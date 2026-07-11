@@ -16,6 +16,10 @@
 
 - Jointly explain receiver responses using non-negative, consistently
   normalized bases and explicit precision weights.
+- A non-negative prior may explain only a direction-compatible response.
+  Reverse contrasts or separately defined channels handle attenuation; do not
+  fit a signed response with a non-negative basis and call the residual closed.
+  Signed molecular priors require an explicit, reviewed sign convention.
 - Cluster highly correlated LR profiles before interpreting individual LR
   identities; report family-level results and assignment uncertainty.
 - Graph fusion operates only over `G_C` edges and preserves disconnected
@@ -28,4 +32,5 @@
 
 - CVXPY golden problems, KKT/convergence checks, `lambda_F=0` equivalence,
   large-fusion limits, disconnected graphs, topology jumps, relabeling
-  invariance, collinear-family recovery, and deterministic tuning.
+  invariance, signed/directional response behavior, collinear-family recovery,
+  and deterministic tuning.

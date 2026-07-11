@@ -7,7 +7,7 @@
 
 ## Rules
 
-- Restore damaged equations from `../prompt.md` through independent derivation
+- Restore damaged equations from `../../prompt.md` through independent derivation
   and review before treating them as normative.
 - Clearly label implemented, experimental, and planned behavior.
 - Define inferential versus exploratory output and distinguish strength,

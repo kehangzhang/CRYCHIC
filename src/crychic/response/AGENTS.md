@@ -29,4 +29,5 @@
 
 - Hand-calculated contrasts, null/type-I fixtures, continuous response
   retention, repeated-subject designs, rank-deficient refusal, and backend
-  parity on supported simple designs.
+  parity on supported simple designs. Include the case where subject fixed
+  effects absorb a between-subject treatment effect and require refusal.

@@ -2,8 +2,9 @@
 
 ## Owns
 
-- Subject-stratified folds, paired subject bootstrap, exchangeability-aware
-  blocked permutation, seed manifests, and reusable resampling indices.
+- Estimability-aware subject folds, paired subject bootstrap, explicit
+  exchangeability maps, restricted permutation/sign-flip plans, seed manifests,
+  and reusable resampling indices.
 
 ## Dependencies
 
@@ -13,17 +14,19 @@
 ## Rules
 
 - A subject and all of that subject's samples/contexts stay in one fold or one
-  bootstrap block.
+  bootstrap block. Every training fold must independently satisfy context,
+  covariate, cell-type support, rank, and contrast estimability checks.
 - Never split or permute at cell level for inferential procedures.
-- Respect pairing, strata, batches, and exchangeability restrictions declared
-  by the design.
+- Encode immutable covariates and permitted operations per design factor.
+  Between-subject labels permute subject blocks within strata; paired
+  within-subject effects use only valid restricted swaps or sign flips.
 - Every resample has a stable ID, explicit index set, seed lineage, and
   provenance record.
-- Fail when a requested split cannot preserve minimum estimability rather than
-  silently changing fold count.
+- A planner may reduce `K` only through a documented pre-fit rule; if no
+  `K >= 2` is estimable, reject cross-fitting. Never silently change fold count.
 
 ## Required Tests
 
 - Zero subject overlap between train/test, paired-block preservation,
-  determinism, stratum balance, impossible-split errors, and null permutation
-  behavior.
+  fold-wise rank/estimability, determinism, stratum balance, impossible-split
+  errors, and design-specific null permutation behavior.

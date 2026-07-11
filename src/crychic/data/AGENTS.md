@@ -17,6 +17,9 @@
 - Do not mutate caller-owned AnnData objects.
 - Counts used for inference must be finite, non-negative integers. Report the
   layer and offending coordinates when validation fails.
+- Normalized-only exploratory input declares its source and transform; never
+  infer a transform from value ranges. It forces formal p/q/posterior fields to
+  unavailable with a reason code.
 - Validate that each `sample_id` maps to exactly one subject and one value for
   every declared context key.
 - Gene mapping is explicit, species-aware, many-to-one policy controlled, and
@@ -26,5 +29,5 @@
 ## Required Tests
 
 - Dense, CSR/CSC, backed, duplicated-gene, missing-field, non-integer-count,
-  and inconsistent sample-mapping fixtures.
+  normalized-only/unknown-transform, and inconsistent sample-mapping fixtures.
 - Validation must not alter input values, order, layers, or metadata.

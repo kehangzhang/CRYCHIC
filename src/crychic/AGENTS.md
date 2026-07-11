@@ -13,7 +13,10 @@ rules.
 - Internal modules are private unless explicitly re-exported. Do not make an
   implementation detail public merely for test convenience.
 - Keep imports acyclic and follow the dependency graph documented in
-  `DEVELOPMENT_PLAN.md`.
+  `../../DEVELOPMENT_PLAN.md`.
+- Put a business artifact contract beside its upstream producer and expose it
+  through that subpackage's public surface. Use `core` only for shared
+  primitives and generic protocol/configuration machinery.
 - Use protocols for response, attribution, inference, and resource backends.
 - Import optional dependencies inside the relevant adapter and raise an
   actionable extra-installation error when unavailable.

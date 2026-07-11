@@ -7,7 +7,8 @@
 
 ## Dependencies
 
-- May consume `core`, scoring, inference, signatures, and result contracts.
+- May consume public scoring, inference, and signature artifacts plus shared
+  `core` primitives. It must not import the persistence facade in `results`.
 - No fitting module may depend on this output representation.
 
 ## Rules

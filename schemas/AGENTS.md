@@ -2,8 +2,12 @@
 
 ## Scope
 
-- Own machine-readable schemas for configuration, provenance, interactions,
-  differential tests, signatures, sample scores, graphs, and diagnostics.
+- Own machine-readable schemas for configuration, provenance, drivers,
+  interactions, active probabilities, differential tests, signatures, sample
+  scores, graphs, and diagnostics.
+- This directory is the single normative source for persisted schemas;
+  `crychic.results` implements validation and migrations, while `core` owns only
+  in-memory shared primitives and schema-version identifiers.
 
 ## Rules
 

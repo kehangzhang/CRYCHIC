@@ -23,3 +23,6 @@
   target-only, composition imbalance, graph-smooth, topology jump, wrong
   topology, disconnected graph, collinear LR, structural absence, batch/context
   confounding, annotation perturbation, and prior replacement.
+- Also include legal full-pipeline context permutation, fixed-subject/increasing-
+  cell donor null, context-correlated sampling missingness, and a scoring-
+  functional null. Cell-level permutation is prohibited, not a comparator.

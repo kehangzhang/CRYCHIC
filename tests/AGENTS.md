@@ -13,6 +13,8 @@
 - Structural absence is never silently converted to zero state expression.
 - Penalized coefficients never feed ordinary p-value formulas.
 - Non-estimable designs do not emit inferential fields.
+- Every compared context uses the same fold-frozen scoring functional.
+- Full-pipeline resampling captures filtering/tuning/attribution uncertainty.
 - Sparse/dense and serial/parallel paths agree within declared tolerance.
 
 ## Quality Rules

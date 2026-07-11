@@ -21,20 +21,26 @@ module-specific constraints and takes precedence within its directory.
    `subject_id`. Cells are observations used for aggregation, not independent
    replicates.
 2. Keep `sample_id` and `subject_id` distinct. Repeated contexts from one
-   subject must stay together during splitting, bootstrap, and permutation.
+   subject stay together during splitting and bootstrap. Permutation follows a
+   design-specific exchangeability map: between-subject factors permute subject
+   blocks within strata, while paired within-subject factors use only valid
+   restricted swaps or sign flips.
 3. Structural absence of a cell type is missingness, not zero expression.
 4. Inferential and exploratory modes are separate contracts. Never emit formal
    p-values, q-values, or calibrated probabilities when a design is not
    estimable.
 5. Penalized coefficients support selection, denoising, and attribution. They
    must not be used directly to construct ordinary Wald p-values.
-6. Formal effects and q-values come from unpenalized models of subject-level,
-   out-of-fold sample scores.
+6. Formal point effects use an identical, contrast-level scoring functional on
+   subject-level out-of-fold samples. Until a valid analytic variance is
+   derived, uncertainty and calibration must rerun the complete learned
+   pipeline under repeated cross-fitting and subject-level resampling.
 7. Every data-dependent operation in cross-fitting belongs inside the training
    fold, including filtering, scaling, gating, LR clustering, tuning, and
    sender coupling.
-8. Keep communication strength, active probability, specificity probability,
-   differential effect, and q-value as separate quantities.
+8. Keep communication strength, active posterior probability, bootstrap
+   specificity support, selection frequency, differential effect, and q-value
+   as separate quantities and table grains.
 9. Preserve observed, explained, and residual receiver responses. Never force
    all receiver biology to be explained by known communication resources.
 
@@ -43,8 +49,9 @@ module-specific constraints and takes precedence within its directory.
 - Dependencies flow from foundational modules toward orchestration and user
   interfaces. Numerical modules must not import `workflow`, `api`, `cli`, or
   `visualization`.
-- Exchange cross-module data through typed contracts defined in `core`; avoid
-  importing another module's private implementation.
+- Exchange cross-module data through typed public contracts owned by the
+  upstream producer. `core` owns only genuinely shared primitives; never import
+  another module's private implementation.
 - Keep the three graph meanings separate: context topology in `design`,
   molecular signaling topology in package `resources`, and output
   communication hypergraphs in `network`.

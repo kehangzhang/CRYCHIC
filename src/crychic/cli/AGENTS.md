@@ -7,8 +7,8 @@
 
 ## Dependencies
 
-- May import `api`, `workflow`, and `results` only through stable public
-  contracts. It must contain no statistical or resource-parsing logic.
+- May import only the stable `api` surface. It must not bypass the facade to
+  import `workflow` or `results`, and contains no statistical/resource logic.
 
 ## Rules
 

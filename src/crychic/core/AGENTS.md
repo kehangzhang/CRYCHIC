@@ -2,12 +2,11 @@
 
 ## Owns
 
-- Serializable configuration, enums, stable identifiers, typed protocols,
-  shared immutable data contracts, errors, provenance primitives, and seed
-  lineage.
-- Cross-module contracts such as pseudobulk, response, attribution, score, and
-  result metadata interfaces. Concrete numerical implementations stay outside
-  this module.
+- Serializable configuration, common enums, stable identifiers, generic typed
+  protocols, errors, provenance primitives, seed lineage, and schema-version
+  identifiers.
+- Business artifacts such as pseudobulk, response, attribution, and score DTOs
+  are owned by their producer modules, not by `core`.
 
 ## Dependencies
 
@@ -26,6 +25,6 @@
 
 ## Required Tests
 
-- Serialization and schema migration round-trips.
+- Configuration and in-memory metadata serialization round-trips.
 - Stable-ID permutation invariance and collision fixtures.
 - Seed-tree determinism and protocol conformance.

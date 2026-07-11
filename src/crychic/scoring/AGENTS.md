@@ -15,6 +15,10 @@
 - Do not call a raw expression product or integrated strength a probability.
 - Inferential scores are generated out of fold; retain fold and training-model
   identity on every sample score.
+- For a registered contrast, derive one frozen scoring functional per training
+  fold and apply the same functional, feature universe, transformations, and
+  scale to every context being compared. Context-specific score functions are
+  mechanistic outputs, not directly comparable inferential outcomes.
 - Preserve availability, downstream, sender, prior-quality, and abundance
   components alongside the composite geometric score.
 - Missing core evidence yields missing/flagged scores according to policy, not
@@ -24,4 +28,5 @@
 ## Required Tests
 
 - Formula hand checks, component monotonicity, missingness propagation,
-  out-of-fold provenance, abundance-only separation, and fold-scale handling.
+  out-of-fold provenance, common-functional context comparability,
+  fold-specific-functional null, abundance-only separation, and scale handling.
