@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
-from crychic.core import ContractError
+from crychic.core import ContractError, stable_id
 
 
 class AvailabilityStatus(StrEnum):
@@ -17,6 +19,172 @@ class AvailabilityStatus(StrEnum):
     QC_FAILURE = "qc_failure"
     CONFIRMED_ABSENCE = "confirmed_absence"
     UNAVAILABLE = "unavailable"
+
+
+class InteractionFilterPolicy(StrEnum):
+    """Training-only policies used to define an LR interaction universe."""
+
+    POOLED_SUPPORT_V1 = "training_pooled_support_v1"
+    EXPLORATORY_POOLED_TOP_K_V1 = "exploratory_training_pooled_top_k_v1"
+
+
+class InteractionFilterApplication(StrEnum):
+    """Whether availability selected or only applied an interaction universe."""
+
+    TRAINING_SELECTION_V1 = "training_selection_v1"
+    FROZEN_APPLICATION_V1 = "frozen_application_v1"
+
+
+def _stable_identifiers(
+    values: tuple[str, ...], *, field_name: str, allow_empty: bool
+) -> tuple[str, ...]:
+    if not allow_empty and not values:
+        raise ContractError(
+            f"{field_name} must not be empty",
+            code="invalid_frozen_interaction_universe",
+            field=field_name,
+            remediation="Record the biological subjects used to fit the filter",
+        )
+    if any(not isinstance(value, str) or not value.strip() for value in values):
+        raise ContractError(
+            f"{field_name} must contain non-empty strings",
+            code="invalid_frozen_interaction_universe",
+            field=field_name,
+            remediation="Use stable resource and subject identifiers",
+        )
+    normalized = tuple(value.strip() for value in values)
+    if len(normalized) != len(set(normalized)):
+        raise ContractError(
+            f"{field_name} must contain unique identifiers",
+            code="duplicate_frozen_interaction_universe",
+            field=field_name,
+            remediation="Deduplicate the training filter manifest before application",
+        )
+    return tuple(sorted(normalized))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FrozenInteractionUniverse:
+    """Fold-frozen interaction IDs and training provenance for test application."""
+
+    interaction_ids: tuple[str, ...]
+    training_subject_ids: tuple[str, ...]
+    resource_id: str
+    resource_version: str
+    resource_manifest_digest: str
+    min_pooled_availability: float
+    max_interactions: int | None
+    selection_policy: InteractionFilterPolicy | str
+    schema_version: str = "1.0.0"
+    filter_universe_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        interactions = _stable_identifiers(
+            tuple(self.interaction_ids),
+            field_name="interaction_ids",
+            allow_empty=True,
+        )
+        subjects = _stable_identifiers(
+            tuple(self.training_subject_ids),
+            field_name="training_subject_ids",
+            allow_empty=False,
+        )
+        resource_fields = (
+            "resource_id",
+            "resource_version",
+            "resource_manifest_digest",
+        )
+        for field_name in resource_fields:
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ContractError(
+                    f"{field_name} must be a non-empty string",
+                    code="invalid_frozen_interaction_universe",
+                    field=field_name,
+                    remediation="Freeze the resource identity with the filter universe",
+                )
+            object.__setattr__(self, field_name, value.strip())
+        threshold = float(self.min_pooled_availability)
+        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ContractError(
+                "min_pooled_availability must lie in [0, 1]",
+                code="invalid_frozen_interaction_universe",
+                field="min_pooled_availability",
+                remediation="Record the exact training-fold pooled threshold",
+            )
+        maximum = self.max_interactions
+        if maximum is not None and (
+            isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1
+        ):
+            raise ContractError(
+                "max_interactions must be a positive integer or None",
+                code="invalid_frozen_interaction_universe",
+                field="max_interactions",
+                remediation="Record the exact exploratory training cap",
+            )
+        policy = InteractionFilterPolicy(self.selection_policy)
+        expected_policy = (
+            InteractionFilterPolicy.POOLED_SUPPORT_V1
+            if maximum is None
+            else InteractionFilterPolicy.EXPLORATORY_POOLED_TOP_K_V1
+        )
+        if policy is not expected_policy:
+            raise ContractError(
+                "selection_policy does not match max_interactions",
+                code="invalid_frozen_interaction_universe",
+                field="selection_policy",
+                remediation=(
+                    "Use pooled_support_v1 without a cap or the explicit "
+                    "exploratory top-k policy with a cap"
+                ),
+            )
+        if self.schema_version != "1.0.0":
+            raise ContractError(
+                "FrozenInteractionUniverse schema_version must be 1.0.0",
+                code="invalid_frozen_interaction_universe",
+                field="schema_version",
+                remediation="Use the released availability filter manifest schema",
+            )
+        payload = {
+            "interaction_ids": list(interactions),
+            "max_interactions": maximum,
+            "min_pooled_availability": threshold,
+            "resource_id": self.resource_id,
+            "resource_manifest_digest": self.resource_manifest_digest,
+            "resource_version": self.resource_version,
+            "schema_version": self.schema_version,
+            "selection_policy": policy.value,
+            "training_subject_ids": list(subjects),
+        }
+        object.__setattr__(self, "interaction_ids", interactions)
+        object.__setattr__(self, "training_subject_ids", subjects)
+        object.__setattr__(self, "min_pooled_availability", threshold)
+        object.__setattr__(self, "selection_policy", policy)
+        object.__setattr__(
+            self,
+            "filter_universe_id",
+            stable_id(
+                "availability_filter_universe",
+                payload,
+                schema_version=self.schema_version,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a serialization-ready frozen filter manifest."""
+
+        return {
+            "filter_universe_id": self.filter_universe_id,
+            "schema_version": self.schema_version,
+            "selection_policy": InteractionFilterPolicy(self.selection_policy).value,
+            "interaction_ids": list(self.interaction_ids),
+            "training_subject_ids": list(self.training_subject_ids),
+            "resource_id": self.resource_id,
+            "resource_version": self.resource_version,
+            "resource_manifest_digest": self.resource_manifest_digest,
+            "min_pooled_availability": self.min_pooled_availability,
+            "max_interactions": self.max_interactions,
+        }
 
 
 @dataclass(frozen=True, slots=True)

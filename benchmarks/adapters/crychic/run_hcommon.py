@@ -93,6 +93,21 @@ def _dataset_spec(benchmark: Mapping[str, Any], dataset: str) -> Mapping[str, An
     return cast(Mapping[str, Any], spec)
 
 
+def validate_hcommon_workflow(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Reject data-driven interaction caps in the H-common comparison arm."""
+
+    raw = spec.get("workflow")
+    if not isinstance(raw, Mapping):
+        raise ValueError("H-common dataset spec has no workflow mapping")
+    workflow = dict(cast(Mapping[str, Any], raw))
+    if workflow.get("max_interactions") is not None:
+        raise ValueError(
+            "H-common workflow requires max_interactions=None; a data-driven "
+            "top-k interaction cap changes the comparison universe"
+        )
+    return workflow
+
+
 def run_hcommon_from_benchmark(
     benchmark_config: str | Path,
     dataset: str,
@@ -115,6 +130,7 @@ def run_hcommon_from_benchmark(
     config_path = Path(benchmark_config).resolve()
     benchmark = load_benchmark_config(config_path)
     spec = _dataset_spec(benchmark, dataset)
+    workflow = validate_hcommon_workflow(spec)
     input_path = resolve_path(str(spec["input"]), repo_root=root)
     expected_sha256 = str(spec["input_sha256"])
     observed_sha256 = sha256_file(input_path)
@@ -169,7 +185,6 @@ def run_hcommon_from_benchmark(
             context_keys=tuple(config.context_keys),
         )
         method_version = _package_version()
-        workflow = dict(cast(Mapping[str, Any], spec["workflow"]))
         manifest = begin_manifest(
             repo_root=root,
             dataset_id=str(spec["dataset_id"]),

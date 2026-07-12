@@ -11,7 +11,7 @@ from scipy import sparse
 from crychic.core import ContractError, stable_id
 from crychic.resources import TargetPrior
 
-from .contracts import BasisBuildReport, GatedTargetBasis
+from .contracts import BasisBuildReport, GatedTargetBasis, ReceptorGatePolicy
 
 
 def _validated_gates(
@@ -57,12 +57,59 @@ def _validated_gates(
     return result
 
 
+def _gate_policy_state(
+    gate_policy: ReceptorGatePolicy | str,
+    receptor_gate_threshold: float | None,
+    gates: np.ndarray,
+) -> tuple[ReceptorGatePolicy, float | None, np.ndarray, np.ndarray]:
+    try:
+        policy = ReceptorGatePolicy(gate_policy)
+    except (TypeError, ValueError) as error:
+        raise ContractError(
+            "Attribution basis requires a recognized receptor gate policy",
+            code="invalid_receptor_gate_policy",
+            field="gate_policy",
+            remediation="Use an explicit versioned ReceptorGatePolicy",
+        ) from error
+    if policy is ReceptorGatePolicy.LEGACY_CONTINUOUS_V1:
+        if receptor_gate_threshold is not None:
+            raise ContractError(
+                "Legacy continuous receptor gating does not use a threshold",
+                code="invalid_receptor_gate_threshold",
+                field="receptor_gate_threshold",
+                remediation="Leave the threshold unset or select hard eligibility",
+            )
+        eligible = gates > 0
+        return policy, None, eligible, gates
+
+    if isinstance(receptor_gate_threshold, bool) or receptor_gate_threshold is None:
+        raise ContractError(
+            "Hard receptor eligibility requires an explicit threshold",
+            code="invalid_receptor_gate_threshold",
+            field="receptor_gate_threshold",
+            remediation="Provide a finite threshold in (0, 1]",
+        )
+    threshold = float(receptor_gate_threshold)
+    if not math.isfinite(threshold) or not 0 < threshold <= 1:
+        raise ContractError(
+            "Hard receptor eligibility threshold must lie in (0, 1]",
+            code="invalid_receptor_gate_threshold",
+            field="receptor_gate_threshold",
+            remediation="Choose a pre-registered threshold in (0, 1]",
+        )
+    eligible = gates >= threshold
+    return policy, threshold, eligible, eligible.astype(float)
+
+
 def build_gated_target_basis(
     prior: TargetPrior,
     feature_ids: Sequence[str],
     receptor_gates: Mapping[str, float],
+    *,
+    gate_policy: ReceptorGatePolicy | str = (ReceptorGatePolicy.LEGACY_CONTINUOUS_V1),
+    receptor_gate_threshold: float | None = None,
 ) -> GatedTargetBasis:
-    """Align a positive prior, L2-normalize columns, then apply receptor gates."""
+    """Build a normalized TargetPrior basis under a versioned gate policy."""
 
     if not isinstance(prior, TargetPrior):
         raise TypeError("prior must be a TargetPrior")
@@ -82,6 +129,11 @@ def build_gated_target_basis(
             remediation="Collapse duplicate response genes before attribution",
         )
     gates = _validated_gates(prior.driver_ids, receptor_gates)
+    policy, threshold, eligible, column_scales = _gate_policy_state(
+        gate_policy,
+        receptor_gate_threshold,
+        gates,
+    )
     feature_index = {gene: index for index, gene in enumerate(features)}
     normalized_data: list[float] = []
     normalized_indices: list[int] = []
@@ -106,14 +158,14 @@ def build_gated_target_basis(
         if norm == 0:
             zero_norm.append(driver)
         else:
-            gate = gates[driver_index]
+            column_scale = column_scales[driver_index]
             for row, weight in column:
                 normalized = weight / norm
                 normalized_indices.append(row)
                 normalized_data.append(normalized)
-                if gate > 0:
+                if column_scale > 0:
                     gated_indices.append(row)
-                    gated_data.append(normalized * gate)
+                    gated_data.append(normalized * column_scale)
         normalized_indptr.append(len(normalized_data))
         gated_indptr.append(len(gated_data))
 
@@ -153,6 +205,10 @@ def build_gated_target_basis(
             "driver_ids": prior.driver_ids,
             "feature_ids": features,
             "gates": gates.tolist(),
+            "gate_policy": policy.value,
+            "gate_policy_version": policy.version,
+            "receptor_gate_threshold": threshold,
+            "receptor_eligible": eligible.tolist(),
             "prior_manifest": prior.manifest_digest,
             "prior_resource_id": prior.resource_id,
             "prior_version": prior.version,
@@ -165,6 +221,9 @@ def build_gated_target_basis(
         normalized_profiles=normalized_profiles,
         matrix=gated_matrix,
         receptor_gates=gates,
+        receptor_eligible=eligible,
+        gate_policy=policy,
+        receptor_gate_threshold=threshold,
         pre_normalization_norms=np.asarray(norms, dtype=float),
         prior_resource_id=prior.resource_id,
         prior_version=prior.version,

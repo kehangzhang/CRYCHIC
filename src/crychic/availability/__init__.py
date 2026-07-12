@@ -7,8 +7,11 @@ from .contracts import (
     AvailabilityStatus,
     DetectionShrinkage,
     EntityAvailability,
+    FrozenInteractionUniverse,
     GeneObservation,
     HillParameters,
+    InteractionFilterApplication,
+    InteractionFilterPolicy,
     SubunitAvailability,
 )
 from .estimation import (
@@ -31,8 +34,11 @@ __all__ = [
     "BatchAvailability",
     "DetectionShrinkage",
     "EntityAvailability",
+    "FrozenInteractionUniverse",
     "GeneObservation",
     "HillParameters",
+    "InteractionFilterApplication",
+    "InteractionFilterPolicy",
     "SubunitAvailability",
     "estimate_bundle_availability",
     "estimate_entity_availability",

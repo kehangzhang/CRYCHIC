@@ -1,0 +1,88 @@
+{
+  "schema_version": "canonical-v0.1",
+  "config_revision": "hcommon_nocap_v02",
+  "historical_base_config": "benchmarks/configs/multicondition_v01_final.json",
+  "historical_base_sha256": "dbe5374bd3e6a661d3500b97f425ce8e59d9b99c9457a60ffb8a5bec115844a2",
+  "database_root": "../databases",
+  "output_root": "../benchmark_work/multicondition_v02/crychic_hcommon_nocap",
+  "resources": {
+    "cellchat_human": {
+      "adapter": "cellchat",
+      "manifest": "resources/cellchatdb_human_v2.json",
+      "species": "human"
+    },
+    "nichenet_human": {
+      "manifest": "resources/nichenet_human_v2_2021.json",
+      "release": "v2_2021"
+    }
+  },
+  "datasets": {
+    "cscc_native_cellchat": {
+      "dataset_id": "GSE144236_Ji_cSCC",
+      "input": "../benchmark_work/multicondition_v01/prepared/GSE144236_cscc_paired.h5ad",
+      "input_sha256": "b15759def47df2c2aa5e1936398c9e57fab92dac6814b77d31839ae50b675b81",
+      "output_name": "cscc_native_cellchat",
+      "input_mode": "counts",
+      "lr_resource": "cellchat_human",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_multicondition_hcommon_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "random_seed": 20260712
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 5,
+        "min_subjects_per_context": 5,
+        "min_pooled_availability": 0.01,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "ms_native_cellchat": {
+      "dataset_id": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+      "input": "../benchmark_work/multicondition_v01/prepared/UCSC_Lerma_Martin_MS_CA_vs_Ctrl.h5ad",
+      "input_sha256": "612fe9c4cdaf88694a47e13ba4458c828f206cd945eba9e9c72f46e9bd0196c7",
+      "output_name": "ms_native_cellchat",
+      "input_mode": "counts",
+      "lr_resource": "cellchat_human",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "independent_multicondition_hcommon_nocap_v02",
+      "config": {
+        "context_keys": ["lesion_type"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "covariates": ["batch"],
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ batch + lesion_type",
+        "random_seed": 20260712
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.01,
+        "max_interactions": null,
+        "subject_fixed_effects": false,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    }
+  }
+}

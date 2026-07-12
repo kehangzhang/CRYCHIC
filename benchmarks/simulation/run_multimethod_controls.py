@@ -1061,7 +1061,7 @@ def main() -> None:
         type=Path,
         default=(
             Path(__file__).resolve().parents[1]
-            / "configs/synthetic_multimethod_v01.json"
+            / "configs/synthetic_multimethod_nocap_v02.json"
         ),
     )
     parser.add_argument("--crychic-threads", type=int, default=4)

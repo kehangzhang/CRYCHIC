@@ -1,0 +1,65 @@
+{
+  "schema_version": "crychic-downstream-support-candidate-v1",
+  "config_revision": "hcommon_nocap_v02",
+  "historical_base_config": "benchmarks/configs/downstream_support_candidate_holdout_v01.json",
+  "historical_base_sha256": "dae56551514f79b7f30fdc5068efa310eacd037f6d300d68d54b61d5aaef7817",
+  "development_scope": "post_benchmark_candidate_not_primary_benchmark",
+  "holdout_seed": 20260819,
+  "n_subjects": 8,
+  "mean_cells_per_sample": 240,
+  "scenarios": [
+    "active",
+    "ligand_only",
+    "target_only",
+    "receptor_knockout"
+  ],
+  "database_root": "../databases",
+  "harmonized_resource": "../benchmark_work/multicondition_v01/resources/synthetic_harmonized_lr/harmonized_lr.tsv",
+  "harmonized_manifest": "../benchmark_work/multicondition_v01/resources/synthetic_harmonized_lr/manifest.json",
+  "target_prior_manifest": "resources/nichenet_human_v2_2021.json",
+  "target_prior_release": "v2_2021",
+  "support_methods": [
+    "gated_prior_attribution_v1",
+    "gated_response_norm_attribution_support_v2"
+  ],
+  "known_edge": {
+    "sender": "Sender",
+    "receiver": "Receiver",
+    "interaction_id": "harmonized_lr_7bbc87ba05fdbbd5fe9aefc993426648",
+    "ligand": "CXCL10",
+    "receptor": "CXCR3"
+  },
+  "analysis": {
+    "context_key": "condition",
+    "reference": "ctrl",
+    "target": "stim",
+    "contrast": "stim_vs_ctrl",
+    "crychic_primary_contrast_candidate": "global:'stim'",
+    "min_pairs": 5,
+    "top_k": 5,
+    "communication_mode": "state"
+  },
+  "workflow": {
+    "min_cells": 10,
+    "min_samples_per_context": 4,
+    "min_subjects_per_context": 4,
+    "min_pooled_availability": 0.0,
+    "max_interactions": null,
+    "subject_fixed_effects": true,
+    "lambda1": 0.0,
+    "lambda2": 0.0,
+    "cosine_threshold": 0.95,
+    "prior_quality": 1.0
+  },
+  "decision_rule": {
+    "active_min_positive_direction_fraction": 0.75,
+    "active_max_effect_rank": 5,
+    "require_active_positive_effect": true,
+    "require_strict_effect_reduction": [
+      "ligand_only",
+      "target_only"
+    ],
+    "reduction_epsilon": 0.0
+  },
+  "threads": 4
+}

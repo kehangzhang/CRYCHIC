@@ -40,12 +40,15 @@ uv run python -m benchmarks.simulation.run_multimethod_controls \
 ```
 
 CellChat, CellPhoneDB, LIANA, and CRYCHIC use the exact five-edge H-common
-fixture. CRYCHIC uses the frozen `synthetic_multimethod_v01.json` paired design,
-the frozen NicheNet target prior, state scoring, `min_cells=10`,
-`min_subjects_per_context=4`, and `max_interactions=5`. NicheNet runs its
-separate, source-agnostic ligand-to-target-program Track B and auto-normalizes
-integer count input to library-size 10,000 plus `log1p`; its adapter manifest
-records the resolved transformation.
+fixture. New CRYCHIC runs use the versioned
+`synthetic_multimethod_nocap_v02.json` paired design, the frozen NicheNet target
+prior, state scoring, `min_cells=10`,
+`min_subjects_per_context=4`, and no data-driven top-k interaction cap. The
+H-common adapter rejects non-null `max_interactions` so the comparison universe
+cannot be selected from evaluation data. NicheNet runs its separate,
+source-agnostic ligand-to-target-program Track B and auto-normalizes integer
+count input to library-size 10,000 plus `log1p`; its adapter manifest records
+the resolved transformation.
 
 The suite writes one independent method/scenario directory, sampled wall time
 and process-tree RSS, stdout/stderr logs, `runs.tsv`, and a checksum-pinned
@@ -83,8 +86,8 @@ CRYCHIC-only holdout audit with:
 
 ```bash
 uv run python -m benchmarks.simulation.evaluate_downstream_support_candidate \
-  benchmarks/configs/downstream_support_candidate_holdout_v01.json \
-  benchmark_work/multicondition_v01/downstream_support_candidate_v2_holdout
+  benchmarks/configs/downstream_support_candidate_holdout_nocap_v02.json \
+  benchmark_work/multicondition_v02/downstream_support_candidate_nocap_v02_holdout
 ```
 
 The runner generates seed `20260819` holdouts, executes complete v1 and v2
@@ -94,3 +97,22 @@ support method. Its report is labeled post-benchmark development and is never
 merged into `simulation_records.tsv`. Passing the decision rule qualifies v2
 for a future default-change evaluation; it does not switch the current v1
 default or authorize a real-data rerun.
+
+## G1.5 mechanism-specificity gate
+
+Run the frozen development and independent-holdout campaigns separately:
+
+```bash
+uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
+  --phase development \
+  --output-dir benchmark_work/g1_5_v2/development
+uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
+  --phase independent_holdout \
+  --output-dir benchmark_work/g1_5_v2/independent_holdout
+```
+
+The runner writes atomic evidence, generation provenance, and evaluator metrics.
+It refuses to overwrite an existing phase directory and forbids tuning in the
+independent holdout. Published lightweight results and exact artifact hashes are
+in [`benchmarks/results/g1_5_v2_summary.json`](../results/g1_5_v2_summary.json).
+The synthetic gate never switches the public default by itself.

@@ -19,17 +19,27 @@ The current branch adds more explicit evidence and provenance contracts while
 preserving the exploratory v0.1 behavior:
 
 - downstream output separates the source-agnostic `receiver_program_score`
-  from the reserved `incremental_downstream` field. The latter remains
-  `not_estimable` until a cross-fitted receiver-null model is implemented;
+  from `incremental_downstream`. Training/application primitives for held-out
+  receiver-null loss gain and subject-fold contracts are available, while the
+  public workflow still reports this field as `not_estimable` until every
+  upstream data-driven transform is fitted inside the training fold;
 - attribution now consumes winsorized, median-normalized response precision and
   records its fitted transform and support diagnostics;
+- opt-in attribution candidates provide hard receptor eligibility, directional
+  response channels, strict family-first bases, and evidence-weighted member
+  allocation without changing the legacy default;
 - tracked scores carry a `score_version` and `model_manifest_id` covering the
   fitted basis, coefficient digest, receptor gates, target weights, sender and
   downstream functionals, availability and precision transforms, filtering,
   and tuning artifacts;
 - availability state and ecosystem eligibility have separate status and reason
   fields, and missing sender evidence no longer receives an implicit uniform
-  assignment.
+  assignment;
+- fold manifests enforce subject-blocked train/test separation, frozen
+  interaction universes prevent test-fold filtering leakage, and the H-common
+  benchmark arm rejects data-driven top-k interaction caps;
+- an edge-evidence ledger records component status, missingness reasons and
+  provenance at sample x context x sender x receiver x interaction grain.
 
 `EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
 candidate. It allocates bounded model-level explained gain across driver
@@ -41,10 +51,13 @@ that default.
 The G1.5 mechanism-specificity contract is frozen in
 `benchmarks/configs/mechanism_specificity_v2.json`, with component truth in
 `benchmarks/truth/component_truth_matrix.yaml` and a paired-seed evaluator in
-`benchmarks/metrics/mechanism_specificity.py`. It requires 50 development seeds
-and 200 independent holdout seeds. These files define the gate only: this
-repository state does not claim that either seed campaign has been run or that
-the candidate has passed G1.5, and G1.5 alone cannot switch the default method.
+`benchmarks/metrics/mechanism_specificity.py`. The deterministic campaign has
+now been run with 50 development seeds and 200 independent holdout seeds across
+three known edges and seven scenarios. Both phases passed all supplied G1.5
+gates; the holdout equal-edge active-minus-ligand-only margin was `0.341761`
+with a 95% CI of `[0.335538, 0.347985]`. This is a synthetic mechanism-specificity
+result, not evidence of real-data accuracy, and G1.5 alone cannot switch the
+default method. See [the result summary](docs/results/g1-5-mechanism-specificity.md).
 
 ## Install
 
@@ -57,8 +70,9 @@ uv sync --extra dev --extra resources --extra plotting --extra benchmark
 ## Repository Scope
 
 This branch tracks the core package, benchmark code and configurations, tests,
-schemas, method documentation, and checksum-pinned resource manifests. Large or
-locally generated assets are intentionally not versioned:
+schemas, method documentation, lightweight benchmark summaries, and
+checksum-pinned resource manifests. Large or locally generated assets are
+intentionally not versioned:
 
 - input `.h5ad`/HDF5 matrices;
 - database payloads under the workspace-level `databases/` directory;
@@ -120,6 +134,12 @@ validated table reads and ranked interaction queries.
 uv run --extra benchmark python benchmarks/run_canonical_v01.py
 uv run --extra benchmark python -m benchmarks.simulation.run_negative_controls \
   --output-dir ../benchmark_work/synthetic_v01 --seed 20260712
+uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
+  --phase development \
+  --output-dir benchmark_work/g1_5_v2/development
+uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
+  --phase independent_holdout \
+  --output-dir benchmark_work/g1_5_v2/independent_holdout
 uv run --extra resources --extra benchmark --extra plotting \
   python benchmarks/report/generate_canonical_report.py --workspace-root ..
 ```
@@ -135,4 +155,5 @@ uv run --extra dev python -m build
 
 - [Detailed development plan](DEVELOPMENT_PLAN.md)
 - [v0.1 method specification](docs/methods/v0.1-exploratory-baseline.md)
+- [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
 - [Repository development instructions](AGENTS.md)

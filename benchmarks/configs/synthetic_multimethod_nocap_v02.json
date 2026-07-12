@@ -1,0 +1,259 @@
+{
+  "schema_version": "canonical-v0.1",
+  "config_revision": "synthetic_hcommon_nocap_v02",
+  "historical_base_config": "benchmarks/configs/synthetic_multimethod_v01.json",
+  "historical_base_sha256": "b1f427806592fbba8f4e3fc589372d78cfe5f447c0ee21dd812efea66cdf2f5d",
+  "database_root": "../databases",
+  "output_root": "../benchmark_work/multicondition_v02/synthetic_multimethod_nocap/crychic_hcommon",
+  "resources": {
+    "synthetic_hcommon": {
+      "adapter": "harmonized_fixture",
+      "manifest": "../benchmark_work/multicondition_v01/resources/synthetic_harmonized_lr/manifest.json",
+      "species": "human"
+    },
+    "nichenet_human": {
+      "manifest": "resources/nichenet_human_v2_2021.json",
+      "release": "v2_2021"
+    }
+  },
+  "datasets": {
+    "synthetic_active": {
+      "dataset_id": "synthetic_active",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_active.h5ad",
+      "input_sha256": "87a395e3d35a6fff475c10453dac51d474cef46440f6617e9b7d1d9c7e427dee",
+      "output_name": "synthetic_active",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 779404205
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_global_null": {
+      "dataset_id": "synthetic_global_null",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_global_null.h5ad",
+      "input_sha256": "37f846e1d753816ff71b86cb90bd298b7647bfcea7c473dd1d778b50f6baa187",
+      "output_name": "synthetic_global_null",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 1817746471
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_abundance_only": {
+      "dataset_id": "synthetic_abundance_only",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_abundance_only.h5ad",
+      "input_sha256": "47864b350ee364a14ca86a499ebaaff3d8ab05946d3882eefdc6b18c451e33e6",
+      "output_name": "synthetic_abundance_only",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 172186306
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_receiver_autonomous": {
+      "dataset_id": "synthetic_receiver_autonomous",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_receiver_autonomous.h5ad",
+      "input_sha256": "bba02e0eb3b588a0edbf963173806df13abc4c415eb4d1adc86002eeb6e23985",
+      "output_name": "synthetic_receiver_autonomous",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 4285072227
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_ligand_only": {
+      "dataset_id": "synthetic_ligand_only",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_ligand_only.h5ad",
+      "input_sha256": "4f0997c833e54ed341873f3c91f7560473fcd0571d713129a14c7a27ce14cae9",
+      "output_name": "synthetic_ligand_only",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 3259882498
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_target_only": {
+      "dataset_id": "synthetic_target_only",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_target_only.h5ad",
+      "input_sha256": "6cd886b0a487b4963e03a25489b9d142b33eac2b4cc837f67f47a6957c641ee8",
+      "output_name": "synthetic_target_only",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 3462572278
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "synthetic_receptor_knockout": {
+      "dataset_id": "synthetic_receptor_knockout",
+      "input": "../benchmark_work/multicondition_v01/synthetic_controls/synthetic_receptor_knockout.h5ad",
+      "input_sha256": "252eb5ffdc9a3d24f898dce14652c0ec0d09f5c2a768a278376d220e0bbe1313",
+      "output_name": "synthetic_receptor_knockout",
+      "input_mode": "counts",
+      "lr_resource": "synthetic_hcommon",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "paired_synthetic_hcommon_cross_method_nocap_v02",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "design": "~ condition",
+        "communication_modes": ["state"],
+        "random_seed": 949971671
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 4,
+        "min_subjects_per_context": 4,
+        "min_pooled_availability": 0.0,
+        "max_interactions": null,
+        "subject_fixed_effects": true,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    }
+  }
+}

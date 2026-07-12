@@ -18,6 +18,7 @@ from benchmarks.adapters.common import (
 from benchmarks.adapters.crychic import readback
 from benchmarks.adapters.crychic.readback import convert_result_to_long
 from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
+from benchmarks.adapters.crychic.run_hcommon import validate_hcommon_workflow
 
 from crychic.core import stable_id
 from crychic.resources import (
@@ -27,6 +28,8 @@ from crychic.resources import (
     ResourceBundle,
     Species,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class FakeResult:
@@ -96,6 +99,74 @@ def _interaction(
         species=Species.HUMAN,
         gene_namespace=GeneNamespace.HGNC_SYMBOL,
     )
+
+
+def test_hcommon_workflow_rejects_data_driven_interaction_cap() -> None:
+    accepted = validate_hcommon_workflow(
+        {"workflow": {"min_cells": 10, "max_interactions": None}}
+    )
+    assert accepted["max_interactions"] is None
+
+    with pytest.raises(ValueError, match="requires max_interactions=None"):
+        validate_hcommon_workflow(
+            {"workflow": {"min_cells": 10, "max_interactions": 100}}
+        )
+
+
+def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> None:
+    historical_caps = {
+        "multicondition_v01_initial.json": 800,
+        "multicondition_v01_final.json": 800,
+        "synthetic_multimethod_v01.json": 5,
+    }
+    for name, cap in historical_caps.items():
+        config = json.loads(
+            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert all(
+            dataset["workflow"]["max_interactions"] == cap
+            for dataset in config["datasets"].values()
+        )
+
+    historical_candidate = json.loads(
+        (
+            REPO_ROOT
+            / "benchmarks/configs/downstream_support_candidate_holdout_v01.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert historical_candidate["workflow"]["max_interactions"] == 5
+
+    for name in (
+        "multicondition_hcommon_nocap_v02.json",
+        "synthetic_multimethod_nocap_v02.json",
+    ):
+        config = json.loads(
+            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert all(
+            dataset["workflow"]["max_interactions"] is None
+            for dataset in config["datasets"].values()
+        )
+        base_path = REPO_ROOT / config["historical_base_config"]
+        assert hashlib.sha256(base_path.read_bytes()).hexdigest() == config[
+            "historical_base_sha256"
+        ]
+
+    candidate = json.loads(
+        (
+            REPO_ROOT
+            / "benchmarks/configs/downstream_support_candidate_holdout_nocap_v02.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert candidate["workflow"]["max_interactions"] is None
+    base_path = REPO_ROOT / candidate["historical_base_config"]
+    assert hashlib.sha256(base_path.read_bytes()).hexdigest() == candidate[
+        "historical_base_sha256"
+    ]
 
 
 def _bundle() -> ResourceBundle:

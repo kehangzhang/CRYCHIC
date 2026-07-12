@@ -284,6 +284,25 @@ completion, and final runs use one immutable config snapshot.
   biology aliases, single-class AUROC rejection, >=1,000-null calibration gates,
   NE iteration semantics and artifact checksum completeness.
 
+## I12: versioned no-cap H-common configurations
+
+- Failure class: comparison-universe leakage and frozen-config provenance.
+- Historical configs remain byte-compatible with their recorded runs:
+  `multicondition_v01_initial.json` and `multicondition_v01_final.json` retain
+  `max_interactions=800`; `synthetic_multimethod_v01.json` and
+  `downstream_support_candidate_holdout_v01.json` retain `max_interactions=5`.
+- New H-common runs use `multicondition_hcommon_nocap_v02.json`,
+  `synthetic_multimethod_nocap_v02.json`, or
+  `downstream_support_candidate_holdout_nocap_v02.json`. These configs set
+  `max_interactions=null` and carry an explicit historical base-config reference
+  plus SHA256 lock. Their documented runs use disjoint
+  `benchmark_work/multicondition_v02/` output roots, including
+  `downstream_support_candidate_nocap_v02_holdout` for the candidate audit.
+- The H-common adapter rejects a non-null cap before reading the input matrix.
+  This prevents evaluation data from selecting a top-k comparison universe.
+- No existing v0.1 benchmark result is relabeled as a no-cap result. The v0.2
+  configurations define new reruns whose outputs must be evaluated separately.
+
 ## Frozen rerun observations
 
 The optimized native-resource rerun preserved the primary score artifact

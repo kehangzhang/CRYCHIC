@@ -17,10 +17,12 @@ site/
 *.egg-info/
 
 benchmark_work/
+/suggestion_1.md
 
 # Local reports and large matrix artifacts are published separately.
 /reports/
 *.h5ad
 *.h5
+*.hdf5
 *.loom
 *.zarr/

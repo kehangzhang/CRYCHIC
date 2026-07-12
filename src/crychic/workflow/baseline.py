@@ -59,6 +59,7 @@ from crychic.sender import (
 )
 
 from .contracts import (
+    EDGE_EVIDENCE_COLUMNS,
     BaselineArtifacts,
     BaselineAttributionRun,
     BaselineDryRunPlan,
@@ -711,11 +712,19 @@ def _scoring_availability(
                 "sample_id",
                 "subject_id",
                 "context",
+                "context_id",
                 "sender",
                 "receiver",
                 "interaction_id",
                 "state_availability",
+                "state_availability_status",
+                "state_availability_reason_code",
                 "ecosystem_availability",
+                "ecosystem_availability_status",
+                "ecosystem_availability_reason_code",
+                "sender_weight",
+                "sender_status",
+                "sender_reason_code",
                 "sender_component",
             ]
         )
@@ -765,10 +774,19 @@ def _scoring_availability(
     source["sender_component"] = (
         source["assignment_weight"].astype(float).where(supported_sender)
     )
+    source["sender_weight"] = (
+        source["assignment_weight"]
+        .astype(float)
+        .where(source["sender_status"] != "missing_evidence")
+    )
     result = source.rename(
         columns={
             "availability_state": "state_availability",
             "availability_ecosystem": "ecosystem_availability",
+            "state_status": "state_availability_status",
+            "state_reason_code": "state_availability_reason_code",
+            "ecosystem_status": "ecosystem_availability_status",
+            "ecosystem_reason_code": "ecosystem_availability_reason_code",
         }
     ).loc[
         :,
@@ -776,11 +794,19 @@ def _scoring_availability(
             "sample_id",
             "subject_id",
             "context",
+            "context_id",
             "sender",
             "receiver",
             "interaction_id",
             "state_availability",
+            "state_availability_status",
+            "state_availability_reason_code",
             "ecosystem_availability",
+            "ecosystem_availability_status",
+            "ecosystem_availability_reason_code",
+            "sender_weight",
+            "sender_status",
+            "sender_reason_code",
             "sender_component",
         ],
     ]
@@ -1422,6 +1448,353 @@ def _score_runs(
     return tuple(outputs)
 
 
+def _empty_edge_evidence() -> pd.DataFrame:
+    return pd.DataFrame(columns=EDGE_EVIDENCE_COLUMNS)
+
+
+def _edge_modes(
+    config_modes: Sequence[CommunicationMode | str],
+) -> tuple[str, ...]:
+    return tuple(CommunicationMode(mode).value for mode in config_modes)
+
+
+def _expand_edge_modes(source: pd.DataFrame, modes: tuple[str, ...]) -> pd.DataFrame:
+    return pd.concat(
+        [source.assign(mode=mode) for mode in modes],
+        ignore_index=True,
+        sort=False,
+    )
+
+
+def _add_receptor_gate_evidence(
+    table: pd.DataFrame, run: BaselineAttributionRun
+) -> pd.DataFrame:
+    result = table.copy(deep=True)
+    mapping = dict(run.driver_by_interaction)
+    gates = dict(run.receptor_gates)
+    result["driver_id"] = result["interaction_id"].astype(str).map(mapping)
+    known_gate = result["driver_id"].notna() & result["driver_id"].isin(gates)
+    missing_driver = result["driver_id"].isna()
+    result["receptor_gate"] = pd.to_numeric(
+        result["driver_id"].map(gates), errors="coerce"
+    ).where(known_gate)
+    fallback_status = (
+        RunStatus.UNAVAILABLE.value if run.succeeded else run.status.value
+    )
+    result["receptor_gate_status"] = fallback_status
+    result["receptor_gate_reason_code"] = (
+        run.reason_code or "receptor_gate_unavailable"
+    )
+    result.loc[missing_driver, "receptor_gate_status"] = "missing"
+    result.loc[missing_driver, "receptor_gate_reason_code"] = (
+        run.reason_code
+        if not mapping and run.reason_code is not None
+        else "interaction_not_in_target_prior"
+    )
+    result.loc[known_gate, "receptor_gate_status"] = "observed"
+    result.loc[known_gate, "receptor_gate_reason_code"] = None
+    return result
+
+
+def _scored_edge_evidence(
+    scoring_availability: pd.DataFrame,
+    score_run: BaselineScoreRun,
+    attribution_run: BaselineAttributionRun,
+    *,
+    emitted: bool,
+) -> pd.DataFrame:
+    source_columns = [
+        *_JOIN_KEYS,
+        "sender",
+        "context_id",
+        "state_availability",
+        "state_availability_status",
+        "state_availability_reason_code",
+        "ecosystem_availability",
+        "ecosystem_availability_status",
+        "ecosystem_availability_reason_code",
+        "sender_weight",
+        "sender_status",
+        "sender_reason_code",
+    ]
+    source = scoring_availability.loc[
+        _value_mask(scoring_availability["receiver"], attribution_run.receiver)
+        & _context_mask(
+            scoring_availability["context"], attribution_run.contrast_contexts
+        ),
+        source_columns,
+    ].copy()
+    downstream_columns = [
+        *_JOIN_KEYS,
+        "receiver_program_score",
+        "receiver_program_status",
+        "receiver_program_reason_code",
+        "incremental_downstream",
+        "incremental_downstream_status",
+        "incremental_downstream_reason_code",
+        "downstream_status",
+        "downstream_reason_code",
+        "attribution_support",
+        "target_weight_method",
+        "prior_quality_source",
+    ]
+    result = score_run.scores.table.merge(
+        source,
+        how="left",
+        on=[*_JOIN_KEYS, "sender"],
+        validate="many_to_one",
+        sort=False,
+    ).merge(
+        score_run.downstream_activity.loc[:, downstream_columns],
+        how="left",
+        on=_JOIN_KEYS,
+        validate="many_to_one",
+        sort=False,
+    )
+    if result["context_id"].isna().any():
+        raise ValueError("edge evidence source does not cover every score row")
+    result = _add_receptor_gate_evidence(result, attribution_run)
+    support_observed = result["attribution_support"].notna()
+    result["attribution_support_method"] = result["target_weight_method"]
+    result["attribution_support_status"] = result["downstream_status"].where(
+        ~support_observed, "observed"
+    )
+    result["attribution_support_reason_code"] = result["downstream_reason_code"].where(
+        ~support_observed
+    )
+    quality_observed = result["prior_quality"].notna()
+    result["prior_quality_status"] = result["downstream_status"].where(
+        ~quality_observed, "observed"
+    )
+    result["prior_quality_reason_code"] = result["downstream_reason_code"].where(
+        ~quality_observed
+    )
+    result["legacy_downstream_activity"] = result["downstream_activity"]
+    result["legacy_downstream_status"] = result["downstream_status"]
+    result["legacy_downstream_reason_code"] = result["downstream_reason_code"]
+    result["legacy_integrated_strength"] = result["comm_strength"]
+    result["legacy_integrated_status"] = result["status"]
+    result["legacy_integrated_reason_code"] = result["reason_code"]
+    result["scoring_function_status"] = result["functional_status"]
+    result["scoring_function_reason_code"] = result["functional_reason_code"]
+    result["sample_score_status"] = "linked" if emitted else "not_emitted"
+    result["sample_score_reason_code"] = (
+        None if emitted else "branch_has_no_complete_core_evidence"
+    )
+    return result.loc[:, list(EDGE_EVIDENCE_COLUMNS)]
+
+
+def _unscored_edge_evidence(
+    source: pd.DataFrame,
+    run: BaselineAttributionRun,
+    *,
+    modes: tuple[str, ...],
+    attribution_support_method: AttributionSupportMethod,
+) -> pd.DataFrame:
+    result = _expand_edge_modes(source, modes)
+    result["contrast"] = run.contrast
+    result["fold_id"] = "in_sample"
+    result = _add_receptor_gate_evidence(result, run)
+    unavailable_status = (
+        run.status.value if not run.succeeded else RunStatus.UNAVAILABLE.value
+    )
+    unavailable_reason = run.reason_code or "scoring_function_unavailable"
+    result["receiver_program_score"] = None
+    result["receiver_program_status"] = unavailable_status
+    result["receiver_program_reason_code"] = unavailable_reason
+    result["incremental_downstream"] = None
+    result["incremental_downstream_status"] = RunStatus.NOT_ESTIMABLE.value
+    result["incremental_downstream_reason_code"] = (
+        "cross_fitted_receiver_null_not_implemented"
+    )
+    result["attribution_support"] = None
+    result["attribution_support_method"] = attribution_support_method.value
+    result["attribution_support_status"] = unavailable_status
+    result["attribution_support_reason_code"] = unavailable_reason
+    result["prior_quality"] = None
+    result["prior_quality_source"] = None
+    result["prior_quality_status"] = unavailable_status
+    result["prior_quality_reason_code"] = unavailable_reason
+    result["legacy_downstream_activity"] = None
+    result["legacy_downstream_status"] = unavailable_status
+    result["legacy_downstream_reason_code"] = unavailable_reason
+    result["legacy_integrated_strength"] = None
+    result["legacy_integrated_status"] = unavailable_status
+    result["legacy_integrated_reason_code"] = unavailable_reason
+    result["scoring_function_status"] = unavailable_status
+    result["scoring_function_reason_code"] = unavailable_reason
+    result["score_version"] = None
+    result["model_manifest_id"] = None
+    result["scoring_function_id"] = None
+    result["sample_score_status"] = "not_emitted"
+    result["sample_score_reason_code"] = "scoring_function_unavailable"
+    return result.loc[:, list(EDGE_EVIDENCE_COLUMNS)]
+
+
+def _availability_only_edge_evidence(
+    source: pd.DataFrame,
+    *,
+    modes: tuple[str, ...],
+    attribution_support_method: AttributionSupportMethod,
+    reason_code: str,
+) -> pd.DataFrame:
+    result = _expand_edge_modes(source, modes)
+    result["driver_id"] = None
+    result["contrast"] = "availability_only"
+    result["fold_id"] = "in_sample"
+    for value_column, status_column, reason_column in (
+        ("receptor_gate", "receptor_gate_status", "receptor_gate_reason_code"),
+        (
+            "receiver_program_score",
+            "receiver_program_status",
+            "receiver_program_reason_code",
+        ),
+        (
+            "attribution_support",
+            "attribution_support_status",
+            "attribution_support_reason_code",
+        ),
+        ("prior_quality", "prior_quality_status", "prior_quality_reason_code"),
+        (
+            "legacy_downstream_activity",
+            "legacy_downstream_status",
+            "legacy_downstream_reason_code",
+        ),
+        (
+            "legacy_integrated_strength",
+            "legacy_integrated_status",
+            "legacy_integrated_reason_code",
+        ),
+    ):
+        result[value_column] = None
+        result[status_column] = RunStatus.NOT_ESTIMABLE.value
+        result[reason_column] = reason_code
+    result["incremental_downstream"] = None
+    result["incremental_downstream_status"] = RunStatus.NOT_ESTIMABLE.value
+    result["incremental_downstream_reason_code"] = (
+        "cross_fitted_receiver_null_not_implemented"
+    )
+    result["attribution_support_method"] = attribution_support_method.value
+    result["prior_quality_source"] = None
+    result["scoring_function_status"] = RunStatus.UNAVAILABLE.value
+    result["scoring_function_reason_code"] = reason_code
+    result["score_version"] = None
+    result["model_manifest_id"] = None
+    result["scoring_function_id"] = None
+    result["sample_score_status"] = "not_emitted"
+    result["sample_score_reason_code"] = "integrated_strength_unavailable"
+    return result.loc[:, list(EDGE_EVIDENCE_COLUMNS)]
+
+
+def _build_edge_evidence(
+    scoring_availability: pd.DataFrame,
+    attribution_runs: tuple[BaselineAttributionRun, ...],
+    candidate_score_runs: tuple[BaselineScoreRun, ...],
+    emitted_score_runs: tuple[BaselineScoreRun, ...],
+    *,
+    config_modes: Sequence[CommunicationMode | str],
+    attribution_support_method: AttributionSupportMethod,
+) -> pd.DataFrame:
+    if scoring_availability.empty:
+        return _empty_edge_evidence()
+    modes = _edge_modes(config_modes)
+    score_lookup = {
+        (_string_identifier(run.receiver), run.contrast): run
+        for run in candidate_score_runs
+    }
+    if len(score_lookup) != len(candidate_score_runs):
+        raise ValueError("candidate score-run receiver/contrast keys must be unique")
+    emitted_keys = {
+        (_string_identifier(run.receiver), run.contrast) for run in emitted_score_runs
+    }
+    frames: list[pd.DataFrame] = []
+    covered_receivers: set[str] = set()
+    source_columns = [
+        "sample_id",
+        "subject_id",
+        "context",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+        "state_availability",
+        "state_availability_status",
+        "state_availability_reason_code",
+        "ecosystem_availability",
+        "ecosystem_availability_status",
+        "ecosystem_availability_reason_code",
+        "sender_weight",
+        "sender_status",
+        "sender_reason_code",
+    ]
+    for run in attribution_runs:
+        receiver_id = _string_identifier(run.receiver)
+        selected = scoring_availability.loc[
+            _value_mask(scoring_availability["receiver"], run.receiver)
+            & _context_mask(scoring_availability["context"], run.contrast_contexts),
+            source_columns,
+        ].copy()
+        if selected.empty:
+            continue
+        covered_receivers.add(receiver_id)
+        key = (receiver_id, run.contrast)
+        score_run = score_lookup.get(key)
+        if score_run is None:
+            frames.append(
+                _unscored_edge_evidence(
+                    selected,
+                    run,
+                    modes=modes,
+                    attribution_support_method=attribution_support_method,
+                )
+            )
+        else:
+            frames.append(
+                _scored_edge_evidence(
+                    scoring_availability,
+                    score_run,
+                    run,
+                    emitted=key in emitted_keys,
+                )
+            )
+    uncovered = scoring_availability.loc[
+        ~scoring_availability["receiver"]
+        .map(_string_identifier)
+        .isin(covered_receivers),
+        source_columns,
+    ].copy()
+    if not uncovered.empty:
+        reason = (
+            "no_estimable_response_contrast"
+            if not attribution_runs
+            else "receiver_attribution_branch_unavailable"
+        )
+        frames.append(
+            _availability_only_edge_evidence(
+                uncovered,
+                modes=modes,
+                attribution_support_method=attribution_support_method,
+                reason_code=reason,
+            )
+        )
+    if not frames:
+        return _empty_edge_evidence()
+    return pd.concat(frames, ignore_index=True, sort=False).sort_values(
+        [
+            "contrast",
+            "sample_id",
+            "context_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+            "mode",
+        ],
+        key=lambda column: column.astype(str),
+        kind="stable",
+        ignore_index=True,
+    )
+
+
 def _effective_run_parameters(
     *,
     graph: ContextGraph,
@@ -1663,6 +2036,14 @@ def fit_baseline(
     else:
         sample_scores = pd.DataFrame()
         mode = BaselineMode.AVAILABILITY_BASELINE
+    edge_evidence = _build_edge_evidence(
+        scoring_availability,
+        attribution_runs,
+        candidate_score_runs,
+        score_runs,
+        config_modes=config.communication_modes,
+        attribution_support_method=attribution_support_method,
+    )
 
     reason_codes = [
         *validated.report.reason_codes,
@@ -1692,6 +2073,7 @@ def fit_baseline(
         attribution_runs=attribution_runs,
         score_runs=score_runs,
         sample_scores=sample_scores,
+        edge_evidence=edge_evidence,
         mode=mode,
         reason_codes=tuple(reason_codes),
         run_parameters=_effective_run_parameters(

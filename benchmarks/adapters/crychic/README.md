@@ -18,15 +18,17 @@ Use a new output directory. The command retains the native CRYCHIC result under
 
 ```bash
 uv run python -m benchmarks.adapters.crychic.run_hcommon \
-  benchmarks/configs/multicondition_v01_initial.json cscc_native_cellchat \
-  ../benchmark_work/multicondition_v01/crychic_hcommon/cscc \
+  benchmarks/configs/multicondition_hcommon_nocap_v02.json cscc_native_cellchat \
+  ../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc \
   --harmonized-resource ../benchmark_work/multicondition_v01/resources/harmonized_simple_lr/harmonized_lr.tsv \
   --harmonized-manifest ../benchmark_work/multicondition_v01/resources/harmonized_simple_lr/manifest.json \
   --blas-threads 8
 ```
 
 Replace `cscc_native_cellchat` with `ms_native_cellchat` and use a different
-output directory for the MS arm.
+output directory for the MS arm. Historical `multicondition_v01_*` configs are
+retained unchanged for their recorded native capped runs and are not valid
+inputs to the no-cap H-common adapter.
 
 ## Native result readback
 

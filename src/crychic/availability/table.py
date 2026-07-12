@@ -15,7 +15,12 @@ from crychic.design import context_id
 from crychic.pseudobulk import ExploratoryAggregate, PseudobulkDataset
 from crychic.resources import Interaction, ResourceBundle
 
-from .contracts import AvailabilityParameters
+from .contracts import (
+    AvailabilityParameters,
+    FrozenInteractionUniverse,
+    InteractionFilterApplication,
+    InteractionFilterPolicy,
+)
 
 Aggregate: TypeAlias = PseudobulkDataset | ExploratoryAggregate
 _DEFAULT_PARAMETERS = AvailabilityParameters()
@@ -30,6 +35,49 @@ class BatchAvailability:
     resource_id: str
     resource_version: str
     detection_available: bool
+    frozen_interaction_universe: FrozenInteractionUniverse
+    filter_application: InteractionFilterApplication
+    application_subject_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.frozen_interaction_universe, FrozenInteractionUniverse
+        ):
+            raise TypeError(
+                "frozen_interaction_universe must be a FrozenInteractionUniverse"
+            )
+        application = InteractionFilterApplication(self.filter_application)
+        subjects = tuple(sorted(str(value) for value in self.application_subject_ids))
+        if not subjects or len(subjects) != len(set(subjects)):
+            raise ValueError("application_subject_ids must be non-empty and unique")
+        observed_ids = set(
+            self.sample_interactions.get("interaction_id", pd.Series(dtype="object"))
+            .dropna()
+            .astype(str)
+        )
+        unknown = observed_ids.difference(
+            self.frozen_interaction_universe.interaction_ids
+        )
+        if unknown:
+            raise ValueError(
+                "availability rows fall outside the frozen interaction universe: "
+                f"{sorted(unknown)}"
+            )
+        if (
+            application is InteractionFilterApplication.TRAINING_SELECTION_V1
+            and subjects != self.frozen_interaction_universe.training_subject_ids
+        ):
+            raise ValueError(
+                "training filter application subjects must match training provenance"
+            )
+        object.__setattr__(self, "filter_application", application)
+        object.__setattr__(self, "application_subject_ids", subjects)
+
+    @property
+    def filter_universe_id(self) -> str:
+        """Stable identity of the selected or applied interaction universe."""
+
+        return self.frozen_interaction_universe.filter_universe_id
 
 
 def _entity_values(
@@ -107,19 +155,35 @@ def estimate_bundle_availability(
     parameters: AvailabilityParameters = _DEFAULT_PARAMETERS,
     min_pooled_availability: float = 0.01,
     max_interactions: int | None = None,
+    frozen_interaction_universe: FrozenInteractionUniverse | None = None,
 ) -> BatchAvailability:
     """Estimate all mapped LR components without using response outcomes.
 
-    The pooled-support filter is independent of context labels. Only units with
-    eligible state expression enter the long score table; missing grid units
-    remain explicit in ``aggregate.unit_metadata`` and are never materialized
-    as measured zero rows.
+    Without a frozen universe, pooled support and the legacy optional top-k cap
+    are training-data operations. The cap is retained only as an explicitly
+    exploratory policy. With ``frozen_interaction_universe``, resource IDs are
+    applied directly and neither pooled support nor top-k is relearned from the
+    application data.
     """
 
     if not 0 <= min_pooled_availability <= 1:
         raise ValueError("min_pooled_availability must lie in [0, 1]")
-    if max_interactions is not None and max_interactions < 1:
-        raise ValueError("max_interactions must be positive when provided")
+    if max_interactions is not None and (
+        isinstance(max_interactions, bool)
+        or not isinstance(max_interactions, int)
+        or max_interactions < 1
+    ):
+        raise ValueError("max_interactions must be a positive integer when provided")
+    if frozen_interaction_universe is not None and not isinstance(
+        frozen_interaction_universe, FrozenInteractionUniverse
+    ):
+        raise TypeError(
+            "frozen_interaction_universe must be a FrozenInteractionUniverse or None"
+        )
+    if frozen_interaction_universe is not None and max_interactions is not None:
+        raise ValueError(
+            "frozen_interaction_universe cannot be combined with max_interactions"
+        )
     if not context_keys:
         raise ValueError("context_keys must contain at least one field")
     missing_context = set(context_keys).difference(aggregate.unit_metadata.columns)
@@ -129,11 +193,47 @@ def estimate_bundle_availability(
             f"aggregate metadata lacks contexts: {sorted(missing_context)}"
         )
 
+    application_subject_ids = tuple(
+        sorted(set(aggregate.unit_metadata["subject_id"].astype(str)))
+    )
+    if not application_subject_ids:
+        raise ValueError("availability requires at least one application subject")
+    if frozen_interaction_universe is None:
+        candidate_interactions = bundle.interactions
+        filter_application = InteractionFilterApplication.TRAINING_SELECTION_V1
+    else:
+        expected_resource = (
+            frozen_interaction_universe.resource_id,
+            frozen_interaction_universe.resource_version,
+            frozen_interaction_universe.resource_manifest_digest,
+        )
+        observed_resource = (
+            bundle.resource_id,
+            bundle.version,
+            bundle.manifest_digest,
+        )
+        if expected_resource != observed_resource:
+            raise ValueError(
+                "frozen interaction universe resource provenance does not match bundle"
+            )
+        by_id = {item.interaction_id: item for item in bundle.interactions}
+        unknown = set(frozen_interaction_universe.interaction_ids).difference(by_id)
+        if unknown:
+            raise ValueError(
+                "frozen interaction universe contains unknown interaction IDs: "
+                f"{sorted(unknown)}"
+            )
+        candidate_interactions = tuple(
+            by_id[interaction_id]
+            for interaction_id in frozen_interaction_universe.interaction_ids
+        )
+        filter_application = InteractionFilterApplication.FROZEN_APPLICATION_V1
+
     feature_index = {gene: index for index, gene in enumerate(aggregate.feature_ids)}
     mapped: list[Interaction] = []
     dropped_unmapped: list[str] = []
     needed_genes: set[str] = set()
-    for interaction in bundle.interactions:
+    for interaction in candidate_interactions:
         required = (*interaction.ligand_subunits, *interaction.receptor_subunits)
         if any(gene not in feature_index for gene in required):
             dropped_unmapped.append(interaction.interaction_id)
@@ -218,7 +318,9 @@ def estimate_bundle_availability(
         receptor_max = (
             float(np.nanmax(receptor)) if np.isfinite(receptor).any() else 0.0
         )
-        if min(ligand_max, receptor_max) < min_pooled_availability:
+        if frozen_interaction_universe is None and (
+            min(ligand_max, receptor_max) < min_pooled_availability
+        ):
             dropped_no_support.append(interaction.interaction_id)
             continue
         supported.append(interaction)
@@ -244,10 +346,31 @@ def estimate_bundle_availability(
         ligand_columns = [ligand_columns[index] for index in order]
         receptor_columns = [receptor_columns[index] for index in order]
 
+    if frozen_interaction_universe is None:
+        selection_policy = (
+            InteractionFilterPolicy.POOLED_SUPPORT_V1
+            if max_interactions is None
+            else InteractionFilterPolicy.EXPLORATORY_POOLED_TOP_K_V1
+        )
+        resolved_universe = FrozenInteractionUniverse(
+            interaction_ids=tuple(item.interaction_id for item in supported),
+            training_subject_ids=application_subject_ids,
+            resource_id=bundle.resource_id,
+            resource_version=bundle.version,
+            resource_manifest_digest=bundle.manifest_digest,
+            min_pooled_availability=min_pooled_availability,
+            max_interactions=max_interactions,
+            selection_policy=selection_policy,
+        )
+    else:
+        resolved_universe = frozen_interaction_universe
+
     mapping_summary = pd.DataFrame(
         {
             "metric": [
                 "source_interactions",
+                "filter_candidate_interactions",
+                "excluded_by_frozen_universe_interactions",
                 "gene_mapped_interactions",
                 "pooled_supported_interactions",
                 "dropped_unmapped_interactions",
@@ -255,6 +378,10 @@ def estimate_bundle_availability(
             ],
             "value": [
                 len(bundle.interactions),
+                len(candidate_interactions),
+                len(bundle.interactions) - len(candidate_interactions)
+                if frozen_interaction_universe is not None
+                else 0,
                 len(mapped),
                 len(supported),
                 len(dropped_unmapped),
@@ -269,6 +396,9 @@ def estimate_bundle_availability(
             resource_id=bundle.resource_id,
             resource_version=bundle.version,
             detection_available=detection_available,
+            frozen_interaction_universe=resolved_universe,
+            filter_application=filter_application,
+            application_subject_ids=application_subject_ids,
         )
 
     ligand_matrix = np.column_stack(ligand_columns)
@@ -366,4 +496,7 @@ def estimate_bundle_availability(
         resource_id=bundle.resource_id,
         resource_version=bundle.version,
         detection_available=detection_available,
+        frozen_interaction_universe=resolved_universe,
+        filter_application=filter_application,
+        application_subject_ids=application_subject_ids,
     )

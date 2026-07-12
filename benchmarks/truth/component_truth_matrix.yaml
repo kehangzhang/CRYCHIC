@@ -4,6 +4,26 @@ locked_at: '2026-07-13T00:00:00+08:00'
 truth_scope: simulation
 record_grain: seed_x_scenario_x_known_edge
 
+known_edges:
+  - known_edge_id: synthetic_cxcl10_cxcr3
+    ligand: CXCL10
+    receptor: CXCR3
+    family: interferon_chemokine
+  - known_edge_id: synthetic_ccl5_ccr5
+    ligand: CCL5
+    receptor: CCR5
+    family: inflammatory_chemokine
+  - known_edge_id: synthetic_egf_egfr
+    ligand: EGF
+    receptor: EGFR
+    family: growth_factor
+
+known_edge_policy:
+  identities_are_preregistered_in_this_file: true
+  every_edge_requires_every_seed_and_scenario: true
+  per_edge_results_required: true
+  macro_aggregation: equal_edge_within_seed_then_across_seeds
+
 component_semantics:
   availability: ligand/state availability evidence before downstream integration
   receptor: receptor or required-complex gate
@@ -15,8 +35,12 @@ component_semantics:
 truth_codes:
   positive: the component is expected to be positive
   zero: the component is required to be zero or non-positive
-  allowed_positive: a positive value is compatible but is not evidence for an LR edge
-  ecosystem_only: abundance may alter ecosystem availability but not state LR evidence
+  allowed_positive: >-
+    a positive value is compatible and reported diagnostically, but cannot be
+    used as evidence that the integrated LR edge exists
+  ecosystem_only: >-
+    abundance may alter ecosystem availability; the evidence record stores the
+    state-mode availability effect, which must remain zero or non-positive
 
 scenarios:
   active:

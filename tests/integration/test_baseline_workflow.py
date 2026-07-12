@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -353,6 +355,66 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
         .str.contains("constant=1.0;resource=synthetic_prior")
         .all()
     )
+    evidence = artifacts.edge_evidence
+    evidence_key = [
+        "contrast",
+        "fold_id",
+        "sample_id",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+        "mode",
+    ]
+    assert not evidence.empty
+    assert not evidence.duplicated(evidence_key).any()
+    assert len(evidence.loc[evidence["sample_score_status"] == "linked"]) == len(
+        artifacts.sample_scores
+    )
+    signal_evidence = evidence.loc[
+        (evidence["contrast"] == contrast)
+        & (evidence["sample_id"] == "c1")
+        & (evidence["sender"] == "Sender")
+        & (evidence["receiver"] == "Receiver")
+        & (evidence["interaction_id"] == "i_signal")
+    ].set_index("mode")
+    assert set(signal_evidence.index) == {"state", "ecosystem"}
+    assert set(signal_evidence["state_availability_status"]) == {"observed"}
+    assert set(signal_evidence["ecosystem_availability_status"]) == {"observed"}
+    assert set(signal_evidence["receptor_gate_status"]) == {"observed"}
+    assert signal_evidence["receptor_gate"].notna().all()
+    assert set(signal_evidence["receiver_program_status"]) == {"observed"}
+    assert signal_evidence["receiver_program_score"].notna().all()
+    assert signal_evidence["incremental_downstream"].isna().all()
+    assert set(signal_evidence["incremental_downstream_reason_code"]) == {
+        "cross_fitted_receiver_null_not_implemented"
+    }
+    assert set(signal_evidence["attribution_support_method"]) == {
+        AttributionSupportMethod.RELATIVE_COEFFICIENT_V1.value
+    }
+    assert set(signal_evidence["attribution_support_status"]) == {"observed"}
+    assert set(signal_evidence["sender_status"]) == {"ok"}
+    assert signal_evidence["sender_weight"].notna().all()
+    assert set(signal_evidence["prior_quality_status"]) == {"observed"}
+    assert set(signal_evidence["legacy_integrated_status"]) == {"ok"}
+    assert set(signal_evidence["sample_score_status"]) == {"linked"}
+    assert set(signal_evidence["score_version"]) == {"geometric_v1_tracked"}
+    assert signal_evidence["model_manifest_id"].nunique() == 1
+    assert signal_evidence["scoring_function_id"].nunique() == 1
+    tampered = evidence.copy(deep=True)
+    linked_strength = (
+        tampered["sample_score_status"].eq("linked")
+        & tampered["legacy_integrated_strength"].notna()
+    )
+    tampered_index = tampered.index[linked_strength][0]
+    original_strength = float(tampered.at[tampered_index, "legacy_integrated_strength"])
+    tampered.at[tampered_index, "legacy_integrated_strength"] = (
+        0.0 if original_strength > 0 else 1.0
+    )
+    with pytest.raises(
+        ValueError, match="does not reproduce sample score comm_strength"
+    ):
+        replace(artifacts, edge_evidence=tampered)
     assert not {
         "p",
         "p_value",
@@ -373,6 +435,7 @@ def test_fit_baseline_is_deterministic() -> None:
     second = fit_baseline(_adata(), _config(), _bundle(), **arguments)
 
     pd.testing.assert_frame_equal(first.sample_scores, second.sample_scores)
+    pd.testing.assert_frame_equal(first.edge_evidence, second.edge_evidence)
     pd.testing.assert_frame_equal(
         first.availability.sample_interactions,
         second.availability.sample_interactions,
@@ -471,6 +534,26 @@ def test_missing_optional_prior_returns_explicit_availability_baseline() -> None
         run.status in {RunStatus.UNAVAILABLE, RunStatus.NOT_ESTIMABLE}
         for run in artifacts.attribution_runs
     )
+    evidence = artifacts.edge_evidence
+    assert not evidence.empty
+    assert evidence["state_availability"].notna().all()
+    assert set(evidence["state_availability_status"]) == {"observed"}
+    for column in (
+        "receptor_gate",
+        "receiver_program_score",
+        "incremental_downstream",
+        "attribution_support",
+        "prior_quality",
+        "legacy_integrated_strength",
+        "score_version",
+        "model_manifest_id",
+        "scoring_function_id",
+    ):
+        assert evidence[column].isna().all()
+    assert evidence["receptor_gate_reason_code"].notna().all()
+    assert evidence["receiver_program_reason_code"].notna().all()
+    assert evidence["legacy_integrated_reason_code"].notna().all()
+    assert set(evidence["sample_score_status"]) == {"not_emitted"}
 
 
 def test_low_sender_support_cannot_become_complete_core_evidence() -> None:
@@ -487,6 +570,24 @@ def test_low_sender_support_cannot_become_complete_core_evidence() -> None:
     assert artifacts.mode is BaselineMode.AVAILABILITY_BASELINE
     assert not artifacts.score_runs
     assert "score_branch_no_complete_core_evidence" in artifacts.reason_codes
+    scored_evidence = artifacts.edge_evidence.loc[
+        artifacts.edge_evidence["score_version"].notna()
+        & (artifacts.edge_evidence["interaction_id"] == "i_signal")
+    ]
+    assert not scored_evidence.empty
+    assert set(scored_evidence["sender_status"]) == {"low_support"}
+    assert set(scored_evidence["sender_reason_code"]) == {
+        "insufficient_subject_support"
+    }
+    assert scored_evidence["sender_weight"].notna().all()
+    assert scored_evidence["legacy_integrated_strength"].isna().all()
+    assert set(scored_evidence["legacy_integrated_reason_code"]) == {
+        "missing_core_evidence:sender"
+    }
+    assert set(scored_evidence["sample_score_status"]) == {"not_emitted"}
+    assert set(scored_evidence["sample_score_reason_code"]) == {
+        "branch_has_no_complete_core_evidence"
+    }
 
 
 def test_multifactor_context_uses_one_id_across_availability_and_sender() -> None:
