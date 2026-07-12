@@ -1,0 +1,32 @@
+{
+  "resource_id": "nichenet_v2_ligand_target_human",
+  "version": "21122021",
+  "species": "human",
+  "gene_namespace": "HGNC symbol",
+  "source_url": "https://zenodo.org/records/7074291",
+  "license": "CC-BY-4.0",
+  "citation": "Browaeys R, Saelens W, Saeys Y. NicheNet: modeling intercellular communication by linking ligands to target genes. Nature Methods (2020).",
+  "retrieved_at": "2026-07-12",
+  "adapter_version": "crychic-nichenet-top-targets-v1",
+  "payloads": [
+    {
+      "path": "nichenet/v2_2021/ligand_target_matrix_nsga2r_final.rds",
+      "sha256": "699fce17ff65e2511277359696306bb130aa833bd7f30dd9290ad9efd9dc9c5d",
+      "bytes": 262116605,
+      "upstream_md5": "b09606b04b2d4490418d9028c0e58b9f",
+      "role": "upstream dense target-by-ligand matrix"
+    },
+    {
+      "path": "nichenet/v2_2021/ligand_target_top250.parquet",
+      "sha256": "42a6fa3746ad3ab4ba3f03c35fe693d7d2ef0a9b28677295ec838cfc2e0f0293",
+      "bytes": 2202509,
+      "role": "runtime sparse long-form prior"
+    }
+  ],
+  "transformation_log": [
+    "Read the named 33354 target by 1226 ligand matrix without rescaling.",
+    "For each ligand, retained the 250 targets with the largest positive regulatory-potential weights.",
+    "Discarded zero-weight links and sorted deterministically by ligand, rank, and target.",
+    "Stored weights as float32 and rank as int16 in Zstandard-compressed Parquet."
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": "crychic-track-a-differential-suite-v1",
+  "suite_root": "../benchmark_work/multicondition_v01/synthetic_multimethod",
+  "track_a_truth": "../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+  "track_b_simulation_records": "../benchmark_work/multicondition_v01/track_b_metrics/track_b_simulation_truth.tsv",
+  "context_key": "condition",
+  "reference": "ctrl",
+  "target": "stim",
+  "contrast": "stim_vs_ctrl",
+  "min_pairs": 5,
+  "top_k": 5,
+  "truth_universe_size": 45,
+  "positive_scenario": "active",
+  "crychic_primary_contrast_candidate": "global:'stim'",
+  "known_edge": {
+    "sender": "Sender",
+    "receiver": "Receiver",
+    "interaction_id": "harmonized_lr_7bbc87ba05fdbbd5fe9aefc993426648",
+    "ligand": "CXCL10",
+    "receptor": "CXCR3"
+  },
+  "methods": [
+    "crychic",
+    "cellchat",
+    "cellphonedb",
+    "liana"
+  ],
+  "scenarios": [
+    {
+      "scenario": "active",
+      "dataset": "synthetic_active"
+    },
+    {
+      "scenario": "global_null",
+      "dataset": "synthetic_global_null"
+    },
+    {
+      "scenario": "abundance_only",
+      "dataset": "synthetic_abundance_only"
+    },
+    {
+      "scenario": "receiver_autonomous",
+      "dataset": "synthetic_receiver_autonomous"
+    },
+    {
+      "scenario": "ligand_only",
+      "dataset": "synthetic_ligand_only"
+    },
+    {
+      "scenario": "target_only",
+      "dataset": "synthetic_target_only"
+    },
+    {
+      "scenario": "receptor_knockout",
+      "dataset": "synthetic_receptor_knockout"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:interactions:0.1.0",
+  "title": "CRYCHIC v0.1 interactions table",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result_schema_version", "table", "filename", "primary_key", "columns", "inferential_null_columns", "reason_required_for_null_columns"],
+  "properties": {
+    "result_schema_version": {"const": "0.1.0"},
+    "table": {"const": "interactions"},
+    "filename": {"const": "interactions.parquet"},
+    "primary_key": {
+      "const": ["context_id", "sender", "receiver", "interaction_id", "mode", "contrast"]
+    },
+    "inferential_null_columns": {"const": ["comm_probability"]},
+    "reason_required_for_null_columns": {
+      "const": ["availability", "assignment_weight", "comm_strength", "comm_probability", "prior_quality"]
+    },
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_id", "context_json", "sender", "receiver", "interaction_id", "mode", "contrast", "availability", "assignment_weight", "comm_strength", "comm_probability", "prior_quality", "n_subjects", "status", "reason_code"],
+      "properties": {
+        "context_id": {"$ref": "#/$defs/stringRequired"},
+        "context_json": {"$ref": "#/$defs/stringRequired"},
+        "sender": {"$ref": "#/$defs/stringRequired"},
+        "receiver": {"$ref": "#/$defs/stringRequired"},
+        "interaction_id": {"$ref": "#/$defs/stringRequired"},
+        "mode": {"$ref": "#/$defs/mode"},
+        "contrast": {"$ref": "#/$defs/stringRequired"},
+        "availability": {"$ref": "#/$defs/unitIntervalNullable"},
+        "assignment_weight": {"$ref": "#/$defs/unitIntervalNullable"},
+        "comm_strength": {"$ref": "#/$defs/unitIntervalNullable"},
+        "comm_probability": {"$ref": "#/$defs/unitIntervalNullable"},
+        "prior_quality": {"$ref": "#/$defs/unitIntervalNullable"},
+        "n_subjects": {"dtype": "integer", "nullable": false, "minimum": 0, "unit": "subjects", "description": "Biological subject support"},
+        "status": {"$ref": "#/$defs/status"},
+        "reason_code": {"dtype": "string", "nullable": false, "unit": null, "description": "v0.1 inferential-disable or row status reason"}
+      }
+    }
+  },
+  "$defs": {
+    "stringRequired": {"dtype": "string", "nullable": false, "unit": null, "description": "Stable non-null identifier"},
+    "unitIntervalNullable": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0, "unit": "proportion", "description": "Nullable exploratory component"},
+    "mode": {"dtype": "string", "nullable": false, "enum": ["state", "ecosystem"], "unit": null, "description": "Communication estimand"},
+    "status": {"dtype": "string", "nullable": false, "enum": ["ok", "missing", "not_estimable", "filtered", "failed"], "unit": null, "description": "Explicit result status"}
+  }
+}

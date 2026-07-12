@@ -1,0 +1,81 @@
+truth_set_id: canonical_ccc_supportive_v1
+locked_at: '2026-07-12T06:10:00+08:00'
+status: supportive_silver_standard
+
+datasets:
+  cellchat_ad_skin:
+    contexts: [NL, LS]
+    design_limitations:
+      - normalized_only
+      - condition_specific_subjects_are_not_paired
+      - cellchat_object_is_a_silver_standard_not_independent_truth
+    expected_observations:
+      - id: inflammatory_cell_expansion
+        direction: LS_up
+        cell_types: [Inflam. FIB, Inflam. DC, Inflam. TC]
+        metric: cell_proportion
+      - id: inflammatory_pathways
+        direction: LS_up_or_LS_specific
+        pathways: [CCL, TNF, IL4, MIF, ANNEXIN, GALECTIN, COMPLEMENT]
+        metric: pathway_level_availability_and_top_edge_support
+    source:
+      citation: >-
+        Jin S et al. Inference and analysis of cell-cell communication using
+        CellChat. Nature Communications 12, 1088 (2021), together with the
+        official human atopic-dermatitis comparison object.
+      doi: 10.1038/s41467-021-21246-9
+
+  cellchat_embryonic_skin:
+    contexts: [E13.5, E14.5]
+    design_limitations:
+      - normalized_only
+      - one_merged_object_per_stage
+      - no_independent_subject_level_inference
+    expected_observations:
+      - id: stage_specific_cell_types
+        direction: E14_only
+        cell_types: [DC, Pericyte]
+        metric: structural_absence_semantics
+        expectation: >-
+          E13 state values for these E14-specific populations remain missing,
+          not measured zero.
+      - id: wnt_reconfiguration
+        direction: E14_up_or_rewired
+        pathways: [WNT, ncWNT]
+        metric: pathway_level_availability_and_rank_change
+    source:
+      citation: >-
+        Official CellChat E13.5/E14.5 embryonic-skin comparison tutorial and
+        archived CellChat objects (Figshare 21887559).
+      figshare_doi: 10.6084/m9.figshare.21887559
+
+  cellphonedb_trophoblast:
+    contexts: [maternal_fetal_interface]
+    design_limitations:
+      - no_validated_condition_mapping
+      - source_sample_is_not_a_repeated_context_subject
+      - single_context_only
+    expected_observations:
+      - id: trophoblast_hla_g
+        direction: enriched
+        genes: [HLA-G]
+        receiver_cell_types: [EVT_1, EVT_2, iEVT]
+        metric: expression_and_lr_availability_rank
+      - id: tutorial_active_tf_support
+        direction: present_in_receiver_programs
+        genes: [ASCL2, GATA3, STAT1, STAT2, HIF1A]
+        metric: external_active_tf_overlap
+      - id: pv_trophoblast_microenvironment
+        direction: supported_edges
+        genes: [MMP11, MYH11, STEAP4]
+        metric: top_interaction_manual_review
+    source:
+      citation: >-
+        CellPhoneDB v5 Method 3 official maternal-fetal-interface tutorial data.
+      data_role: external DEG/TF labels are supportive and not independent negatives
+
+evaluation_policy:
+  inferential_fields_required_null: true
+  do_not_compute_real_data_edge_auroc: true
+  do_not_treat_cellchat_scores_as_ground_truth_probability: true
+  report_failed_or_not_estimable_explicitly: true

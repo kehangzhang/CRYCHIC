@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+
+.coverage
+.coverage.*
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
+.hatch/
+.nox/
+.venv/
+build/
+dist/
+site/
+*.egg-info/
+
+benchmark_work/
+
+# Local reports and large matrix artifacts are published separately.
+/reports/
+*.h5ad
+*.h5
+*.loom
+*.zarr/

@@ -1,0 +1,128 @@
+{
+  "schema_version": "canonical-v0.1",
+  "database_root": "../databases",
+  "output_root": "../benchmark_work/canonical_v01_results",
+  "resources": {
+    "cellchat_human": {
+      "adapter": "cellchat",
+      "manifest": "resources/cellchatdb_human_v2.json",
+      "species": "human"
+    },
+    "cellphonedb_human": {
+      "adapter": "cellphonedb",
+      "manifest": "resources/cellphonedb_human_v5.0.0.json",
+      "version": "v5.0.0"
+    },
+    "nichenet_human": {
+      "manifest": "resources/nichenet_human_v2_2021.json",
+      "release": "v2_2021"
+    }
+  },
+  "datasets": {
+    "kang2018": {
+      "dataset_id": "GSE96583_Kang2018_batch2",
+      "input": "../benchmark_work/kang2018_batch2.h5ad",
+      "input_sha256": "5ee14c9df0a58e385828f9339dc93eff52fae7614218e82ed9c9a022804b30ac",
+      "output_name": "kang2018",
+      "input_mode": "counts",
+      "lr_resource": "cellchat_human",
+      "target_prior": "nichenet_human",
+      "benchmark_scope": "resource_truncated_v0_1_smoke",
+      "config": {
+        "context_keys": ["condition"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "random_seed": 20260712
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 2,
+        "min_subjects_per_context": 2,
+        "min_pooled_availability": 0.01,
+        "max_interactions": 100,
+        "subject_fixed_effects": false,
+        "lambda1": 0.0,
+        "lambda2": 0.0,
+        "cosine_threshold": 0.95,
+        "prior_quality": 1.0
+      }
+    },
+    "ad_skin": {
+      "dataset_id": "CellChat_AD_skin_NL_LS",
+      "input": "../benchmark_work/ad_skin_cellchat.h5ad",
+      "input_sha256": "76d77cbde24481296cb1d8010b6fc8f483784372a8bd59ff64845690dec955ce",
+      "output_name": "ad_skin",
+      "input_mode": "normalized_only",
+      "lr_resource": "cellchat_human",
+      "target_prior": null,
+      "benchmark_scope": "availability_only_normalized_v0_1",
+      "config": {
+        "context_keys": ["context"],
+        "counts_layer": null,
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "expression_source": "CellChat normalized @data",
+        "expression_transform": "log1p_normalized",
+        "normalized_zero_is_nondetection": false,
+        "random_seed": 20260712
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 2,
+        "min_subjects_per_context": 2,
+        "min_pooled_availability": 0.01,
+        "max_interactions": 800,
+        "subject_fixed_effects": false
+      }
+    },
+    "trophoblast": {
+      "dataset_id": "CellPhoneDB_trophoblast_tutorial",
+      "input": "../benchmark_work/trophoblast.h5ad",
+      "input_sha256": "15cd154d5f99855afd4a53f443c816ec37edea9f04d9220675eab8df5c467686",
+      "output_name": "trophoblast",
+      "input_mode": "counts",
+      "lr_resource": "cellphonedb_human",
+      "target_prior": null,
+      "benchmark_scope": "single_context_availability_v0_1",
+      "include_cell_types": [
+        "EVT_1",
+        "EVT_2",
+        "PV MMP11",
+        "PV MYH11",
+        "PV STEAP4",
+        "SCT",
+        "VCT",
+        "VCT_CCC",
+        "VCT_fusing",
+        "VCT_p",
+        "eEVT",
+        "iEVT"
+      ],
+      "config": {
+        "context_keys": ["context"],
+        "counts_layer": "counts",
+        "sample_key": "sample_id",
+        "subject_key": "subject_id",
+        "cell_type_key": "cell_type",
+        "species": "human",
+        "gene_namespace": "hgnc_symbol",
+        "random_seed": 20260712
+      },
+      "workflow": {
+        "min_cells": 10,
+        "min_samples_per_context": 2,
+        "min_subjects_per_context": 2,
+        "min_pooled_availability": 0.01,
+        "max_interactions": 800,
+        "subject_fixed_effects": false
+      }
+    }
+  }
+}

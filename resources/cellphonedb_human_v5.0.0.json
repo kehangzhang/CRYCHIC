@@ -1,0 +1,41 @@
+{
+  "resource_id": "cellphonedb",
+  "version": "v5.0.0",
+  "species": "human",
+  "gene_namespace": "HGNC symbol",
+  "source_url": "https://github.com/ventolab/cellphonedb-data/releases/tag/v5.0.0",
+  "license": "MIT",
+  "citation": "Efremova M et al. CellPhoneDB: inferring cell-cell communication from combined expression of multi-subunit ligand-receptor complexes. Nature Protocols (2020).",
+  "retrieved_at": "2026-07-12",
+  "adapter_version": "crychic-cellphonedb-parquet-v1",
+  "payloads": [
+    {
+      "path": "cellphonedb/v5.0.0/complex_composition.parquet",
+      "sha256": "d9e8fd1818b3aaf3b2fb1ebc26aa22ecf7f057286a1d6cac8a5cae28156dde9e",
+      "bytes": 7213,
+      "role": "complex subunit mapping"
+    },
+    {
+      "path": "cellphonedb/v5.0.0/complex_expanded.parquet",
+      "sha256": "9065807c3719ef971c771fa44ab7531aeabb06932caf78c30ceb307f2934098e",
+      "bytes": 27730,
+      "role": "complex metadata"
+    },
+    {
+      "path": "cellphonedb/v5.0.0/genes.parquet",
+      "sha256": "f22f03a2175ebe69562174408552f6ecca782c36b7205117db73911fe337e550",
+      "bytes": 120635,
+      "role": "protein multidata to HGNC mapping"
+    },
+    {
+      "path": "cellphonedb/v5.0.0/interactions.parquet",
+      "sha256": "9b782291b420edc1bf64d1a9e19fa91288c6899a7059de4ea4ad86f03240366d",
+      "bytes": 177417,
+      "role": "interactions"
+    }
+  ],
+  "transformation_log": [
+    "Generated the official CellPhoneDB v5.0.0 database with cellphonedb 5.0.1 and read it back through the official database utility.",
+    "The adapter resolves protein and complex multidata identifiers to HGNC symbols and records any orientation swap in the mapping report."
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "schema_version": "crychic-track-b-suite-v1",
+  "track_b_truth": "../benchmark_work/multicondition_v01/synthetic_multimethod/track_b_scenario_truth.tsv",
+  "integrated_truth": "../benchmark_work/multicondition_v01/synthetic_controls/scenario_truth.tsv",
+  "top_k": 5,
+  "n_repeats": 100,
+  "random_seed": 20260712,
+  "require_resolved_expression_transform": true,
+  "inputs": [
+    {
+      "dataset": "synthetic_active",
+      "scenario": "active",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/active/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_global_null",
+      "scenario": "global_null",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_abundance_only",
+      "scenario": "abundance_only",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_receiver_autonomous",
+      "scenario": "receiver_autonomous",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_ligand_only",
+      "scenario": "ligand_only",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_target_only",
+      "scenario": "target_only",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "synthetic_receptor_knockout",
+      "scenario": "receptor_knockout",
+      "receiver_of_interest": "Receiver",
+      "path": "../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "GSE144236_Ji_cSCC",
+      "path": "../benchmark_work/multicondition_v01/external_initial/cscc/native/nichenet/interactions_long.parquet",
+      "context_key": "condition",
+      "reference": "Normal",
+      "target": "Tumor",
+      "design": "paired",
+      "min_support": 5
+    },
+    {
+      "dataset": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+      "path": "../benchmark_work/multicondition_v01/external_initial/ms/native/nichenet/interactions_long.parquet",
+      "context_key": "lesion_type",
+      "reference": "Ctrl",
+      "target": "CA",
+      "design": "independent",
+      "min_support": 4
+    }
+  ]
+}

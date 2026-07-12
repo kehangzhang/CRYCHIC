@@ -1,0 +1,41 @@
+{
+  "resource_id": "cellchatdb_v2",
+  "version": "2.2.0.9001",
+  "species": "mouse",
+  "gene_namespace": "MGI symbol",
+  "source_url": "https://github.com/jinworks/CellChat",
+  "license": "GPL-3",
+  "citation": "Jin S et al. Inference and analysis of cell-cell communication using CellChat. Nature Communications (2021).",
+  "retrieved_at": "2026-07-12",
+  "adapter_version": "crychic-cellchat-csv-v1",
+  "payloads": [
+    {
+      "path": "cellchat/CELLCHATDB_VERSION.txt",
+      "sha256": "d0a159e5eefd290083f58e7073e99ffad0b8d337935ee743f88a808610a5670d",
+      "bytes": 159,
+      "role": "version metadata"
+    },
+    {
+      "path": "cellchat/mouse_cofactor.csv",
+      "sha256": "498772444120ba6f9b88ac192e9cfac7e0480f4b0baf865afbb17fba66a94c27",
+      "bytes": 2959,
+      "role": "cofactor groups"
+    },
+    {
+      "path": "cellchat/mouse_complex.csv",
+      "sha256": "90e285fd737ed5919e8f7debbbc1b7270350997c16026da38c1360d229a1ed2e",
+      "bytes": 13816,
+      "role": "complex subunits"
+    },
+    {
+      "path": "cellchat/mouse_interaction.csv",
+      "sha256": "8483fa96db70692b9a74bbeb8c2a98f0c1ca6fe22b357d4964da93c3e0f6c196",
+      "bytes": 3599883,
+      "role": "interactions"
+    }
+  ],
+  "transformation_log": [
+    "Exported the nested CellChatDB.mouse object from CellChat 2.2.0.9001 to CSV with row names preserved.",
+    "The adapter expands named ligand/receptor complexes and cofactor groups without dropping required components."
+  ]
+}

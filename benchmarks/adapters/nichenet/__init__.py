@@ -1,0 +1,1 @@
+"""NicheNet prior benchmark adapter."""

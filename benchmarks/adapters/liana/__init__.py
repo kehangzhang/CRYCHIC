@@ -1,0 +1,1 @@
+"""LIANA benchmark adapter."""

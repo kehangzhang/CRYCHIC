@@ -1,0 +1,1 @@
+"""CellChat benchmark adapter."""

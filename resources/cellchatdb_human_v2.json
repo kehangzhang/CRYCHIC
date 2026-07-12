@@ -1,0 +1,41 @@
+{
+  "resource_id": "cellchatdb_v2",
+  "version": "2.2.0.9001",
+  "species": "human",
+  "gene_namespace": "HGNC symbol",
+  "source_url": "https://github.com/jinworks/CellChat",
+  "license": "GPL-3",
+  "citation": "Jin S et al. Inference and analysis of cell-cell communication using CellChat. Nature Communications (2021).",
+  "retrieved_at": "2026-07-12",
+  "adapter_version": "crychic-cellchat-csv-v1",
+  "payloads": [
+    {
+      "path": "cellchat/CELLCHATDB_VERSION.txt",
+      "sha256": "d0a159e5eefd290083f58e7073e99ffad0b8d337935ee743f88a808610a5670d",
+      "bytes": 159,
+      "role": "version metadata"
+    },
+    {
+      "path": "cellchat/human_cofactor.csv",
+      "sha256": "0adfd1604d62f458361ff8c6bbb23c872a7e3f1f20e1cbce13e4eab8cd722a8e",
+      "bytes": 2880,
+      "role": "cofactor groups"
+    },
+    {
+      "path": "cellchat/human_complex.csv",
+      "sha256": "3d683825466f69a8f4f3bfb323028168e5fd2bc99fd4641b1ad10271a27aad40",
+      "bytes": 13813,
+      "role": "complex subunits"
+    },
+    {
+      "path": "cellchat/human_interaction.csv",
+      "sha256": "098d8c21cf43d486a548dfc6e4ecdca89221254d6b378ab331973efe98ad4905",
+      "bytes": 3323082,
+      "role": "interactions"
+    }
+  ],
+  "transformation_log": [
+    "Exported the nested CellChatDB.human object from CellChat 2.2.0.9001 to CSV with row names preserved.",
+    "The adapter expands named ligand/receptor complexes and cofactor groups without dropping required components."
+  ]
+}

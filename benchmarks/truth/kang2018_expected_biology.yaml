@@ -1,0 +1,104 @@
+truth_set_id: kang2018_ifnb_supportive_v1
+locked_at: '2026-07-12T06:05:00+08:00'
+dataset: GSE96583_Kang2018_batch2
+status: supportive_silver_standard
+primary_reference:
+  citation: >-
+    Kang HM et al. Multiplexed droplet single-cell RNA-sequencing using natural
+    genetic variation. Nature Biotechnology 36, 89-94 (2018).
+  doi: 10.1038/nbt.4042
+  pmcid: PMC5784859
+  design: 8 SLE donors, recombinant IFN-beta versus untreated, paired at 6 hours
+
+expected_observations:
+  - id: paired_design_recovered
+    level: data_contract
+    direction: exact
+    expectation: Eight subjects have both ctrl and stim samples.
+
+  - id: cell_composition_stable
+    level: composition
+    direction: stable
+    expectation: >-
+      IFN-beta should not cause a systematic shift in major PBMC cell-type
+      proportions; state and ecosystem results should therefore be broadly
+      concordant for strong molecular effects.
+    source: PMC5784859 reports no IFN-beta effect on cell-type proportions.
+    acceptance:
+      median_subject_spearman_min: 0.85
+      median_absolute_fraction_change_max: 0.05
+
+  - id: pan_cell_isg_response
+    level: receiver_gene_response
+    direction: stim_up
+    genes:
+      - IFI6
+      - IFI44
+      - IFI44L
+      - IFIT1
+      - IFIT2
+      - IFIT3
+      - ISG15
+      - MX1
+      - OAS1
+      - OAS2
+      - STAT1
+      - STAT2
+    receiver_cell_types:
+      - B cells
+      - CD14+ Monocytes
+      - CD4 T cells
+      - CD8 T cells
+      - Dendritic cells
+      - FCGR3A+ Monocytes
+      - NK cells
+    expectation: >-
+      Most listed genes have a positive paired stim-minus-ctrl response in most
+      eligible receiver cell types, with heterogeneous magnitudes.
+    source: >-
+      PMC5784859 describes widespread, cell-type-specific interferon-sensitive
+      gene responses and maximal ISG expression at the six-hour time point.
+    acceptance:
+      eligible_gene_celltype_positive_fraction_min: 0.75
+      donor_direction_consistency_median_min: 0.75
+
+  - id: antigen_presentation_response
+    level: receiver_gene_response
+    direction: stim_up
+    genes:
+      - B2M
+      - HLA-A
+      - HLA-B
+      - HLA-C
+      - TAP1
+      - TAP2
+    expectation: IFN stimulation increases antigen-presentation programs.
+    acceptance:
+      eligible_gene_celltype_positive_fraction_min: 0.67
+
+  - id: exogenous_ifnb_not_endogenous_sender
+    level: interpretation_guardrail
+    direction: no_required_recovery
+    interactions:
+      - IFNB1_IFNAR1_IFNAR2
+    expectation: >-
+      A strong receiver ISG response does not require detectable endogenous
+      IFNB1 sender expression because recombinant IFN-beta was added externally.
+      Weak ligand availability together with strong receiver response is a
+      scientifically valid residual, not a pipeline failure.
+
+evaluation_policy:
+  preregistered_before_response_scoring: true
+  real_data_is_not_edge_level_ground_truth: true
+  do_not_compute_edge_auroc: true
+  report:
+    - paired_gene_effect_direction
+    - donor_direction_consistency
+    - cell_type_coverage
+    - pathway_or_module_enrichment
+    - state_ecosystem_rank_concordance
+    - endogenous_ifnb_availability
+  forbidden_claims:
+    - calibrated differential significance
+    - causal sender identity
+    - recovery of recombinant IFN-beta as endogenous transcription

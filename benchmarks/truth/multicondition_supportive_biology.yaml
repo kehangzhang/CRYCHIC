@@ -1,0 +1,127 @@
+truth_set_id: multicondition_supportive_biology_v1
+locked_at: '2026-07-12T11:17:52+08:00'
+status: preregistered_supportive_silver_standard
+
+datasets:
+  GSE144236_Ji_cSCC:
+    primary_contrast: Tumor_vs_Normal
+    annotation_limitations:
+      - primary_benchmark_uses_level1_celltype
+      - tumor_specific_keratinocytes_are_aggregated_into_Epithelial
+      - CAF_is_aggregated_into_Fibroblast
+      - findings_are_supportive_not_edge_level_ground_truth
+    expected_observations:
+      - id: epithelial_fibrovascular_myeloid_hub
+        direction: Tumor_up
+        sender: Epithelial
+        receivers: [Fibroblast, Endothelial Cell, Mac, MDSC]
+        metric: paired_differential_rank_and_top_edge_support
+        expectation: >-
+          Tumor-specific keratinocytes were reported as a communication hub with
+          CAFs, endothelial cells, macrophages and MDSCs. The level-1 analysis can
+          test only the corresponding aggregate Epithelial-to-stroma pattern.
+      - id: epithelial_to_fibroblast_reported_lr
+        direction: Tumor_up
+        sender: Epithelial
+        receiver: Fibroblast
+        interactions:
+          - [MMP9, LRP1]
+          - [TNC, SDC1]
+        metric: native_resource_rank_and_direction
+      - id: epithelial_to_endothelial_reported_lr
+        direction: Tumor_up
+        sender: Epithelial
+        receiver: Endothelial Cell
+        interactions:
+          - [PGF, FLT1]
+          - [PGF, NRP2]
+          - [EFNB1, EPHB4]
+        harmonized_common_covered:
+          - [PGF, FLT1]
+          - [EFNB1, EPHB4]
+        metric: native_and_harmonized_rank_when_covered
+      - id: stroma_to_epithelial_program
+        direction: Tumor_up
+        senders: [Fibroblast, Endothelial Cell, Mac, MDSC]
+        receiver: Epithelial
+        ligands: [TFPI, FN1, THBS1, TGFB1, TGFB3]
+        receptors_or_programs: [ITGA3, ITGB1, EMT]
+        metric: ligand_target_or_lr_support_without_causal_sender_claim
+    source:
+      citation: >-
+        Ji AL et al. Multimodal Analysis of Composition and Spatial Architecture
+        in Human Squamous Cell Carcinoma. Cell 182, 497-514.e22 (2020).
+      doi: 10.1016/j.cell.2020.05.039
+      pmcid: PMC7391009
+      frozen_fulltext: benchmark_work/literature/fulltext/cscc_ji_2020_PMC7391009.xml
+
+  UCSC_Lerma_Martin_MS_snRNA:
+    primary_contrast: CA_vs_Ctrl
+    secondary_contrasts: [CI_vs_Ctrl, CA_vs_CI]
+    annotation_mapping:
+      manuscript_MC: MG
+    design_limitations:
+      - primary_CA_and_Ctrl_subjects_are_independent
+      - CI_has_only_two_independent_subjects
+      - spatial_validation_is_not_present_in_the_snRNA_only_run
+      - findings_are_supportive_not_edge_level_ground_truth
+    expected_observations:
+      - id: disease_glial_immune_vascular_network
+        direction: CA_up
+        senders: [AS, MG]
+        receivers: [AS, MG, EC]
+        metric: subject_level_differential_rank_and_network_edge_count
+        expectation: >-
+          The reported MS network was driven by immune cells interacting with
+          astrocytes, stromal and endothelial cells; most AS and myeloid
+          interactions were associated with chronic-active lesions.
+      - id: control_oligodendrocyte_network
+        direction: Ctrl_up
+        cell_types: [OL, OPC]
+        metric: subject_level_differential_rank_and_network_edge_count
+      - id: astrocyte_hmgb1_to_myeloid
+        direction: CA_up
+        sender: AS
+        receiver: MG
+        interactions:
+          - [HMGB1, CD163]
+          - [HMGB1, TLR2]
+        metric: native_resource_rank_and_direction
+        validation_note: paper_reports_spatial_localization_and_smFISH_at_CA_rim
+      - id: myeloid_cd14_to_glial_vascular_itgb1
+        direction: CA_up
+        sender: MG
+        receivers: [AS, EC]
+        interactions:
+          - [CD14, ITGB1]
+        metric: native_resource_rank_and_direction
+        validation_note: paper_reports_spatial_localization_and_smFISH_at_CA_rim
+      - id: phagocytosis_and_complement_programs
+        direction: CA_up
+        receiver: MG
+        pathways: [lipid_degradation, phagocytosis, complement]
+        metric: ligand_target_program_direction
+    source:
+      citation: >-
+        Lerma-Martin C et al. Cell type mapping reveals tissue niches and
+        interactions in subcortical multiple sclerosis lesions. Nature
+        Neuroscience 27, 2354-2365 (2024).
+      doi: 10.1038/s41593-024-01796-z
+      pmcid: PMC11614744
+      frozen_fulltext: benchmark_work/literature/fulltext/ms_lerma_2024_PMC11614744.xml
+      frozen_supplement: >-
+        benchmark_work/literature/fulltext/41593_2024_1796_MOESM2_ESM.xlsx
+
+evaluation_policy:
+  preregistered_before_method_outputs: true
+  real_data_is_not_edge_level_ground_truth: true
+  do_not_compute_real_data_edge_auroc: true
+  resource_absence_is_not_method_failure: true
+  only_test_harmonized_edges_when_universe_member: true
+  report_native_and_harmonized_arms_separately: true
+  inferential_fields_required_null_until_development_gates_pass: true
+  forbidden_claims:
+    - calibrated_differential_significance
+    - causal_sender_identity
+    - spatial_validation_from_snRNA_only_data
+    - superior_accuracy_from_method_consensus

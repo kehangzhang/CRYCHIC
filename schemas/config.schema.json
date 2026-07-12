@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:config:0.1.0",
+  "title": "CRYCHIC configuration",
+  "description": "Persisted Phase 0 analysis configuration contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "counts_layer",
+    "sample_key",
+    "subject_key",
+    "cell_type_key",
+    "context_keys",
+    "covariates",
+    "species",
+    "gene_namespace",
+    "expression_layer",
+    "expression_source",
+    "expression_transform",
+    "normalized_zero_is_nondetection",
+    "allow_duplicate_genes",
+    "design",
+    "communication_modes",
+    "random_seed"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "counts_layer": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "sample_key": {
+      "$ref": "#/$defs/fieldName"
+    },
+    "subject_key": {
+      "$ref": "#/$defs/fieldName"
+    },
+    "cell_type_key": {
+      "$ref": "#/$defs/fieldName"
+    },
+    "context_keys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fieldName"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "covariates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fieldName"
+      },
+      "uniqueItems": true
+    },
+    "species": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "gene_namespace": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "expression_layer": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "expression_source": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "expression_transform": {
+      "type": ["string", "null"],
+      "enum": ["linear_normalized", "log1p_normalized", null]
+    },
+    "normalized_zero_is_nondetection": {
+      "type": "boolean"
+    },
+    "allow_duplicate_genes": {
+      "type": "boolean"
+    },
+    "design": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "communication_modes": {
+      "type": "array",
+      "items": {
+        "enum": ["state", "ecosystem"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "random_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "counts_layer": {
+            "type": "null"
+          }
+        },
+        "required": ["counts_layer"]
+      },
+      "then": {
+        "properties": {
+          "expression_source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expression_transform": {
+            "enum": ["linear_normalized", "log1p_normalized"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "expression_source": {
+            "type": "null"
+          }
+        },
+        "required": ["expression_source"]
+      },
+      "then": {
+        "properties": {
+          "expression_transform": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "expression_transform": {
+            "enum": ["linear_normalized", "log1p_normalized"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "fieldName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$"
+    }
+  }
+}

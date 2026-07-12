@@ -1,0 +1,2169 @@
+"""Freeze multi-condition benchmark metrics into the report input contract.
+
+The finalizer is intentionally a metrics and provenance stage. It consumes
+already materialized adapter outputs, never reruns a communication method, and
+never interprets real-data supportive observations as edge-level truth.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gc
+import hashlib
+import json
+import math
+import os
+import shutil
+import tempfile
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
+
+import numpy as np
+import pandas as pd
+import yaml  # type: ignore[import-untyped]
+
+from benchmarks.metrics.multicondition import (
+    EDGE_KEYS,
+    METHOD_IDENTITY_KEYS,
+    SYNTHETIC_TRUTH_SCOPES,
+    aggregate_loso_primary_endpoint,
+    cross_method_concordance,
+    external_long_to_score_table,
+    paired_differential_loso_reproducibility,
+    paired_edge_effects,
+    score_coverage_summary,
+    summarize_loso_primary_endpoint,
+    summarize_run_performance,
+    synthetic_edge_truth_metrics,
+    unpaired_differential_split_half_reproducibility,
+    unpaired_edge_effects,
+    unpaired_leave_one_subject_influence,
+    within_context_reproducibility,
+)
+
+SPEC_SCHEMA_VERSION = "crychic-multicondition-finalize-v1"
+REPORT_INPUT_SCHEMA_VERSION = "multicondition-report-inputs.v1"
+SCORE_INDEX_SCHEMA_VERSION = "crychic-unified-score-index-v1"
+FINALIZATION_SCHEMA_VERSION = "crychic-multicondition-finalization-v1"
+
+METRIC_FILES: dict[str, str] = {
+    "dataset_design": "dataset_design.tsv",
+    "coverage": "coverage_summary.tsv",
+    "loso_primary": "loso_primary_endpoint.tsv",
+    "stability": "stability_summary.tsv",
+    "concordance": "concordance_summary.tsv",
+    "performance": "performance_summary.tsv",
+    "biology_support": "biology_support.tsv",
+    "simulation_truth": "simulation_truth_metrics.tsv",
+    "iteration_comparison": "iteration_comparison.tsv",
+}
+
+EXTERNAL_LR_COLUMNS = (
+    "run_id",
+    "dataset_id",
+    "method_id",
+    "method_version",
+    "analysis_track",
+    "resource_id",
+    "resource_version",
+    "resource_mode",
+    "universe_id",
+    "universe_member",
+    "universe_size",
+    "sample_id",
+    "subject_id",
+    "context_json",
+    *EDGE_KEYS,
+    "score",
+    "score_name",
+    "score_direction",
+    "status",
+)
+
+TRACK_METADATA_COLUMNS = (
+    "run_id",
+    "dataset_id",
+    "method_id",
+    "method_version",
+    "analysis_track",
+    "resource_id",
+    "resource_version",
+    "resource_mode",
+    "universe_id",
+    "sample_id",
+    "subject_id",
+    "score_name",
+)
+
+REAL_TRUTH_METRIC_NAMES = frozenset(
+    {
+        "auroc",
+        "auc",
+        "auprc",
+        "average_precision",
+        "precision_recall_auc",
+    }
+)
+
+BIOLOGY_SUPPORT_STATUSES = frozenset(
+    {
+        "supported",
+        "partial",
+        "discordant",
+        "not_covered",
+        "not_estimable",
+        "not_evaluated",
+    }
+)
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    dataset: str
+    design: Mapping[str, Any]
+    comparison: Mapping[str, Any]
+    context_key: str
+    truth_scope: str
+    simulation_truth: Path | None
+    dataset_manifest: Path | None
+    adapter_runs: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class RunIdentity:
+    dataset: str
+    method: str
+    method_version: str
+    analysis_track: str
+    resource: str
+    resource_version: str
+    resource_mode: str
+    score_semantics: str
+    universe_id: str
+    contrast: str
+
+    def metric_values(self) -> dict[str, str]:
+        """Return the identity columns shared by score-derived metrics."""
+        return {
+            "dataset": self.dataset,
+            "method": self.method,
+            "method_version": self.method_version,
+            "analysis_track": self.analysis_track,
+            "resource": self.resource,
+            "resource_version": self.resource_version,
+            "resource_mode": self.resource_mode,
+            "score_semantics": self.score_semantics,
+            "universe_id": self.universe_id,
+            "contrast": self.contrast,
+        }
+
+
+@dataclass(frozen=True)
+class ScoreView:
+    run_id: str
+    label: str
+    role: str
+    include: bool
+    contrast: str
+    contrast_candidate: str | None
+    explicit: bool
+
+    @property
+    def primary(self) -> bool:
+        return self.include and self.role == "primary"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return value.as_posix()
+    return value
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            _json_safe(payload),
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"JSON object required: {path}")
+    return cast(dict[str, Any], payload)
+
+
+def _resolve(root: Path, value: object, *, field: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty path string")
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _optional_path(root: Path, value: object, *, field: str) -> Path | None:
+    if value is None:
+        return None
+    return _resolve(root, value, field=field)
+
+
+def _read_table(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix in {".parquet", ".pq"}:
+        return pd.read_parquet(path)
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    if suffix in {".tsv", ".txt"}:
+        return pd.read_csv(path, sep="\t")
+    raise ValueError(f"unsupported table format: {path}")
+
+
+def _write_tsv(path: Path, table: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(path, sep="\t", index=False, lineterminator="\n")
+
+
+def _slug(value: object) -> str:
+    text = str(value).strip().lower()
+    result = "".join(character if character.isalnum() else "_" for character in text)
+    return "_".join(part for part in result.split("_") if part) or "unknown"
+
+
+def _one_text(table: pd.DataFrame, column: str) -> str:
+    values = table[column].drop_duplicates()
+    if len(values) != 1:
+        raise ValueError(f"adapter column {column!r} must contain one value")
+    return str(values.iloc[0])
+
+
+def _manifest_value(payload: Mapping[str, Any], *path: str) -> Any:
+    current: Any = payload
+    for key in path:
+        if not isinstance(current, Mapping) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _manifest_identity(
+    dataset: DatasetSpec,
+    run: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> RunIdentity:
+    identity = run.get("identity", {})
+    if not isinstance(identity, Mapping):
+        raise ValueError("adapter_runs[].identity must be an object")
+
+    def choose(
+        name: str,
+        manifest_paths: Sequence[tuple[str, ...]],
+        default: str,
+    ) -> str:
+        value = identity.get(name)
+        if value is None:
+            for manifest_path in manifest_paths:
+                value = _manifest_value(manifest, *manifest_path)
+                if value is not None:
+                    break
+        return str(default if value is None else value)
+
+    method = choose("method", (("method", "id"),), "unknown_method")
+    analysis_default = (
+        "ligand_target_program" if "nichenet" in method.lower() else "lr_stlr"
+    )
+    return RunIdentity(
+        dataset=dataset.dataset,
+        method=method,
+        method_version=choose("method_version", (("method", "version"),), "unknown"),
+        analysis_track=choose(
+            "analysis_track", (("analysis_track",),), analysis_default
+        ),
+        resource=choose(
+            "resource",
+            (("resource", "resource_id"), ("resource", "id")),
+            "unknown",
+        ),
+        resource_version=choose(
+            "resource_version", (("resource", "version"),), "unknown"
+        ),
+        resource_mode=choose("resource_mode", (("resource", "mode"),), "native"),
+        score_semantics=choose(
+            "score_semantics",
+            (
+                ("score_semantics", "primary_score"),
+                ("score_semantics", "name"),
+            ),
+            "unknown",
+        ),
+        universe_id=choose(
+            "universe_id", (("output", "universe_id"),), "not_available"
+        ),
+        contrast=str(dataset.comparison.get("contrast", "not_available")),
+    )
+
+
+def _load_spec(path: Path) -> tuple[dict[str, Any], tuple[DatasetSpec, ...]]:
+    payload = _read_json(path)
+    schema = payload.get("schema_version")
+    if schema != SPEC_SCHEMA_VERSION:
+        raise ValueError(
+            f"run specification schema must be {SPEC_SCHEMA_VERSION!r}; got {schema!r}"
+        )
+    raw_datasets = payload.get("datasets")
+    if not isinstance(raw_datasets, list) or not raw_datasets:
+        raise ValueError("run specification datasets must be a non-empty list")
+    root = path.parent
+    datasets: list[DatasetSpec] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(raw_datasets):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"datasets[{index}] must be an object")
+        dataset = raw.get("dataset_id")
+        if not isinstance(dataset, str) or not dataset:
+            raise ValueError(f"datasets[{index}].dataset_id must be a non-empty string")
+        if dataset in seen:
+            raise ValueError(f"duplicate dataset_id: {dataset!r}")
+        seen.add(dataset)
+        design = raw.get("design")
+        comparison = raw.get("comparison")
+        adapter_runs = raw.get("adapter_runs", [])
+        if not isinstance(design, Mapping):
+            raise ValueError(f"datasets[{index}].design must be an object")
+        if not isinstance(comparison, Mapping):
+            raise ValueError(f"datasets[{index}].comparison must be an object")
+        if not isinstance(adapter_runs, list) or not all(
+            isinstance(item, Mapping) for item in adapter_runs
+        ):
+            raise ValueError(
+                f"datasets[{index}].adapter_runs must be a list of objects"
+            )
+        design_type = comparison.get("design")
+        if design_type not in {"paired", "unpaired", "unsupported"}:
+            raise ValueError(
+                f"datasets[{index}].comparison.design must be paired, unpaired, "
+                "or unsupported"
+            )
+        context_key = raw.get("context_key")
+        if not isinstance(context_key, str) or not context_key:
+            raise ValueError(f"datasets[{index}].context_key must be a string")
+        if design_type != "unsupported":
+            for field in ("reference", "target", "contrast"):
+                if not isinstance(comparison.get(field), str) or not comparison[field]:
+                    raise ValueError(
+                        f"datasets[{index}].comparison.{field} must be a string"
+                    )
+        truth_scope = str(raw.get("truth_scope", "real_data"))
+        simulation_truth = _optional_path(
+            root,
+            raw.get("simulation_truth"),
+            field=f"datasets[{index}].simulation_truth",
+        )
+        if simulation_truth is not None:
+            if truth_scope not in SYNTHETIC_TRUTH_SCOPES:
+                raise ValueError(
+                    "AUROC/AUPRC are forbidden for real datasets; simulation_truth "
+                    f"requires an explicit synthetic truth_scope for {dataset!r}"
+                )
+            if not simulation_truth.is_file():
+                raise FileNotFoundError(simulation_truth)
+        dataset_manifest = _optional_path(
+            root,
+            raw.get("dataset_manifest"),
+            field=f"datasets[{index}].dataset_manifest",
+        )
+        if dataset_manifest is not None and not dataset_manifest.is_file():
+            raise FileNotFoundError(dataset_manifest)
+        datasets.append(
+            DatasetSpec(
+                dataset=dataset,
+                design=cast(Mapping[str, Any], design),
+                comparison=cast(Mapping[str, Any], comparison),
+                context_key=context_key,
+                truth_scope=truth_scope,
+                simulation_truth=simulation_truth,
+                dataset_manifest=dataset_manifest,
+                adapter_runs=tuple(cast(Sequence[Mapping[str, Any]], adapter_runs)),
+            )
+        )
+    return payload, tuple(datasets)
+
+
+def _parameters(payload: Mapping[str, Any]) -> dict[str, int]:
+    raw = payload.get("parameters", {})
+    if not isinstance(raw, Mapping):
+        raise ValueError("parameters must be an object")
+    defaults = {
+        "top_k": 100,
+        "minimum_shared_edges": 20,
+        "n_bootstrap": 2000,
+        "n_split_repeats": 200,
+        "min_subjects_per_half": 2,
+        "random_seed": 0,
+    }
+    result: dict[str, int] = {}
+    for name, default in defaults.items():
+        value = raw.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"parameters.{name} must be an integer")
+        minimum = 0 if name == "random_seed" else 1
+        if name in {"minimum_shared_edges", "n_split_repeats", "min_subjects_per_half"}:
+            minimum = 2
+        if name == "minimum_shared_edges":
+            minimum = 3
+        if value < minimum:
+            raise ValueError(f"parameters.{name} must be >= {minimum}")
+        result[name] = value
+    return result
+
+
+def _dataset_design_table(datasets: Sequence[DatasetSpec]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    scale_fields = ("n_cells", "n_samples", "n_subjects", "n_contexts", "n_cell_types")
+    for dataset in datasets:
+        design_type = str(dataset.comparison["design"])
+        row: dict[str, Any] = {"dataset": dataset.dataset}
+        row.update(dataset.design)
+        for field in scale_fields:
+            row.setdefault(field, np.nan)
+        row.setdefault("design_type", design_type)
+        row.setdefault(
+            "status", "observed" if design_type != "unsupported" else "not_estimable"
+        )
+        row.setdefault(
+            "reason_code",
+            None if design_type != "unsupported" else "unsupported_comparison_design",
+        )
+        row["truth_scope"] = dataset.truth_scope
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _validate_source_hash(path: Path, manifest: Mapping[str, Any]) -> str:
+    digest = _sha256(path)
+    declared = _manifest_value(manifest, "output", "sha256")
+    if declared is not None and str(declared) != digest:
+        raise ValueError(
+            f"adapter output SHA256 disagrees with manifest for {path}: "
+            f"declared={declared}, observed={digest}"
+        )
+    return digest
+
+
+def _identity_from_track_metadata(
+    metadata: pd.DataFrame, dataset: DatasetSpec
+) -> RunIdentity:
+    if _one_text(metadata, "dataset_id") != dataset.dataset:
+        raise ValueError("adapter dataset_id disagrees with run specification")
+    return RunIdentity(
+        dataset=dataset.dataset,
+        method=_one_text(metadata, "method_id"),
+        method_version=_one_text(metadata, "method_version"),
+        analysis_track=_one_text(metadata, "analysis_track"),
+        resource=_one_text(metadata, "resource_id"),
+        resource_version=_one_text(metadata, "resource_version"),
+        resource_mode=_one_text(metadata, "resource_mode"),
+        score_semantics=_one_text(metadata, "score_name"),
+        universe_id=_one_text(metadata, "universe_id"),
+        contrast=str(dataset.comparison.get("contrast", "not_available")),
+    )
+
+
+def _manifest_score_views(
+    manifest: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    raw = _manifest_value(manifest, "source_result", "score_views")
+    if raw is None:
+        raw = manifest.get("score_views")
+    if raw is None:
+        return {}
+    if not isinstance(raw, list):
+        raise ValueError("adapter manifest score_views must be a list")
+    result: dict[str, tuple[str, ...]] = {}
+    for item in raw:
+        if not isinstance(item, Mapping) or "run_id" not in item:
+            raise ValueError("adapter manifest score_views require run_id")
+        run_id = str(item["run_id"])
+        candidates = item.get("contrast_candidates", [])
+        if not isinstance(candidates, list):
+            raise ValueError("score view contrast_candidates must be a list")
+        result[run_id] = tuple(map(str, candidates))
+    return result
+
+
+def _score_views(
+    metadata: pd.DataFrame,
+    dataset: DatasetSpec,
+    run: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> tuple[ScoreView, ...]:
+    observed = tuple(sorted(metadata["run_id"].astype(str).unique()))
+    if not observed:
+        raise ValueError("adapter long table has no run_id values")
+    manifest_views = _manifest_score_views(manifest)
+    raw = run.get("score_views")
+    if raw is None:
+        if len(observed) > 1:
+            raise ValueError(
+                "adapter long table contains multiple run_id score views; "
+                "adapter_runs[].score_views must map every view explicitly"
+            )
+        candidates = manifest_views.get(observed[0], ())
+        candidate = candidates[0] if len(candidates) == 1 else None
+        return (
+            ScoreView(
+                run_id=observed[0],
+                label="default",
+                role="primary",
+                include=True,
+                contrast=str(dataset.comparison["contrast"]),
+                contrast_candidate=candidate,
+                explicit=False,
+            ),
+        )
+    if not isinstance(raw, list) or not all(isinstance(item, Mapping) for item in raw):
+        raise ValueError("adapter_runs[].score_views must be a list of objects")
+    entries = cast(Sequence[Mapping[str, Any]], raw)
+    views: list[ScoreView] = []
+    for index, item in enumerate(entries):
+        run_id = item.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError(f"score_views[{index}].run_id must be a string")
+        role = str(item.get("role", "sensitivity"))
+        if role not in {"primary", "sensitivity", "excluded"}:
+            raise ValueError(
+                f"score_views[{index}].role must be primary, sensitivity, or excluded"
+            )
+        include = item.get("include", role != "excluded")
+        if not isinstance(include, bool):
+            raise ValueError(f"score_views[{index}].include must be boolean")
+        if role == "excluded" and include:
+            raise ValueError("an excluded score view cannot have include=true")
+        contrast = item.get("contrast", dataset.comparison.get("contrast"))
+        if not isinstance(contrast, str) or not contrast:
+            raise ValueError(f"score_views[{index}].contrast must be a string")
+        candidate_value = item.get("contrast_candidate")
+        candidate = None if candidate_value is None else str(candidate_value)
+        declared = manifest_views.get(run_id, ())
+        if declared and candidate not in declared:
+            raise ValueError(
+                f"score view {run_id!r} contrast_candidate must be one of "
+                f"manifest candidates {list(declared)!r}"
+            )
+        label = str(item.get("label", candidate or run_id))
+        if not label:
+            raise ValueError(f"score_views[{index}].label must be non-empty")
+        views.append(
+            ScoreView(
+                run_id=run_id,
+                label=label,
+                role=role,
+                include=include,
+                contrast=contrast,
+                contrast_candidate=candidate,
+                explicit=True,
+            )
+        )
+    mapped_ids = tuple(sorted(view.run_id for view in views))
+    if len(mapped_ids) != len(set(mapped_ids)):
+        raise ValueError("adapter_runs[].score_views contains duplicate run_id values")
+    if mapped_ids != observed:
+        raise ValueError(
+            "adapter_runs[].score_views must exactly map observed run_id values; "
+            f"observed={list(observed)!r}, mapped={list(mapped_ids)!r}"
+        )
+    primary = [view for view in views if view.primary]
+    if len(primary) != 1:
+        raise ValueError("exactly one included score view must have role='primary'")
+    labels = [view.label for view in views if view.include]
+    if len(labels) != len(set(labels)):
+        raise ValueError("included score view labels must be unique")
+    if len(observed) > 1:
+        preregistered = dataset.comparison.get("primary_score_view")
+        if not isinstance(preregistered, str) or not preregistered:
+            raise ValueError(
+                "multi-view adapters require comparison.primary_score_view"
+            )
+        if primary[0].contrast_candidate != preregistered:
+            raise ValueError(
+                "the primary score view does not match the preregistered "
+                f"comparison.primary_score_view={preregistered!r}"
+            )
+    return tuple(views)
+
+
+def _view_identity(
+    base: RunIdentity,
+    view: ScoreView,
+    *,
+    multiple_views: bool,
+) -> RunIdentity:
+    semantics = base.score_semantics
+    if multiple_views or view.explicit:
+        semantics = f"{semantics}|score_view={view.label}"
+    return RunIdentity(
+        dataset=base.dataset,
+        method=base.method,
+        method_version=base.method_version,
+        analysis_track=base.analysis_track,
+        resource=base.resource,
+        resource_version=base.resource_version,
+        resource_mode=base.resource_mode,
+        score_semantics=semantics,
+        universe_id=base.universe_id,
+        contrast=view.contrast,
+    )
+
+
+def _annotate_view(table: pd.DataFrame, view: ScoreView) -> pd.DataFrame:
+    result = table.copy(deep=True)
+    result["score_view_run_id"] = view.run_id
+    result["score_view_label"] = view.label
+    result["score_view_role"] = view.role
+    result["score_view_contrast_candidate"] = view.contrast_candidate
+    result["score_view_primary"] = view.primary
+    return result
+
+
+def _annotate_truth_scope(
+    table: pd.DataFrame,
+    dataset_truth_scopes: Mapping[str, str],
+) -> pd.DataFrame:
+    """Attach the frozen dataset truth scope without overwriting explicit scope."""
+    result = table.copy(deep=True)
+    if result.empty:
+        if "truth_scope" not in result:
+            result["truth_scope"] = pd.Series(dtype=str)
+        return result
+    if "dataset" not in result:
+        raise ValueError("truth-scoped metric tables require a dataset column")
+    mapped = result["dataset"].astype(str).map(dataset_truth_scopes)
+    if "truth_scope" in result:
+        supplied = result["truth_scope"].notna()
+        conflict = (
+            supplied
+            & mapped.notna()
+            & result["truth_scope"].astype(str).ne(mapped)
+        )
+        if conflict.any():
+            datasets = sorted(result.loc[conflict, "dataset"].astype(str).unique())
+            raise ValueError(
+                "metric truth_scope disagrees with the frozen dataset scope for "
+                f"datasets: {datasets}"
+            )
+        resolved = result["truth_scope"].where(supplied, mapped)
+    else:
+        resolved = mapped
+    if resolved.isna().any():
+        datasets = sorted(result.loc[resolved.isna(), "dataset"].astype(str).unique())
+        raise ValueError(f"metric rows reference unknown dataset scopes: {datasets}")
+    result["truth_scope"] = resolved.astype(str)
+    return result
+
+
+def _not_estimable_coverage(identity: RunIdentity, reason: str) -> dict[str, Any]:
+    return identity.metric_values() | {
+        "n_samples": 0,
+        "n_subjects": 0,
+        "frozen_universe_edges": np.nan,
+        "resource_covered_edges": np.nan,
+        "resource_coverage_fraction": np.nan,
+        "eligible_universe_rows": 0,
+        "comparison_eligible_rows": 0,
+        "comparison_coverage_fraction": np.nan,
+        "observed_rows": 0,
+        "not_predicted_rows": 0,
+        "missing_rows": 0,
+        "cell_type_missing_rows": 0,
+        "not_estimable_rows": 0,
+        "failed_rows": 0,
+        "not_supported_rows": 0,
+        "median_sample_comparison_coverage": np.nan,
+        "minimum_sample_comparison_coverage": np.nan,
+        "status": "not_estimable",
+        "reason_code": reason,
+    }
+
+
+def _not_estimable_primary(identity: RunIdentity, reason: str) -> dict[str, Any]:
+    return identity.metric_values() | {
+        "endpoint": "not_estimable",
+        "endpoint_scope": "dataset",
+        "estimate": np.nan,
+        "ci_lower": np.nan,
+        "ci_upper": np.nan,
+        "confidence_level": 0.95,
+        "n_subjects_total": 0,
+        "n_subjects_estimable": 0,
+        "status": "not_estimable",
+        "reason_code": reason,
+    }
+
+
+def _not_estimable_stability(identity: RunIdentity, reason: str) -> dict[str, Any]:
+    return identity.metric_values() | {
+        "context": "all",
+        "metric": "lr_reproducibility",
+        "estimate": np.nan,
+        "status": "not_estimable",
+        "reason_code": reason,
+    }
+
+
+def _stability_long(table: pd.DataFrame) -> pd.DataFrame:
+    metric_columns = (
+        "median_spearman",
+        "median_top_k_jaccard",
+        "effect_spearman",
+        "mean_direction_agreement",
+        "valid_repeat_fraction",
+    )
+    rows: list[dict[str, Any]] = []
+    for raw_record in table.to_dict(orient="records"):
+        record = cast(dict[str, Any], raw_record)
+        for metric in metric_columns:
+            if metric not in record:
+                continue
+            value = pd.to_numeric(pd.Series([record[metric]]), errors="coerce").iloc[0]
+            row = dict(record)
+            row["metric"] = metric
+            row["estimate"] = value
+            if not np.isfinite(value):
+                row["status"] = "not_estimable"
+                row["reason_code"] = row.get("reason_code") or f"{metric}_not_estimable"
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _influence_summary(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return pd.DataFrame()
+    grouping = [*METHOD_IDENTITY_KEYS, "contrast"]
+    metrics = (
+        "family_macro_rank_similarity_to_full",
+        "direction_agreement_to_full",
+        "mean_absolute_effect_change",
+    )
+    rows: list[dict[str, Any]] = []
+    for keys, group in table.groupby(grouping, sort=False, observed=True):
+        observed = group.loc[group["status"].eq("descriptive")]
+        identity = dict(zip(grouping, keys, strict=True))
+        for metric in metrics:
+            values = pd.to_numeric(observed[metric], errors="coerce")
+            values = values.loc[np.isfinite(values)]
+            rows.append(
+                identity
+                | {
+                    "context": "leave_one_subject",
+                    "metric": f"influence_{metric}",
+                    "estimate": float(values.median()) if len(values) else np.nan,
+                    "n_exclusions_estimable": len(values),
+                    "interpretation": (
+                        "influence_diagnostic_not_independent_replication"
+                    ),
+                    "status": "observed" if len(values) else "not_estimable",
+                    "reason_code": None if len(values) else "no_estimable_exclusions",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _unpaired_primary(split: pd.DataFrame) -> pd.DataFrame:
+    result = split.copy(deep=True)
+    result["endpoint_scope"] = "dataset"
+    result["n_subjects_total"] = pd.to_numeric(
+        result["n_reference_subjects"], errors="coerce"
+    ) + pd.to_numeric(result["n_target_subjects"], errors="coerce")
+    result["n_subjects_estimable"] = np.where(
+        result["status"].eq("observed"), result["n_subjects_total"], 0
+    )
+    return result
+
+
+def _paired_primary(summary: pd.DataFrame) -> pd.DataFrame:
+    result = summary.copy(deep=True)
+    result["endpoint_scope"] = "dataset"
+    return result
+
+
+def _cross_dataset_primary(
+    loso: pd.DataFrame, parameters: Mapping[str, int]
+) -> pd.DataFrame:
+    if "truth_scope" not in loso:
+        raise ValueError("cross-dataset LOSO aggregation requires truth_scope")
+    real_loso = loso.loc[
+        ~loso["truth_scope"].astype(str).isin(SYNTHETIC_TRUTH_SCOPES)
+    ].copy()
+    if real_loso.empty:
+        return pd.DataFrame()
+    result = aggregate_loso_primary_endpoint(
+        real_loso,
+        n_bootstrap=parameters["n_bootstrap"],
+        random_seed=parameters["random_seed"],
+    )
+    result["dataset"] = "__cross_dataset__"
+    result["contrast"] = "prespecified_per_dataset"
+    result["universe_id"] = "__multiple_frozen_universes__"
+    result["endpoint_scope"] = "cross_dataset"
+    result["n_subjects_total"] = result["n_subjects_estimable"]
+    result["truth_scope"] = "real_data"
+    return result
+
+
+def _track_b_reason(identity: RunIdentity) -> str:
+    return (
+        "track_b_ligand_target_program_not_lr_stlr_comparable"
+        if identity.analysis_track == "ligand_target_program"
+        else "analysis_track_not_lr_stlr_comparable"
+    )
+
+
+def _derived_performance_record(
+    identity: RunIdentity,
+    manifest: Mapping[str, Any],
+    long_path: Path | None,
+) -> dict[str, Any]:
+    status = str(manifest.get("status", "failed"))
+    if status not in {"complete", "failed", "not_supported", "skipped"}:
+        status = "failed"
+    threads = _manifest_value(manifest, "environment", "threads")
+    return {
+        "dataset": identity.dataset,
+        "method": identity.method,
+        "method_version": identity.method_version,
+        "analysis_track": identity.analysis_track,
+        "resource": identity.resource,
+        "resource_version": identity.resource_version,
+        "resource_mode": identity.resource_mode,
+        "run_id": str(manifest.get("run_id", f"manifest_{_slug(identity.method)}")),
+        "status": status,
+        "wall_time_seconds": manifest.get("elapsed_seconds"),
+        "peak_rss_mb": _manifest_value(manifest, "performance", "peak_rss_mb"),
+        "output_bytes": long_path.stat().st_size
+        if long_path and long_path.is_file()
+        else None,
+        "threads": 1 if threads is None else threads,
+        "determinism_key": _manifest_value(manifest, "parameters", "determinism_key"),
+        "output_sha256": (
+            _manifest_value(manifest, "output", "sha256")
+            if status == "complete"
+            else None
+        ),
+    }
+
+
+def _truth_observations(path: Path) -> pd.DataFrame:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("supportive biology truth must contain a YAML object")
+    datasets = payload.get("datasets")
+    if not isinstance(datasets, Mapping):
+        raise ValueError("supportive biology truth datasets must be an object")
+    rows: list[dict[str, str]] = []
+    for dataset, raw in datasets.items():
+        if not isinstance(raw, Mapping):
+            continue
+        observations = raw.get("expected_observations", [])
+        if not isinstance(observations, list):
+            raise ValueError("expected_observations must be a list")
+        for observation in observations:
+            if not isinstance(observation, Mapping) or "id" not in observation:
+                raise ValueError("every supportive observation requires an id")
+            rows.append(
+                {
+                    "dataset": str(dataset),
+                    "observation_id": str(observation["id"]),
+                    "expected_direction": str(
+                        observation.get("direction", "not_directional")
+                    ),
+                    "expected_metric": str(
+                        observation.get("metric", "supportive_only")
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _biology_dataset_aliases(payload: Mapping[str, Any]) -> dict[str, str]:
+    raw = payload.get("supportive_biology_dataset_aliases", {})
+    if not isinstance(raw, Mapping):
+        raise ValueError("supportive_biology_dataset_aliases must be an object")
+    aliases = {str(source): str(target) for source, target in raw.items()}
+    if any(not source or not target for source, target in aliases.items()):
+        raise ValueError("supportive biology dataset aliases must be non-empty")
+    if len(set(aliases.values())) != len(aliases):
+        raise ValueError("supportive biology dataset aliases must be one-to-one")
+    return aliases
+
+
+def _biology_support_table(
+    truth_path: Path,
+    evidence_path: Path | None,
+    variants: pd.DataFrame,
+    *,
+    dataset_aliases: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    truth = _truth_observations(truth_path)
+    if truth.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "dataset": "__none__",
+                    "observation_id": "no_locked_observations",
+                    "method": "No method result",
+                    "resource_mode": "not_available",
+                    "support_status": "not_evaluated",
+                    "observed_direction": "",
+                    "evidence_note": "supportive_biology_truth_has_no_observations",
+                    "status": "not_estimable",
+                    "reason_code": "supportive_biology_truth_has_no_observations",
+                }
+            ]
+        )
+    aliases = dict(dataset_aliases or {})
+    unknown_aliases = set(aliases).difference(truth["dataset"].astype(str))
+    if unknown_aliases:
+        raise ValueError(
+            "supportive biology dataset aliases reference unknown locked datasets: "
+            f"{sorted(unknown_aliases)}"
+        )
+    truth["truth_dataset"] = truth["dataset"].astype(str)
+    truth["dataset"] = truth["dataset"].astype(str).replace(aliases)
+    if truth.duplicated(["dataset", "observation_id"]).any():
+        raise ValueError("supportive biology aliases create duplicate observations")
+
+    variant_columns = ["dataset", "method", "resource_mode"]
+    if variants.empty:
+        variants = pd.DataFrame(columns=variant_columns)
+    else:
+        variants = variants.loc[:, variant_columns].drop_duplicates()
+    key = ["dataset", "observation_id", "method", "resource_mode"]
+    if evidence_path is None:
+        evidence = pd.DataFrame(
+            columns=[
+                *key,
+                "support_status",
+                "observed_direction",
+                "evidence_note",
+                "status",
+                "reason_code",
+            ]
+        )
+    else:
+        if not evidence_path.is_file():
+            raise FileNotFoundError(evidence_path)
+        evidence = _read_table(evidence_path)
+        missing = set(key).difference(evidence.columns)
+        if missing:
+            raise ValueError(
+                f"biology support evidence is missing columns: {sorted(missing)}"
+            )
+        if evidence.duplicated(key).any():
+            raise ValueError("biology support evidence contains duplicate rows")
+        evidence = evidence.copy(deep=True)
+        evidence["dataset"] = evidence["dataset"].astype(str).replace(aliases)
+        if evidence.duplicated(key).any():
+            raise ValueError(
+                "supportive biology aliases create duplicate evidence rows"
+            )
+        unknown = set(
+            evidence[["dataset", "observation_id"]].itertuples(index=False, name=None)
+        ).difference(
+            set(truth[["dataset", "observation_id"]].itertuples(index=False, name=None))
+        )
+        if unknown:
+            raise ValueError(
+                "biology support evidence contains unlocked observations: "
+                f"{sorted(unknown)}"
+            )
+        invalid = set(
+            evidence.get("support_status", pd.Series(dtype=str)).astype(str)
+        ).difference(BIOLOGY_SUPPORT_STATUSES)
+        if invalid:
+            raise ValueError(
+                "biology support evidence has invalid support_status: "
+                f"{sorted(invalid)}"
+            )
+        evidence_variants = evidence.loc[:, variant_columns].drop_duplicates()
+        variants = pd.concat(
+            [variants, evidence_variants], ignore_index=True
+        ).drop_duplicates(ignore_index=True)
+
+    grids: list[pd.DataFrame] = []
+    for dataset, observations in truth.groupby("dataset", sort=False, observed=True):
+        methods = variants.loc[variants["dataset"].eq(dataset)]
+        if methods.empty:
+            methods = pd.DataFrame(
+                [
+                    {
+                        "dataset": dataset,
+                        "method": "No method result",
+                        "resource_mode": "not_available",
+                    }
+                ]
+            )
+        grid = observations.merge(
+            methods, on="dataset", how="inner", validate="many_to_many"
+        )
+        grids.append(grid)
+    grid = pd.concat(grids, ignore_index=True)
+    result = grid.merge(evidence, on=key, how="left", validate="one_to_one")
+    defaults: dict[str, str] = {
+        "support_status": "not_evaluated",
+        "observed_direction": "",
+        "evidence_note": "supportive_evidence_not_supplied",
+        "status": "not_estimable",
+        "reason_code": "supportive_evidence_not_supplied",
+    }
+    for column, default in defaults.items():
+        if column not in result:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
+    return result
+
+
+def _empty_simulation_table() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "dataset": "__none__",
+                "method": "No simulation input",
+                "resource_mode": "not_available",
+                "truth_scope": "synthetic",
+                "metric": "not_estimable",
+                "estimate": np.nan,
+                "status": "not_estimable",
+                "reason_code": "simulation_truth_not_supplied",
+            }
+        ]
+    )
+
+
+def _iteration_table(path: Path | None, real_datasets: frozenset[str]) -> pd.DataFrame:
+    if path is None:
+        return pd.DataFrame(
+            [
+                {
+                    "dataset": "__none__",
+                    "method": "CRYCHIC",
+                    "metric": "iteration_not_supplied",
+                    "iteration_from": "not_available",
+                    "iteration_to": "not_available",
+                    "before": np.nan,
+                    "after": np.nan,
+                    "metric_direction": "higher",
+                    "status": "not_estimable",
+                    "reason_code": "iteration_comparison_not_supplied",
+                }
+            ]
+        )
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    result = _read_table(path)
+    required = {
+        "dataset",
+        "method",
+        "metric",
+        "iteration_from",
+        "iteration_to",
+        "before",
+        "after",
+        "metric_direction",
+        "status",
+        "reason_code",
+    }
+    missing = required.difference(result.columns)
+    if missing:
+        raise ValueError(f"iteration comparison is missing columns: {sorted(missing)}")
+    normalized_metric = (
+        result["metric"]
+        .astype(str)
+        .str.lower()
+        .str.replace(r"[^a-z0-9]+", "_", regex=True)
+        .str.strip("_")
+    )
+    truth_metric = normalized_metric.map(
+        lambda value: (
+            value in REAL_TRUTH_METRIC_NAMES
+            or "auroc" in value
+            or "auprc" in value
+            or "average_precision" in value
+            or "precision_recall_auc" in value
+        )
+    )
+    forbidden = result["dataset"].astype(str).isin(real_datasets) & truth_metric
+    if forbidden.any():
+        raise ValueError("real-data AUROC/AUPRC iteration metrics are forbidden")
+    invalid_direction = set(result["metric_direction"].astype(str)).difference(
+        {"higher", "lower"}
+    )
+    if invalid_direction:
+        raise ValueError(
+            f"invalid iteration metric_direction: {sorted(invalid_direction)}"
+        )
+    return result
+
+
+def _copy_input(source: Path, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return destination
+
+
+def _source_record(path: Path, role: str) -> dict[str, Any]:
+    if not path.is_file():
+        return {
+            "scope": "input",
+            "role": role,
+            "path": path.as_posix(),
+            "bytes": np.nan,
+            "sha256": None,
+            "status": "missing",
+        }
+    return {
+        "scope": "input",
+        "role": role,
+        "path": path.as_posix(),
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+        "status": "verified_present",
+    }
+
+
+def _output_records(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        if path.name == "SHA256SUMS.tsv":
+            continue
+        rows.append(
+            {
+                "scope": "output",
+                "role": "finalized benchmark artifact",
+                "path": path.relative_to(root).as_posix(),
+                "bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+                "status": "generated",
+            }
+        )
+    return rows
+
+
+def _prepare_output(output_dir: Path, overwrite: bool) -> Path:
+    output_dir = output_dir.resolve()
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists() and not overwrite:
+        raise FileExistsError(f"output directory already exists: {output_dir}")
+    return Path(
+        tempfile.mkdtemp(prefix=f".{output_dir.name}.tmp-", dir=output_dir.parent)
+    )
+
+
+def _install_output(staging: Path, output: Path, overwrite: bool) -> None:
+    if output.exists():
+        if not overwrite:
+            raise FileExistsError(output)
+        shutil.rmtree(output)
+    os.replace(staging, output)
+
+
+def finalize(
+    specification: str | Path,
+    output_dir: str | Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Finalize one run specification and return its machine-readable manifest."""
+    spec_path = Path(specification).resolve()
+    if not spec_path.is_file():
+        raise FileNotFoundError(spec_path)
+    payload, datasets = _load_spec(spec_path)
+    parameters = _parameters(payload)
+    dataset_truth_scopes = {
+        dataset.dataset: dataset.truth_scope for dataset in datasets
+    }
+    spec_root = spec_path.parent
+    output = Path(output_dir).resolve()
+    staging = _prepare_output(output, overwrite)
+
+    coverage_frames: list[pd.DataFrame] = []
+    primary_frames: list[pd.DataFrame] = []
+    stability_frames: list[pd.DataFrame] = []
+    effects_frames: list[pd.DataFrame] = []
+    paired_loso_frames: list[pd.DataFrame] = []
+    influence_frames: list[pd.DataFrame] = []
+    simulation_frames: list[pd.DataFrame] = []
+    sensitivity_coverage_frames: list[pd.DataFrame] = []
+    sensitivity_primary_frames: list[pd.DataFrame] = []
+    sensitivity_stability_frames: list[pd.DataFrame] = []
+    sensitivity_effects_frames: list[pd.DataFrame] = []
+    sensitivity_loso_frames: list[pd.DataFrame] = []
+    sensitivity_influence_frames: list[pd.DataFrame] = []
+    sensitivity_simulation_frames: list[pd.DataFrame] = []
+    score_index_rows: list[dict[str, Any]] = []
+    performance_records: list[dict[str, Any]] = []
+    variant_rows: list[dict[str, str]] = []
+    adapter_manifest_outputs: list[Path] = []
+    score_outputs: list[Path] = []
+    dataset_manifest_outputs: list[Path] = []
+    source_records: list[dict[str, Any]] = [
+        _source_record(spec_path, "run specification")
+    ]
+
+    try:
+        copied_spec = _copy_input(
+            spec_path, staging / "provenance" / "run_specification.json"
+        )
+        del copied_spec
+        design = _dataset_design_table(datasets)
+        _write_tsv(staging / "metrics" / METRIC_FILES["dataset_design"], design)
+
+        for dataset_index, dataset in enumerate(datasets):
+            generated_dataset_manifest = (
+                staging / "datasets" / _slug(dataset.dataset) / "dataset_manifest.json"
+            )
+            _write_json(
+                generated_dataset_manifest,
+                {
+                    "schema_version": "crychic-finalized-dataset-manifest-v1",
+                    "dataset_id": dataset.dataset,
+                    "input": dict(dataset.design),
+                    "design_audit": {
+                        "design_type": dataset.comparison["design"],
+                        "status": design.loc[
+                            design["dataset"].eq(dataset.dataset), "status"
+                        ].iloc[0],
+                        "reason_code": design.loc[
+                            design["dataset"].eq(dataset.dataset), "reason_code"
+                        ].iloc[0],
+                    },
+                    "comparison": dict(dataset.comparison),
+                    "truth_scope": dataset.truth_scope,
+                },
+            )
+            dataset_manifest_outputs.append(generated_dataset_manifest)
+            if dataset.dataset_manifest is not None:
+                source_records.append(
+                    _source_record(dataset.dataset_manifest, "source dataset manifest")
+                )
+                _copy_input(
+                    dataset.dataset_manifest,
+                    staging
+                    / "provenance"
+                    / "dataset_manifests"
+                    / f"{dataset_index:03d}_{dataset.dataset_manifest.name}",
+                )
+
+            truth = (
+                _read_table(dataset.simulation_truth)
+                if dataset.simulation_truth is not None
+                else None
+            )
+            if dataset.simulation_truth is not None:
+                source_records.append(
+                    _source_record(dataset.simulation_truth, "synthetic edge truth")
+                )
+
+            if not dataset.adapter_runs:
+                reason = "dataset_has_no_adapter_runs"
+                identity = RunIdentity(
+                    dataset=dataset.dataset,
+                    method="No adapter run",
+                    method_version="not_available",
+                    analysis_track="lr_stlr",
+                    resource="not_available",
+                    resource_version="not_available",
+                    resource_mode="native",
+                    score_semantics="not_available",
+                    universe_id="not_available",
+                    contrast=str(dataset.comparison.get("contrast", "not_available")),
+                )
+                coverage_frames.append(
+                    pd.DataFrame([_not_estimable_coverage(identity, reason)])
+                )
+                primary_frames.append(
+                    pd.DataFrame([_not_estimable_primary(identity, reason)])
+                )
+                stability_frames.append(
+                    pd.DataFrame([_not_estimable_stability(identity, reason)])
+                )
+                score_index_rows.append(
+                    {
+                        "schema_version": SCORE_INDEX_SCHEMA_VERSION,
+                        **identity.metric_values(),
+                        "source_path": None,
+                        "output_path": None,
+                        "rows": 0,
+                        "status": "not_estimable",
+                        "reason_code": reason,
+                    }
+                )
+                performance_records.append(
+                    {
+                        "dataset": identity.dataset,
+                        "method": identity.method,
+                        "method_version": identity.method_version,
+                        "analysis_track": identity.analysis_track,
+                        "resource": identity.resource,
+                        "resource_version": identity.resource_version,
+                        "resource_mode": identity.resource_mode,
+                        "run_id": f"no_adapter_{_slug(dataset.dataset)}",
+                        "status": "skipped",
+                        "wall_time_seconds": None,
+                        "peak_rss_mb": None,
+                        "output_bytes": None,
+                        "threads": 1,
+                    }
+                )
+                if truth is not None:
+                    simulation_frames.append(
+                        pd.DataFrame(
+                            [
+                                identity.metric_values()
+                                | {
+                                    "truth_scope": dataset.truth_scope,
+                                    "metric": "edge_truth",
+                                    "estimate": np.nan,
+                                    "status": "not_estimable",
+                                    "reason_code": reason,
+                                }
+                            ]
+                        )
+                    )
+                continue
+
+            for run_index, run in enumerate(dataset.adapter_runs):
+                manifest_path = _resolve(
+                    spec_root,
+                    run.get("manifest"),
+                    field=f"{dataset.dataset}.adapter_runs[{run_index}].manifest",
+                )
+                if not manifest_path.is_file():
+                    raise FileNotFoundError(manifest_path)
+                manifest = _read_json(manifest_path)
+                source_records.append(_source_record(manifest_path, "adapter manifest"))
+                copied_manifest = _copy_input(
+                    manifest_path,
+                    staging
+                    / "provenance"
+                    / "adapter_manifests"
+                    / f"{dataset_index:03d}_{run_index:03d}_{manifest_path.name}",
+                )
+                adapter_manifest_outputs.append(copied_manifest)
+                fallback_identity = _manifest_identity(dataset, run, manifest)
+                long_value = run.get("long_table")
+                long_path = (
+                    _resolve(
+                        spec_root,
+                        long_value,
+                        field=f"{dataset.dataset}.adapter_runs[{run_index}].long_table",
+                    )
+                    if long_value is not None
+                    else None
+                )
+                performance_records.append(
+                    _derived_performance_record(fallback_identity, manifest, long_path)
+                )
+                if long_path is None or not long_path.is_file():
+                    reason = (
+                        "adapter_long_table_missing_after_failed_run"
+                        if str(manifest.get("status")) != "complete"
+                        else "adapter_long_table_missing"
+                    )
+                    source_records.append(
+                        _source_record(
+                            long_path or Path(str(long_value or "not_declared")),
+                            "adapter long table",
+                        )
+                    )
+                    coverage_frames.append(
+                        pd.DataFrame(
+                            [_not_estimable_coverage(fallback_identity, reason)]
+                        )
+                    )
+                    primary_frames.append(
+                        pd.DataFrame(
+                            [_not_estimable_primary(fallback_identity, reason)]
+                        )
+                    )
+                    stability_frames.append(
+                        pd.DataFrame(
+                            [_not_estimable_stability(fallback_identity, reason)]
+                        )
+                    )
+                    score_index_rows.append(
+                        {
+                            "schema_version": SCORE_INDEX_SCHEMA_VERSION,
+                            **fallback_identity.metric_values(),
+                            "source_path": None
+                            if long_path is None
+                            else long_path.as_posix(),
+                            "output_path": None,
+                            "rows": 0,
+                            "status": "not_estimable",
+                            "reason_code": reason,
+                        }
+                    )
+                    variant_rows.append(
+                        {
+                            "dataset": fallback_identity.dataset,
+                            "method": fallback_identity.method,
+                            "resource_mode": fallback_identity.resource_mode,
+                        }
+                    )
+                    continue
+
+                source_records.append(_source_record(long_path, "adapter long table"))
+                source_digest = _validate_source_hash(long_path, manifest)
+                track_frame = pd.read_parquet(
+                    long_path, columns=list(TRACK_METADATA_COLUMNS)
+                )
+                base_identity = _identity_from_track_metadata(track_frame, dataset)
+                views = _score_views(track_frame, dataset, run, manifest)
+                multiple_views = len(views) > 1
+                variant_rows.append(
+                    {
+                        "dataset": base_identity.dataset,
+                        "method": base_identity.method,
+                        "resource_mode": base_identity.resource_mode,
+                    }
+                )
+                if base_identity.analysis_track != "lr_stlr":
+                    track_table = pd.read_parquet(long_path)
+                    for view_index, view in enumerate(views):
+                        identity = _view_identity(
+                            base_identity, view, multiple_views=multiple_views
+                        )
+                        index_base = {
+                            "schema_version": SCORE_INDEX_SCHEMA_VERSION,
+                            **identity.metric_values(),
+                            "score_view_run_id": view.run_id,
+                            "score_view_label": view.label,
+                            "score_view_role": view.role,
+                            "score_view_contrast_candidate": view.contrast_candidate,
+                            "score_view_primary": view.primary,
+                            "source_path": long_path.as_posix(),
+                            "source_sha256": source_digest,
+                        }
+                        if not view.include:
+                            score_index_rows.append(
+                                index_base
+                                | {
+                                    "output_path": None,
+                                    "rows": 0,
+                                    "status": "not_estimable",
+                                    "reason_code": (
+                                        "score_view_excluded_by_preregistered_selection"
+                                    ),
+                                }
+                            )
+                            continue
+                        selected_track = track_table.loc[
+                            track_table["run_id"].astype(str).eq(view.run_id)
+                        ].copy()
+                        selected_track["score_view_label"] = view.label
+                        selected_track["score_view_role"] = view.role
+                        selected_track["score_view_contrast_candidate"] = (
+                            view.contrast_candidate
+                        )
+                        output_name = (
+                            f"{dataset_index:03d}_{run_index:03d}_{view_index:03d}_"
+                            f"{_slug(dataset.dataset)}_{_slug(identity.method)}_"
+                            f"{_slug(view.label)}.parquet"
+                        )
+                        destination = staging / "track_b_tables" / output_name
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        selected_track.to_parquet(destination, index=False)
+                        score_outputs.append(destination)
+                        reason = _track_b_reason(identity)
+                        score_index_rows.append(
+                            index_base
+                            | {
+                                "output_path": destination.relative_to(
+                                    staging
+                                ).as_posix(),
+                                "output_sha256": _sha256(destination),
+                                "rows": len(selected_track),
+                                "status": "not_estimable",
+                                "reason_code": reason,
+                            }
+                        )
+                        coverage_ne = pd.DataFrame(
+                            [_not_estimable_coverage(identity, reason)]
+                        )
+                        primary_ne = pd.DataFrame(
+                            [_not_estimable_primary(identity, reason)]
+                        )
+                        stability_ne = pd.DataFrame(
+                            [_not_estimable_stability(identity, reason)]
+                        )
+                        if view.primary:
+                            coverage_frames.append(_annotate_view(coverage_ne, view))
+                            primary_frames.append(_annotate_view(primary_ne, view))
+                            stability_frames.append(_annotate_view(stability_ne, view))
+                        else:
+                            sensitivity_coverage_frames.append(
+                                _annotate_view(coverage_ne, view)
+                            )
+                            sensitivity_primary_frames.append(
+                                _annotate_view(primary_ne, view)
+                            )
+                            sensitivity_stability_frames.append(
+                                _annotate_view(stability_ne, view)
+                            )
+                        if truth is not None:
+                            truth_ne = pd.DataFrame(
+                                [
+                                    identity.metric_values()
+                                    | {
+                                        "truth_scope": dataset.truth_scope,
+                                        "metric": "track_b_truth_metric",
+                                        "estimate": np.nan,
+                                        "status": "not_estimable",
+                                        "reason_code": (
+                                            "track_b_requires_track_specific_"
+                                            "truth_metric"
+                                        ),
+                                    }
+                                ]
+                            )
+                            target_frames = (
+                                simulation_frames
+                                if view.primary
+                                else sensitivity_simulation_frames
+                            )
+                            target_frames.append(_annotate_view(truth_ne, view))
+                    del track_frame, track_table
+                    gc.collect()
+                    continue
+
+                external = pd.read_parquet(long_path, columns=list(EXTERNAL_LR_COLUMNS))
+                del track_frame
+                for view_index, view in enumerate(views):
+                    base_view_identity = _identity_from_track_metadata(
+                        external.loc[
+                            external["run_id"].astype(str).eq(view.run_id),
+                            list(TRACK_METADATA_COLUMNS),
+                        ],
+                        dataset,
+                    )
+                    identity = _view_identity(
+                        base_view_identity, view, multiple_views=multiple_views
+                    )
+                    index_base = {
+                        "schema_version": SCORE_INDEX_SCHEMA_VERSION,
+                        **identity.metric_values(),
+                        "score_view_run_id": view.run_id,
+                        "score_view_label": view.label,
+                        "score_view_role": view.role,
+                        "score_view_contrast_candidate": view.contrast_candidate,
+                        "score_view_primary": view.primary,
+                        "source_path": long_path.as_posix(),
+                        "source_sha256": source_digest,
+                    }
+                    if not view.include:
+                        score_index_rows.append(
+                            index_base
+                            | {
+                                "output_path": None,
+                                "rows": 0,
+                                "status": "not_estimable",
+                                "reason_code": (
+                                    "score_view_excluded_by_preregistered_selection"
+                                ),
+                            }
+                        )
+                        continue
+                    selected_external = external.loc[
+                        external["run_id"].astype(str).eq(view.run_id)
+                    ].copy()
+                    selected_external["score_name"] = identity.score_semantics
+                    mapped = external_long_to_score_table(
+                        selected_external,
+                        context_key=dataset.context_key,
+                        contrast=view.contrast,
+                        dataset=dataset.dataset,
+                    )
+                    del selected_external
+                    mapped = _annotate_view(mapped, view)
+                    output_name = (
+                        f"{dataset_index:03d}_{run_index:03d}_{view_index:03d}_"
+                        f"{_slug(dataset.dataset)}_{_slug(identity.method)}_"
+                        f"{_slug(view.label)}.parquet"
+                    )
+                    destination = staging / "score_tables" / output_name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    mapped.to_parquet(destination, index=False)
+                    score_outputs.append(destination)
+                    score_index_rows.append(
+                        index_base
+                        | {
+                            "output_path": destination.relative_to(staging).as_posix(),
+                            "output_sha256": _sha256(destination),
+                            "rows": len(mapped),
+                            "status": "observed",
+                            "reason_code": None,
+                        }
+                    )
+
+                    coverage_result = _annotate_view(
+                        score_coverage_summary(mapped, validated=True), view
+                    )
+                    within = _annotate_view(
+                        _stability_long(
+                            within_context_reproducibility(
+                                mapped,
+                                top_k=parameters["top_k"],
+                                validated=True,
+                            )
+                        ),
+                        view,
+                    )
+                    coverage_target = (
+                        coverage_frames if view.primary else sensitivity_coverage_frames
+                    )
+                    stability_target = (
+                        stability_frames
+                        if view.primary
+                        else sensitivity_stability_frames
+                    )
+                    coverage_target.append(coverage_result)
+                    stability_target.append(within)
+                    design_type = str(dataset.comparison["design"])
+                    reference = str(dataset.comparison.get("reference", ""))
+                    target = str(dataset.comparison.get("target", ""))
+                    minimum = int(dataset.comparison.get("min_subjects", 3))
+                    if design_type == "paired":
+                        effects = _annotate_view(
+                            paired_edge_effects(
+                                mapped,
+                                reference=reference,
+                                target=target,
+                                min_pairs=minimum,
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        loso = _annotate_view(
+                            paired_differential_loso_reproducibility(
+                                mapped,
+                                reference=reference,
+                                target=target,
+                                min_subjects=minimum,
+                                top_k=parameters["top_k"],
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        summary = _annotate_view(
+                            summarize_loso_primary_endpoint(
+                                loso,
+                                n_bootstrap=parameters["n_bootstrap"],
+                                random_seed=parameters["random_seed"],
+                            ),
+                            view,
+                        )
+                        if view.primary:
+                            effects_frames.append(effects)
+                            paired_loso_frames.append(loso)
+                            primary_frames.append(_paired_primary(summary))
+                            stability_frames.append(_stability_long(loso))
+                        else:
+                            sensitivity_effects_frames.append(effects)
+                            sensitivity_loso_frames.append(loso)
+                            sensitivity_primary_frames.append(_paired_primary(summary))
+                            sensitivity_stability_frames.append(_stability_long(loso))
+                    elif design_type == "unpaired":
+                        effects = _annotate_view(
+                            unpaired_edge_effects(
+                                mapped,
+                                reference=reference,
+                                target=target,
+                                min_subjects=minimum,
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        split = _annotate_view(
+                            unpaired_differential_split_half_reproducibility(
+                                mapped,
+                                reference=reference,
+                                target=target,
+                                n_repeats=parameters["n_split_repeats"],
+                                min_subjects_per_half=parameters[
+                                    "min_subjects_per_half"
+                                ],
+                                top_k=parameters["top_k"],
+                                random_seed=parameters["random_seed"],
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        influence = _annotate_view(
+                            unpaired_leave_one_subject_influence(
+                                mapped,
+                                reference=reference,
+                                target=target,
+                                min_remaining_subjects=max(2, minimum - 1),
+                                top_k=parameters["top_k"],
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        if view.primary:
+                            effects_frames.append(effects)
+                            influence_frames.append(influence)
+                            primary_frames.append(_unpaired_primary(split))
+                            stability_frames.append(_stability_long(split))
+                            stability_frames.append(
+                                _annotate_view(_influence_summary(influence), view)
+                            )
+                        else:
+                            sensitivity_effects_frames.append(effects)
+                            sensitivity_influence_frames.append(influence)
+                            sensitivity_primary_frames.append(_unpaired_primary(split))
+                            sensitivity_stability_frames.append(_stability_long(split))
+                            sensitivity_stability_frames.append(
+                                _annotate_view(_influence_summary(influence), view)
+                            )
+                    else:
+                        reason = "unsupported_comparison_design"
+                        primary_ne = _annotate_view(
+                            pd.DataFrame([_not_estimable_primary(identity, reason)]),
+                            view,
+                        )
+                        stability_ne = _annotate_view(
+                            pd.DataFrame([_not_estimable_stability(identity, reason)]),
+                            view,
+                        )
+                        if view.primary:
+                            primary_frames.append(primary_ne)
+                            stability_frames.append(stability_ne)
+                        else:
+                            sensitivity_primary_frames.append(primary_ne)
+                            sensitivity_stability_frames.append(stability_ne)
+
+                    if truth is not None:
+                        truth_result = _annotate_view(
+                            synthetic_edge_truth_metrics(
+                                mapped,
+                                truth,
+                                top_k=parameters["top_k"],
+                                validated=True,
+                            ),
+                            view,
+                        )
+                        truth_target = (
+                            simulation_frames
+                            if view.primary
+                            else sensitivity_simulation_frames
+                        )
+                        truth_target.append(truth_result)
+                    del mapped
+                    gc.collect()
+                del external
+                gc.collect()
+
+        if paired_loso_frames:
+            all_loso = _annotate_truth_scope(
+                pd.concat(paired_loso_frames, ignore_index=True, sort=False),
+                dataset_truth_scopes,
+            )
+            cross_dataset = _cross_dataset_primary(all_loso, parameters)
+            if not cross_dataset.empty:
+                primary_frames.append(cross_dataset)
+            derived_dir = staging / "derived"
+            derived_dir.mkdir(parents=True, exist_ok=True)
+            all_loso.to_parquet(derived_dir / "paired_loso_folds.parquet", index=False)
+        else:
+            all_loso = pd.DataFrame()
+
+        if effects_frames:
+            all_effects = _annotate_truth_scope(
+                pd.concat(effects_frames, ignore_index=True, sort=False),
+                dataset_truth_scopes,
+            )
+            concordance = cross_method_concordance(
+                all_effects,
+                minimum_shared_edges=parameters["minimum_shared_edges"],
+            )
+            derived_dir = staging / "derived"
+            derived_dir.mkdir(parents=True, exist_ok=True)
+            all_effects.to_parquet(derived_dir / "edge_effects.parquet", index=False)
+        else:
+            all_effects = pd.DataFrame()
+            concordance = pd.DataFrame()
+
+        concordance = _annotate_truth_scope(concordance, dataset_truth_scopes)
+        if concordance.empty or not concordance["truth_scope"].eq("real_data").any():
+            real_data_ne = pd.DataFrame(
+                [
+                    {
+                        "dataset": "__none_real_data__",
+                        "method_left": "NE",
+                        "method_right": "NE",
+                        "analysis_track": "lr_stlr",
+                        "resource_mode": "H-common",
+                        "truth_scope": "real_data",
+                        "contrast": "prespecified_per_dataset",
+                        "effect_spearman": np.nan,
+                        "direction_agreement": np.nan,
+                        "shared_edges": 0,
+                        "status": "not_estimable",
+                        "reason_code": "no_comparable_real_data_lr_method_pair",
+                    }
+                ]
+            )
+            concordance = pd.concat(
+                [concordance, real_data_ne], ignore_index=True, sort=False
+            )
+
+        if influence_frames:
+            all_influence = pd.concat(influence_frames, ignore_index=True, sort=False)
+            derived_dir = staging / "derived"
+            derived_dir.mkdir(parents=True, exist_ok=True)
+            all_influence.to_parquet(
+                derived_dir / "unpaired_leave_one_subject_influence.parquet",
+                index=False,
+            )
+
+        sensitivity_tables = {
+            "sensitivity_coverage.tsv": sensitivity_coverage_frames,
+            "sensitivity_primary_endpoint.tsv": sensitivity_primary_frames,
+            "sensitivity_stability.tsv": sensitivity_stability_frames,
+            "sensitivity_simulation_truth.tsv": sensitivity_simulation_frames,
+        }
+        for filename, frames in sensitivity_tables.items():
+            if frames:
+                table = _annotate_truth_scope(
+                    pd.concat(frames, ignore_index=True, sort=False),
+                    dataset_truth_scopes,
+                )
+                _write_tsv(
+                    staging / "derived" / filename,
+                    table,
+                )
+        sensitivity_parquets = {
+            "sensitivity_edge_effects.parquet": sensitivity_effects_frames,
+            "sensitivity_paired_loso_folds.parquet": sensitivity_loso_frames,
+            "sensitivity_unpaired_influence.parquet": (sensitivity_influence_frames),
+        }
+        for filename, frames in sensitivity_parquets.items():
+            if frames:
+                path = staging / "derived" / filename
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _annotate_truth_scope(
+                    pd.concat(frames, ignore_index=True, sort=False),
+                    dataset_truth_scopes,
+                ).to_parquet(path, index=False)
+
+        coverage = (
+            pd.concat(coverage_frames, ignore_index=True, sort=False)
+            if coverage_frames
+            else pd.DataFrame()
+        )
+        explicit_coverage = _optional_path(
+            spec_root,
+            payload.get("coverage_records"),
+            field="coverage_records",
+        )
+        if explicit_coverage is not None:
+            if not explicit_coverage.is_file():
+                raise FileNotFoundError(explicit_coverage)
+            source_records.append(
+                _source_record(explicit_coverage, "precomputed coverage records")
+            )
+            coverage_input = _read_table(explicit_coverage)
+            required_coverage = {
+                "dataset",
+                "method",
+                "resource_mode",
+                "status",
+                "reason_code",
+            }
+            missing_coverage = required_coverage.difference(coverage_input.columns)
+            if missing_coverage:
+                raise ValueError(
+                    "coverage_records is missing columns: "
+                    f"{sorted(missing_coverage)}"
+                )
+            coverage = pd.concat(
+                [coverage, coverage_input], ignore_index=True, sort=False
+            )
+        coverage = _annotate_truth_scope(coverage, dataset_truth_scopes)
+        primary = (
+            pd.concat(primary_frames, ignore_index=True, sort=False)
+            if primary_frames
+            else pd.DataFrame()
+        )
+        primary = _annotate_truth_scope(primary, dataset_truth_scopes)
+        stability = (
+            pd.concat(stability_frames, ignore_index=True, sort=False)
+            if stability_frames
+            else pd.DataFrame()
+        )
+        stability = _annotate_truth_scope(stability, dataset_truth_scopes)
+        simulation = (
+            pd.concat(simulation_frames, ignore_index=True, sort=False)
+            if simulation_frames
+            else _empty_simulation_table()
+        )
+        explicit_simulation = _optional_path(
+            spec_root,
+            payload.get("simulation_records"),
+            field="simulation_records",
+        )
+        if explicit_simulation is not None:
+            if not explicit_simulation.is_file():
+                raise FileNotFoundError(explicit_simulation)
+            source_records.append(
+                _source_record(explicit_simulation, "external simulation metrics")
+            )
+            simulation_input = _read_table(explicit_simulation)
+            required_simulation = {
+                "truth_scope",
+                "method",
+                "metric",
+                "estimate",
+                "status",
+                "reason_code",
+            }
+            missing_simulation = required_simulation.difference(
+                simulation_input.columns
+            )
+            if missing_simulation:
+                raise ValueError(
+                    "simulation_records is missing columns: "
+                    f"{sorted(missing_simulation)}"
+                )
+            invalid_scopes = set(
+                simulation_input["truth_scope"].astype(str)
+            ).difference(SYNTHETIC_TRUTH_SCOPES)
+            if invalid_scopes:
+                raise ValueError(
+                    "simulation_records contains non-synthetic truth scopes: "
+                    f"{sorted(invalid_scopes)}"
+                )
+            simulation = (
+                pd.concat(
+                    [simulation, simulation_input], ignore_index=True, sort=False
+                )
+                if simulation_frames
+                else simulation_input
+            )
+
+        explicit_performance = _optional_path(
+            spec_root,
+            payload.get("performance_records"),
+            field="performance_records",
+        )
+        if explicit_performance is not None:
+            if not explicit_performance.is_file():
+                raise FileNotFoundError(explicit_performance)
+            source_records.append(
+                _source_record(explicit_performance, "performance run records")
+            )
+            performance_input = _read_table(explicit_performance)
+        else:
+            performance_input = pd.DataFrame(performance_records)
+        performance = _annotate_truth_scope(
+            summarize_run_performance(performance_input),
+            dataset_truth_scopes,
+        )
+
+        truth_value = payload.get("supportive_biology_truth")
+        if truth_value is None:
+            raise ValueError("supportive_biology_truth is required and must be frozen")
+        truth_path = _resolve(spec_root, truth_value, field="supportive_biology_truth")
+        if not truth_path.is_file():
+            raise FileNotFoundError(truth_path)
+        source_records.append(
+            _source_record(truth_path, "locked supportive biology truth")
+        )
+        copied_truth = _copy_input(
+            truth_path,
+            staging / "truth" / "multicondition_supportive_biology.yaml",
+        )
+        evidence_path = _optional_path(
+            spec_root,
+            payload.get("biology_support"),
+            field="biology_support",
+        )
+        if evidence_path is not None:
+            source_records.append(
+                _source_record(evidence_path, "supportive biology evidence")
+            )
+        variants = pd.DataFrame(variant_rows)
+        biology_dataset_aliases = _biology_dataset_aliases(payload)
+        biology = _biology_support_table(
+            copied_truth,
+            evidence_path,
+            variants,
+            dataset_aliases=biology_dataset_aliases,
+        )
+
+        iteration_path = _optional_path(
+            spec_root,
+            payload.get("iteration_comparison"),
+            field="iteration_comparison",
+        )
+        if iteration_path is not None:
+            source_records.append(
+                _source_record(iteration_path, "iteration comparison")
+            )
+        real_datasets = frozenset(
+            dataset.dataset
+            for dataset in datasets
+            if dataset.truth_scope not in SYNTHETIC_TRUTH_SCOPES
+        )
+        iteration = _iteration_table(iteration_path, real_datasets)
+
+        metric_tables = {
+            "coverage": coverage,
+            "loso_primary": primary,
+            "stability": stability,
+            "concordance": concordance,
+            "performance": performance,
+            "biology_support": biology,
+            "simulation_truth": simulation,
+            "iteration_comparison": iteration,
+        }
+        for key, table in metric_tables.items():
+            _write_tsv(staging / "metrics" / METRIC_FILES[key], table)
+
+        score_index = pd.DataFrame(score_index_rows)
+        _write_tsv(staging / "score_tables" / "score_table_index.tsv", score_index)
+
+        report_inputs = {
+            "schema_version": REPORT_INPUT_SCHEMA_VERSION,
+            "supportive_biology_dataset_aliases": biology_dataset_aliases,
+            "dataset_truth_scopes": dataset_truth_scopes,
+            "adapter_manifests": [
+                path.relative_to(staging).as_posix()
+                for path in adapter_manifest_outputs
+            ],
+            "score_tables": [
+                path.relative_to(staging).as_posix() for path in score_outputs
+            ],
+            "dataset_manifests": [
+                path.relative_to(staging).as_posix()
+                for path in dataset_manifest_outputs
+            ],
+            "truth_yaml": copied_truth.relative_to(staging).as_posix(),
+            "metrics": {
+                key: f"metrics/{filename}" for key, filename in METRIC_FILES.items()
+            },
+        }
+        _write_json(staging / "report_inputs.json", report_inputs)
+
+        generated_at = str(payload.get("generated_at", datetime.now(UTC).isoformat()))
+        final_manifest: dict[str, Any] = {
+            "schema_version": FINALIZATION_SCHEMA_VERSION,
+            "specification_schema_version": SPEC_SCHEMA_VERSION,
+            "generated_at": generated_at,
+            "parameters": parameters,
+            "datasets": [dataset.dataset for dataset in datasets],
+            "counts": {
+                "adapter_runs": sum(len(dataset.adapter_runs) for dataset in datasets),
+                "lr_score_tables": int(
+                    score_index["analysis_track"].eq("lr_stlr").sum()
+                )
+                if not score_index.empty
+                else 0,
+                "track_b_tables": int(score_index["analysis_track"].ne("lr_stlr").sum())
+                if not score_index.empty
+                else 0,
+                "primary_score_views": int(
+                    score_index["score_view_primary"].fillna(False).astype(bool).sum()
+                )
+                if "score_view_primary" in score_index
+                else 0,
+                "sensitivity_score_views": int(
+                    score_index["score_view_role"].eq("sensitivity").sum()
+                )
+                if "score_view_role" in score_index
+                else 0,
+                "excluded_score_views": int(
+                    score_index["score_view_role"].eq("excluded").sum()
+                )
+                if "score_view_role" in score_index
+                else 0,
+                "coverage_rows": len(coverage),
+                "primary_endpoint_rows": len(primary),
+                "stability_rows": len(stability),
+                "concordance_rows": len(concordance),
+                "simulation_truth_rows": len(simulation),
+            },
+            "guardrails": {
+                "real_data_edge_auroc_reported": False,
+                "supportive_biology_is_edge_ground_truth": False,
+                "track_b_mixed_with_lr_concordance": False,
+                "preregistered_track_b_primary_reported": False,
+                "track_b_proxy_mislabelled_as_native_nichenet": False,
+                "unpaired_leave_one_out_labelled_independent_replication": False,
+            },
+            "supportive_biology_dataset_aliases": biology_dataset_aliases,
+            "report_inputs": "report_inputs.json",
+            "checksum_manifest": "SHA256SUMS.tsv",
+        }
+        _write_json(staging / "finalization_manifest.json", final_manifest)
+        checksums = pd.DataFrame([*source_records, *_output_records(staging)])
+        _write_tsv(staging / "SHA256SUMS.tsv", checksums)
+        _install_output(staging, output, overwrite)
+        return final_manifest
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Finalize paired/unpaired multi-condition adapter outputs into the "
+            "publication report input contract."
+        )
+    )
+    parser.add_argument(
+        "--spec", required=True, type=Path, help="JSON run specification"
+    )
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--overwrite", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    manifest = finalize(args.spec, args.output_dir, overwrite=args.overwrite)
+    print(json.dumps(_json_safe(manifest), indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

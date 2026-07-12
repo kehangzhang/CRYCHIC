@@ -1,0 +1,353 @@
+{
+  "audit_version": "2026-07-12.v1",
+  "contracts": {
+    "independent_unit": "subject_id",
+    "sample_unit": "sample_id",
+    "cell_unit": "used only to construct sample-level aggregates",
+    "primary_real_data_claims": "exploratory until the relevant CRYCHIC release gate passes",
+    "fairness_tracks": [
+      "native resource",
+      "harmonized LR resource",
+      "LR/STLR output",
+      "ligand-target/downstream response output"
+    ]
+  },
+  "priority_order": [
+    "GSE144236_Ji_cSCC",
+    "UCSC_Lerma_Martin_MS_snRNA",
+    "Kuppe_MI_Zenodo6578047",
+    "GSE244992_Panc02_PancVAX"
+  ],
+  "datasets": [
+    {
+      "dataset_id": "GSE144236_Ji_cSCC",
+      "local_path": "dataset/GSE144236_Ji_cSCC",
+      "prepared_path": "benchmark_work/multicondition_v01/prepared/GSE144236_cscc_paired.h5ad",
+      "species": "human",
+      "modality": "scRNA-seq",
+      "input": {
+        "format": "wide counts TSV.gz plus corrected metadata TSV.gz",
+        "source_cells": 48164,
+        "source_genes": 32738,
+        "counts": "raw non-negative integers",
+        "cell_annotations": [
+          "level1_celltype",
+          "level2_celltype",
+          "level3_celltype"
+        ]
+      },
+      "design": {
+        "subject_key_source": "patient",
+        "sample_id_rule": "patient + '_' + tum.norm",
+        "context_key_source": "tum.norm",
+        "contexts": [
+          "Normal",
+          "Tumor"
+        ],
+        "subjects": 10,
+        "samples": 20,
+        "paired": true,
+        "filter": "level1_celltype != Multiplet"
+      },
+      "eligibility": {
+        "tier": "primary",
+        "cellchat": "ready",
+        "cellphonedb": "ready",
+        "nichenet": "ready in ligand-target track",
+        "liana": "ready",
+        "crychic": "ready",
+        "formal_inference": "not yet authorized by CRYCHIC G3"
+      },
+      "risk": [
+        "cell-type paired support varies sharply",
+        "do not treat cells as independent replicates",
+        "exclude Multiplet before all method runs"
+      ]
+    },
+    {
+      "dataset_id": "GSE279183_Lerma_Martin_MS_raw_local",
+      "local_path": "dataset/GSE279183_Lerma-Martin_MS",
+      "species": "human",
+      "modality": "snRNA-seq",
+      "input": {
+        "format": "16 sample-level 10x matrices",
+        "observations": 134118,
+        "genes": 36601,
+        "counts": "raw non-negative integers",
+        "cell_annotations": "not present locally",
+        "assay_evidence": "GEO GSM8563681-GSM8563696 titles and descriptions explicitly identify snRNA-seq 10x Genomics"
+      },
+      "eligibility": {
+        "tier": "blocked until source-compatible cell annotations are prepared",
+        "intended_task": "multigroup snRNA CCC"
+      },
+      "risk": [
+        "UCSC processed-atlas metadata barcodes overlap the local raw matrices only partially and by a sample-dependent fraction",
+        "do not naively join UCSC annotations to local raw barcodes",
+        "prefer the UCSC matrix that exactly matches the UCSC metadata or document a validated alignment/QC transform"
+      ]
+    },
+    {
+      "dataset_id": "UCSC_Lerma_Martin_MS_snRNA",
+      "upstream_path": "https://cells.ucsc.edu/ms-subcortical-lesions/snrna-atlas",
+      "prepared_path": "benchmark_work/multicondition_v01/prepared/UCSC_Lerma_Martin_MS_snRNA.h5ad",
+      "prepared_sha256": "3019c05759439ceacff29db2b80dae79beb1b38687f574581803d1da51a2d3ba",
+      "primary_prepared_path": "benchmark_work/multicondition_v01/prepared/UCSC_Lerma_Martin_MS_CA_vs_Ctrl.h5ad",
+      "primary_prepared_sha256": "612fe9c4cdaf88694a47e13ba4458c828f206cd945eba9e9c72f46e9bd0196c7",
+      "species": "human",
+      "modality": "snRNA-seq",
+      "input": {
+        "format": "UCSC 10x matrix plus meta.tsv",
+        "nuclei": 103794,
+        "cell_types_major": 9,
+        "genes": 32115,
+        "counts_nnz": 220543010,
+        "cell_subtypes": 85,
+        "local_status": "exact UCSC matrix and metadata prepared; barcode order equality and source hashes verified"
+      },
+      "design": {
+        "subject_key": "patient_id",
+        "sample_key": "sample_id",
+        "context_key": "lesion_type",
+        "contexts": [
+          "Ctrl",
+          "CA",
+          "CI"
+        ],
+        "subjects": 13,
+        "samples": 16,
+        "subjects_by_context": {
+          "Ctrl": 6,
+          "CA": 5,
+          "CI": 2
+        },
+        "samples_by_context": {
+          "Ctrl": 6,
+          "CA": 6,
+          "CI": 4
+        }
+      },
+      "eligibility": {
+        "tier": "primary prepared",
+        "primary_contrast": "CA vs Ctrl",
+        "primary_design": "independent subjects; ~ batch + lesion_type; rank 5/5",
+        "secondary_contrasts": [
+          "CI vs Ctrl",
+          "CA vs CI"
+        ],
+        "three_group_claim": "descriptive only because CI has two independent subjects"
+      },
+      "risk": [
+        "multiple samples from one subject must remain in one resampling block",
+        "sample count must not replace independent subject count",
+        "the local GEO raw snRNA matrices and UCSC processed snRNA atlas are distinct processing versions and require exact alignment"
+      ]
+    },
+    {
+      "dataset_id": "Kuppe_MI_Zenodo6578047",
+      "local_path": "dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad",
+      "species": "human",
+      "modality": "snRNA-seq",
+      "input": {
+        "cells": 191795,
+        "genes": 29126,
+        "cell_types": 11,
+        "counts": "integer counts in raw.X; X is log normalized",
+        "converter": "benchmarks/datasets/prepare_kuppe.py",
+        "converter_status": "implemented and fixture-tested; full matrix write deferred",
+        "audit_path": "benchmark_work/multicondition_v01/prepared/kuppe_design_audit"
+      },
+      "design": {
+        "subject_key": "patient",
+        "sample_key": "sample",
+        "context_key": "major_labl",
+        "canonical_subject_key": "subject_id",
+        "canonical_sample_key": "sample_id",
+        "canonical_context_key": "region",
+        "canonical_cell_type_key": "cell_type",
+        "canonical_broad_cell_type_key": "broad_cell_type",
+        "contexts": [
+          "CTRL",
+          "RZ",
+          "BZ",
+          "IZ",
+          "FZ"
+        ],
+        "subjects": 20,
+        "samples": 29,
+        "subjects_by_context": {
+          "CTRL": 4,
+          "RZ": 5,
+          "BZ": 3,
+          "IZ": 7,
+          "FZ": 6
+        },
+        "samples_by_context": {
+          "CTRL": 4,
+          "RZ": 5,
+          "BZ": 3,
+          "IZ": 11,
+          "FZ": 6
+        },
+        "partially_repeated": true,
+        "design_class": "mixed_paired_unpaired_multi_region",
+        "cross_region_subjects": {
+          "P2": ["RZ", "BZ", "IZ"],
+          "P3": ["RZ", "BZ", "IZ"],
+          "P9": ["RZ", "IZ"]
+        },
+        "within_region_replicate_samples": {
+          "P9|IZ": 3,
+          "P15|IZ": 2,
+          "P16|IZ": 2
+        }
+      },
+      "eligibility": {
+        "tier": "secondary descriptive",
+        "task": "availability and scalability validation",
+        "response_status": "not_estimable",
+        "response_reason_code": "mixed_paired_unpaired_multi_region_design_unsupported",
+        "availability_status": "eligible_descriptive_only",
+        "formal_inference": "prohibited under the current response backend",
+        "pairwise_note": "between-subject pairs require explicit preregistered subsetting; RZ-BZ, RZ-IZ, and BZ-IZ remain mixed"
+      },
+      "risk": [
+        "region and subject are strongly imbalanced",
+        "full counts artifact and hashes are pending the deferred conversion run",
+        "simple pooled region comparison is not a valid patient-aware test",
+        "do not discard unpaired subjects to manufacture a paired contrast",
+        "keep all samples from one subject in one resampling block"
+      ]
+    },
+    {
+      "dataset_id": "GSE244992_Panc02_PancVAX",
+      "local_path": "dataset/GSE244992_Panc02_PancVAX",
+      "species": "mouse",
+      "modality": "scRNA-seq",
+      "input": {
+        "cells_across_16_objects": 56674,
+        "genes": 24337,
+        "format": "16 double-gzip Seurat RDS objects",
+        "treatments": 8,
+        "compartments_or_batches": [
+          "tumor",
+          "immune"
+        ],
+        "cell_types": 14
+      },
+      "design": {
+        "independent_subject_id": "absent",
+        "samples": 16,
+        "contexts": "8 treatments crossed with tumor/immune objects",
+        "paired": false
+      },
+      "eligibility": {
+        "tier": "demonstration only",
+        "task": "multigroup software stress test",
+        "formal_inference": "prohibited"
+      },
+      "risk": [
+        "the 16 objects are not 16 independent biological replicates",
+        "do not use bootstrap or compartment objects as mouse replicates",
+        "CellPhoneDB, NicheNet, and LIANA need a frozen mouse orthology/resource policy"
+      ]
+    },
+    {
+      "dataset_id": "GSE96583_Kang2018_PBMC",
+      "local_path": "benchmark_work/kang2018_batch2.h5ad",
+      "species": "human",
+      "modality": "scRNA-seq",
+      "input": {
+        "cells": 24673,
+        "genes": 32938,
+        "counts": "raw integer counts layer",
+        "cell_types": 8
+      },
+      "design": {
+        "subjects": 8,
+        "samples": 16,
+        "contexts": [
+          "ctrl",
+          "stim"
+        ],
+        "paired": true
+      },
+      "eligibility": {
+        "tier": "positive control",
+        "all_requested_methods": "ready"
+      },
+      "risk": [
+        "strong exogenous IFN response is easier than most disease contrasts",
+        "known response is not edge-level communication truth"
+      ]
+    },
+    {
+      "dataset_id": "GSE147424_CellChat_AD_skin",
+      "local_path": "benchmark_work/ad_skin_cellchat.h5ad",
+      "species": "human",
+      "modality": "scRNA-seq",
+      "input": {
+        "cells": 7563,
+        "genes": 17328,
+        "counts": "not available in prepared object",
+        "expression": "normalized only"
+      },
+      "design": {
+        "subjects": 8,
+        "samples": 8,
+        "contexts": [
+          "NL",
+          "LS"
+        ],
+        "paired": false,
+        "note": "each exported subject occurs in one context only"
+      },
+      "eligibility": {
+        "tier": "exploratory reference",
+        "crychic": "normalized-only exploratory"
+      }
+    },
+    {
+      "dataset_id": "CellPhoneDB_trophoblast",
+      "local_path": "benchmark_work/trophoblast.h5ad",
+      "species": "human",
+      "modality": "scRNA-seq",
+      "input": {
+        "cells": 3312,
+        "genes": 30800,
+        "subjects": 62,
+        "cell_types": 42
+      },
+      "design": {
+        "contexts": [
+          "maternal_fetal_interface"
+        ],
+        "multigroup": false
+      },
+      "eligibility": {
+        "tier": "single-context smoke",
+        "task": "known LR expression and tutorial reproduction"
+      }
+    },
+    {
+      "dataset_id": "CellChat_embryonic_skin",
+      "local_path": "dataset/canonical_datasets/figshare_CellChat_embryonic_skin",
+      "species": "mouse",
+      "modality": "scRNA-seq",
+      "input": {
+        "format": "two CellChat RDS objects"
+      },
+      "design": {
+        "contexts": [
+          "E13.5",
+          "E14.5"
+        ],
+        "independent_replicates": "not established"
+      },
+      "eligibility": {
+        "tier": "demonstration only",
+        "task": "composition and network reconfiguration"
+      }
+    }
+  ]
+}
