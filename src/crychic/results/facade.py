@@ -23,6 +23,7 @@ from crychic.core import (
 from ._schema import (
     RESULT_SCHEMA_VERSION,
     TABLE_NAMES,
+    edge_evidence_contract,
     load_schema_document,
     table_contract,
     validate_table,
@@ -82,7 +83,8 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
         "stages",
         "warnings",
     }
-    if set(value) != required:
+    optional = {"extensions"}
+    if not required.issubset(value) or set(value).difference(required) - optional:
         _fail(
             "Run manifest fields do not match the v0.1 schema",
             code="invalid_run_manifest",
@@ -205,6 +207,58 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
                 code="invalid_run_manifest",
                 field_name=table_name,
             )
+    if "extensions" in value:
+        extensions = value["extensions"]
+        extension_contract = edge_evidence_contract()
+        if not isinstance(extensions, Mapping) or set(extensions) != {
+            extension_contract.name
+        }:
+            _fail(
+                "Run manifest result extensions are invalid",
+                code="invalid_run_manifest",
+                field_name="extensions",
+            )
+        extension = extensions[extension_contract.name]
+        expected_fields = {
+            "extension_schema_version",
+            "filename",
+            "rows",
+            "sha256",
+            "schema",
+            "linked_tables",
+        }
+        if not isinstance(extension, Mapping) or set(extension) != expected_fields:
+            _fail(
+                "Run manifest edge-evidence extension record is invalid",
+                code="invalid_run_manifest",
+                field_name=extension_contract.name,
+            )
+        linked_tables = extension["linked_tables"]
+        if (
+            extension["extension_schema_version"]
+            != extension_contract.extension_schema_version
+            or extension["filename"] != extension_contract.filename
+            or extension["schema"] != extension_contract.schema_filename
+            or not isinstance(extension["rows"], int)
+            or isinstance(extension["rows"], bool)
+            or extension["rows"] < 0
+            or not isinstance(extension["sha256"], str)
+            or _SHA256.fullmatch(extension["sha256"]) is None
+            or not isinstance(linked_tables, Mapping)
+            or set(linked_tables) != set(extension_contract.linked_tables)
+        ):
+            _fail(
+                "Run manifest edge-evidence extension record is incompatible",
+                code="invalid_run_manifest",
+                field_name=extension_contract.name,
+            )
+        for linked_table in extension_contract.linked_tables:
+            if linked_tables[linked_table] != tables[linked_table]["sha256"]:
+                _fail(
+                    "Edge-evidence extension linkage does not match its table",
+                    code="result_digest_mismatch",
+                    field_name=extension_contract.name,
+                )
     if not isinstance(value["stages"], list) or not isinstance(value["warnings"], list):
         _fail(
             "Run manifest stages and warnings must be arrays",
@@ -375,6 +429,36 @@ class CrychicResult:
                 )
             validate_table(table_name, frame)
 
+        extensions = manifest.get("extensions")
+        if extensions is not None:
+            extension_contract = edge_evidence_contract()
+            extension_record = extensions[extension_contract.name]
+            extension_path = root / extension_contract.filename
+            try:
+                digest = sha256_file(extension_path)
+                from pyarrow.parquet import ParquetFile  # type: ignore[import-untyped]
+
+                parquet = ParquetFile(extension_path)
+                row_count = parquet.metadata.num_rows
+                columns = tuple(parquet.schema_arrow.names)
+            except Exception as exc:
+                raise ResultValidationError(
+                    "Edge-evidence result extension is missing or corrupted",
+                    code="corrupted_result_extension",
+                    field=extension_contract.name,
+                    remediation="Reject the artifact and regenerate it",
+                ) from exc
+            if (
+                digest != extension_record["sha256"]
+                or row_count != extension_record["rows"]
+                or columns != extension_contract.columns
+            ):
+                _fail(
+                    "Edge-evidence result extension does not match its manifest",
+                    code="result_digest_mismatch",
+                    field_name=extension_contract.name,
+                )
+
         return cls(
             path=root.resolve(),
             _manifest=_freeze(manifest),
@@ -399,6 +483,43 @@ class CrychicResult:
         """Return immutable persisted provenance metadata."""
 
         return self._provenance
+
+    @property
+    def has_edge_evidence(self) -> bool:
+        """Whether this result includes the optional edge-evidence extension."""
+
+        return "extensions" in self._manifest
+
+    def read_edge_evidence(
+        self,
+        *,
+        filters: Mapping[str, object] | None = None,
+        columns: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Read the optional evidence ledger, with Parquet filter pushdown."""
+
+        if not self.has_edge_evidence:
+            raise KeyError("edge_evidence")
+        contract = edge_evidence_contract()
+        requested_columns = None if columns is None else list(columns)
+        if requested_columns is not None:
+            unknown_columns = set(requested_columns).difference(contract.columns)
+            if unknown_columns:
+                raise KeyError(sorted(unknown_columns)[0])
+        parquet_filters: list[tuple[str, str, object]] | None = None
+        if filters:
+            unknown_filters = set(filters).difference(contract.columns)
+            if unknown_filters:
+                raise KeyError(sorted(unknown_filters)[0])
+            parquet_filters = [
+                (column, "==", value) for column, value in filters.items()
+            ]
+        return _read_parquet(
+            self.path / contract.filename,
+            columns=requested_columns,
+            filters=parquet_filters,
+            engine="pyarrow",
+        )
 
     def read_table(
         self,

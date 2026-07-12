@@ -312,6 +312,30 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
     assert set(receiver_scores["functional_reason_code"]) == {
         "exploratory_not_cross_fitted"
     }
+    assert all(
+        run.functional.model_manifest.filter_universe_id
+        == artifacts.availability.filter_universe_id
+        for run in artifacts.score_runs
+    )
+    availability_parameters = artifacts.run_parameters["availability"]
+    assert availability_parameters["filter_application"] == "training_selection_v1"
+    assert availability_parameters["application_subject_ids"] == (
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+    )
+    frozen_filter = availability_parameters["frozen_interaction_universe"]
+    assert frozen_filter["filter_universe_id"] == (
+        artifacts.availability.filter_universe_id
+    )
+    assert frozen_filter["interaction_ids"] == (
+        artifacts.availability.frozen_interaction_universe.interaction_ids
+    )
+    assert frozen_filter["training_subject_ids"] == (
+        artifacts.availability.frozen_interaction_universe.training_subject_ids
+    )
+    assert frozen_filter["selection_policy"] == "training_pooled_support_v1"
     sender_specificity = receiver_scores.loc[
         receiver_scores["mode"] == "state"
     ].groupby(["sample_id", "interaction_id"], observed=True)["sender_component"]
@@ -665,9 +689,25 @@ def test_public_facade_atomically_persists_queryable_v0_1_result(tmp_path) -> No
     )
 
     assert isinstance(result, crychic.CrychicResult)
+    assert not result.has_edge_evidence
+    assert "edge_evidence_not_persisted" in result.manifest["warnings"]
     assert result.manifest["mode"] == "exploratory"
     assert result.manifest["workflow_parameters"]["pseudobulk"] == {"min_cells": 2}
     assert len(result.manifest["workflow_digest"]) == 64
+    availability_parameters = result.manifest["workflow_parameters"]["availability"]
+    assert availability_parameters["filter_application"] == "training_selection_v1"
+    assert availability_parameters["application_subject_ids"] == (
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+    )
+    frozen_filter = availability_parameters["frozen_interaction_universe"]
+    assert frozen_filter["training_subject_ids"] == ("p1", "p2", "p3", "p4")
+    assert frozen_filter["selection_policy"] == "training_pooled_support_v1"
+    assert str(frozen_filter["filter_universe_id"]).startswith(
+        "availability_filter_universe_"
+    )
     interactions = result.read_table("interactions")
     responses = result.read_table("responses")
     sample_scores = result.read_table("sample_scores")
@@ -686,6 +726,34 @@ def test_public_facade_atomically_persists_queryable_v0_1_result(tmp_path) -> No
     )
     assert not ranked.empty
     assert ranked["comm_strength"].notna().any()
+
+
+def test_public_facade_persists_opt_in_edge_evidence_extension(tmp_path) -> None:
+    model = crychic.Crychic(_config(), resource_bundle=_bundle(), target_prior=_prior())
+    result = model.fit(
+        _adata(),
+        output_dir=tmp_path / "result-with-edge-evidence",
+        input_digest="d" * 64,
+        sender_parameters=SenderEvidenceParameters(min_subjects=2),
+        min_cells=2,
+        min_pooled_availability=0.0,
+        persist_edge_evidence=True,
+    )
+
+    assert isinstance(result, crychic.CrychicResult)
+    assert result.has_edge_evidence
+    assert "edge_evidence_not_persisted" not in result.manifest["warnings"]
+    extension = result.manifest["extensions"]["edge_evidence"]
+    assert extension["rows"] > 0
+    assert extension["linked_tables"]["sample_scores"] == (
+        result.manifest["tables"]["sample_scores"]["sha256"]
+    )
+    linked = result.read_edge_evidence(
+        filters={"sample_score_status": "linked"},
+        columns=["sample_id", "interaction_id", "sample_score_status"],
+    )
+    assert len(linked) == result.manifest["tables"]["sample_scores"]["rows"]
+    assert set(linked["sample_score_status"]) == {"linked"}
 
 
 def test_public_facade_persists_opt_in_v2_support_provenance(tmp_path) -> None:

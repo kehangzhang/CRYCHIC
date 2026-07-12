@@ -15,6 +15,7 @@ ROOT = Path(__file__).parents[2]
     "filename",
     [
         "run_manifest.schema.json",
+        "edge_evidence.schema.json",
         "interactions.schema.json",
         "differential.schema.json",
         "responses.schema.json",
@@ -68,4 +69,18 @@ def test_run_manifest_schema_accepts_v0_1_shape() -> None:
         "warnings": [],
     }
 
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
+
+    manifest["extensions"] = {
+        "edge_evidence": {
+            "extension_schema_version": "1.0.0",
+            "filename": "edge_evidence.parquet",
+            "rows": 0,
+            "sha256": "d" * 64,
+            "schema": "edge_evidence.schema.json",
+            "linked_tables": {
+                "sample_scores": tables["sample_scores"]["sha256"]
+            },
+        }
+    }
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)

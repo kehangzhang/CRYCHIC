@@ -494,9 +494,16 @@ def write_baseline_result(
     package_version: str | None = None,
     run_id: str | None = None,
     sender_parameters: SenderEvidenceParameters | None = None,
+    persist_edge_evidence: bool = False,
 ) -> CrychicResult:
-    """Persist a complete exploratory baseline with atomic publication."""
+    """Persist a complete exploratory baseline with atomic publication.
 
+    The potentially large edge-evidence ledger is opt-in. When omitted, the
+    run manifest records that choice without materializing another ledger copy.
+    """
+
+    if not isinstance(persist_edge_evidence, bool):
+        raise TypeError("persist_edge_evidence must be a bool")
     tables = baseline_result_tables(
         artifacts, sender_parameters=sender_parameters
     )
@@ -570,6 +577,8 @@ def write_baseline_result(
             "reason_code": "attribution_not_estimable",
         }
     warnings = list(artifacts.reason_codes)
+    if not persist_edge_evidence:
+        warnings.append("edge_evidence_not_persisted")
     if input_digest is None:
         warnings.append("input_digest_not_supplied")
     if not response_ok:
@@ -626,6 +635,7 @@ def write_baseline_result(
         provenance=provenance,
         run_manifest=manifest,
         tables=tables,
+        edge_evidence=(artifacts.edge_evidence if persist_edge_evidence else None),
     )
 
 

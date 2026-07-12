@@ -12,6 +12,7 @@ from crychic.core import (
     stable_id,
 )
 from crychic.results import RESULT_SCHEMA_VERSION, empty_table
+from crychic.workflow.contracts import EDGE_EVIDENCE_COLUMNS
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -26,6 +27,63 @@ def table_factory() -> Callable[[str, list[dict[str, Any]]], pd.DataFrame]:
         return frame
 
     return make
+
+
+@pytest.fixture  # type: ignore[untyped-decorator]
+def edge_evidence_frame() -> pd.DataFrame:
+    row: dict[str, object] = {
+        "sample_id": "donor-1-stim",
+        "subject_id": "donor-1",
+        "context": "stim",
+        "context_id": stable_id("context", {"condition": "stim"}),
+        "sender": "Monocyte",
+        "receiver": "B cell",
+        "interaction_id": "CXCL10_CXCR3",
+        "driver_id": "CXCR3",
+        "mode": "state",
+        "contrast": "stim_vs_ctrl",
+        "fold_id": "fold-0",
+        "state_availability": 0.8,
+        "state_availability_status": "observed",
+        "state_availability_reason_code": None,
+        "ecosystem_availability": 0.7,
+        "ecosystem_availability_status": "observed",
+        "ecosystem_availability_reason_code": None,
+        "receptor_gate": 0.9,
+        "receptor_gate_status": "observed",
+        "receptor_gate_reason_code": None,
+        "receiver_program_score": 0.75,
+        "receiver_program_status": "observed",
+        "receiver_program_reason_code": None,
+        "incremental_downstream": None,
+        "incremental_downstream_status": "not_estimable",
+        "incremental_downstream_reason_code": "crossfit_not_available",
+        "attribution_support": 0.85,
+        "attribution_support_method": "signed_attribution",
+        "attribution_support_status": "observed",
+        "attribution_support_reason_code": None,
+        "sender_weight": 0.7,
+        "sender_status": "ok",
+        "sender_reason_code": None,
+        "prior_quality": 0.9,
+        "prior_quality_source": "fixture-prior",
+        "prior_quality_status": "observed",
+        "prior_quality_reason_code": None,
+        "legacy_downstream_activity": 0.9,
+        "legacy_downstream_status": "observed",
+        "legacy_downstream_reason_code": None,
+        "legacy_integrated_strength": 0.82,
+        "legacy_integrated_status": "ok",
+        "legacy_integrated_reason_code": None,
+        "scoring_function_status": "ok",
+        "scoring_function_reason_code": None,
+        "score_version": "0.1.0",
+        "model_manifest_id": "model-1",
+        "scoring_function_id": "functional-1",
+        "sample_score_status": "linked",
+        "sample_score_reason_code": None,
+    }
+    return pd.DataFrame([row], columns=EDGE_EVIDENCE_COLUMNS)
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -135,8 +193,18 @@ def result_payload(
                     "sample_id": "donor-1-stim",
                     "context_id": context_id,
                     "context_json": context_json,
-                    "design_row_id": "design-1",
-                    "edge_id": "edge-1",
+                    "design_row_id": stable_id(
+                        "design_row",
+                        {"context_id": context_id, "sample_id": "donor-1-stim"},
+                    ),
+                    "edge_id": stable_id(
+                        "communication_edge",
+                        {
+                            "interaction_id": "CXCL10_CXCR3",
+                            "receiver": "B cell",
+                            "sender": "Monocyte",
+                        },
+                    ),
                     "scoring_functional_id": "functional-1",
                     "repeat_id": "repeat-0",
                     "fold_id": "fold-0",

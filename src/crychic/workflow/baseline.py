@@ -1260,7 +1260,7 @@ def _scoring_model_manifest(
     response: ResponseEstimate,
     prior: TargetPrior,
     *,
-    interaction_ids: tuple[str, ...],
+    filter_universe_id: str,
     matched_targets: tuple[str, ...],
     availability_parameters: AvailabilityParameters,
     sender_functional_id: str,
@@ -1271,6 +1271,8 @@ def _scoring_model_manifest(
         raise ValueError("successful score run requires attribution artifacts")
     if run.precision_transform_id is None:
         raise ValueError("successful score run requires precision provenance")
+    if not filter_universe_id:
+        raise ValueError("successful score run requires a filter universe ID")
     receptor_gate_manifest_id = stable_id(
         "receptor_gate_manifest",
         {
@@ -1315,13 +1317,6 @@ def _scoring_model_manifest(
             "hill_half_saturation": availability_parameters.hill.half_saturation,
         },
     )
-    filter_universe_id = stable_id(
-        "filter_universe",
-        {
-            "interaction_ids": list(interaction_ids),
-            "policy": "pooled_support_then_optional_global_cap_v1",
-        },
-    )
     tuning_manifest_id = stable_id(
         "attribution_tuning_manifest",
         {
@@ -1360,6 +1355,7 @@ def _score_runs(
     config_modes: Sequence[CommunicationMode | str],
     attribution_support_method: AttributionSupportMethod,
     sender_functional_id: str,
+    filter_universe_id: str,
     cosine_threshold: float,
 ) -> tuple[BaselineScoreRun, ...]:
     if prior is None:
@@ -1400,7 +1396,7 @@ def _score_runs(
             run,
             response,
             prior,
-            interaction_ids=interaction_ids,
+            filter_universe_id=filter_universe_id,
             matched_targets=matched_targets,
             availability_parameters=availability_parameters,
             sender_functional_id=sender_functional_id,
@@ -1798,6 +1794,7 @@ def _build_edge_evidence(
 def _effective_run_parameters(
     *,
     graph: ContextGraph,
+    availability: BatchAvailability,
     availability_parameters: AvailabilityParameters,
     sender_assignment: SenderAssignment,
     min_cells: int,
@@ -1856,6 +1853,11 @@ def _effective_run_parameters(
             "complex_epsilon": availability_parameters.complex_epsilon,
             "min_pooled_availability": min_pooled_availability,
             "max_interactions": max_interactions,
+            "filter_application": availability.filter_application.value,
+            "application_subject_ids": list(availability.application_subject_ids),
+            "frozen_interaction_universe": (
+                availability.frozen_interaction_universe.to_dict()
+            ),
         },
         "sender": sender_assignment.parameters.to_dict(),
         "attribution": {
@@ -2009,6 +2011,7 @@ def fit_baseline(
         sender_functional_id=(
             sender_assignment.parameters.assignment_functional_id
         ),
+        filter_universe_id=availability.filter_universe_id,
         cosine_threshold=cosine_threshold,
     )
     score_runs = tuple(
@@ -2078,6 +2081,7 @@ def fit_baseline(
         reason_codes=tuple(reason_codes),
         run_parameters=_effective_run_parameters(
             graph=graph,
+            availability=availability,
             availability_parameters=availability_parameters,
             sender_assignment=sender_assignment,
             min_cells=min_cells,

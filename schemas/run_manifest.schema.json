@@ -57,6 +57,14 @@
         "signatures": {"$ref": "#/$defs/tableRecord"}
       }
     },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_evidence"],
+      "properties": {
+        "edge_evidence": {"$ref": "#/$defs/edgeEvidenceRecord"}
+      }
+    },
     "stages": {
       "type": "array",
       "items": {
@@ -88,6 +96,26 @@
         "rows": {"type": "integer", "minimum": 0},
         "sha256": {"$ref": "#/$defs/sha256"},
         "schema": {"type": "string", "pattern": "^[a-z_]+\\.schema\\.json$"}
+      }
+    },
+    "edgeEvidenceRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extension_schema_version", "filename", "rows", "sha256", "schema", "linked_tables"],
+      "properties": {
+        "extension_schema_version": {"const": "1.0.0"},
+        "filename": {"const": "edge_evidence.parquet"},
+        "rows": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "schema": {"const": "edge_evidence.schema.json"},
+        "linked_tables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sample_scores"],
+          "properties": {
+            "sample_scores": {"$ref": "#/$defs/sha256"}
+          }
+        }
       }
     }
   }

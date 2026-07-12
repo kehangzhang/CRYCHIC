@@ -616,7 +616,7 @@ class BaselineArtifacts:
 
     @property
     def run_parameters_digest(self) -> str:
-        """Digest every effective non-data workflow choice."""
+        """Digest effective workflow choices and fitted filter provenance."""
 
         return canonical_digest(self.run_parameters)
 

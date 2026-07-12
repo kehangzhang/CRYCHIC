@@ -12,7 +12,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from pandas.api import types as pd_types
 
 from crychic.core import canonical_json, stable_id
@@ -20,6 +22,8 @@ from crychic.core import canonical_json, stable_id
 from .errors import ResultValidationError
 
 RESULT_SCHEMA_VERSION = "0.1.0"
+EDGE_EVIDENCE_EXTENSION_VERSION = "1.0.0"
+EDGE_EVIDENCE_EXTENSION_NAME = "edge_evidence"
 TABLE_NAMES = (
     "interactions",
     "differential",
@@ -50,6 +54,19 @@ class TableContract:
     columns: Mapping[str, ColumnContract]
     inferential_null_columns: tuple[str, ...]
     reason_required_for_null_columns: tuple[str, ...]
+    schema_filename: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResultExtensionContract:
+    """Resolved contract for an optional persisted result extension."""
+
+    name: str
+    extension_schema_version: str
+    filename: str
+    primary_key: tuple[str, ...]
+    linked_tables: tuple[str, ...]
+    columns: tuple[str, ...]
     schema_filename: str
 
 
@@ -232,6 +249,258 @@ def table_contract(name: str) -> TableContract:
         reason_required_for_null_columns=tuple(reason_columns),
         schema_filename=schema_filename,
     )
+
+
+@cache
+def edge_evidence_contract() -> ResultExtensionContract:
+    """Resolve the versioned optional edge-evidence result extension."""
+
+    schema_filename = "edge_evidence.schema.json"
+    document = load_schema_document(schema_filename)
+    properties = document.get("properties")
+    if not isinstance(properties, Mapping):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has no properties",
+            code="invalid_result_schema",
+            field="properties",
+            remediation="Restore the released schema document",
+        )
+
+    def constant(property_name: str) -> Any:
+        value = properties.get(property_name)
+        if not isinstance(value, Mapping) or "const" not in value:
+            raise ResultValidationError(
+                f"Extension schema {schema_filename} lacks {property_name!r}",
+                code="invalid_result_schema",
+                field=property_name,
+                remediation="Restore the released schema document",
+            )
+        return value["const"]
+
+    version = constant("extension_schema_version")
+    result_version = constant("result_schema_version")
+    table_name = constant("table")
+    filename = constant("filename")
+    primary_key = constant("primary_key")
+    linked_tables = constant("linked_tables")
+    column_block = properties.get("columns")
+    raw_columns = (
+        column_block.get("properties")
+        if isinstance(column_block, Mapping)
+        else None
+    )
+    if (
+        version != EDGE_EVIDENCE_EXTENSION_VERSION
+        or result_version != RESULT_SCHEMA_VERSION
+        or table_name != EDGE_EVIDENCE_EXTENSION_NAME
+        or filename != "edge_evidence.parquet"
+        or not isinstance(primary_key, list)
+        or not isinstance(linked_tables, list)
+        or linked_tables != ["sample_scores"]
+        or not isinstance(raw_columns, Mapping)
+    ):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has incompatible metadata",
+            code="invalid_result_schema",
+            field="extension_schema_version",
+            remediation="Use schemas from the installed result extension version",
+        )
+    if not all(isinstance(value, str) and value for value in primary_key):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has an invalid primary key",
+            code="invalid_result_schema",
+            field="primary_key",
+            remediation="Restore the released schema document",
+        )
+    if not all(isinstance(value, str) and value for value in raw_columns):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has invalid columns",
+            code="invalid_result_schema",
+            field="columns",
+            remediation="Restore the released schema document",
+        )
+    if not set(primary_key).issubset(raw_columns):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} primary key is incomplete",
+            code="invalid_result_schema",
+            field="primary_key",
+            remediation="Restore the released schema document",
+        )
+    return ResultExtensionContract(
+        name=table_name,
+        extension_schema_version=version,
+        filename=filename,
+        primary_key=tuple(primary_key),
+        linked_tables=tuple(linked_tables),
+        columns=tuple(raw_columns),
+        schema_filename=schema_filename,
+    )
+
+
+def validate_edge_evidence(frame: pd.DataFrame) -> pd.DataFrame:
+    """Validate the optional ledger without retaining an additional table copy."""
+
+    from crychic.workflow.contracts import EdgeEvidenceLedger
+
+    contract = edge_evidence_contract()
+    if not isinstance(frame, pd.DataFrame):
+        raise ResultValidationError(
+            "Edge evidence must be a pandas DataFrame",
+            code="invalid_result_extension",
+            field=contract.name,
+            remediation="Supply an EdgeEvidenceLedger-compatible table",
+        )
+    try:
+        validated_columns = tuple(EdgeEvidenceLedger(frame).table.columns)
+    except (TypeError, ValueError) as exc:
+        raise ResultValidationError(
+            "Edge evidence does not satisfy its released extension contract",
+            code="invalid_result_extension",
+            field=contract.name,
+            remediation="Regenerate the ledger from validated workflow artifacts",
+        ) from exc
+    if validated_columns != contract.columns:
+        raise ResultValidationError(
+            "Edge evidence columns do not match its released schema order",
+            code="invalid_result_extension",
+            field=contract.name,
+            remediation="Write columns in the released edge-evidence order",
+        )
+    return frame
+
+
+_EDGE_EVIDENCE_PERSISTED_LINK_COLUMNS = (
+    "subject_id",
+    "sample_id",
+    "context_id",
+    "design_row_id",
+    "edge_id",
+    "scoring_functional_id",
+    "repeat_id",
+    "fold_id",
+    "mode",
+    "availability",
+    "downstream",
+    "sender_component",
+    "prior_quality",
+    "comm_strength",
+    "eligible",
+    "status",
+)
+
+
+def _persisted_edge_link_projection(frame: pd.DataFrame) -> pd.DataFrame:
+    mode = frame["mode"].astype("string")
+    status = frame["legacy_integrated_status"].astype("string")
+    projected = pd.DataFrame(
+        {
+            "subject_id": frame["subject_id"].astype("string"),
+            "sample_id": frame["sample_id"].astype("string"),
+            "context_id": frame["context_id"].astype("string"),
+            "design_row_id": [
+                stable_id(
+                    "design_row",
+                    {"context_id": str(context_id), "sample_id": str(sample_id)},
+                )
+                for context_id, sample_id in frame[
+                    ["context_id", "sample_id"]
+                ].itertuples(index=False, name=None)
+            ],
+            "edge_id": [
+                stable_id(
+                    "communication_edge",
+                    {
+                        "interaction_id": str(interaction_id),
+                        "receiver": str(receiver),
+                        "sender": str(sender),
+                    },
+                )
+                for sender, receiver, interaction_id in frame[
+                    ["sender", "receiver", "interaction_id"]
+                ].itertuples(index=False, name=None)
+            ],
+            "scoring_functional_id": frame["scoring_function_id"].astype("string"),
+            "repeat_id": pd.Series("repeat-0", index=frame.index, dtype="string"),
+            "fold_id": frame["fold_id"].astype("string"),
+            "mode": mode,
+            "availability": pd.to_numeric(
+                frame["state_availability"].where(
+                    mode.eq("state"), frame["ecosystem_availability"]
+                ),
+                errors="coerce",
+            ).astype("float64"),
+            "downstream": pd.to_numeric(
+                frame["legacy_downstream_activity"], errors="coerce"
+            ).astype("float64"),
+            "sender_component": pd.to_numeric(
+                frame["sender_weight"], errors="coerce"
+            ).astype("float64"),
+            "prior_quality": pd.to_numeric(
+                frame["prior_quality"], errors="coerce"
+            ).astype("float64"),
+            "comm_strength": pd.to_numeric(
+                frame["legacy_integrated_strength"], errors="coerce"
+            ).astype("float64"),
+            "eligible": status.eq("ok").astype(bool),
+            "status": status.where(status.eq("ok"), "missing").astype("string"),
+        },
+        index=frame.index,
+    )
+    return projected.loc[:, list(_EDGE_EVIDENCE_PERSISTED_LINK_COLUMNS)]
+
+
+def validate_edge_evidence_links(
+    edge_evidence: pd.DataFrame,
+    sample_scores: pd.DataFrame,
+    *,
+    chunk_size: int = 100_000,
+) -> None:
+    """Validate linked ledger rows against persisted sample-score keys and values.
+
+    The comparison is chunked and retains only one 64-bit row fingerprint per
+    record, avoiding a full many-column merge for multi-million-row ledgers.
+    """
+
+    linked_mask = edge_evidence["sample_score_status"].eq("linked").to_numpy()
+    linked_count = int(linked_mask.sum())
+    if linked_count == 0:
+        return
+    if linked_count != len(sample_scores):
+        raise ResultValidationError(
+            "Linked edge evidence does not cover the persisted sample-score table",
+            code="invalid_result_extension_linkage",
+            field="edge_evidence",
+            remediation="Persist sample scores and edge evidence from one artifact",
+        )
+    actual = sample_scores.loc[
+        :, list(_EDGE_EVIDENCE_PERSISTED_LINK_COLUMNS)
+    ]
+    actual_hashes = pd.util.hash_pandas_object(actual, index=False).to_numpy(
+        dtype="uint64", copy=True
+    )
+    expected_hashes: NDArray[np.uint64] = np.empty(linked_count, dtype="uint64")
+    output_offset = 0
+    for start in range(0, len(edge_evidence), chunk_size):
+        stop = min(start + chunk_size, len(edge_evidence))
+        chunk_mask = linked_mask[start:stop]
+        if not bool(chunk_mask.any()):
+            continue
+        chunk = edge_evidence.iloc[start:stop].loc[chunk_mask]
+        projected = _persisted_edge_link_projection(chunk)
+        hashes = pd.util.hash_pandas_object(projected, index=False).to_numpy(
+            dtype="uint64", copy=False
+        )
+        expected_hashes[output_offset : output_offset + len(hashes)] = hashes
+        output_offset += len(hashes)
+    actual_hashes.sort()
+    expected_hashes.sort()
+    if not np.array_equal(actual_hashes, expected_hashes):
+        raise ResultValidationError(
+            "Edge evidence does not reproduce persisted sample-score keys and values",
+            code="invalid_result_extension_linkage",
+            field="edge_evidence",
+            remediation="Persist sample scores and edge evidence from one artifact",
+        )
 
 
 def empty_table(name: str) -> pd.DataFrame:

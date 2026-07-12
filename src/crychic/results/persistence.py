@@ -19,7 +19,15 @@ from crychic.core import (
     canonical_json,
 )
 
-from ._schema import RESULT_SCHEMA_VERSION, TABLE_NAMES, table_contract, validate_table
+from ._schema import (
+    RESULT_SCHEMA_VERSION,
+    TABLE_NAMES,
+    edge_evidence_contract,
+    table_contract,
+    validate_edge_evidence,
+    validate_edge_evidence_links,
+    validate_table,
+)
 from .errors import ResultWriteError
 
 if TYPE_CHECKING:
@@ -98,6 +106,7 @@ def _build_manifest(
     config: CrychicConfig,
     provenance: RunProvenance,
     table_records: Mapping[str, object],
+    extension_records: Mapping[str, object],
 ) -> dict[str, object]:
     allowed = {
         "run_id",
@@ -132,7 +141,7 @@ def _build_manifest(
     warnings = tuple(raw_warnings)
     if any(not isinstance(item, str) or not item for item in warnings):
         raise ValueError("run manifest warnings must be non-empty strings")
-    return {
+    manifest: dict[str, object] = {
         "result_schema_version": RESULT_SCHEMA_VERSION,
         "run_id": run_id,
         "status": "complete",
@@ -149,6 +158,9 @@ def _build_manifest(
         "stages": [_normalise_stage(stage) for stage in raw_stages],
         "warnings": list(warnings),
     }
+    if extension_records:
+        manifest["extensions"] = dict(extension_records)
+    return manifest
 
 
 def _mark_incomplete(path: Path, error_type: str | None = None) -> None:
@@ -171,8 +183,13 @@ def write_result(
     provenance: RunProvenance | Mapping[str, object],
     run_manifest: Mapping[str, object],
     tables: Mapping[str, pd.DataFrame],
+    edge_evidence: pd.DataFrame | None = None,
 ) -> CrychicResult:
-    """Validate and atomically publish a complete v0.1 result directory."""
+    """Validate and atomically publish a complete v0.1 result directory.
+
+    ``edge_evidence`` is an optional, independently versioned result extension.
+    Omitting it preserves the original v0.1.0 manifest and directory shape.
+    """
 
     output = Path(destination)
     if output.exists():
@@ -199,7 +216,7 @@ def write_result(
 
         write_json(temporary / CONFIG_FILENAME, resolved_config.to_dict())
         write_json(temporary / PROVENANCE_FILENAME, resolved_provenance.to_dict())
-        table_records: dict[str, object] = {}
+        table_records: dict[str, dict[str, object]] = {}
         for name in TABLE_NAMES:
             frame = tables[name]
             validate_table(name, frame)
@@ -213,11 +230,41 @@ def write_result(
                 "schema": contract.schema_filename,
             }
 
+        extension_records: dict[str, object] = {}
+        if edge_evidence is not None:
+            extension_contract = edge_evidence_contract()
+            validated_edge_evidence = validate_edge_evidence(edge_evidence)
+            validate_edge_evidence_links(
+                validated_edge_evidence, tables["sample_scores"]
+            )
+            extension_path = temporary / extension_contract.filename
+            validated_edge_evidence.to_parquet(
+                extension_path,
+                index=False,
+                engine="pyarrow",
+                compression="zstd",
+                row_group_size=131_072,
+            )
+            extension_records[extension_contract.name] = {
+                "extension_schema_version": (
+                    extension_contract.extension_schema_version
+                ),
+                "filename": extension_contract.filename,
+                "rows": len(validated_edge_evidence),
+                "sha256": sha256_file(extension_path),
+                "schema": extension_contract.schema_filename,
+                "linked_tables": {
+                    table_name: table_records[table_name]["sha256"]
+                    for table_name in extension_contract.linked_tables
+                },
+            }
+
         manifest = _build_manifest(
             run_manifest,
             config=resolved_config,
             provenance=resolved_provenance,
             table_records=table_records,
+            extension_records=extension_records,
         )
         write_json(temporary / MANIFEST_FILENAME, manifest)
         write_json(

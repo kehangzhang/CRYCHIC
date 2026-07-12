@@ -1,0 +1,141 @@
+# ADR-004: Train-only cross-fit boundary
+
+- Status: Accepted
+- Date: 2026-07-13
+- Implementation status: Partial; the sanitized training/application boundary
+  and frozen interaction-universe stage exist, but the public end-to-end
+  cross-fit workflow does not
+
+## Context
+
+CRYCHIC has subject-blocked fold planning, frozen interaction-universe
+contracts, incremental downstream fit/apply primitives, and out-of-fold table
+validators. Those pieces do not by themselves prove that every data-derived
+artifact was learned from training subjects only. A caller can otherwise pass
+precomputed matrices or provenance labels derived from the complete data and
+still produce an output table that looks out of fold.
+
+The certified workflow therefore needs a physical data boundary, not only
+matching identifiers. This boundary must cover filtering, receptor gates,
+family construction, precision transforms, nuisance encoders, tuning,
+downstream models, sender functionals, and scoring manifests.
+
+## Decision
+
+The only public cross-fit entry point will accept raw observations and
+pre-registered, data-independent inputs:
+
+```python
+def run_subject_crossfit(
+    adata: AnnData,
+    config: CrychicConfig,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    *,
+    spec: CrossFitSpec,
+) -> CrossFitArtifacts:
+    ...
+```
+
+It will not accept a `FoldPlan`, subject identifiers, response or availability
+matrices, fitted artifacts, family bases, scoring functionals, or caller-made
+provenance identifiers. The orchestrator derives folds from declared metadata
+and creates physical, sanitized training and test `AnnData` copies. These
+copies retain only the declared count matrix, required observation columns,
+and variable names; they do not retain `raw`, `uns`, embeddings, or parent
+views.
+
+An internal training scope derives its subject and sample identifiers from its
+own observations. Every data-driven fit runs inside that scope. Application
+receives only immutable training artifacts plus a held-out scope and may call
+fixed transforms and apply functions, but no fit, pooling, clustering,
+winsorization, or tuning function.
+
+Certified out-of-fold status requires raw counts. A normalized-only input may
+run as exploratory, but cannot claim certified train-only provenance because
+CRYCHIC cannot audit how its upstream normalization was learned.
+
+## Fold stages
+
+Training performs, in order:
+
+1. pseudobulk construction and training-only expression support filtering;
+2. interaction selection, optional cap, and receptor/path eligibility;
+3. continuous response and precision-transform fitting;
+4. strict family construction and frozen target basis fitting;
+5. nuisance encoder and inner-training parameter selection;
+6. incremental downstream model fitting;
+7. a contrast-common sender functional;
+8. an aggregate fold/contrast scoring manifest.
+
+Application performs only sample-local fixed count transforms, frozen-universe
+availability, frozen gate and design encoding, downstream and sender
+application, and common-functional scoring.
+
+A fold/contrast may contain multiple receiver models. Its aggregate manifest
+hashes the sorted child manifest identifiers. Score rows record both the
+aggregate manifest and their receiver child manifest so that the existing OOF
+coverage checks do not mistake multiple legitimate receiver models for
+inconsistent scoring.
+
+## Globally frozen inputs
+
+The following may be fixed before folds are observed: resource and target
+prior checksums, namespace maps, static complex definitions, the explicit
+context graph and contrasts, predefined nuisance gene programs, formulas,
+threshold candidates, component weights, fold policy, and seed lineage.
+
+The following must never be learned from the complete dataset: expression or
+interaction support, a top-k cap, receptor gates, family definitions,
+precision winsorization, selected penalties, attribution coefficients, latent
+nuisance factors, downstream centering/scaling/models, sender prevalence or
+temperature, and data-driven component calibration.
+
+## Acceptance tests
+
+The workflow is not certified until all of these tests pass:
+
+- Altering only test-subject expression leaves every training artifact ID
+  unchanged while allowing held-out scores to change.
+- Test-only poison values that would alter a global filter, gate, precision
+  transform, family, downstream model, or sender model do not alter training
+  manifests.
+- Monkeypatching every fit function to raise during application does not stop
+  application.
+- Each training stage observes exactly its fold's training subjects.
+- Public signatures reject precomputed matrices, artifacts, IDs, and claimed
+  provenance.
+- Every subject appears in exactly one test fold and every score has one
+  aggregate and one receiver-child manifest.
+- An unseen held-out categorical level becomes `not_estimable`; application
+  does not refit the encoder.
+- Normalized-only input cannot produce certified out-of-fold status.
+
+## Alternatives considered
+
+Allowing callers to supply `TrainingArtifacts` or a claimed list of training
+subjects was rejected. Digests can prove object identity after construction,
+but cannot prove that the object was not fitted on held-out observations.
+
+Validating only the final score table was also rejected. Exact fold coverage
+is necessary, but it audits output bookkeeping rather than stage-level data
+access.
+
+## Consequences
+
+The public API is intentionally narrower than the low-level research APIs.
+Advanced users may still call primitives directly, but their results remain
+exploratory and cannot be relabeled as certified OOF.
+
+The first implementation adds dedicated training and application modules. It
+fits the interaction universe from a sanitized training scope, rejects subject
+overlap, and applies that universe to held-out observations without calling a
+training fit function. Its producer-owned artifacts enumerate every remaining
+stage and always report `partial_not_oof`.
+
+A cross-fit orchestrator, fixed sample transform, frozen design encoder,
+receptor gate, response and precision stages, family-first attribution,
+incremental downstream model, common sender functional, and common scoring
+manifest still remain. Until that complete path exists and passes every poison
+test above, incremental downstream evidence remains `not_estimable` in the
+public baseline workflow and no default-method switch is eligible.

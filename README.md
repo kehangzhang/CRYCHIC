@@ -39,7 +39,17 @@ preserving the exploratory v0.1 behavior:
   interaction universes prevent test-fold filtering leakage, and the H-common
   benchmark arm rejects data-driven top-k interaction caps;
 - an edge-evidence ledger records component status, missingness reasons and
-  provenance at sample x context x sender x receiver x interaction grain.
+  provenance at sample x context x sender x receiver x interaction grain. It
+  can be persisted as an optional, versioned Parquet result extension with
+  `persist_edge_evidence=True`;
+- a producer-owned partial train/apply API now learns the interaction universe
+  from sanitized training-fold observations and applies it unchanged to
+  held-out observations. It is explicitly labelled `partial_not_oof`; receptor,
+  response, family, downstream, sender, and common-scoring stages remain to be
+  connected before certified cross-fitting;
+- benchmark utilities now provide frozen-universe RBO, weighted Kendall,
+  top-k curves, rank intervals, and stable-tier assignments. They are not yet
+  connected to the real-data report campaign.
 
 `EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
 candidate. It allocates bounded model-level explained gain across driver
@@ -155,5 +165,7 @@ uv run --extra dev python -m build
 
 - [Detailed development plan](DEVELOPMENT_PLAN.md)
 - [v0.1 method specification](docs/methods/v0.1-exploratory-baseline.md)
+- [Suggestion 1 implementation status](docs/methods/suggestion-1-implementation-status.md)
+- [Train-only cross-fit boundary decision](docs/adr/ADR-004-train-only-crossfit-boundary.md)
 - [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
 - [Repository development instructions](AGENTS.md)

@@ -123,6 +123,7 @@ class Crychic:
         git_dirty: bool = False,
         package_version: str | None = None,
         run_id: str | None = None,
+        persist_edge_evidence: bool = False,
         availability_parameters: AvailabilityParameters = (
             _DEFAULT_AVAILABILITY_PARAMETERS
         ),
@@ -191,4 +192,5 @@ class Crychic:
             package_version=package_version,
             run_id=run_id,
             sender_parameters=sender_parameters,
+            persist_edge_evidence=persist_edge_evidence,
         )
