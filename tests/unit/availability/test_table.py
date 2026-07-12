@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from scipy import sparse
 
@@ -9,6 +10,7 @@ from crychic.availability import (
     HillParameters,
     estimate_bundle_availability,
 )
+from crychic.availability.table import _entity_values
 from crychic.pseudobulk import ExploratoryAggregate, PseudobulkDataset
 from crychic.resources import (
     GeneNamespace,
@@ -123,6 +125,10 @@ def test_batch_availability_preserves_state_and_ecosystem_components() -> None:
     assert len(active) == 3
     assert (active["availability_state"] > 0).all()
     assert (active["availability_ecosystem"] < active["availability_state"]).all()
+    assert set(table["state_status"].astype(str)) == {"observed"}
+    assert table["state_reason_code"].isna().all()
+    assert set(table["ecosystem_status"].astype(str)) == {"observed"}
+    assert table["ecosystem_reason_code"].isna().all()
     missing_sample = table.loc[table["sample_id"] == "S2:stim"]
     assert set(missing_sample["sender"].astype(str)) == {"Sender"}
     assert set(missing_sample["receiver"].astype(str)) == {"Sender"}
@@ -250,3 +256,81 @@ def test_normalized_without_detection_is_invariant_to_cell_count() -> None:
     assert not result.detection_available
     assert selected["availability_state"].nunique() == 1
     assert selected["availability_ecosystem"].nunique() == 1
+
+
+def test_complex_values_preserve_exact_zero_and_missingness() -> None:
+    values = np.asarray(
+        [
+            [0.0, 0.8],
+            [np.nan, 0.8],
+            [0.0, np.nan],
+            [0.4, 0.8],
+        ]
+    )
+
+    result = _entity_values(values, (0, 1), power=4.0, epsilon=1e-12)
+
+    assert result[0] == 0.0
+    assert np.isnan(result[1])
+    assert np.isnan(result[2])
+    assert 0.4 < result[3] < 0.8
+
+
+def test_state_score_does_not_require_abundance_eligibility() -> None:
+    aggregate = _aggregate()
+    metadata = aggregate.unit_metadata.copy()
+    unavailable = (metadata["sample_id"] == "S1:ctrl") & (
+        metadata["cell_type"] == "Sender"
+    )
+    metadata.loc[unavailable, "abundance_eligible"] = False
+    modified = PseudobulkDataset(
+        counts=aggregate.counts,
+        detection_fraction=aggregate.detection_fraction,
+        unit_metadata=metadata,
+        feature_ids=aggregate.feature_ids,
+        matrix_unit_ids=aggregate.matrix_unit_ids,
+        source_location=aggregate.source_location,
+    )
+
+    result = estimate_bundle_availability(
+        modified,
+        _bundle(),
+        context_keys=("condition",),
+        parameters=AvailabilityParameters(
+            hill=HillParameters(half_saturation=1.0),
+            detection=DetectionShrinkage(alpha=1.0, beta=1.0, exponent=0.0),
+        ),
+        min_pooled_availability=0.0,
+    )
+
+    sample = result.sample_interactions.loc[
+        result.sample_interactions["sample_id"] == "S1:ctrl"
+    ]
+    assert len(sample) == 4
+    assert sample["availability_state"].notna().all()
+    assert set(sample["state_status"].astype(str)) == {"observed"}
+    assert sample["state_reason_code"].isna().all()
+
+    sender_to_receiver = sample.loc[
+        (sample["sender"] == "Sender") & (sample["receiver"] == "Receiver")
+    ].iloc[0]
+    assert pd.isna(sender_to_receiver["availability_ecosystem"])
+    assert sender_to_receiver["ecosystem_status"] == "abundance_not_estimable"
+    assert (
+        sender_to_receiver["ecosystem_reason_code"] == "sender_abundance_not_eligible"
+    )
+
+    receiver_to_sender = sample.loc[
+        (sample["sender"] == "Receiver") & (sample["receiver"] == "Sender")
+    ].iloc[0]
+    assert pd.isna(receiver_to_sender["availability_ecosystem"])
+    assert (
+        receiver_to_sender["ecosystem_reason_code"] == "receiver_abundance_not_eligible"
+    )
+
+    receiver_to_receiver = sample.loc[
+        (sample["sender"] == "Receiver") & (sample["receiver"] == "Receiver")
+    ].iloc[0]
+    assert receiver_to_receiver["ecosystem_status"] == "observed"
+    assert pd.isna(receiver_to_receiver["ecosystem_reason_code"])
+    assert pd.notna(receiver_to_receiver["availability_ecosystem"])

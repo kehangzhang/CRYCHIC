@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, field
@@ -9,11 +10,86 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from crychic.core import canonical_json, stable_id
 
 CORE_COMPONENTS = ("availability", "downstream", "sender", "prior_quality")
+LEGACY_UNTRACKED_SCORE_VERSION = "geometric_v1_untracked"
+
+
+def float64_array_digest(values: np.ndarray) -> str:
+    """Hash an array after canonical C-order, little-endian float64 conversion."""
+
+    canonical = np.asarray(values, dtype="<f8", order="C")
+    if np.any(~np.isfinite(canonical)):
+        raise ValueError("array digest requires finite values")
+    return hashlib.sha256(canonical.tobytes(order="C")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScoringModelManifest:
+    """Stable identity of every learned artifact consumed by a score."""
+
+    score_version: str
+    basis_id: str
+    coefficient_digest: str
+    receptor_gate_manifest_id: str
+    target_weight_manifest_id: str
+    downstream_functional_id: str
+    sender_functional_id: str
+    availability_transform_id: str
+    precision_transform_id: str
+    filter_universe_id: str
+    tuning_manifest_id: str
+    model_manifest_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        artifact_fields = (
+            "score_version",
+            "basis_id",
+            "coefficient_digest",
+            "receptor_gate_manifest_id",
+            "target_weight_manifest_id",
+            "downstream_functional_id",
+            "sender_functional_id",
+            "availability_transform_id",
+            "precision_transform_id",
+            "filter_universe_id",
+            "tuning_manifest_id",
+        )
+        payload: dict[str, str] = {}
+        for field_name in artifact_fields:
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must be a non-empty string")
+            normalized = value.strip()
+            object.__setattr__(self, field_name, normalized)
+            payload[field_name] = normalized
+        object.__setattr__(
+            self,
+            "model_manifest_id",
+            stable_id("scoring_model_manifest", payload),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        """Return a serialization-ready learned-artifact manifest."""
+
+        return {
+            "model_manifest_id": self.model_manifest_id,
+            "score_version": self.score_version,
+            "basis_id": self.basis_id,
+            "coefficient_digest": self.coefficient_digest,
+            "receptor_gate_manifest_id": self.receptor_gate_manifest_id,
+            "target_weight_manifest_id": self.target_weight_manifest_id,
+            "downstream_functional_id": self.downstream_functional_id,
+            "sender_functional_id": self.sender_functional_id,
+            "availability_transform_id": self.availability_transform_id,
+            "precision_transform_id": self.precision_transform_id,
+            "filter_universe_id": self.filter_universe_id,
+            "tuning_manifest_id": self.tuning_manifest_id,
+        }
 
 
 class ScoringFunctionalStatus(StrEnum):
@@ -88,6 +164,8 @@ class ScoringFunctional:
     training_subject_ids: tuple[str, ...]
     interaction_ids: tuple[str, ...]
     target_ids: tuple[str, ...]
+    score_version: str = LEGACY_UNTRACKED_SCORE_VERSION
+    model_manifest: ScoringModelManifest | None = None
     status: ScoringFunctionalStatus = ScoringFunctionalStatus.EXPLORATORY_IN_SAMPLE
     fold_id: str | None = None
     component_weights: Mapping[str, float] = field(
@@ -99,6 +177,7 @@ class ScoringFunctional:
     frozen: bool = True
     output_scale: str = "unit_interval"
     scoring_function_id: str = field(init=False)
+    model_manifest_id: str | None = field(init=False)
     interaction_universe_id: str = field(init=False)
     target_universe_id: str = field(init=False)
     reason_code: str | None = field(init=False)
@@ -110,6 +189,25 @@ class ScoringFunctional:
             raise ValueError("a ScoringFunctional must be frozen before application")
         if self.output_scale != "unit_interval":
             raise ValueError("v0.1 scoring supports only output_scale='unit_interval'")
+        if not isinstance(self.score_version, str) or not self.score_version.strip():
+            raise ValueError("score_version must be a non-empty string")
+        score_version = self.score_version.strip()
+        if self.model_manifest is None:
+            if score_version != LEGACY_UNTRACKED_SCORE_VERSION:
+                raise ValueError(
+                    "a tracked score_version requires a ScoringModelManifest"
+                )
+            model_manifest_id = None
+        else:
+            if not isinstance(self.model_manifest, ScoringModelManifest):
+                raise TypeError(
+                    "model_manifest must be a ScoringModelManifest or None"
+                )
+            if score_version != self.model_manifest.score_version:
+                raise ValueError(
+                    "score_version must match the supplied ScoringModelManifest"
+                )
+            model_manifest_id = self.model_manifest.model_manifest_id
         status = ScoringFunctionalStatus(self.status)
         contexts = _stable_tuple(
             tuple(self.contrast_contexts), field_name="contrast_contexts"
@@ -154,7 +252,9 @@ class ScoringFunctional:
             "fold_id": self.fold_id,
             "frozen": True,
             "interaction_universe_id": interaction_universe_id,
+            "model_manifest_id": model_manifest_id,
             "output_scale": self.output_scale,
+            "score_version": score_version,
             "status": status.value,
             "target_universe_id": target_universe_id,
             "training_subject_ids": list(training_subjects),
@@ -166,10 +266,12 @@ class ScoringFunctional:
         object.__setattr__(self, "training_subject_ids", training_subjects)
         object.__setattr__(self, "interaction_ids", interactions)
         object.__setattr__(self, "target_ids", targets)
+        object.__setattr__(self, "score_version", score_version)
         object.__setattr__(self, "component_weights", weights)
         object.__setattr__(self, "component_scales", scales)
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "reason_code", reason_code)
+        object.__setattr__(self, "model_manifest_id", model_manifest_id)
         object.__setattr__(self, "interaction_universe_id", interaction_universe_id)
         object.__setattr__(self, "target_universe_id", target_universe_id)
         object.__setattr__(self, "scoring_function_id", function_id)
@@ -191,6 +293,11 @@ class ScoringFunctional:
             "interaction_universe_id": self.interaction_universe_id,
             "target_ids": list(self.target_ids),
             "target_universe_id": self.target_universe_id,
+            "score_version": self.score_version,
+            "model_manifest_id": self.model_manifest_id,
+            "model_manifest": (
+                None if self.model_manifest is None else self.model_manifest.to_dict()
+            ),
             "component_weights": dict(self.component_weights),
             "component_scales": dict(self.component_scales),
             "status": self.status.value,
@@ -221,6 +328,8 @@ SCORE_COLUMNS = {
     "contrast",
     "fold_id",
     "scoring_function_id",
+    "score_version",
+    "model_manifest_id",
     "interaction_universe_id",
     "target_universe_id",
 }
@@ -235,6 +344,8 @@ def validate_common_functional(table: pd.DataFrame) -> None:
         "context",
         "functional_status",
         "scoring_function_id",
+        "score_version",
+        "model_manifest_id",
     }
     missing = required.difference(table.columns)
     if missing:
@@ -248,6 +359,13 @@ def validate_common_functional(table: pd.DataFrame) -> None:
                 "out-of-fold contexts use different scoring_function_id values "
                 f"for contrast={contrast!r}, fold_id={fold_id!r}"
             )
+        for column in ("score_version", "model_manifest_id"):
+            if group[column].nunique(dropna=False) != 1:
+                raise ValueError(
+                    "out-of-fold contexts use different "
+                    f"{column} values for contrast={contrast!r}, "
+                    f"fold_id={fold_id!r}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +411,8 @@ class CommunicationScores:
             expected_provenance = {
                 "functional_status": self.functional.status.value,
                 "fold_id": self.functional.fold_id or "in_sample",
+                "score_version": self.functional.score_version,
+                "model_manifest_id": self.functional.model_manifest_id,
                 "interaction_universe_id": self.functional.interaction_universe_id,
                 "target_universe_id": self.functional.target_universe_id,
             }

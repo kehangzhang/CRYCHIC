@@ -120,10 +120,12 @@ def _validate_input(sample_availability: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-def _softmax(scores: list[float | None], *, temperature: float) -> list[float]:
+def _softmax(
+    scores: list[float | None], *, temperature: float
+) -> list[float | None]:
     observed = {index: value for index, value in enumerate(scores) if value is not None}
     if not observed:
-        return [1.0 / len(scores)] * len(scores)
+        return [None] * len(scores)
     maximum = max(observed.values())
     exponentials = {
         index: math.exp((value - maximum) / temperature)
@@ -133,12 +135,17 @@ def _softmax(scores: list[float | None], *, temperature: float) -> list[float]:
     return [exponentials.get(index, 0.0) / denominator for index in range(len(scores))]
 
 
-def _normalized_entropy(weights: list[float]) -> float:
-    if len(weights) <= 1:
+def _normalized_entropy(weights: list[float | None]) -> float | None:
+    if all(weight is None for weight in weights):
+        return None
+    if any(weight is None for weight in weights):
+        raise ValueError("sender weights must be either all missing or all numeric")
+    numeric = [float(weight) for weight in weights if weight is not None]
+    if len(numeric) <= 1:
         return 0.0
     entropy = float(
-        -sum(weight * math.log(weight) for weight in weights if weight > 0)
-        / math.log(len(weights))
+        -sum(weight * math.log(weight) for weight in numeric if weight > 0)
+        / math.log(len(numeric))
     )
     return min(1.0, max(0.0, entropy))
 

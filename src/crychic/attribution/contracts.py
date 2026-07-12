@@ -41,6 +41,7 @@ class AttributionSupportMethod(StrEnum):
 
     RELATIVE_COEFFICIENT_V1 = "gated_prior_attribution_v1"
     GATED_RESPONSE_NORM_V2 = "gated_response_norm_attribution_support_v2"
+    EXPLAINED_SHARE_V3 = "explained_share_attribution_support_v3"
 
     def to_dict(self) -> dict[str, object]:
         """Return manifest-ready provenance for the selected formula."""
@@ -50,11 +51,16 @@ class AttributionSupportMethod(StrEnum):
             denominator = "maximum_nonnegative_driver_coefficient"
             formula = "beta_j/max_k_beta_k"
             version = 1
-        else:
+        elif self is AttributionSupportMethod.GATED_RESPONSE_NORM_V2:
             numerator = "l2_norm_gated_basis_column_times_coefficient"
             denominator = "l2_norm_positive_response_channel"
             formula = "norm2(B_j*beta_j)/norm2(y_positive)"
             version = 2
+        else:
+            numerator = "weighted_driver_contribution_norm"
+            denominator = "sum_weighted_driver_contribution_norms"
+            formula = "explained_gain*contribution_j/sum_k_contribution_k"
+            version = 3
         return {
             "method": self.value,
             "version": version,
@@ -62,9 +68,11 @@ class AttributionSupportMethod(StrEnum):
             "numerator": numerator,
             "denominator": denominator,
             "clip": [0.0, 1.0],
-            "gate_aware": (
-                self is AttributionSupportMethod.GATED_RESPONSE_NORM_V2
-            ),
+            "gate_aware": self
+            in {
+                AttributionSupportMethod.GATED_RESPONSE_NORM_V2,
+                AttributionSupportMethod.EXPLAINED_SHARE_V3,
+            },
             "application": "multiply_sample_target_activity",
             "experimental": True,
         }
@@ -178,6 +186,8 @@ class DownstreamAttributionSupport:
     values: np.ndarray
     numerator_values: np.ndarray
     denominator_value: float
+    model_explained_gain: float | None = None
+    response_norm_floor: float | None = None
     experimental: bool = True
 
     def __post_init__(self) -> None:
@@ -234,6 +244,45 @@ class DownstreamAttributionSupport:
                 field="values",
                 remediation="Return zero support when the normalizer is zero",
             )
+        explained_gain = self.model_explained_gain
+        response_norm_floor = self.response_norm_floor
+        if method is AttributionSupportMethod.EXPLAINED_SHARE_V3:
+            if (
+                explained_gain is None
+                or not math.isfinite(explained_gain)
+                or not 0 <= explained_gain <= 1
+            ):
+                raise ContractError(
+                    "Explained-share support requires a model gain in [0, 1]",
+                    code="invalid_attribution_support",
+                    field="model_explained_gain",
+                    remediation="Compute weighted model-level explained gain",
+                )
+            if (
+                response_norm_floor is None
+                or not math.isfinite(response_norm_floor)
+                or response_norm_floor < 0
+            ):
+                raise ContractError(
+                    "Explained-share support requires a non-negative response floor",
+                    code="invalid_attribution_support",
+                    field="response_norm_floor",
+                    remediation="Declare the tiny-response suppression threshold",
+                )
+            if float(values.sum()) > explained_gain + 1e-10:
+                raise ContractError(
+                    "Explained-share support cannot exceed model explained gain",
+                    code="invalid_attribution_support",
+                    field="values",
+                    remediation="Allocate the model gain across driver contributions",
+                )
+        elif explained_gain is not None or response_norm_floor is not None:
+            raise ContractError(
+                "Model gain diagnostics are specific to explained-share support",
+                code="invalid_attribution_support",
+                field="model_explained_gain",
+                remediation="Leave v1/v2 explained-share diagnostics unset",
+            )
         if not self.experimental:
             raise ContractError(
                 "Downstream attribution support remains experimental",
@@ -245,18 +294,23 @@ class DownstreamAttributionSupport:
         object.__setattr__(self, "values", values)
         object.__setattr__(self, "numerator_values", numerators)
         object.__setattr__(self, "denominator_value", denominator)
+        object.__setattr__(self, "model_explained_gain", explained_gain)
+        object.__setattr__(self, "response_norm_floor", response_norm_floor)
 
     @property
     def version(self) -> int:
-        return (
-            1
-            if self.method is AttributionSupportMethod.RELATIVE_COEFFICIENT_V1
-            else 2
-        )
+        return {
+            AttributionSupportMethod.RELATIVE_COEFFICIENT_V1: 1,
+            AttributionSupportMethod.GATED_RESPONSE_NORM_V2: 2,
+            AttributionSupportMethod.EXPLAINED_SHARE_V3: 3,
+        }[self.method]
 
     @property
     def gate_aware(self) -> bool:
-        return self.method is AttributionSupportMethod.GATED_RESPONSE_NORM_V2
+        return self.method in {
+            AttributionSupportMethod.GATED_RESPONSE_NORM_V2,
+            AttributionSupportMethod.EXPLAINED_SHARE_V3,
+        }
 
     def to_dict(self) -> dict[str, object]:
         """Return manifest-ready method provenance without fitted values."""

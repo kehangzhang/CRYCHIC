@@ -114,5 +114,5 @@ def test_generated_candidate_config_never_relies_on_an_implicit_default(
         for value in datasets.values()
     }
 
-    assert methods == {method.value for method in AttributionSupportMethod}
+    assert methods == set(spec["support_methods"])
     assert set(datasets) == {"holdout_active_v1", "holdout_active_v2"}

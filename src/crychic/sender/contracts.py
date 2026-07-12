@@ -348,6 +348,8 @@ class SenderAssignment:
                     "cell_type_specificity",
                     "subject_prevalence",
                     "evidence_score",
+                    "assignment_weight",
+                    "normalized_entropy",
                 },
             )
             for column in (
@@ -445,7 +447,26 @@ class SenderAssignment:
             list(ASSIGNMENT_GROUP_COLUMNS), sort=False, observed=True
         )
         for _, group in grouped:
-            weights = [float(value) for value in group["assignment_weight"]]
+            raw_weights = group["assignment_weight"]
+            if raw_weights.isna().all():
+                if not (
+                    group["status"] == SenderAssignmentStatus.MISSING_EVIDENCE.value
+                ).all() or group["normalized_entropy"].notna().any():
+                    raise ContractError(
+                        "all-missing sender evidence requires NA weights and entropy",
+                        code="invalid_sender_normalization",
+                        field="assignment_weight",
+                        remediation="Do not emit fallback weights without evidence",
+                    )
+                continue
+            if raw_weights.isna().any() or group["normalized_entropy"].isna().any():
+                raise ContractError(
+                    "partially missing sender weights are not a valid assignment",
+                    code="invalid_sender_normalization",
+                    field="assignment_weight",
+                    remediation="Normalize observed evidence or mark the group missing",
+                )
+            weights = [float(value) for value in raw_weights]
             if not math.isclose(sum(weights), 1.0, rel_tol=1e-10, abs_tol=1e-12):
                 raise ContractError(
                     "sender assignment weights must sum to one within every group",

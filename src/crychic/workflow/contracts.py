@@ -101,7 +101,11 @@ class BaselineAttributionRun:
     basis: GatedTargetBasis | None
     attribution: AttributionResult | None
     response_field: str = "effect"
-    precision_method: str = "uniform"
+    precision_method: str = "not_applied"
+    precision_transform_id: str | None = None
+    precision_lower_quantile: float | None = None
+    precision_upper_quantile: float | None = None
+    n_positive_precision_features: int = 0
     experimental: bool = True
 
     def __post_init__(self) -> None:
@@ -120,6 +124,31 @@ class BaselineAttributionRun:
             raise ValueError("status=ok requires basis and attribution artifacts")
         if status is not RunStatus.OK and not self.reason_code:
             raise ValueError("non-success attribution requires an explicit reason_code")
+        if not self.precision_method.strip():
+            raise ValueError("precision_method must be a non-empty string")
+        if self.precision_transform_id is None:
+            if (
+                self.precision_lower_quantile is not None
+                or self.precision_upper_quantile is not None
+                or self.n_positive_precision_features != 0
+            ):
+                raise ValueError(
+                    "precision diagnostics require a precision_transform_id"
+                )
+        else:
+            if self.precision_method == "not_applied":
+                raise ValueError("applied precision transform requires its method name")
+            lower = self.precision_lower_quantile
+            upper = self.precision_upper_quantile
+            if (
+                lower is None
+                or upper is None
+                or not 0 <= lower <= upper <= 1
+                or self.n_positive_precision_features < 0
+            ):
+                raise ValueError("precision transform diagnostics are invalid")
+        if status is RunStatus.OK and self.precision_transform_id is None:
+            raise ValueError("successful attribution requires precision provenance")
         if not self.experimental:
             raise ValueError("v0.1 attribution must remain experimental")
         object.__setattr__(self, "status", status)

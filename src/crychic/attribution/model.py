@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -128,6 +129,7 @@ def downstream_attribution_support(
     method: AttributionSupportMethod | str = (
         AttributionSupportMethod.RELATIVE_COEFFICIENT_V1
     ),
+    response_norm_floor: float = 1e-8,
 ) -> DownstreamAttributionSupport:
     """Calculate the declared bounded support for every fitted driver."""
 
@@ -150,11 +152,20 @@ def downstream_attribution_support(
             remediation="Preserve canonical driver order from attribution",
         )
     selected = AttributionSupportMethod(method)
+    if not np.isfinite(response_norm_floor) or response_norm_floor < 0:
+        raise ValueError("response_norm_floor must be finite and non-negative")
     coefficients = np.asarray(attribution.coefficients, dtype=float)
+    model_explained_gain: float | None = None
+    declared_response_floor: float | None = None
     if selected is AttributionSupportMethod.RELATIVE_COEFFICIENT_V1:
         numerators = coefficients.copy()
         denominator = float(np.max(coefficients, initial=0.0))
-    else:
+        values = (
+            np.zeros_like(numerators)
+            if denominator == 0
+            else np.clip(numerators / denominator, 0.0, 1.0)
+        )
+    elif selected is AttributionSupportMethod.GATED_RESPONSE_NORM_V2:
         numerators = np.asarray(
             [
                 np.linalg.norm(
@@ -166,11 +177,44 @@ def downstream_attribution_support(
             dtype=float,
         )
         denominator = float(np.linalg.norm(attribution.positive_response))
-    values = (
-        np.zeros_like(numerators)
-        if denominator == 0
-        else np.clip(numerators / denominator, 0.0, 1.0)
-    )
+        values = (
+            np.zeros_like(numerators)
+            if denominator == 0
+            else np.clip(numerators / denominator, 0.0, 1.0)
+        )
+    else:
+        positive = np.asarray(attribution.positive_response, dtype=float)
+        fitted = np.asarray(attribution.predicted, dtype=float)
+        precision = np.asarray(attribution.precision_weights, dtype=float)
+        null_loss = float(np.dot(precision, positive * positive))
+        response_norm = math.sqrt(max(0.0, null_loss))
+        declared_response_floor = response_norm_floor
+        if null_loss <= 0 or response_norm <= response_norm_floor:
+            model_explained_gain = 0.0
+        else:
+            residual = positive - fitted
+            fitted_loss = float(np.dot(precision, residual * residual))
+            model_explained_gain = float(
+                np.clip((null_loss - fitted_loss) / null_loss, 0.0, 1.0)
+            )
+        sqrt_precision = np.sqrt(precision)
+        numerators = np.asarray(
+            [
+                np.linalg.norm(
+                    sqrt_precision
+                    * np.asarray(basis.matrix.getcol(column).toarray()).ravel()
+                    * coefficient
+                )
+                for column, coefficient in enumerate(coefficients)
+            ],
+            dtype=float,
+        )
+        denominator = float(numerators.sum())
+        values = (
+            np.zeros_like(numerators)
+            if denominator == 0 or model_explained_gain == 0
+            else model_explained_gain * numerators / denominator
+        )
     return DownstreamAttributionSupport(
         basis_id=basis.basis_id,
         driver_ids=basis.driver_ids,
@@ -178,6 +222,8 @@ def downstream_attribution_support(
         values=values,
         numerator_values=numerators,
         denominator_value=denominator,
+        model_explained_gain=model_explained_gain,
+        response_norm_floor=declared_response_floor,
     )
 
 

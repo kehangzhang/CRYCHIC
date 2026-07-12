@@ -81,7 +81,11 @@ def _validated_spec(path: Path, repo_root: Path) -> dict[str, Any]:
     if not isinstance(methods_raw, list) or len(methods_raw) != 2:
         raise ValueError("candidate requires explicit v1 and v2 support methods")
     methods = tuple(AttributionSupportMethod(str(value)) for value in methods_raw)
-    if set(methods) != set(AttributionSupportMethod):
+    legacy_candidate_methods = {
+        AttributionSupportMethod.RELATIVE_COEFFICIENT_V1,
+        AttributionSupportMethod.GATED_RESPONSE_NORM_V2,
+    }
+    if set(methods) != legacy_candidate_methods:
         raise ValueError("candidate support_methods must contain exactly v1 and v2")
     seed = spec.get("holdout_seed")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:

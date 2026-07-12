@@ -151,14 +151,14 @@ def test_missing_candidate_is_explicit_and_not_converted_to_zero() -> None:
     assert table["assignment_weight"].sum() == pytest.approx(1.0)
 
 
-def test_all_missing_candidates_use_explicit_noninformative_equal_fallback() -> None:
+def test_all_missing_candidates_do_not_emit_pseudo_weights() -> None:
     availability = _availability()
     availability["ligand_availability"] = np.nan
 
     result = assign_senders(availability)
 
-    assert result.table["assignment_weight"].tolist() == pytest.approx([0.5, 0.5])
-    assert result.table["normalized_entropy"].tolist() == pytest.approx([1.0, 1.0])
+    assert result.table["assignment_weight"].isna().all()
+    assert result.table["normalized_entropy"].isna().all()
     assert set(result.table["status"]) == {
         SenderAssignmentStatus.MISSING_EVIDENCE.value
     }
@@ -183,7 +183,8 @@ def test_equal_weight_entropy_stays_inside_unit_interval(
 
     result = assign_senders(availability)
 
-    assert result.table["normalized_entropy"].tolist() == [1.0] * candidate_count
+    assert result.table["assignment_weight"].isna().all()
+    assert result.table["normalized_entropy"].isna().all()
 
 
 def test_low_subject_support_is_retained_with_reason() -> None:

@@ -15,6 +15,7 @@ from crychic.attribution import (
     AttributionSupportMethod,
     attribute_target_prior,
     downstream_attribution_support,
+    winsorized_normalized_precision,
 )
 from crychic.availability import (
     AvailabilityParameters,
@@ -47,6 +48,8 @@ from crychic.scoring import (
     CORE_COMPONENTS,
     CommunicationScores,
     ScoringFunctional,
+    ScoringModelManifest,
+    float64_array_digest,
     score_communication,
 )
 from crychic.sender import (
@@ -69,6 +72,11 @@ from .contracts import (
 _METHOD_VERSION = "0.1.0-exploratory"
 _JOIN_KEYS = ["sample_id", "subject_id", "context", "receiver", "interaction_id"]
 _DEFAULT_AVAILABILITY_PARAMETERS = AvailabilityParameters()
+_PRECISION_LOWER_QUANTILE = 0.05
+_PRECISION_UPPER_QUANTILE = 0.95
+_MIN_POSITIVE_PRECISION_FEATURES = 2
+_PRECISION_METHOD = "winsorized_median_normalized_v1"
+_TRACKED_GEOMETRIC_SCORE_VERSION = "geometric_v1_tracked"
 
 
 def _workflow_contrasts(graph: ContextGraph) -> tuple[ContrastSpec, ...]:
@@ -751,7 +759,7 @@ def _scoring_availability(
         validate="many_to_one",
         sort=False,
     )
-    if source["assignment_weight"].isna().any():
+    if source["sender_status"].isna().any():
         raise ValueError("sender assignment does not cover every availability edge")
     supported_sender = source["sender_status"] == "ok"
     source["sender_component"] = (
@@ -965,13 +973,50 @@ def _run_attribution(
                     )
                 )
                 continue
+            raw_precision = pd.to_numeric(
+                selected["precision"], errors="coerce"
+            ).to_numpy(dtype=float)
+            precision_transform = winsorized_normalized_precision(
+                raw_precision,
+                lower_quantile=_PRECISION_LOWER_QUANTILE,
+                upper_quantile=_PRECISION_UPPER_QUANTILE,
+                min_positive_features=_MIN_POSITIVE_PRECISION_FEATURES,
+            )
+            if not precision_transform.estimable:
+                runs.append(
+                    BaselineAttributionRun(
+                        receiver=receiver,
+                        contrast=spec.name,
+                        contrast_contexts=contexts,
+                        status=RunStatus.NOT_ESTIMABLE,
+                        reason_code=precision_transform.reason_code,
+                        receptor_gates=gate_tuple,
+                        driver_by_interaction=mapping_tuple,
+                        basis=None,
+                        attribution=None,
+                        precision_method=_PRECISION_METHOD,
+                        precision_transform_id=(
+                            precision_transform.precision_transform_id
+                        ),
+                        precision_lower_quantile=(
+                            precision_transform.lower_quantile
+                        ),
+                        precision_upper_quantile=(
+                            precision_transform.upper_quantile
+                        ),
+                        n_positive_precision_features=(
+                            precision_transform.n_positive_features
+                        ),
+                    )
+                )
+                continue
             try:
                 basis, result = attribute_target_prior(
                     prior,
                     response.feature_ids,
                     gates,
                     effects,
-                    precision_weights=np.ones(len(effects), dtype=float),
+                    precision_weights=precision_transform.values,
                     lambda1=lambda1,
                     lambda2=lambda2,
                     cosine_threshold=cosine_threshold,
@@ -998,6 +1043,13 @@ def _run_attribution(
                     driver_by_interaction=mapping_tuple,
                     basis=basis,
                     attribution=result,
+                    precision_method=_PRECISION_METHOD,
+                    precision_transform_id=precision_transform.precision_transform_id,
+                    precision_lower_quantile=precision_transform.lower_quantile,
+                    precision_upper_quantile=precision_transform.upper_quantile,
+                    n_positive_precision_features=(
+                        precision_transform.n_positive_features
+                    ),
                 )
             )
     return tuple(runs)
@@ -1052,20 +1104,27 @@ def _downstream_table(
         interaction_id = str(row.interaction_id)
         driver = driver_by_interaction.get(interaction_id)
         activity: float | None = None
+        receiver_program_score: float | None = None
         quality: float | None = None
         status = "missing_core_evidence"
         reason = run.reason_code
+        receiver_program_status = "missing_core_evidence"
+        receiver_program_reason = run.reason_code
         target_weight_id: str | None = None
         support_value: float | None = None
         support_numerator: float | None = None
         support_denominator: float | None = None
         if driver is None:
             reason = "interaction_not_in_target_prior"
+            receiver_program_reason = reason
         elif not run.succeeded or run.basis is None or run.attribution is None:
             reason = run.reason_code or "attribution_unavailable"
+            receiver_program_reason = reason
         else:
             column = run.basis.driver_ids.index(driver)
-            profile = np.asarray(run.basis.matrix.getcol(column).toarray()).ravel()
+            profile = np.asarray(
+                run.basis.normalized_profiles.getcol(column).toarray()
+            ).ravel()
             profile_sum = float(profile.sum())
             if support is None:
                 raise RuntimeError("successful attribution lacks support contract")
@@ -1091,21 +1150,20 @@ def _downstream_table(
             )
             if profile_sum <= 0:
                 reason = "driver_basis_unavailable"
+                receiver_program_reason = reason
                 quality = None
-            elif support_value <= 0:
-                activity = 0.0
-                status = "zero_attribution"
-                reason = None
             else:
                 source_row = sample_rows.get(_plain(row.sample_id))
                 if source_row is None or not bool(
                     response.sample_metadata.at[source_row, "response_eligible"]
                 ):
                     reason = "receiver_response_unavailable"
+                    receiver_program_reason = reason
                 else:
                     values = response.sample_values[source_row]
                     if not np.isfinite(values).all():
                         reason = "receiver_response_unavailable"
+                        receiver_program_reason = reason
                     else:
                         weights = profile / profile_sum
                         transformed = np.asarray(
@@ -1115,15 +1173,25 @@ def _downstream_table(
                             ],
                             dtype=float,
                         )
-                        activity = float(
-                            np.clip(
-                                np.dot(weights, transformed) * support_value,
-                                0,
-                                1,
-                            )
+                        receiver_program_score = float(
+                            np.clip(np.dot(weights, transformed), 0, 1)
                         )
-                        status = "observed"
-                        reason = None
+                        receiver_program_status = "observed"
+                        receiver_program_reason = None
+                        if support_value <= 0:
+                            activity = 0.0
+                            status = "zero_attribution"
+                            reason = None
+                        else:
+                            activity = float(
+                                np.clip(
+                                    receiver_program_score * support_value,
+                                    0,
+                                    1,
+                                )
+                            )
+                            status = "observed"
+                            reason = None
         records.append(
             {
                 "sample_id": row.sample_id,
@@ -1131,6 +1199,14 @@ def _downstream_table(
                 "context": row.context,
                 "receiver": row.receiver,
                 "interaction_id": row.interaction_id,
+                "receiver_program_score": receiver_program_score,
+                "receiver_program_status": receiver_program_status,
+                "receiver_program_reason_code": receiver_program_reason,
+                "incremental_downstream": None,
+                "incremental_downstream_status": "not_estimable",
+                "incremental_downstream_reason_code": (
+                    "cross_fitted_receiver_null_not_implemented"
+                ),
                 "downstream_activity": activity,
                 "prior_quality": quality,
                 "contrast": run.contrast,
@@ -1153,6 +1229,98 @@ def _downstream_table(
     return pd.DataFrame(records)
 
 
+def _scoring_model_manifest(
+    run: BaselineAttributionRun,
+    response: ResponseEstimate,
+    prior: TargetPrior,
+    *,
+    interaction_ids: tuple[str, ...],
+    matched_targets: tuple[str, ...],
+    availability_parameters: AvailabilityParameters,
+    sender_functional_id: str,
+    attribution_support_method: AttributionSupportMethod,
+    cosine_threshold: float,
+) -> ScoringModelManifest:
+    if run.basis is None or run.attribution is None:
+        raise ValueError("successful score run requires attribution artifacts")
+    if run.precision_transform_id is None:
+        raise ValueError("successful score run requires precision provenance")
+    receptor_gate_manifest_id = stable_id(
+        "receptor_gate_manifest",
+        {
+            "gate_policy": "continuous_basis_scale_v1",
+            "receiver": _string_identifier(run.receiver),
+            "receptor_gates": [
+                [driver, gate] for driver, gate in run.receptor_gates
+            ],
+        },
+    )
+    target_weight_manifest_id = stable_id(
+        "target_weight_manifest",
+        {
+            "attribution_support_method": attribution_support_method.value,
+            "basis_id": run.basis.basis_id,
+            "matched_targets": list(matched_targets),
+            "prior_manifest": prior.manifest_digest,
+            "prior_resource_id": prior.resource_id,
+            "prior_version": prior.version,
+        },
+    )
+    downstream_functional_id = stable_id(
+        "downstream_functional",
+        {
+            "attribution_support_method": attribution_support_method.value,
+            "hill_coefficient": availability_parameters.hill.coefficient,
+            "hill_half_saturation": availability_parameters.hill.half_saturation,
+            "method": "absolute_receiver_program_hill_v1",
+            "response_scale": response.value_scale,
+            "target_weight_manifest_id": target_weight_manifest_id,
+        },
+    )
+    availability_transform_id = stable_id(
+        "availability_transform",
+        {
+            "complex_epsilon": availability_parameters.complex_epsilon,
+            "complex_power": availability_parameters.complex_power,
+            "detection_alpha": availability_parameters.detection.alpha,
+            "detection_beta": availability_parameters.detection.beta,
+            "detection_exponent": availability_parameters.detection.exponent,
+            "hill_coefficient": availability_parameters.hill.coefficient,
+            "hill_half_saturation": availability_parameters.hill.half_saturation,
+        },
+    )
+    filter_universe_id = stable_id(
+        "filter_universe",
+        {
+            "interaction_ids": list(interaction_ids),
+            "policy": "pooled_support_then_optional_global_cap_v1",
+        },
+    )
+    tuning_manifest_id = stable_id(
+        "attribution_tuning_manifest",
+        {
+            "attribution_support_method": attribution_support_method.value,
+            "cosine_threshold": cosine_threshold,
+            "lambda1": run.attribution.lambda1,
+            "lambda2": run.attribution.lambda2,
+            "solver": "nonnegative_elastic_net_coordinate_descent_v1",
+        },
+    )
+    return ScoringModelManifest(
+        score_version=_TRACKED_GEOMETRIC_SCORE_VERSION,
+        basis_id=run.basis.basis_id,
+        coefficient_digest=float64_array_digest(run.attribution.coefficients),
+        receptor_gate_manifest_id=receptor_gate_manifest_id,
+        target_weight_manifest_id=target_weight_manifest_id,
+        downstream_functional_id=downstream_functional_id,
+        sender_functional_id=sender_functional_id,
+        availability_transform_id=availability_transform_id,
+        precision_transform_id=run.precision_transform_id,
+        filter_universe_id=filter_universe_id,
+        tuning_manifest_id=tuning_manifest_id,
+    )
+
+
 def _score_runs(
     response: ResponseEstimate,
     availability: pd.DataFrame,
@@ -1165,6 +1333,8 @@ def _score_runs(
     component_scales: Mapping[str, float] | None,
     config_modes: Sequence[CommunicationMode | str],
     attribution_support_method: AttributionSupportMethod,
+    sender_functional_id: str,
+    cosine_threshold: float,
 ) -> tuple[BaselineScoreRun, ...]:
     if prior is None:
         return ()
@@ -1200,12 +1370,25 @@ def _score_runs(
         interaction_ids = tuple(sorted(set(selected["interaction_id"].astype(str))))
         if not interaction_ids:
             continue
+        model_manifest = _scoring_model_manifest(
+            run,
+            response,
+            prior,
+            interaction_ids=interaction_ids,
+            matched_targets=matched_targets,
+            availability_parameters=availability_parameters,
+            sender_functional_id=sender_functional_id,
+            attribution_support_method=attribution_support_method,
+            cosine_threshold=cosine_threshold,
+        )
         functional = ScoringFunctional(
             contrast_name=run.contrast,
             contrast_contexts=run.contrast_contexts,
             training_subject_ids=training_subjects,
             interaction_ids=interaction_ids,
             target_ids=matched_targets,
+            score_version=_TRACKED_GEOMETRIC_SCORE_VERSION,
+            model_manifest=model_manifest,
             component_weights=weights,
             component_scales=scales,
         )
@@ -1306,6 +1489,12 @@ def _effective_run_parameters(
             "lambda1": lambda1,
             "lambda2": lambda2,
             "cosine_threshold": cosine_threshold,
+            "precision_transform": {
+                "method": _PRECISION_METHOD,
+                "lower_quantile": _PRECISION_LOWER_QUANTILE,
+                "upper_quantile": _PRECISION_UPPER_QUANTILE,
+                "min_positive_features": _MIN_POSITIVE_PRECISION_FEATURES,
+            },
         },
         "scoring": {
             "prior_quality": prior_quality,
@@ -1316,7 +1505,7 @@ def _effective_run_parameters(
     }
     if (
         attribution_support_method
-        is AttributionSupportMethod.GATED_RESPONSE_NORM_V2
+        is not AttributionSupportMethod.RELATIVE_COEFFICIENT_V1
     ):
         attribution = cast(dict[str, object], parameters["attribution"])
         attribution["downstream_support"] = attribution_support_method.to_dict()
@@ -1444,6 +1633,10 @@ def fit_baseline(
         component_scales=component_scales,
         config_modes=config.communication_modes,
         attribution_support_method=attribution_support_method,
+        sender_functional_id=(
+            sender_assignment.parameters.assignment_functional_id
+        ),
+        cosine_threshold=cosine_threshold,
     )
     score_runs = tuple(
         run

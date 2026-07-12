@@ -42,9 +42,16 @@ def _entity_values(
     values = gene_values[:, indices]
     if values.shape[1] == 1:
         return np.asarray(values[:, 0], dtype=np.float64).copy()
+    missing = np.isnan(values).any(axis=1)
+    has_zero = np.equal(values, 0.0).any(axis=1)
     shifted_inverse = np.mean((values + epsilon) ** (-power), axis=1)
-    result = shifted_inverse ** (-1.0 / power) - epsilon
-    return np.asarray(np.clip(result, 0.0, 1.0), dtype=np.float64)
+    result = np.asarray(
+        np.clip(shifted_inverse ** (-1.0 / power) - epsilon, 0.0, 1.0),
+        dtype=np.float64,
+    )
+    result[has_zero] = 0.0
+    result[missing] = np.nan
+    return result
 
 
 def _context_value(row: pd.Series, key: str) -> object:
@@ -60,7 +67,7 @@ def _context_value(row: pd.Series, key: str) -> object:
 
 def _context_id(row: pd.Series, context_keys: Sequence[str]) -> str:
     payload = {key: _context_value(row, key) for key in context_keys}
-    return context_id(payload, context_keys)
+    return str(context_id(payload, context_keys))
 
 
 def _empty_sample_table(context_keys: Sequence[str]) -> pd.DataFrame:
@@ -84,7 +91,9 @@ def _empty_sample_table(context_keys: Sequence[str]) -> pd.DataFrame:
             "availability_state",
             "availability_ecosystem",
             "state_status",
+            "state_reason_code",
             "ecosystem_status",
+            "ecosystem_reason_code",
             "ecosystem_label",
         ]
     )
@@ -149,7 +158,7 @@ def estimate_bundle_availability(
         .loc[list(aggregate.matrix_unit_ids)]
         .reset_index(drop=True)
     )
-    eligible = metadata["state_eligible"].to_numpy(dtype=bool)
+    state_eligible = metadata["state_eligible"].to_numpy(dtype=bool)
     n_cells = metadata["n_cells"].to_numpy(dtype=float)
     if isinstance(aggregate, PseudobulkDataset):
         library = np.asarray(aggregate.counts.sum(axis=1)).ravel().astype(float)
@@ -181,16 +190,12 @@ def estimate_bundle_availability(
     if detection_available:
         shrunk_detection = (
             detection * n_cells[:, None] + parameters.detection.alpha
-        ) / (
-            n_cells[:, None]
-            + parameters.detection.alpha
-            + parameters.detection.beta
-        )
+        ) / (n_cells[:, None] + parameters.detection.alpha + parameters.detection.beta)
     else:
         # Without declared zero/detection semantics, detection is neutral.
         shrunk_detection = np.ones_like(selected)
     gene_values = hill * shrunk_detection**parameters.detection.exponent
-    gene_values[~eligible, :] = np.nan
+    gene_values[~state_eligible, :] = np.nan
 
     ligand_columns: list[np.ndarray] = []
     receptor_columns: list[np.ndarray] = []
@@ -268,9 +273,7 @@ def estimate_bundle_availability(
 
     ligand_matrix = np.column_stack(ligand_columns)
     receptor_matrix = np.column_stack(receptor_columns)
-    usable_rows = metadata.index[
-        eligible & metadata["abundance_eligible"].to_numpy(dtype=bool)
-    ]
+    state_rows = metadata.index[state_eligible]
     records: list[pd.DataFrame] = []
     interaction_fields = {
         "interaction_id": [item.interaction_id for item in supported],
@@ -279,7 +282,7 @@ def estimate_bundle_availability(
         "receptor": [item.receptor_name for item in supported],
         "pathway": [item.pathway for item in supported],
     }
-    for sample_id, sample_rows in metadata.loc[usable_rows].groupby(
+    for sample_id, sample_rows in metadata.loc[state_rows].groupby(
         "sample_id", sort=False, observed=True
     ):
         row_indices = sample_rows.index.to_numpy(dtype=int)
@@ -292,14 +295,36 @@ def estimate_bundle_availability(
                 state = ligand * receptor
                 sender_proportion = float(sender["cell_proportion"])
                 receiver_proportion = float(receiver["cell_proportion"])
-                ecosystem = state * math.sqrt(sender_proportion * receiver_proportion)
+                sender_abundance_eligible = bool(sender["abundance_eligible"])
+                receiver_abundance_eligible = bool(receiver["abundance_eligible"])
+                ecosystem_eligible = (
+                    sender_abundance_eligible and receiver_abundance_eligible
+                )
+                if ecosystem_eligible:
+                    ecosystem = state * math.sqrt(
+                        sender_proportion * receiver_proportion
+                    )
+                    ecosystem_status = "observed"
+                    ecosystem_reason_code: str | None = None
+                else:
+                    ecosystem = np.full_like(state, np.nan)
+                    ecosystem_status = "abundance_not_estimable"
+                    if (
+                        not sender_abundance_eligible
+                        and not receiver_abundance_eligible
+                    ):
+                        ecosystem_reason_code = (
+                            "sender_and_receiver_abundance_not_eligible"
+                        )
+                    elif not sender_abundance_eligible:
+                        ecosystem_reason_code = "sender_abundance_not_eligible"
+                    else:
+                        ecosystem_reason_code = "receiver_abundance_not_eligible"
                 frame = pd.DataFrame(interaction_fields)
                 frame.insert(0, "receiver", receiver["cell_type"])
                 frame.insert(0, "sender", sender["cell_type"])
                 for key in reversed(context_keys):
-                    frame.insert(
-                        0, key, [_context_value(sender, key)] * len(frame)
-                    )
+                    frame.insert(0, key, [_context_value(sender, key)] * len(frame))
                 frame.insert(0, "context_id", _context_id(sender, context_keys))
                 frame.insert(0, "subject_id", sender["subject_id"])
                 frame.insert(0, "sample_id", sample_id)
@@ -310,10 +335,16 @@ def estimate_bundle_availability(
                 frame["availability_state"] = state
                 frame["availability_ecosystem"] = ecosystem
                 frame["state_status"] = "observed"
-                frame["ecosystem_status"] = "observed"
+                frame["state_reason_code"] = None
+                frame["ecosystem_status"] = ecosystem_status
+                frame["ecosystem_reason_code"] = ecosystem_reason_code
                 frame["ecosystem_label"] = "capture_weighted_ecosystem_proxy"
                 records.append(frame)
-    sample_interactions = pd.concat(records, ignore_index=True)
+    sample_interactions = (
+        pd.concat(records, ignore_index=True)
+        if records
+        else _empty_sample_table(context_keys)
+    )
     for column in (
         "sender",
         "receiver",
@@ -323,7 +354,9 @@ def estimate_bundle_availability(
         "receptor",
         "pathway",
         "state_status",
+        "state_reason_code",
         "ecosystem_status",
+        "ecosystem_reason_code",
         "ecosystem_label",
     ):
         sample_interactions[column] = sample_interactions[column].astype("category")

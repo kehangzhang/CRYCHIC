@@ -13,6 +13,39 @@ This is not the completed roadmap or a calibrated inference release. v0.1
 strengths are descriptive and in-sample; p-values, q-values,
 `comm_probability`, posterior quantities, and causal sender claims are disabled.
 
+## Current Development Status
+
+The current branch adds more explicit evidence and provenance contracts while
+preserving the exploratory v0.1 behavior:
+
+- downstream output separates the source-agnostic `receiver_program_score`
+  from the reserved `incremental_downstream` field. The latter remains
+  `not_estimable` until a cross-fitted receiver-null model is implemented;
+- attribution now consumes winsorized, median-normalized response precision and
+  records its fitted transform and support diagnostics;
+- tracked scores carry a `score_version` and `model_manifest_id` covering the
+  fitted basis, coefficient digest, receptor gates, target weights, sender and
+  downstream functionals, availability and precision transforms, filtering,
+  and tuning artifacts;
+- availability state and ecosystem eligibility have separate status and reason
+  fields, and missing sender evidence no longer receives an implicit uniform
+  assignment.
+
+`EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
+candidate. It allocates bounded model-level explained gain across driver
+contributions and suppresses tiny-response support. The public workflow default
+remains `gated_prior_attribution_v1`; the baseline score remains the tracked
+geometric v1 path. Candidate soft-min/mechanistic scoring helpers do not replace
+that default.
+
+The G1.5 mechanism-specificity contract is frozen in
+`benchmarks/configs/mechanism_specificity_v2.json`, with component truth in
+`benchmarks/truth/component_truth_matrix.yaml` and a paired-seed evaluator in
+`benchmarks/metrics/mechanism_specificity.py`. It requires 50 development seeds
+and 200 independent holdout seeds. These files define the gate only: this
+repository state does not claim that either seed campaign has been run or that
+the candidate has passed G1.5, and G1.5 alone cannot switch the default method.
+
 ## Install
 
 Python 3.11-3.13 is supported. From this repository:

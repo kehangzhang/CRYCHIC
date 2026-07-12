@@ -1,0 +1,84 @@
+schema_version: crychic-component-truth-matrix-v1
+truth_set_id: mechanism_specificity_components_v1
+locked_at: '2026-07-13T00:00:00+08:00'
+truth_scope: simulation
+record_grain: seed_x_scenario_x_known_edge
+
+component_semantics:
+  availability: ligand/state availability evidence before downstream integration
+  receptor: receptor or required-complex gate
+  receiver_program: receiver target-program evidence without an LR-edge claim
+  incremental_downstream: LR-specific gain over the receiver-null model
+  sender: sender-specific allocation evidence after an unresolved LR edge exists
+  integrated: receptor-gated LR edge requiring availability and incremental evidence
+
+truth_codes:
+  positive: the component is expected to be positive
+  zero: the component is required to be zero or non-positive
+  allowed_positive: a positive value is compatible but is not evidence for an LR edge
+  ecosystem_only: abundance may alter ecosystem availability but not state LR evidence
+
+scenarios:
+  active:
+    availability: positive
+    receptor: positive
+    receiver_program: positive
+    incremental_downstream: positive
+    sender: positive
+    integrated: positive
+  global_null:
+    availability: zero
+    receptor: zero
+    receiver_program: zero
+    incremental_downstream: zero
+    sender: zero
+    integrated: zero
+  abundance_only:
+    availability: ecosystem_only
+    receptor: allowed_positive
+    receiver_program: zero
+    incremental_downstream: zero
+    sender: allowed_positive
+    integrated: zero
+  ligand_only:
+    availability: positive
+    receptor: positive
+    receiver_program: allowed_positive
+    incremental_downstream: zero
+    sender: allowed_positive
+    integrated: zero
+  target_only:
+    availability: zero
+    receptor: allowed_positive
+    receiver_program: positive
+    incremental_downstream: positive
+    sender: zero
+    integrated: zero
+  receiver_autonomous:
+    availability: zero
+    receptor: allowed_positive
+    receiver_program: positive
+    incremental_downstream: zero
+    sender: zero
+    integrated: zero
+  receptor_knockout:
+    availability: positive
+    receptor: zero
+    receiver_program: positive
+    incremental_downstream: allowed_positive
+    sender: allowed_positive
+    integrated: zero
+
+evaluation_policy:
+  positive_scenario: active
+  paired_falsification_scenario: ligand_only
+  negative_integrated_scenarios:
+    - global_null
+    - abundance_only
+    - ligand_only
+    - target_only
+    - receiver_autonomous
+    - receptor_knockout
+  receiver_program_positive_does_not_imply_integrated_edge: true
+  tune_on_silver_standard_biology: false
+  real_data_accuracy_claims: false

@@ -55,6 +55,10 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         crychic.AttributionSupportMethod.GATED_RESPONSE_NORM_V2.value
         == "gated_response_norm_attribution_support_v2"
     )
+    assert (
+        crychic.AttributionSupportMethod.EXPLAINED_SHARE_V3.value
+        == "explained_share_attribution_support_v3"
+    )
     assert isinstance(crychic.__version__, str)
     assert not hasattr(crychic, "TopoCCC")
 

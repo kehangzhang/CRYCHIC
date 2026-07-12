@@ -20,6 +20,7 @@ from .model import (
     downstream_attribution_support,
     fit_positive_attribution,
 )
+from .precision import PrecisionTransformResult, winsorized_normalized_precision
 from .solver import ElasticNetSolution, solve_nonnegative_elastic_net
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "FamilyEstimate",
     "GatedTargetBasis",
     "ObjectiveTerms",
+    "PrecisionTransformResult",
     "SolverDiagnostics",
     "SolverStatus",
     "attribute_target_prior",
@@ -41,4 +43,5 @@ __all__ = [
     "downstream_attribution_support",
     "fit_positive_attribution",
     "solve_nonnegative_elastic_net",
+    "winsorized_normalized_precision",
 ]

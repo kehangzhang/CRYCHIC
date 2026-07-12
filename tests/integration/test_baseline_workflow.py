@@ -286,6 +286,14 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
     assert dict(attribution.receptor_gates).keys() == {"L"}
     assert dict(attribution.receptor_gates)["L"] > 0
     assert attribution.attribution is not None
+    assert attribution.precision_method == "winsorized_median_normalized_v1"
+    assert attribution.precision_transform_id is not None
+    positive_precision = attribution.attribution.precision_weights
+    assert attribution.n_positive_precision_features == int(
+        np.count_nonzero(positive_precision)
+    )
+    assert attribution.n_positive_precision_features >= 2
+    assert np.median(positive_precision[positive_precision > 0]) == pytest.approx(1.0)
     autonomous_index = artifacts.response.feature_ids.index("AUTO")
     assert attribution.attribution.residual[autonomous_index] > 0
 
@@ -296,6 +304,9 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
     assert set(receiver_scores["context"]) == {"control", "treated"}
     assert set(receiver_scores["mode"]) == {"state", "ecosystem"}
     assert receiver_scores["scoring_function_id"].nunique() == 1
+    assert set(receiver_scores["score_version"]) == {"geometric_v1_tracked"}
+    assert receiver_scores["model_manifest_id"].notna().all()
+    assert receiver_scores["model_manifest_id"].nunique() == 1
     assert set(receiver_scores["functional_reason_code"]) == {
         "exploratory_not_cross_fitted"
     }
@@ -327,6 +338,16 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
         & (artifacts.downstream_activity["interaction_id"] == "i_signal")
     ]
     assert downstream["target_weight_id"].nunique() == 1
+    assert downstream["receiver_program_score"].notna().all()
+    assert (
+        downstream["downstream_activity"]
+        <= downstream["receiver_program_score"] + 1e-12
+    ).all()
+    assert downstream["incremental_downstream"].isna().all()
+    assert set(downstream["incremental_downstream_status"]) == {"not_estimable"}
+    assert set(downstream["incremental_downstream_reason_code"]) == {
+        "cross_fitted_receiver_null_not_implemented"
+    }
     assert (
         downstream["prior_quality_source"]
         .str.contains("constant=1.0;resource=synthetic_prior")

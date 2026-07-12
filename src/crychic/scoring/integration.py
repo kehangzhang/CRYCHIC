@@ -85,6 +85,68 @@ def weighted_geometric_strength(
     return float(math.exp(log_strength / weight_sum))
 
 
+def pair_softmin(
+    left: float | None,
+    right: float | None,
+    *,
+    power: float = 4.0,
+    epsilon: float = 1e-12,
+) -> float | None:
+    """Combine two necessary unit-interval components by a smooth minimum."""
+
+    if not math.isfinite(power) or power <= 0:
+        raise ValueError("power must be finite and positive")
+    if not math.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError("epsilon must be finite and positive")
+    left_value = _numeric_component(left, name="left")
+    right_value = _numeric_component(right, name="right")
+    if left_value is None or right_value is None:
+        return None
+    if left_value == 0.0 or right_value == 0.0:
+        return 0.0
+    shifted_inverse = 0.5 * (
+        (left_value + epsilon) ** (-power)
+        + (right_value + epsilon) ** (-power)
+    )
+    return float(
+        np.clip(shifted_inverse ** (-1.0 / power) - epsilon, 0.0, 1.0)
+    )
+
+
+def mechanistic_strength(
+    *,
+    availability: float | None,
+    incremental_downstream: float | None,
+    prior_quality: float | None,
+    sender_weight: float | None,
+    softmin_power: float = 4.0,
+    epsilon: float = 1e-12,
+) -> tuple[float | None, float | None, float | None]:
+    """Return LR core, quality-adjusted, and sender-resolved strengths.
+
+    The first value is sender-unresolved. Prior quality is a multiplier, making
+    one exactly neutral. Sender weight is applied last, so missing sender
+    evidence cannot erase an otherwise estimable LR core.
+    """
+
+    lr_core = pair_softmin(
+        availability,
+        incremental_downstream,
+        power=softmin_power,
+        epsilon=epsilon,
+    )
+    quality = _numeric_component(prior_quality, name="prior_quality")
+    sender = _numeric_component(sender_weight, name="sender_weight")
+    if lr_core is None or quality is None:
+        prior_adjusted = None
+    else:
+        prior_adjusted = lr_core * quality
+    sender_resolved = (
+        None if prior_adjusted is None or sender is None else prior_adjusted * sender
+    )
+    return lr_core, prior_adjusted, sender_resolved
+
+
 def _require_columns(table: pd.DataFrame, required: set[str], *, name: str) -> None:
     missing = required.difference(table.columns)
     if missing:
@@ -262,6 +324,8 @@ def score_communication(
                     "contrast": functional.contrast_name,
                     "fold_id": fold_id,
                     "scoring_function_id": functional.scoring_function_id,
+                    "score_version": functional.score_version,
+                    "model_manifest_id": functional.model_manifest_id,
                     "interaction_universe_id": functional.interaction_universe_id,
                     "target_universe_id": functional.target_universe_id,
                 }
