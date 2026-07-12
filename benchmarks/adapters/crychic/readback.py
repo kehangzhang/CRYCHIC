@@ -6,6 +6,7 @@ import argparse
 import json
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -40,6 +41,19 @@ METHOD_ID = "crychic"
 ANALYSIS_TRACK = "lr_stlr"
 SCORE_NAME = "comm_strength"
 SCORE_DIRECTION = "higher"
+RECEIVER_ROW_UNION_BRIDGE_VERSION = "receiver_row_union_bridge_v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoreView:
+    child_ids: tuple[str, ...]
+    contrast_candidates: tuple[str, ...]
+    grouped_contrast: str | None
+    receiver_partitions: tuple[tuple[str, tuple[str, ...]], ...]
+
+    @property
+    def grouped(self) -> bool:
+        return self.grouped_contrast is not None
 
 
 class ResultReader(Protocol):
@@ -107,6 +121,20 @@ def _min_cells(result: ResultReader) -> int:
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 return value
     raise ValueError("CRYCHIC result does not record pseudobulk.min_cells")
+
+
+def _source_table_digests(result: ResultReader) -> dict[str, str]:
+    tables = result.manifest.get("tables")
+    if not isinstance(tables, Mapping):
+        raise ValueError("CRYCHIC result manifest does not record source tables")
+    digests: dict[str, str] = {}
+    for name in ("sample_scores", "interactions"):
+        record = tables.get(name)
+        digest = record.get("sha256") if isinstance(record, Mapping) else None
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"CRYCHIC result manifest does not record {name} SHA256")
+        digests[name] = digest
+    return digests
 
 
 def _verify_resource(result: ResultReader, bundle: ResourceBundle) -> None:
@@ -223,9 +251,26 @@ def _contrast_candidates(
         "scoring_functional_id", sort=True, observed=True
     ):
         candidates: list[str] = []
+        support = functional.loc[:, ["context_id", "edge_id"]]
+        if support.duplicated().any():
+            raise ValueError("functional summary has duplicate context-edge keys")
         for contrast, candidate in persisted.groupby(
             "contrast", sort=True, observed=True
         ):
+            candidate_keys = candidate.loc[:, ["context_id", "edge_id"]]
+            if candidate_keys.duplicated().any():
+                raise ValueError(
+                    "persisted interactions contain duplicate contrast context-edge "
+                    "keys"
+                )
+            candidate = candidate.merge(
+                support,
+                on=["context_id", "edge_id"],
+                how="inner",
+                validate="one_to_one",
+            )
+            if len(candidate) != len(functional):
+                continue
             left = functional.rename(
                 columns={name: f"sample_{name}" for name in numeric}
             )
@@ -238,10 +283,11 @@ def _contrast_candidates(
             merged = left.merge(
                 right,
                 on=["context_id", "edge_id"],
-                how="outer",
+                how="inner",
+                validate="one_to_one",
                 indicator=True,
             )
-            if not merged["_merge"].eq("both").all():
+            if len(merged) != len(functional) or not merged["_merge"].eq("both").all():
                 continue
             matches = pd.Series(True, index=merged.index)
             for sample_name in persisted_numeric:
@@ -253,6 +299,216 @@ def _contrast_candidates(
                 candidates.append(str(contrast))
         result[str(functional_id)] = tuple(candidates)
     return result
+
+
+def _functional_support(
+    selected: pd.DataFrame,
+    edge_map: pd.DataFrame,
+) -> tuple[
+    dict[str, frozenset[tuple[str, str]]],
+    dict[str, frozenset[tuple[str, str]]],
+    dict[str, frozenset[str]],
+]:
+    annotated = selected.merge(
+        edge_map.loc[:, ["edge_id", "receiver"]],
+        on="edge_id",
+        how="left",
+        validate="many_to_one",
+    )
+    if annotated["receiver"].isna().any():
+        raise ValueError("functional support contains an unmapped communication edge")
+    edge_support: dict[str, frozenset[tuple[str, str]]] = {}
+    context_edge_support: dict[str, frozenset[tuple[str, str]]] = {}
+    receiver_support: dict[str, frozenset[str]] = {}
+    for functional_id, functional in annotated.groupby(
+        "scoring_functional_id", sort=True, observed=True
+    ):
+        identifier = str(functional_id)
+        edge_support[identifier] = frozenset(
+            functional.loc[:, ["receiver", "edge_id"]]
+            .astype(str)
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        context_edge_support[identifier] = frozenset(
+            functional.loc[:, ["context_id", "edge_id"]]
+            .astype(str)
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        receiver_support[identifier] = frozenset(functional["receiver"].astype(str))
+    return edge_support, context_edge_support, receiver_support
+
+
+def _persisted_contrast_support(
+    interactions: pd.DataFrame,
+    edge_map: pd.DataFrame,
+    *,
+    communication_mode: str,
+) -> tuple[
+    dict[str, frozenset[tuple[str, str]]],
+    dict[str, frozenset[tuple[str, str]]],
+]:
+    persisted = interactions.loc[interactions["mode"].eq(communication_mode)].merge(
+        edge_map,
+        on=["sender", "receiver", "interaction_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    if persisted["edge_id"].isna().any():
+        raise ValueError(
+            "persisted interactions contain an unmapped communication edge"
+        )
+    edge_support: dict[str, frozenset[tuple[str, str]]] = {}
+    context_edge_support: dict[str, frozenset[tuple[str, str]]] = {}
+    for contrast, candidate in persisted.groupby("contrast", sort=True, observed=True):
+        identifier = str(contrast)
+        keys = candidate.loc[:, ["context_id", "edge_id"]].astype(str)
+        if keys.duplicated().any():
+            raise ValueError(
+                "persisted interactions contain duplicate contrast context-edge keys"
+            )
+        edge_support[identifier] = frozenset(
+            candidate.loc[:, ["receiver", "edge_id"]]
+            .astype(str)
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        context_edge_support[identifier] = frozenset(
+            keys.itertuples(index=False, name=None)
+        )
+    return edge_support, context_edge_support
+
+
+def _default_score_views(
+    selected: pd.DataFrame,
+    interactions: pd.DataFrame,
+    edge_map: pd.DataFrame,
+    candidates: Mapping[str, tuple[str, ...]],
+    available_ids: tuple[str, ...],
+    *,
+    communication_mode: str,
+) -> tuple[_ScoreView, ...]:
+    if len(available_ids) == 1:
+        functional_id = available_ids[0]
+        return (
+            _ScoreView(
+                child_ids=(functional_id,),
+                contrast_candidates=candidates.get(functional_id, ()),
+                grouped_contrast=None,
+                receiver_partitions=(),
+            ),
+        )
+
+    ambiguous = {
+        functional_id: candidates.get(functional_id, ())
+        for functional_id in available_ids
+        if len(candidates.get(functional_id, ())) != 1
+    }
+    if ambiguous:
+        raise ValueError(
+            "default multi-functional readback requires exactly one persisted "
+            "contrast candidate per child; select explicit scoring_functional_ids "
+            f"for diagnostics: {ambiguous}"
+        )
+
+    child_edges, child_context_edges, child_receivers = _functional_support(
+        selected, edge_map
+    )
+    non_receiver_scoped = {
+        child_id: sorted(child_receivers[child_id])
+        for child_id in available_ids
+        if len(child_receivers[child_id]) != 1
+    }
+    if non_receiver_scoped:
+        raise ValueError(
+            "default multi-functional readback requires each child to be scoped "
+            f"to exactly one receiver: {non_receiver_scoped}"
+        )
+    expected_edges, expected_context_edges = _persisted_contrast_support(
+        interactions,
+        edge_map,
+        communication_mode=communication_mode,
+    )
+    grouped: dict[str, list[str]] = {}
+    for functional_id in available_ids:
+        contrast = candidates[functional_id][0]
+        grouped.setdefault(contrast, []).append(functional_id)
+
+    views: list[_ScoreView] = []
+    for contrast in sorted(grouped):
+        child_ids = tuple(sorted(grouped[contrast]))
+        observed_edges: set[tuple[str, str]] = set()
+        observed_context_edges: set[tuple[str, str]] = set()
+        observed_receivers: set[str] = set()
+        for child_id in child_ids:
+            receiver = next(iter(child_receivers[child_id]))
+            if receiver in observed_receivers:
+                raise ValueError(
+                    "contrast child scoring functionals have overlapping receiver "
+                    f"partitions: contrast={contrast!r}, receiver={receiver!r}"
+                )
+            observed_receivers.add(receiver)
+            overlap = observed_edges.intersection(child_edges[child_id])
+            if overlap:
+                raise ValueError(
+                    "contrast child scoring functionals have overlapping edge support: "
+                    f"contrast={contrast!r}, child={child_id!r}, "
+                    f"examples={sorted(overlap)[:5]}"
+                )
+            observed_edges.update(child_edges[child_id])
+            observed_context_edges.update(child_context_edges[child_id])
+        expected = expected_edges.get(contrast)
+        expected_context = expected_context_edges.get(contrast)
+        if expected is None or expected_context is None:
+            raise ValueError(
+                f"persisted contrast is absent from interactions: {contrast}"
+            )
+        if observed_edges != set(expected):
+            missing = sorted(set(expected).difference(observed_edges))[:5]
+            extra = sorted(observed_edges.difference(expected))[:5]
+            raise ValueError(
+                "contrast child scoring functionals do not completely cover the "
+                f"expected receiver/edge universe: contrast={contrast!r}, "
+                f"missing={missing}, extra={extra}"
+            )
+        if observed_context_edges != set(expected_context):
+            missing = sorted(set(expected_context).difference(observed_context_edges))[
+                :5
+            ]
+            extra = sorted(observed_context_edges.difference(expected_context))[:5]
+            raise ValueError(
+                "contrast child scoring functionals do not completely cover the "
+                f"expected context-edge support: contrast={contrast!r}, "
+                f"missing={missing}, extra={extra}"
+            )
+        views.append(
+            _ScoreView(
+                child_ids=child_ids,
+                contrast_candidates=(contrast,),
+                grouped_contrast=contrast,
+                receiver_partitions=tuple(
+                    (child_id, tuple(sorted(child_receivers[child_id])))
+                    for child_id in child_ids
+                ),
+            )
+        )
+    return tuple(views)
+
+
+def _explicit_score_views(
+    requested_ids: tuple[str, ...],
+    candidates: Mapping[str, tuple[str, ...]],
+) -> tuple[_ScoreView, ...]:
+    return tuple(
+        _ScoreView(
+            child_ids=(functional_id,),
+            contrast_candidates=candidates.get(functional_id, ()),
+            grouped_contrast=None,
+            receiver_partitions=(),
+        )
+        for functional_id in requested_ids
+    )
 
 
 def _apply_crychic_statuses(
@@ -315,9 +571,10 @@ def convert_result_to_long(
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     """Convert one persisted result into fixed-universe benchmark runs.
 
-    One long-table ``run_id`` is emitted per scoring functional. This preserves
-    contrast-aligned CRYCHIC scores without adding a method-only column or
-    collapsing distinct score definitions into duplicate result keys.
+    Default readback combines mutually exclusive receiver-specific child
+    functionals into one complete contrast-level view. Explicit functional IDs
+    retain one-child diagnostic views. A historical single common functional
+    remains a single view.
     """
 
     if resource_mode not in {"H-common", "native"}:
@@ -395,40 +652,69 @@ def convert_result_to_long(
         edges,
         communication_mode=communication_mode,
     )
+    score_views = (
+        _default_score_views(
+            selected,
+            interactions,
+            edges,
+            candidates,
+            available_ids,
+            communication_mode=communication_mode,
+        )
+        if scoring_functional_ids is None
+        else _explicit_score_views(requested_ids, candidates)
+    )
     effective_min_cells = _min_cells(result) if min_cells is None else min_cells
     if effective_min_cells < 1:
         raise ValueError("min_cells must be positive")
     method_version = _method_version(result)
     source_run_id = str(result.manifest["run_id"])
+    source_table_digests = _source_table_digests(result)
 
     tables: list[pd.DataFrame] = []
     views: list[dict[str, Any]] = []
     emitted_run_ids: set[str] = set()
-    for functional_id in requested_ids:
+    for view in score_views:
         raw = selected.loc[
-            selected["scoring_functional_id"].astype(str).eq(functional_id)
+            selected["scoring_functional_id"].astype(str).isin(view.child_ids)
         ].merge(edges, on="edge_id", how="left", validate="many_to_one")
         if raw[["sender", "receiver", "interaction_id"]].isna().any().any():
             raise ValueError("sample scores contain an unmapped communication edge")
         duplicate_key = ["sample_id", "sender", "receiver", "interaction_id"]
         if raw.duplicated(duplicate_key).any():
             raise ValueError(
-                "one scoring functional has repeated sample-edge rows; "
-                "select a single persisted repeat/fold before readback"
+                "one score view has repeated sample-edge rows; receiver child "
+                "supports must be disjoint and each child must select one "
+                "persisted repeat/fold"
             )
         raw["target"] = pd.NA
         observed = raw.loc[raw["status"].eq("ok")].copy()
         observed["score"] = observed["comm_strength"]
-        run_id = canonical_digest(
-            {
-                "source_run_id": source_run_id,
-                "scoring_functional_id": functional_id,
-                "communication_mode": communication_mode,
-                "resource_mode": resource_mode,
-                "dataset_id": dataset_id,
-            },
-            prefix="crychic_benchmark_run",
-        )
+        run_identity: dict[str, Any] = {
+            "source_run_id": source_run_id,
+            "communication_mode": communication_mode,
+            "resource_mode": resource_mode,
+            "dataset_id": dataset_id,
+        }
+        if view.grouped:
+            receiver_partitions = {
+                child_id: list(receivers)
+                for child_id, receivers in view.receiver_partitions
+            }
+            run_identity.update(
+                {
+                    "child_scoring_functional_ids": list(view.child_ids),
+                    "contrast": view.grouped_contrast,
+                    "receiver_partition": receiver_partitions,
+                    "bridge_semantics_version": RECEIVER_ROW_UNION_BRIDGE_VERSION,
+                    "aggregation": "none_row_union_by_receiver",
+                    "common_functional_claim": False,
+                    "source_result_table_digests": source_table_digests,
+                }
+            )
+        else:
+            run_identity["scoring_functional_id"] = view.child_ids[0]
+        run_id = canonical_digest(run_identity, prefix="crychic_benchmark_run")
         table = materialize_fixed_universe(
             observed.loc[
                 :,
@@ -458,25 +744,41 @@ def convert_result_to_long(
             min_cells=effective_min_cells,
             validate=False,
         )
-        table = validate_long_table(
-            _apply_crychic_statuses(table, raw, validate=False)
-        )
+        table = validate_long_table(_apply_crychic_statuses(table, raw, validate=False))
         if not table["run_id"].astype(str).eq(run_id).all():
             raise ValueError("one CRYCHIC score view emitted multiple run IDs")
         if run_id in emitted_run_ids:
             raise ValueError("CRYCHIC score views must emit distinct run IDs")
         emitted_run_ids.add(run_id)
         tables.append(table)
-        views.append(
-            {
-                "run_id": run_id,
-                "source_run_id": source_run_id,
-                "scoring_functional_id": functional_id,
-                "contrast_candidates": list(candidates.get(functional_id, ())),
-                "communication_mode": communication_mode,
-                "rows": len(table),
-            }
-        )
+        view_manifest: dict[str, Any] = {
+            "run_id": run_id,
+            "source_run_id": source_run_id,
+            "contrast_candidates": list(view.contrast_candidates),
+            "communication_mode": communication_mode,
+            "rows": len(table),
+        }
+        if view.grouped:
+            view_manifest.update(
+                {
+                    "child_scoring_functional_ids": list(view.child_ids),
+                    "child_receiver_partitions": receiver_partitions,
+                    "view_scope": "contrast_level_receiver_row_union",
+                    "bridge_semantics_version": RECEIVER_ROW_UNION_BRIDGE_VERSION,
+                    "aggregation": "none_row_union_by_receiver",
+                    "common_functional_claim": False,
+                    "provenance_status": "legacy_reconstructed_fail_closed",
+                    "source_result_table_digests": source_table_digests,
+                }
+            )
+        else:
+            view_manifest.update(
+                {
+                    "scoring_functional_id": view.child_ids[0],
+                    "view_scope": "single_scoring_functional",
+                }
+            )
+        views.append(view_manifest)
     combined = pd.concat(tables, ignore_index=True)
     return cast(pd.DataFrame, combined.loc[:, LONG_TABLE_COLUMNS]), views
 
@@ -586,7 +888,9 @@ def export_result(
         "resource_digests": dict(result.manifest["resource_digests"]),
         "score_views": views,
     }
-    return finalize_manifest(manifest, table, output, started=started)
+    return cast(
+        dict[str, Any], finalize_manifest(manifest, table, output, started=started)
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

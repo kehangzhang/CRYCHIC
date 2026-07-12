@@ -39,6 +39,8 @@ class FakeResult:
         bundle: ResourceBundle,
         sample_scores: pd.DataFrame,
         interactions: pd.DataFrame,
+        sample_scores_digest: str = "1" * 64,
+        interactions_digest: str = "2" * 64,
     ) -> None:
         self.manifest: Mapping[str, Any] = {
             "run_id": "source_run",
@@ -49,6 +51,10 @@ class FakeResult:
             "workflow_parameters": {
                 "method_version": "0.1.0-exploratory",
                 "pseudobulk": {"min_cells": 2},
+            },
+            "tables": {
+                "sample_scores": {"sha256": sample_scores_digest},
+                "interactions": {"sha256": interactions_digest},
             },
         }
         self.config: Mapping[str, Any] = {
@@ -121,9 +127,7 @@ def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> Non
     }
     for name, cap in historical_caps.items():
         config = json.loads(
-            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(
-                encoding="utf-8"
-            )
+            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(encoding="utf-8")
         )
         assert all(
             dataset["workflow"]["max_interactions"] == cap
@@ -143,18 +147,17 @@ def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> Non
         "synthetic_multimethod_nocap_v02.json",
     ):
         config = json.loads(
-            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(
-                encoding="utf-8"
-            )
+            (REPO_ROOT / "benchmarks" / "configs" / name).read_text(encoding="utf-8")
         )
         assert all(
             dataset["workflow"]["max_interactions"] is None
             for dataset in config["datasets"].values()
         )
         base_path = REPO_ROOT / config["historical_base_config"]
-        assert hashlib.sha256(base_path.read_bytes()).hexdigest() == config[
-            "historical_base_sha256"
-        ]
+        assert (
+            hashlib.sha256(base_path.read_bytes()).hexdigest()
+            == config["historical_base_sha256"]
+        )
 
     candidate = json.loads(
         (
@@ -164,9 +167,10 @@ def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> Non
     )
     assert candidate["workflow"]["max_interactions"] is None
     base_path = REPO_ROOT / candidate["historical_base_config"]
-    assert hashlib.sha256(base_path.read_bytes()).hexdigest() == candidate[
-        "historical_base_sha256"
-    ]
+    assert (
+        hashlib.sha256(base_path.read_bytes()).hexdigest()
+        == candidate["historical_base_sha256"]
+    )
 
 
 def _bundle() -> ResourceBundle:
@@ -210,6 +214,16 @@ def _edge_id() -> str:
         stable_id(
             "communication_edge",
             {"interaction_id": "i1", "receiver": "B", "sender": "A"},
+        ),
+    )
+
+
+def _edge_id_for(receiver: str) -> str:
+    return cast(
+        str,
+        stable_id(
+            "communication_edge",
+            {"interaction_id": "i1", "receiver": receiver, "sender": "A"},
         ),
     )
 
@@ -346,7 +360,7 @@ def test_readback_materializes_fixed_universe_and_statuses() -> None:
     assert views[0]["contrast_candidates"] == ["global:A"]
 
 
-def test_readback_uses_one_run_per_scoring_functional() -> None:
+def test_explicit_readback_uses_one_run_per_scoring_functional() -> None:
     bundle = _bundle()
     functionals = ("functional_1", "functional_2")
     result = FakeResult(
@@ -360,6 +374,7 @@ def test_readback_uses_one_run_per_scoring_functional() -> None:
         bundle,
         dataset_id="toy_dataset",
         resource_mode="native",
+        scoring_functional_ids=functionals,
     )
 
     assert table["run_id"].nunique() == 2
@@ -385,6 +400,7 @@ def test_readback_optimized_validation_preserves_every_value(
         bundle,
         dataset_id="toy_dataset",
         resource_mode="native",
+        scoring_functional_ids=("functional_1", "functional_2"),
     )
 
     materialize = materialize_fixed_universe
@@ -415,6 +431,7 @@ def test_readback_optimized_validation_preserves_every_value(
         bundle,
         dataset_id="toy_dataset",
         resource_mode="native",
+        scoring_functional_ids=("functional_1", "functional_2"),
     )
 
     pd.testing.assert_frame_equal(optimized, fully_validated, check_exact=True)
@@ -442,6 +459,7 @@ def test_readback_validates_each_score_view_exactly_once(
         _bundle(),
         dataset_id="toy_dataset",
         resource_mode="native",
+        scoring_functional_ids=("functional_1", "functional_2"),
     )
 
     assert len(validated_run_ids) == 2
@@ -464,9 +482,7 @@ def test_readback_per_view_validation_remains_strict(
         result.loc[result.index[0], "status"] = "invalid_status"
         return result
 
-    monkeypatch.setattr(
-        readback, "_apply_crychic_statuses", corrupt_status_after_apply
-    )
+    monkeypatch.setattr(readback, "_apply_crychic_statuses", corrupt_status_after_apply)
     with pytest.raises(ValueError, match="invalid statuses"):
         convert_result_to_long(
             FakeResult(
@@ -479,6 +495,290 @@ def test_readback_per_view_validation_remains_strict(
             dataset_id="toy_dataset",
             resource_mode="native",
         )
+
+
+def _receiver_child_adata() -> ad.AnnData:
+    obs = pd.DataFrame(
+        {
+            "sample_id": ["s1"] * 3 + ["s2"] * 3,
+            "subject_id": ["p1"] * 3 + ["p2"] * 3,
+            "cell_type": ["A", "B", "C", "A", "B", "C"],
+            "condition": ["Normal"] * 3 + ["Tumor"] * 3,
+        },
+        index=[f"child_cell_{index}" for index in range(6)],
+    )
+    return ad.AnnData(
+        X=np.ones((6, 4)),
+        obs=obs,
+        var=pd.DataFrame(index=["L1", "R1", "L2", "R2"]),
+    )
+
+
+def _receiver_child_scores() -> pd.DataFrame:
+    definitions = {
+        "normal_B": ("B", (0.8, 0.6)),
+        "normal_C": ("C", (0.7, 0.5)),
+        "tumor_B": ("B", (0.3, 0.2)),
+        "tumor_C": ("C", (0.4, 0.1)),
+    }
+    records: list[dict[str, object]] = []
+    samples = (
+        ("s1", "p1", "context_normal", '{"condition":"Normal"}'),
+        ("s2", "p2", "context_tumor", '{"condition":"Tumor"}'),
+    )
+    for functional_id, (receiver, values) in definitions.items():
+        for (sample_id, subject_id, context_id, context_json), strength in zip(
+            samples, values, strict=True
+        ):
+            records.append(
+                {
+                    "sample_id": sample_id,
+                    "subject_id": subject_id,
+                    "context_id": context_id,
+                    "context_json": context_json,
+                    "edge_id": _edge_id_for(receiver),
+                    "scoring_functional_id": functional_id,
+                    "repeat_id": "repeat-0",
+                    "fold_id": "in_sample",
+                    "mode": "state",
+                    "availability": strength,
+                    "sender_component": 0.5,
+                    "prior_quality": 1.0,
+                    "comm_strength": strength,
+                    "status": "ok",
+                    "reason_code": "exploratory_not_cross_fitted",
+                }
+            )
+    return pd.DataFrame.from_records(records)
+
+
+def _receiver_child_interactions() -> pd.DataFrame:
+    definitions = {
+        "global:'Normal'": {"B": (0.8, 0.6), "C": (0.7, 0.5)},
+        "global:'Tumor'": {"B": (0.3, 0.2), "C": (0.4, 0.1)},
+    }
+    contexts = ("context_normal", "context_tumor")
+    records: list[dict[str, object]] = []
+    for contrast, receivers in definitions.items():
+        for receiver, values in receivers.items():
+            for context_id, strength in zip(contexts, values, strict=True):
+                records.append(
+                    {
+                        "context_id": context_id,
+                        "sender": "A",
+                        "receiver": receiver,
+                        "interaction_id": "i1",
+                        "mode": "state",
+                        "contrast": contrast,
+                        "availability": strength,
+                        "assignment_weight": 0.5,
+                        "comm_strength": strength,
+                        "prior_quality": 1.0,
+                    }
+                )
+    return pd.DataFrame.from_records(records)
+
+
+def _receiver_child_result(*, sample_scores: pd.DataFrame | None = None) -> FakeResult:
+    return FakeResult(
+        bundle=_bundle(),
+        sample_scores=(
+            _receiver_child_scores() if sample_scores is None else sample_scores
+        ),
+        interactions=_receiver_child_interactions(),
+    )
+
+
+def test_default_readback_unions_receiver_children_by_unique_contrast() -> None:
+    table, views = convert_result_to_long(
+        _receiver_child_result(),
+        _receiver_child_adata(),
+        _bundle(),
+        dataset_id="receiver_children",
+        resource_mode="H-common",
+        min_cells=1,
+    )
+
+    assert table["run_id"].nunique() == 2
+    assert len(table) == 2 * 36
+    by_contrast = {view["contrast_candidates"][0]: view for view in views}
+    assert by_contrast["global:'Normal'"]["child_scoring_functional_ids"] == [
+        "normal_B",
+        "normal_C",
+    ]
+    assert by_contrast["global:'Tumor'"]["child_scoring_functional_ids"] == [
+        "tumor_B",
+        "tumor_C",
+    ]
+    assert by_contrast["global:'Normal'"]["child_receiver_partitions"] == {
+        "normal_B": ["B"],
+        "normal_C": ["C"],
+    }
+    assert all(view["aggregation"] == "none_row_union_by_receiver" for view in views)
+    assert all(view["common_functional_claim"] is False for view in views)
+    assert all(
+        view["provenance_status"] == "legacy_reconstructed_fail_closed"
+        for view in views
+    )
+    assert all(
+        view["source_result_table_digests"]
+        == {"sample_scores": "1" * 64, "interactions": "2" * 64}
+        for view in views
+    )
+
+    observed = table.loc[table["status"].eq("ok")]
+    scores = observed.set_index(["run_id", "sample_id", "receiver"])["score"]
+    assert set(scores.index.get_level_values("receiver")) == {"B", "C"}
+    assert len(scores) == 8
+
+
+def test_grouped_run_id_is_order_invariant_and_source_digest_bound() -> None:
+    first = _receiver_child_result()
+    shuffled = _receiver_child_result(
+        sample_scores=_receiver_child_scores().sample(
+            frac=1.0, random_state=1701, ignore_index=True
+        )
+    )
+    changed = FakeResult(
+        bundle=_bundle(),
+        sample_scores=_receiver_child_scores(),
+        interactions=_receiver_child_interactions(),
+        sample_scores_digest="3" * 64,
+    )
+
+    def run_ids(result: FakeResult) -> dict[str, str]:
+        _, views = convert_result_to_long(
+            result,
+            _receiver_child_adata(),
+            _bundle(),
+            dataset_id="receiver_children",
+            resource_mode="H-common",
+            min_cells=1,
+        )
+        return {
+            str(view["contrast_candidates"][0]): str(view["run_id"]) for view in views
+        }
+
+    assert run_ids(first) == run_ids(shuffled)
+    assert run_ids(first) != run_ids(changed)
+
+
+def test_explicit_receiver_child_remains_a_diagnostic_view() -> None:
+    table, views = convert_result_to_long(
+        _receiver_child_result(),
+        _receiver_child_adata(),
+        _bundle(),
+        dataset_id="receiver_children",
+        resource_mode="H-common",
+        scoring_functional_ids=("normal_B",),
+        min_cells=1,
+    )
+
+    assert table["run_id"].nunique() == 1
+    assert views == [
+        {
+            "run_id": views[0]["run_id"],
+            "source_run_id": "source_run",
+            "contrast_candidates": ["global:'Normal'"],
+            "communication_mode": "state",
+            "rows": 36,
+            "scoring_functional_id": "normal_B",
+            "view_scope": "single_scoring_functional",
+        }
+    ]
+
+
+def test_default_readback_rejects_overlapping_receiver_children() -> None:
+    scores = _receiver_child_scores()
+    duplicate = scores.loc[scores["scoring_functional_id"].eq("normal_B")].copy()
+    duplicate["scoring_functional_id"] = "normal_B_duplicate"
+    scores = pd.concat([scores, duplicate], ignore_index=True)
+
+    with pytest.raises(ValueError, match="overlapping receiver partitions"):
+        convert_result_to_long(
+            _receiver_child_result(sample_scores=scores),
+            _receiver_child_adata(),
+            _bundle(),
+            dataset_id="receiver_children",
+            resource_mode="H-common",
+            min_cells=1,
+        )
+
+
+def test_default_readback_rejects_incomplete_receiver_coverage() -> None:
+    scores = _receiver_child_scores()
+    scores = scores.loc[~scores["scoring_functional_id"].eq("normal_C")].copy()
+
+    with pytest.raises(ValueError, match="do not completely cover"):
+        convert_result_to_long(
+            _receiver_child_result(sample_scores=scores),
+            _receiver_child_adata(),
+            _bundle(),
+            dataset_id="receiver_children",
+            resource_mode="H-common",
+            min_cells=1,
+        )
+
+
+def test_default_readback_rejects_ambiguous_child_contrast_candidates() -> None:
+    with pytest.raises(ValueError, match="exactly one persisted contrast candidate"):
+        convert_result_to_long(
+            FakeResult(
+                bundle=_bundle(),
+                sample_scores=_sample_scores(("functional_1", "functional_2")),
+                interactions=_interactions(("global:A", "global:B")),
+            ),
+            _adata(),
+            _bundle(),
+            dataset_id="toy_dataset",
+            resource_mode="native",
+        )
+
+
+def test_grouped_readback_rejects_repeated_sample_edge_rows() -> None:
+    scores = _receiver_child_scores()
+    duplicate = scores.loc[
+        scores["scoring_functional_id"].eq("normal_B") & scores["sample_id"].eq("s1")
+    ]
+    scores = pd.concat([scores, duplicate], ignore_index=True)
+
+    with pytest.raises(ValueError, match="repeated sample-edge rows"):
+        convert_result_to_long(
+            _receiver_child_result(sample_scores=scores),
+            _receiver_child_adata(),
+            _bundle(),
+            dataset_id="receiver_children",
+            resource_mode="H-common",
+            min_cells=1,
+        )
+
+
+def test_historical_single_common_functional_remains_one_view() -> None:
+    table, views = convert_result_to_long(
+        FakeResult(
+            bundle=_bundle(),
+            sample_scores=_sample_scores(),
+            interactions=_interactions(("global:A", "global:B")),
+        ),
+        _adata(),
+        _bundle(),
+        dataset_id="toy_dataset",
+        resource_mode="native",
+    )
+
+    assert table["run_id"].nunique() == 1
+    assert views[0]["scoring_functional_id"] == "functional_1"
+    assert views[0]["contrast_candidates"] == ["global:A", "global:B"]
+    assert views[0]["run_id"] == readback.canonical_digest(
+        {
+            "source_run_id": "source_run",
+            "scoring_functional_id": "functional_1",
+            "communication_mode": "state",
+            "resource_mode": "native",
+            "dataset_id": "toy_dataset",
+        },
+        prefix="crychic_benchmark_run",
+    )
 
 
 def test_readback_rejects_run_id_collisions(
@@ -496,6 +796,7 @@ def test_readback_rejects_run_id_collisions(
             _bundle(),
             dataset_id="toy_dataset",
             resource_mode="native",
+            scoring_functional_ids=("functional_1", "functional_2"),
         )
 
 

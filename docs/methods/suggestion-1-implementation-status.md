@@ -20,6 +20,7 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | Strict complete-link families | Implemented | Chaining counterexamples are covered by family tests. |
 | True family-first fitting | Partial | Candidate solver, allocation, conservation, and entropy contracts exist; the baseline still fits members before aggregation. |
 | Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. |
+| Receiver-child scoring collection provenance | Partial | The benchmark adapter can fail closed and reconstruct unique, complete receiver partitions as a no-aggregation row union with `common_functional_claim=false`. The core result still lacks an authoritative `ScoringCollectionManifest` child-to-contrast registry. |
 | State/ecosystem eligibility separation | Implemented | State rows no longer depend on abundance eligibility. |
 | All-missing sender evidence | Implemented | Returns missing values rather than fabricated uniform weights. |
 | Common sender functional | Missing | Current sender assignment is context-specific and in-sample. |

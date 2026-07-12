@@ -11,6 +11,26 @@ communication. It is not a probability. The adapter always leaves all
 within-dataset and differential p/q fields null and records
 `v0_1_inferential_disabled` on every row.
 
+Current results may persist one receiver-scoped child scoring functional per
+contrast. Default readback treats these as a provenance-preserving row union:
+each child must match exactly one persisted contrast, cover exactly one
+receiver, and the receiver/edge partitions for a contrast must be disjoint and
+complete. Scores are never averaged or rewritten. The adapter manifest records
+the sorted child IDs, receiver partitions, source-table checksums,
+`aggregation=none_row_union_by_receiver`, and
+`common_functional_claim=false`, with
+`provenance_status=legacy_reconstructed_fail_closed`. These bridge semantics,
+the partitions, child membership, contrast, and source checksums are bound into
+the benchmark run ID. Ambiguous, overlapping, or incomplete child sets fail
+closed. Passing one or more `--scoring-functional-id` options retains
+single-child diagnostic views instead.
+
+This is a compatibility bridge, not evidence that the children form a common
+`ScoringFunctional`. A future core `ScoringCollectionManifest` must provide an
+explicit child-to-contrast registry before the adapter can stop using persisted
+numeric matching. Historical results with one common functional remain one
+view.
+
 ## H-common run
 
 Use a new output directory. The command retains the native CRYCHIC result under
@@ -29,6 +49,11 @@ Replace `cscc_native_cellchat` with `ms_native_cellchat` and use a different
 output directory for the MS arm. Historical `multicondition_v01_*` configs are
 retained unchanged for their recorded native capped runs and are not valid
 inputs to the no-cap H-common adapter.
+
+If fitting completed but an earlier readback emitted one full-universe view per
+receiver child, keep the persisted `result/` unchanged and re-export to a
+disjoint sibling directory with `benchmarks.adapters.crychic.readback`. Never
+use `--overwrite` on the parent directory containing `result/`.
 
 ## Native result readback
 

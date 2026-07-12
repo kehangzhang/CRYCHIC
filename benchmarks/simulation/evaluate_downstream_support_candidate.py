@@ -10,7 +10,7 @@ import argparse
 import json
 import math
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -221,7 +221,7 @@ def _context(value: object, key: str) -> str:
 def _known_downstream_effect(
     run_dir: Path,
     *,
-    scoring_functional_id: str,
+    scoring_functional_ids: Sequence[str],
     known_edge: Mapping[str, str],
     context_key: str,
     reference: str,
@@ -237,7 +237,7 @@ def _known_downstream_effect(
         },
     )
     selected = table.loc[
-        table["scoring_functional_id"].astype(str).eq(scoring_functional_id)
+        table["scoring_functional_id"].astype(str).isin(scoring_functional_ids)
         & table["edge_id"].astype(str).eq(edge_id)
         & table["mode"].astype(str).eq("state")
         & table["status"].astype(str).eq("ok")
@@ -571,9 +571,17 @@ def run_candidate_holdout(
                 )
                 if str(value["run_id"]) == selected_run_id
             )
+            child_ids = view.get("child_scoring_functional_ids")
+            if child_ids is None:
+                child_ids = [view["scoring_functional_id"]]
             downstream = _known_downstream_effect(
                 run_dir,
-                scoring_functional_id=str(view["scoring_functional_id"]),
+                scoring_functional_ids=tuple(
+                    map(
+                        str,
+                        cast(Sequence[object], child_ids),
+                    )
+                ),
                 known_edge=known_edge,
                 context_key=str(analysis["context_key"]),
                 reference=str(analysis["reference"]),
