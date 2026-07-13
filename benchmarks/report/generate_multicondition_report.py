@@ -1491,6 +1491,19 @@ def _empty_panel(axis: mpl.axes.Axes, reason: str) -> None:
     )
 
 
+def _rank_ne_reason_summary(table: pd.DataFrame, *, limit: int = 3) -> str:
+    subset = table.loc[~table["status"].isin(OBSERVED_STATUSES)].copy()
+    if "analysis_track" in subset:
+        lr = subset.loc[subset["analysis_track"].eq("lr_stlr")]
+        if not lr.empty:
+            subset = lr
+    reasons = subset.get("reason_code", pd.Series(dtype=str)).replace("", pd.NA)
+    counts = reasons.dropna().astype(str).value_counts().head(limit)
+    if counts.empty:
+        return "no estimable ranking records"
+    return "\n".join(f"{reason} (n={count})" for reason, count in counts.items())
+
+
 def _save_figure(figure: Figure, figures_dir: Path, stem: str) -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ("svg", "pdf"):
@@ -2400,9 +2413,7 @@ def _plot_rank_stability(
         & agreement["estimate"].notna()
     ].copy()
     if observed_agreement.empty:
-        _empty_panel(
-            axes[0, 0], str(agreement.iloc[0].get("reason_code", "NE"))
-        )
+        _empty_panel(axes[0, 0], _rank_ne_reason_summary(agreement))
     else:
         observed_agreement["label"] = (
             _short_dataset_labels(observed_agreement["dataset"])
@@ -2470,7 +2481,7 @@ def _plot_rank_stability(
         & curve["estimate"].notna()
     ].copy()
     if observed_curve.empty:
-        _empty_panel(axes[0, 1], str(curve.iloc[0].get("reason_code", "NE")))
+        _empty_panel(axes[0, 1], _rank_ne_reason_summary(curve))
     else:
         group_columns = [
             "dataset",
@@ -2513,7 +2524,7 @@ def _plot_rank_stability(
         )
     ].copy()
     if observed_tiers.empty:
-        _empty_panel(axes[1, 0], str(tiers.iloc[0].get("reason_code", "NE")))
+        _empty_panel(axes[1, 0], _rank_ne_reason_summary(tiers))
     else:
         observed_tiers["label"] = (
             _short_dataset_labels(observed_tiers["dataset"])
@@ -2562,9 +2573,7 @@ def _plot_rank_stability(
         & intervals["top_k_frequency"].notna()
     ].copy()
     if observed_intervals.empty:
-        _empty_panel(
-            axes[1, 1], str(intervals.iloc[0].get("reason_code", "NE"))
-        )
+        _empty_panel(axes[1, 1], _rank_ne_reason_summary(intervals))
     else:
         observed_intervals = (
             observed_intervals.sort_values(
@@ -2622,7 +2631,7 @@ def _plot_rank_stability(
     axes[1, 1].set_title("Average-rank interval and top-k frequency")
     _panel_label(axes[1, 1], "D")
 
-    figure.suptitle("Real-data ranking stability beyond Spearman and one top-k cutoff")
+    figure.suptitle("Real-data ranking stability and non-estimability audit")
     figure.subplots_adjust(
         left=0.27, right=0.97, top=0.91, bottom=0.09, hspace=0.35, wspace=0.42
     )

@@ -519,6 +519,7 @@ def test_generate_multicondition_report_from_frozen_fixture(tmp_path: Path) -> N
     assert not manifest["guardrails"]["real_data_edge_auroc_reported"]
     assert not manifest["guardrails"]["preregistered_track_b_primary_reported"]
     assert manifest["endpoint_status_counts"]["loso_not_estimable"] == 1
+
     assert manifest["endpoint_status_counts"]["iteration_regressions"] == 1
     assert len(manifest["artifacts"]) == 35
     assert manifest["ranking_parameters"]["n_bootstrap"] == 2000
@@ -542,6 +543,30 @@ def test_generate_multicondition_report_from_frozen_fixture(tmp_path: Path) -> N
     ):
         source = pd.read_csv(output / f"source_data/{stem}.csv")
         assert "synthetic_active" not in set(source["dataset"])
+
+
+def test_rank_ne_reason_summary_reports_dominant_lr_reasons() -> None:
+    table = pd.DataFrame(
+        [
+            {
+                "analysis_track": "lr_stlr",
+                "status": "not_estimable",
+                "reason_code": "frozen_item_missing",
+            },
+            {
+                "analysis_track": "lr_stlr",
+                "status": "not_estimable",
+                "reason_code": "frozen_item_missing",
+            },
+            {
+                "analysis_track": "ligand_target_program",
+                "status": "not_estimable",
+                "reason_code": "track_b_not_comparable",
+            },
+        ]
+    )
+
+    assert module._rank_ne_reason_summary(table) == "frozen_item_missing (n=2)"
 
 
 def test_simulation_metrics_reject_real_data_truth_scope() -> None:
