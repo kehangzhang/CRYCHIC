@@ -12,12 +12,14 @@ import numpy as np
 import pandas as pd
 import patsy  # type: ignore[import-untyped]
 
-from crychic.core import canonical_digest, canonical_json, stable_id
+from crychic.core import ContractError, canonical_digest, canonical_json, stable_id
 
 from .audit import audit_sample_design, default_design_formula
+from .context_encoding import context_id
 from .contrasts import ContrastSpec
 
-_PRODUCER_MARKER = "crychic.design.frozen_encoder.v2"
+_PRODUCER_MARKER = "crychic.design.frozen_encoder.v3"
+_APPLICATION_PRODUCER_MARKER = "crychic.design.frozen_application.v3"
 _NUMERIC_SCALE_FLOOR = 1e-12
 
 
@@ -53,6 +55,20 @@ def _names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
     return result
 
 
+def _aligned_names(
+    values: Sequence[str], *, length: int, field_name: str
+) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise TypeError(f"{field_name} must be a sequence, not a string")
+    result = tuple(values)
+    if len(result) != length or any(
+        not isinstance(value, str) or not value or value != value.strip()
+        for value in result
+    ):
+        raise ValueError(f"{field_name} must contain {length} aligned canonical names")
+    return result
+
+
 def _array_digest(values: np.ndarray) -> str:
     canonical = np.asarray(values, dtype="<f8", order="C")
     if np.any(~np.isfinite(canonical)):
@@ -63,12 +79,37 @@ def _array_digest(values: np.ndarray) -> str:
     return digest.hexdigest()
 
 
-def _immutable_array(values: np.ndarray) -> np.ndarray:
-    array = np.asarray(values, dtype=np.float64).copy(order="C")
-    if np.any(~np.isfinite(array)):
+def _application_array_digest(values: np.ndarray) -> str:
+    canonical = np.asarray(values, dtype="<f8", order="C").copy(order="C")
+    if np.any(np.isinf(canonical)):
+        raise ValueError("design application arrays cannot contain infinity")
+    canonical[np.isnan(canonical)] = np.nan
+    digest = hashlib.sha256()
+    digest.update(canonical_json({"shape": list(canonical.shape)}).encode("ascii"))
+    digest.update(canonical.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _immutable_array(values: np.ndarray, *, allow_nan: bool = False) -> np.ndarray:
+    owned = np.asarray(values, dtype="<f8", order="C").copy(order="C")
+    invalid = np.isinf(owned) if allow_nan else ~np.isfinite(owned)
+    if np.any(invalid):
         raise ValueError("frozen design arrays must be finite")
-    array.setflags(write=False)
-    return cast(np.ndarray, array)
+    result = cast(
+        np.ndarray,
+        np.frombuffer(owned.tobytes(order="C"), dtype="<f8").reshape(owned.shape),
+    )
+    result.setflags(write=False)
+    return result
+
+
+def _is_immutable_byte_backed(values: np.ndarray) -> bool:
+    if values.flags.writeable or not values.flags.c_contiguous:
+        return False
+    base: object = values
+    while isinstance(base, np.ndarray):
+        base = base.base
+    return isinstance(base, bytes)
 
 
 def _is_categorical(series: pd.Series, *, declared: bool) -> bool:
@@ -158,6 +199,8 @@ class FrozenDesignEncoder:
     sample_key: str
     subject_key: str
     training_sample_ids: tuple[str, ...]
+    training_sample_subject_ids: tuple[str, ...]
+    training_sample_context_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
     covariate_encodings: tuple[FrozenCovariateEncoding, ...]
     factor_levels: tuple[tuple[str, tuple[Hashable, ...]], ...]
@@ -172,9 +215,10 @@ class FrozenDesignEncoder:
     context_regressor_id: str
     nuisance_design_id: str
     encoder_id: str
+    _training_full_design: np.ndarray
+    _coefficient_contrast: np.ndarray
     _null_basis: np.ndarray
     _contrast_direction: np.ndarray
-    _design_info: Any
     _producer_marker: str
 
     def __init__(self) -> None:
@@ -194,6 +238,8 @@ class FrozenDesignEncoder:
         sample_key: str,
         subject_key: str,
         training_sample_ids: tuple[str, ...],
+        training_sample_subject_ids: tuple[str, ...],
+        training_sample_context_ids: tuple[str, ...],
         training_subject_ids: tuple[str, ...],
         covariate_encodings: tuple[FrozenCovariateEncoding, ...],
         factor_levels: tuple[tuple[str, tuple[Hashable, ...]], ...],
@@ -208,13 +254,31 @@ class FrozenDesignEncoder:
         training_sample_manifest: tuple[dict[str, object], ...],
         design_info: Any,
     ) -> FrozenDesignEncoder:
+        samples = _names(training_sample_ids, field_name="training_sample_ids")
+        sample_subjects = _aligned_names(
+            training_sample_subject_ids,
+            length=len(samples),
+            field_name="training_sample_subject_ids",
+        )
+        sample_contexts = _aligned_names(
+            training_sample_context_ids,
+            length=len(samples),
+            field_name="training_sample_context_ids",
+        )
+        subjects = tuple(
+            sorted(_names(training_subject_ids, field_name="training_subject_ids"))
+        )
+        if subjects != tuple(sorted(set(sample_subjects))):
+            raise ValueError(
+                "training_subject_ids must exactly match aligned sample subjects"
+            )
         nuisance = _immutable_array(training_nuisance_matrix)
         regressor = _immutable_array(training_context_regressor)
-        full_design = np.asarray(full_design_matrix, dtype=np.float64)
+        full_design = _immutable_array(full_design_matrix)
         coefficient = _immutable_array(coefficient_contrast)
         frozen_null = _immutable_array(null_basis)
         frozen_direction = _immutable_array(contrast_direction)
-        n_samples = len(training_sample_ids)
+        n_samples = len(samples)
         n_columns = len(formula_column_ids)
         if nuisance.shape != (n_samples, len(nuisance_column_ids)):
             raise ValueError("training nuisance matrix has incompatible shape")
@@ -264,8 +328,7 @@ class FrozenDesignEncoder:
             "context_keys": list(context_keys),
             "covariates": list(covariates),
             "factor_levels": [
-                {"name": name, "levels": list(levels)}
-                for name, levels in factor_levels
+                {"name": name, "levels": list(levels)} for name, levels in factor_levels
             ],
             "formula": formula,
             "formula_column_ids": list(formula_column_ids),
@@ -273,6 +336,19 @@ class FrozenDesignEncoder:
             "sample_key": sample_key,
             "subject_key": subject_key,
             "training_design_digest": training_design_digest,
+            "training_rows": [
+                {
+                    "context_id": context_id_value,
+                    "sample_id": sample_id,
+                    "subject_id": subject_id,
+                }
+                for sample_id, subject_id, context_id_value in zip(
+                    samples,
+                    sample_subjects,
+                    sample_contexts,
+                    strict=True,
+                )
+            ],
             "training_sample_manifest_digest": manifest_digest,
         }
         context_regressor_id = stable_id(
@@ -281,7 +357,7 @@ class FrozenDesignEncoder:
                 **common_identity,
                 "training_context_regressor_digest": _array_digest(regressor),
             },
-            schema_version="2",
+            schema_version="3",
         )
         nuisance_design_id = stable_id(
             "frozen_nuisance_design",
@@ -293,7 +369,7 @@ class FrozenDesignEncoder:
                 "nuisance_column_ids": list(nuisance_column_ids),
                 "training_nuisance_digest": _array_digest(nuisance),
             },
-            schema_version="2",
+            schema_version="3",
         )
         encoder_id = stable_id(
             "frozen_design_encoder",
@@ -301,7 +377,7 @@ class FrozenDesignEncoder:
                 "context_regressor_id": context_regressor_id,
                 "nuisance_design_id": nuisance_design_id,
             },
-            schema_version="2",
+            schema_version="3",
         )
         self = object.__new__(cls)
         values: dict[str, Any] = {
@@ -312,8 +388,10 @@ class FrozenDesignEncoder:
             "categorical_covariates": categorical_covariates,
             "sample_key": sample_key,
             "subject_key": subject_key,
-            "training_sample_ids": training_sample_ids,
-            "training_subject_ids": training_subject_ids,
+            "training_sample_ids": samples,
+            "training_sample_subject_ids": sample_subjects,
+            "training_sample_context_ids": sample_contexts,
+            "training_subject_ids": subjects,
             "covariate_encodings": covariate_encodings,
             "factor_levels": factor_levels,
             "formula_column_ids": formula_column_ids,
@@ -327,22 +405,223 @@ class FrozenDesignEncoder:
             "context_regressor_id": context_regressor_id,
             "nuisance_design_id": nuisance_design_id,
             "encoder_id": encoder_id,
+            "_training_full_design": full_design,
+            "_coefficient_contrast": coefficient,
             "_null_basis": frozen_null,
             "_contrast_direction": frozen_direction,
-            "_design_info": design_info,
             "_producer_marker": _PRODUCER_MARKER,
         }
         for name, value in values.items():
             object.__setattr__(self, name, value)
         return self
 
-    def _require_producer_owned(self) -> None:
+    def _common_identity_payload(self) -> dict[str, object]:
+        return {
+            "categorical_covariates": list(self.categorical_covariates),
+            "coefficient_contrast_digest": self.coefficient_contrast_digest,
+            "contrast": self.contrast.to_dict(),
+            "context_keys": list(self.context_keys),
+            "covariates": list(self.covariates),
+            "factor_levels": [
+                {"name": name, "levels": list(levels)}
+                for name, levels in self.factor_levels
+            ],
+            "formula": self.formula,
+            "formula_column_ids": list(self.formula_column_ids),
+            "reparameterization_digest": self.reparameterization_digest,
+            "sample_key": self.sample_key,
+            "subject_key": self.subject_key,
+            "training_design_digest": self.training_design_digest,
+            "training_rows": [
+                {
+                    "context_id": context_id_value,
+                    "sample_id": sample_id,
+                    "subject_id": subject_id,
+                }
+                for sample_id, subject_id, context_id_value in zip(
+                    self.training_sample_ids,
+                    self.training_sample_subject_ids,
+                    self.training_sample_context_ids,
+                    strict=True,
+                )
+            ],
+            "training_sample_manifest_digest": self.training_sample_manifest_digest,
+        }
+
+    def _require_intact(self) -> None:
         if self._producer_marker != _PRODUCER_MARKER:
             raise TypeError("FrozenDesignEncoder was not produced by this workflow")
+        try:
+            samples = _names(self.training_sample_ids, field_name="training_sample_ids")
+            sample_subjects = _aligned_names(
+                self.training_sample_subject_ids,
+                length=len(samples),
+                field_name="training_sample_subject_ids",
+            )
+            _aligned_names(
+                self.training_sample_context_ids,
+                length=len(samples),
+                field_name="training_sample_context_ids",
+            )
+            subjects = tuple(
+                sorted(
+                    _names(
+                        self.training_subject_ids,
+                        field_name="training_subject_ids",
+                    )
+                )
+            )
+            if subjects != tuple(sorted(set(sample_subjects))):
+                raise ValueError("training sample subjects are inconsistent")
+            n_samples = len(samples)
+            n_columns = len(self.formula_column_ids)
+            nuisance_columns = len(self.nuisance_column_ids)
+            if self.training_nuisance_matrix.shape != (
+                n_samples,
+                nuisance_columns,
+            ) or self.training_context_regressor.shape != (n_samples,):
+                raise ValueError("training design row alignment is inconsistent")
+            protected_arrays = (
+                self.training_nuisance_matrix,
+                self.training_context_regressor,
+                self._training_full_design,
+                self._coefficient_contrast,
+                self._null_basis,
+                self._contrast_direction,
+            )
+            if not all(_is_immutable_byte_backed(value) for value in protected_arrays):
+                raise ValueError("training design arrays are not immutable")
+            if self._null_basis.shape != (n_columns, nuisance_columns) or (
+                self._contrast_direction.shape != (n_columns,)
+            ):
+                raise ValueError("training reparameterization shape is inconsistent")
+            if self._training_full_design.shape != (n_samples, n_columns) or (
+                self._coefficient_contrast.shape != (n_columns,)
+            ):
+                raise ValueError("training formula arrays have inconsistent shape")
+            transformed = np.column_stack(
+                (self.training_nuisance_matrix, self.training_context_regressor)
+            )
+            transformation = np.column_stack(
+                (self._null_basis, self._contrast_direction)
+            )
+            if transformed.shape != (n_samples, n_columns) or (
+                np.linalg.matrix_rank(transformation) != n_columns
+            ):
+                raise ValueError("training reparameterization is rank deficient")
+            if not np.allclose(
+                self._training_full_design @ self._null_basis,
+                self.training_nuisance_matrix,
+                rtol=0.0,
+                atol=1e-12,
+            ) or not np.allclose(
+                self._training_full_design @ self._contrast_direction,
+                self.training_context_regressor,
+                rtol=0.0,
+                atol=1e-12,
+            ):
+                raise ValueError("training transformed design changed")
+            if not np.allclose(
+                self._coefficient_contrast @ self._null_basis,
+                0.0,
+                rtol=0.0,
+                atol=1e-10,
+            ) or not math.isclose(
+                float(self._coefficient_contrast @ self._contrast_direction),
+                1.0,
+                rel_tol=0.0,
+                abs_tol=1e-10,
+            ):
+                raise ValueError("training contrast reparameterization changed")
+            reparameterization_digest = canonical_digest(
+                {
+                    "contrast_direction": _array_digest(self._contrast_direction),
+                    "null_basis": _array_digest(self._null_basis),
+                }
+            )
+            if (
+                _array_digest(self._training_full_design) != self.training_design_digest
+                or _array_digest(self._coefficient_contrast)
+                != self.coefficient_contrast_digest
+                or reparameterization_digest != self.reparameterization_digest
+            ):
+                raise ValueError("training design numerical provenance changed")
+            common_identity = self._common_identity_payload()
+            expected_context_id = stable_id(
+                "frozen_context_regressor",
+                {
+                    **common_identity,
+                    "training_context_regressor_digest": _array_digest(
+                        self.training_context_regressor
+                    ),
+                },
+                schema_version="3",
+            )
+            expected_nuisance_id = stable_id(
+                "frozen_nuisance_design",
+                {
+                    **common_identity,
+                    "covariate_encodings": [
+                        encoding.to_dict() for encoding in self.covariate_encodings
+                    ],
+                    "nuisance_column_ids": list(self.nuisance_column_ids),
+                    "training_nuisance_digest": _array_digest(
+                        self.training_nuisance_matrix
+                    ),
+                },
+                schema_version="3",
+            )
+            expected_encoder_id = stable_id(
+                "frozen_design_encoder",
+                {
+                    "context_regressor_id": expected_context_id,
+                    "nuisance_design_id": expected_nuisance_id,
+                },
+                schema_version="3",
+            )
+            valid = (
+                expected_context_id == self.context_regressor_id
+                and expected_nuisance_id == self.nuisance_design_id
+                and expected_encoder_id == self.encoder_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Frozen design encoder failed integrity validation",
+                code="frozen_design_encoder_integrity_violation",
+                field="encoder_id",
+                remediation="Refit the design encoder from training metadata",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Frozen design encoder failed integrity validation",
+                code="frozen_design_encoder_integrity_violation",
+                field="encoder_id",
+                remediation="Refit the design encoder from training metadata",
+            )
+
+    def _require_producer_owned(self) -> None:
+        self._require_intact()
+
+    def training_application(self) -> FrozenDesignApplication:
+        """Return the producer-owned, sample-keyed training design view."""
+
+        self._require_intact()
+        return FrozenDesignApplication._from_encoder(
+            encoder=self,
+            application_scope="training",
+            sample_ids=self.training_sample_ids,
+            sample_subject_ids=self.training_sample_subject_ids,
+            sample_context_ids=self.training_sample_context_ids,
+            nuisance_matrix=self.training_nuisance_matrix,
+            context_regressor=self.training_context_regressor,
+            status="observed",
+            reason_code=None,
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return manifest provenance without expanding training matrices."""
 
+        self._require_intact()
         return {
             "encoder_id": self.encoder_id,
             "context_regressor_id": self.context_regressor_id,
@@ -355,6 +634,8 @@ class FrozenDesignEncoder:
             "sample_key": self.sample_key,
             "subject_key": self.subject_key,
             "training_sample_ids": list(self.training_sample_ids),
+            "training_sample_subject_ids": list(self.training_sample_subject_ids),
+            "training_sample_context_ids": list(self.training_sample_context_ids),
             "training_subject_ids": list(self.training_subject_ids),
             "training_sample_manifest_digest": self.training_sample_manifest_digest,
             "training_design_digest": self.training_design_digest,
@@ -372,40 +653,258 @@ class FrozenDesignEncoder:
         }
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, init=False)
 class FrozenDesignApplication:
-    """One frozen held-out design encoding or an explicit unavailable result."""
+    """Producer-owned, sample-keyed frozen design application."""
 
     encoder_id: str
+    context_regressor_id: str
+    nuisance_design_id: str
+    application_id: str
+    application_scope: str
     sample_ids: tuple[str, ...]
+    sample_subject_ids: tuple[str, ...]
+    sample_context_ids: tuple[str, ...]
     subject_ids: tuple[str, ...]
     nuisance_matrix: np.ndarray
     context_regressor: np.ndarray
+    nuisance_matrix_digest: str
+    context_regressor_digest: str
     status: str
     reason_code: str | None
+    _producer_marker: str
 
-    def __post_init__(self) -> None:
-        if not self.encoder_id or not self.sample_ids or not self.subject_ids:
-            raise ValueError("design application IDs must be non-empty")
-        if self.status not in {"observed", "not_estimable"}:
+    def __init__(self) -> None:
+        raise TypeError(
+            "FrozenDesignApplication is producer-owned; "
+            "use apply_frozen_design_encoder()"
+        )
+
+    @classmethod
+    def _from_encoder(
+        cls,
+        *,
+        encoder: FrozenDesignEncoder,
+        application_scope: str,
+        sample_ids: tuple[str, ...],
+        sample_subject_ids: tuple[str, ...],
+        sample_context_ids: tuple[str, ...],
+        nuisance_matrix: np.ndarray,
+        context_regressor: np.ndarray,
+        status: str,
+        reason_code: str | None,
+    ) -> FrozenDesignApplication:
+        encoder._require_producer_owned()
+        if application_scope not in {"training", "heldout"}:
+            raise ValueError("design application_scope is invalid")
+        samples = _names(sample_ids, field_name="sample_ids")
+        sample_subjects = _aligned_names(
+            sample_subject_ids,
+            length=len(samples),
+            field_name="sample_subject_ids",
+        )
+        sample_contexts = _aligned_names(
+            sample_context_ids,
+            length=len(samples),
+            field_name="sample_context_ids",
+        )
+        subjects = tuple(sorted(set(sample_subjects)))
+        if status not in {"observed", "not_estimable"}:
             raise ValueError("design application status is invalid")
-        if (self.status == "observed") == (self.reason_code is not None):
+        if (status == "observed") == (reason_code is not None):
             raise ValueError("reason_code is required exactly when not estimable")
-        matrix = np.asarray(self.nuisance_matrix, dtype=np.float64).copy()
-        regressor = np.asarray(self.context_regressor, dtype=np.float64).copy()
-        if matrix.shape[0] != len(self.sample_ids) or regressor.shape != (
-            len(self.sample_ids),
+        matrix = _immutable_array(nuisance_matrix, allow_nan=True)
+        regressor = _immutable_array(context_regressor, allow_nan=True)
+        if matrix.shape != (len(samples), len(encoder.nuisance_column_ids)) or (
+            regressor.shape != (len(samples),)
         ):
             raise ValueError("encoded held-out rows must align with sample IDs")
-        if self.status == "observed":
+        if status == "observed":
             if np.any(~np.isfinite(matrix)) or np.any(~np.isfinite(regressor)):
                 raise ValueError("observed held-out design must be finite")
         elif not np.isnan(matrix).all() or not np.isnan(regressor).all():
             raise ValueError("not-estimable held-out design must contain only NaN")
-        matrix.setflags(write=False)
-        regressor.setflags(write=False)
-        object.__setattr__(self, "nuisance_matrix", matrix)
-        object.__setattr__(self, "context_regressor", regressor)
+        matrix_digest = _application_array_digest(matrix)
+        regressor_digest = _application_array_digest(regressor)
+        self = object.__new__(cls)
+        attributes: dict[str, Any] = {
+            "encoder_id": encoder.encoder_id,
+            "context_regressor_id": encoder.context_regressor_id,
+            "nuisance_design_id": encoder.nuisance_design_id,
+            "application_scope": application_scope,
+            "sample_ids": samples,
+            "sample_subject_ids": sample_subjects,
+            "sample_context_ids": sample_contexts,
+            "subject_ids": subjects,
+            "nuisance_matrix": matrix,
+            "context_regressor": regressor,
+            "nuisance_matrix_digest": matrix_digest,
+            "context_regressor_digest": regressor_digest,
+            "status": status,
+            "reason_code": reason_code,
+            "_producer_marker": _APPLICATION_PRODUCER_MARKER,
+        }
+        for name, value in attributes.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(
+            self,
+            "application_id",
+            stable_id(
+                "frozen_design_application",
+                self._identity_payload(),
+                schema_version="3",
+            ),
+        )
+        return self
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "application_scope": self.application_scope,
+            "context_regressor_digest": self.context_regressor_digest,
+            "context_regressor_id": self.context_regressor_id,
+            "encoder_id": self.encoder_id,
+            "nuisance_design_id": self.nuisance_design_id,
+            "nuisance_matrix_digest": self.nuisance_matrix_digest,
+            "reason_code": self.reason_code,
+            "rows": [
+                {
+                    "context_id": context_id_value,
+                    "sample_id": sample_id,
+                    "subject_id": subject_id,
+                }
+                for sample_id, subject_id, context_id_value in zip(
+                    self.sample_ids,
+                    self.sample_subject_ids,
+                    self.sample_context_ids,
+                    strict=True,
+                )
+            ],
+            "status": self.status,
+            "subject_ids": list(self.subject_ids),
+        }
+
+    def _require_intact(self) -> None:
+        try:
+            samples = _names(self.sample_ids, field_name="sample_ids")
+            sample_subjects = _aligned_names(
+                self.sample_subject_ids,
+                length=len(samples),
+                field_name="sample_subject_ids",
+            )
+            _aligned_names(
+                self.sample_context_ids,
+                length=len(samples),
+                field_name="sample_context_ids",
+            )
+            if self._producer_marker != _APPLICATION_PRODUCER_MARKER:
+                raise TypeError("design application is not producer-owned")
+            if any(
+                not isinstance(value, str) or not value or value != value.strip()
+                for value in (
+                    self.encoder_id,
+                    self.context_regressor_id,
+                    self.nuisance_design_id,
+                    self.application_id,
+                )
+            ):
+                raise ValueError("design application lineage IDs are invalid")
+            if self.subject_ids != tuple(sorted(set(sample_subjects))):
+                raise ValueError("design application subject identity is inconsistent")
+            if self.application_scope not in {"training", "heldout"}:
+                raise ValueError("design application scope is inconsistent")
+            if self.status not in {"observed", "not_estimable"} or (
+                (self.status == "observed") == (self.reason_code is not None)
+            ):
+                raise ValueError("design application status is inconsistent")
+            if self.nuisance_matrix.shape[0] != len(samples) or (
+                self.context_regressor.shape != (len(samples),)
+            ):
+                raise ValueError("design application row alignment is inconsistent")
+            if not _is_immutable_byte_backed(self.nuisance_matrix) or not (
+                _is_immutable_byte_backed(self.context_regressor)
+            ):
+                raise ValueError("design application arrays are not immutable")
+            if self.status == "observed":
+                if np.any(~np.isfinite(self.nuisance_matrix)) or np.any(
+                    ~np.isfinite(self.context_regressor)
+                ):
+                    raise ValueError("observed design application is not finite")
+            elif (
+                not np.isnan(self.nuisance_matrix).all()
+                or not np.isnan(self.context_regressor).all()
+            ):
+                raise ValueError("not-estimable design application is not all NaN")
+            matrix_digest = _application_array_digest(self.nuisance_matrix)
+            regressor_digest = _application_array_digest(self.context_regressor)
+            expected_id = stable_id(
+                "frozen_design_application",
+                self._identity_payload(),
+                schema_version="3",
+            )
+            valid = (
+                matrix_digest == self.nuisance_matrix_digest
+                and regressor_digest == self.context_regressor_digest
+                and expected_id == self.application_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Frozen design application failed integrity validation",
+                code="frozen_design_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact training design encoder",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Frozen design application failed integrity validation",
+                code="frozen_design_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact training design encoder",
+            )
+
+    def require_compatible(self, encoder: FrozenDesignEncoder) -> None:
+        """Validate integrity and exact producer lineage before consumption."""
+
+        if not isinstance(encoder, FrozenDesignEncoder):
+            raise TypeError("encoder must be a FrozenDesignEncoder")
+        encoder._require_producer_owned()
+        self._require_intact()
+        expected = (
+            encoder.encoder_id,
+            encoder.context_regressor_id,
+            encoder.nuisance_design_id,
+        )
+        observed = (
+            self.encoder_id,
+            self.context_regressor_id,
+            self.nuisance_design_id,
+        )
+        if observed != expected:
+            raise ContractError(
+                "Frozen design application does not match its encoder",
+                code="frozen_design_application_scope_mismatch",
+                field="application_id",
+                remediation="Use the application produced by this encoder",
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return row and lineage provenance without expanding matrices."""
+
+        self._require_intact()
+        return {
+            "application_id": self.application_id,
+            "application_scope": self.application_scope,
+            "encoder_id": self.encoder_id,
+            "context_regressor_id": self.context_regressor_id,
+            "nuisance_design_id": self.nuisance_design_id,
+            "sample_ids": list(self.sample_ids),
+            "sample_subject_ids": list(self.sample_subject_ids),
+            "sample_context_ids": list(self.sample_context_ids),
+            "subject_ids": list(self.subject_ids),
+            "nuisance_matrix_digest": self.nuisance_matrix_digest,
+            "context_regressor_digest": self.context_regressor_digest,
+            "status": self.status,
+            "reason_code": self.reason_code,
+        }
 
 
 def _sample_table(
@@ -473,9 +972,7 @@ def _fit_type_registry(
                     levels=levels,
                     column_ids=tuple(
                         f"{name}:"
-                        + stable_id(
-                            "design_level", {"value": _typed_key(level)}
-                        )
+                        + stable_id("design_level", {"value": _typed_key(level)})
                         for level in levels[1:]
                     ),
                 )
@@ -633,6 +1130,10 @@ def fit_frozen_design_encoder(
         sample_key=sample_key,
         subject_key=subject_key,
         training_sample_ids=tuple(table[sample_key]),
+        training_sample_subject_ids=tuple(table[subject_key]),
+        training_sample_context_ids=tuple(
+            context_id(row, contexts) for _, row in table.iterrows()
+        ),
         training_subject_ids=tuple(sorted(table[subject_key].unique())),
         covariate_encodings=encodings,
         factor_levels=factor_levels,
@@ -662,10 +1163,14 @@ def _not_estimable(
     reason_code: str,
 ) -> FrozenDesignApplication:
     shape = (len(table), len(encoder.nuisance_column_ids))
-    return FrozenDesignApplication(
-        encoder_id=encoder.encoder_id,
+    return FrozenDesignApplication._from_encoder(
+        encoder=encoder,
+        application_scope="heldout",
         sample_ids=tuple(table[encoder.sample_key]),
-        subject_ids=tuple(sorted(table[encoder.subject_key].unique())),
+        sample_subject_ids=tuple(table[encoder.subject_key]),
+        sample_context_ids=tuple(
+            context_id(row, encoder.context_keys) for _, row in table.iterrows()
+        ),
         nuisance_matrix=np.full(shape, np.nan, dtype=np.float64),
         context_regressor=np.full(len(table), np.nan, dtype=np.float64),
         status="not_estimable",
@@ -739,11 +1244,8 @@ def apply_frozen_design_encoder(
     if reason is not None or formula_table is None:
         return _not_estimable(encoder, table, reason_code=str(reason))
     try:
-        full_design = np.asarray(
-            patsy.build_design_matrices(
-                [encoder._design_info], formula_table, return_type="dataframe"
-            )[0],
-            dtype=np.float64,
+        heldout_design = patsy.dmatrix(
+            encoder.formula, formula_table, return_type="dataframe"
         )
     except (patsy.PatsyError, ValueError) as error:
         return _not_estimable(
@@ -751,14 +1253,25 @@ def apply_frozen_design_encoder(
             table,
             reason_code=f"heldout_formula_encoding_failed:{type(error).__name__}",
         )
+    if tuple(map(str, heldout_design.columns)) != encoder.formula_column_ids:
+        return _not_estimable(
+            encoder,
+            table,
+            reason_code="heldout_formula_column_mismatch",
+        )
+    full_design = heldout_design.to_numpy(dtype=np.float64)
     if full_design.shape != (len(table), len(encoder.formula_column_ids)):
         raise RuntimeError("frozen formula encoder emitted the wrong matrix shape")
     nuisance = full_design @ encoder._null_basis
     regressor = full_design @ encoder._contrast_direction
-    return FrozenDesignApplication(
-        encoder_id=encoder.encoder_id,
+    return FrozenDesignApplication._from_encoder(
+        encoder=encoder,
+        application_scope="heldout",
         sample_ids=tuple(table[encoder.sample_key]),
-        subject_ids=tuple(sorted(table[encoder.subject_key].unique())),
+        sample_subject_ids=tuple(table[encoder.subject_key]),
+        sample_context_ids=tuple(
+            context_id(row, encoder.context_keys) for _, row in table.iterrows()
+        ),
         nuisance_matrix=nuisance,
         context_regressor=regressor,
         status="observed",

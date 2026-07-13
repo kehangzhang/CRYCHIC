@@ -11,9 +11,12 @@ from typing import Any, cast
 import numpy as np
 
 from crychic.core import ContractError, stable_id
+from crychic.response import FoldGeneResponseArtifact
 
 _METHOD = "winsorized_median_normalized_v2"
 _PRODUCER_MARKER = "crychic.attribution.precision.v2"
+_EXPLORATORY_LINEAGE_MODE = "exploratory_unparented_v2"
+_RESPONSE_LINEAGE_MODE = "fold_gene_response_parented_v1"
 
 
 def _names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
@@ -43,6 +46,74 @@ def _immutable_vector(values: np.ndarray) -> np.ndarray:
     )
     result.setflags(write=False)
     return result
+
+
+def _is_immutable_byte_backed(values: np.ndarray) -> bool:
+    if values.flags.writeable or not values.flags.c_contiguous:
+        return False
+    base: object = values
+    while isinstance(base, np.ndarray):
+        base = base.base
+    return isinstance(base, bytes)
+
+
+def _validated_lineage(
+    *,
+    lineage_mode: str,
+    response_artifact_id: str | None,
+    training_row_manifest_id: str | None,
+    training_subject_ids: Sequence[str],
+    encoder_id: str | None,
+) -> tuple[str, str | None, str | None, tuple[str, ...], str | None]:
+    mode = _scope_name(lineage_mode, field_name="lineage_mode")
+    if isinstance(training_subject_ids, str):
+        raise TypeError("training_subject_ids must be a sequence, not a string")
+    subjects = tuple(training_subject_ids)
+    if any(not isinstance(value, str) or not value for value in subjects):
+        raise ValueError("training_subject_ids must contain non-empty strings")
+    if len(set(subjects)) != len(subjects):
+        raise ValueError("training_subject_ids must contain unique values")
+    parent_ids = (response_artifact_id, training_row_manifest_id, encoder_id)
+    if mode == _EXPLORATORY_LINEAGE_MODE:
+        if any(value is not None for value in parent_ids) or subjects:
+            raise ValueError(
+                "exploratory precision lineage cannot declare response parents"
+            )
+        return mode, None, None, (), None
+    if mode != _RESPONSE_LINEAGE_MODE:
+        raise ValueError("lineage_mode is not a supported precision lineage mode")
+    if not subjects:
+        raise ValueError("parented precision requires training_subject_ids")
+    if subjects != tuple(sorted(subjects)):
+        raise ValueError("training_subject_ids must use canonical sorted order")
+    if any(value is None for value in parent_ids):
+        raise ValueError("parented precision requires complete response parent IDs")
+    validated_ids = tuple(
+        _scope_name(cast(str, value), field_name=field_name)
+        for value, field_name in zip(
+            parent_ids,
+            ("response_artifact_id", "training_row_manifest_id", "encoder_id"),
+            strict=True,
+        )
+    )
+    return mode, validated_ids[0], validated_ids[1], subjects, validated_ids[2]
+
+
+def _lineage_payload(
+    *,
+    lineage_mode: str,
+    response_artifact_id: str | None,
+    training_row_manifest_id: str | None,
+    training_subject_ids: tuple[str, ...],
+    encoder_id: str | None,
+) -> dict[str, object]:
+    return {
+        "encoder_id": encoder_id,
+        "lineage_mode": lineage_mode,
+        "response_artifact_id": response_artifact_id,
+        "training_row_manifest_id": training_row_manifest_id,
+        "training_subject_ids": list(training_subject_ids),
+    }
 
 
 def _finite_vector_digest(values: np.ndarray) -> str:
@@ -100,6 +171,11 @@ class PrecisionTransformResult:
     min_positive_features: int
     raw_precision_digest: str
     transformed_precision_digest: str
+    lineage_mode: str
+    response_artifact_id: str | None
+    training_row_manifest_id: str | None
+    training_subject_ids: tuple[str, ...]
+    encoder_id: str | None
     precision_transform_id: str
     estimable: bool
     reason_code: str | None
@@ -127,11 +203,29 @@ class PrecisionTransformResult:
         normalization_median: float | None,
         min_positive_features: int,
         raw_precision_digest: str,
+        lineage_mode: str,
+        response_artifact_id: str | None,
+        training_row_manifest_id: str | None,
+        training_subject_ids: Sequence[str],
+        encoder_id: str | None,
     ) -> PrecisionTransformResult:
         features = _names(feature_ids, field_name="feature_ids")
         receiver_name = _scope_name(receiver, field_name="receiver")
         contrast = _scope_name(contrast_name, field_name="contrast_name")
         fold = _scope_name(fold_id, field_name="fold_id")
+        (
+            mode,
+            response_parent,
+            row_manifest_parent,
+            training_subjects,
+            encoder_parent,
+        ) = _validated_lineage(
+            lineage_mode=lineage_mode,
+            response_artifact_id=response_artifact_id,
+            training_row_manifest_id=training_row_manifest_id,
+            training_subject_ids=training_subject_ids,
+            encoder_id=encoder_id,
+        )
         transformed = _immutable_vector(values)
         if transformed.shape != (len(features),):
             raise ContractError(
@@ -166,6 +260,15 @@ class PrecisionTransformResult:
             "upper_bound": upper_bound,
             "upper_quantile": upper_quantile,
         }
+        payload.update(
+            _lineage_payload(
+                lineage_mode=mode,
+                response_artifact_id=response_parent,
+                training_row_manifest_id=row_manifest_parent,
+                training_subject_ids=training_subjects,
+                encoder_id=encoder_parent,
+            )
+        )
         transform_id = stable_id("precision_transform", payload, schema_version="2")
         self = object.__new__(cls)
         attributes: dict[str, Any] = {
@@ -184,6 +287,11 @@ class PrecisionTransformResult:
             "min_positive_features": min_positive_features,
             "raw_precision_digest": raw_precision_digest,
             "transformed_precision_digest": transformed_digest,
+            "lineage_mode": mode,
+            "response_artifact_id": response_parent,
+            "training_row_manifest_id": row_manifest_parent,
+            "training_subject_ids": training_subjects,
+            "encoder_id": encoder_parent,
             "precision_transform_id": transform_id,
             "estimable": estimable,
             "reason_code": reason_code,
@@ -196,21 +304,33 @@ class PrecisionTransformResult:
     def _require_producer_owned(self) -> None:
         if self._producer_marker != _PRODUCER_MARKER:
             raise TypeError("precision transform was not produced by this workflow")
-        transformed = np.asarray(self.values, dtype=np.float64)
-        if transformed.shape != (len(self.feature_ids),):
-            raise ContractError(
-                "Precision transform shape no longer matches its feature universe",
-                code="precision_transform_integrity_violation",
-                field="values",
-                remediation="Refit the precision transform from training data",
-            )
         try:
+            (
+                mode,
+                response_parent,
+                row_manifest_parent,
+                training_subjects,
+                encoder_parent,
+            ) = _validated_lineage(
+                lineage_mode=self.lineage_mode,
+                response_artifact_id=self.response_artifact_id,
+                training_row_manifest_id=self.training_row_manifest_id,
+                training_subject_ids=self.training_subject_ids,
+                encoder_id=self.encoder_id,
+            )
+            transformed = np.asarray(self.values, dtype=np.float64)
+            if transformed.shape != (len(self.feature_ids),):
+                raise ValueError(
+                    "precision transform shape does not match its feature universe"
+                )
+            if not _is_immutable_byte_backed(self.values):
+                raise ValueError("precision transform values are not immutable")
             transformed_digest = _finite_vector_digest(transformed)
-        except ValueError as error:
+        except (AttributeError, TypeError, ValueError) as error:
             raise ContractError(
-                "Precision transform values failed integrity validation",
+                "Precision transform failed integrity validation",
                 code="precision_transform_integrity_violation",
-                field="values",
+                field="precision_transform_id",
                 remediation="Refit the precision transform from training data",
             ) from error
         expected_payload: dict[str, Any] = {
@@ -228,6 +348,15 @@ class PrecisionTransformResult:
             "upper_bound": self.upper_bound,
             "upper_quantile": self.upper_quantile,
         }
+        expected_payload.update(
+            _lineage_payload(
+                lineage_mode=mode,
+                response_artifact_id=response_parent,
+                training_row_manifest_id=row_manifest_parent,
+                training_subject_ids=training_subjects,
+                encoder_id=encoder_parent,
+            )
+        )
         expected_id = stable_id(
             "precision_transform", expected_payload, schema_version="2"
         )
@@ -281,6 +410,47 @@ class PrecisionTransformResult:
                 ),
             )
 
+    def require_response_compatible(
+        self, response_artifact: FoldGeneResponseArtifact
+    ) -> None:
+        """Validate integrity and exact fold-response parentage."""
+
+        if not isinstance(response_artifact, FoldGeneResponseArtifact):
+            raise TypeError("response_artifact must be a FoldGeneResponseArtifact")
+        response_artifact._require_intact()
+        self._require_producer_owned()
+        expected = (
+            _RESPONSE_LINEAGE_MODE,
+            response_artifact.artifact_id,
+            response_artifact.training_sample_manifest_digest,
+            response_artifact.training_subject_ids,
+            response_artifact.encoder_id,
+            response_artifact.feature_ids,
+            response_artifact.receiver,
+            response_artifact.contrast_name,
+            response_artifact.fold_id,
+            _raw_vector_digest(response_artifact.raw_precision),
+        )
+        observed = (
+            self.lineage_mode,
+            self.response_artifact_id,
+            self.training_row_manifest_id,
+            self.training_subject_ids,
+            self.encoder_id,
+            self.feature_ids,
+            self.receiver,
+            self.contrast_name,
+            self.fold_id,
+            self.raw_precision_digest,
+        )
+        if observed != expected:
+            raise ContractError(
+                "Precision transform does not match its fold response parent",
+                code="precision_transform_parent_mismatch",
+                field="response_artifact_id",
+                remediation="Fit precision from this exact response artifact",
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return provenance without expanding the transformed vector."""
 
@@ -294,6 +464,11 @@ class PrecisionTransformResult:
             "feature_ids": list(self.feature_ids),
             "raw_precision_digest": self.raw_precision_digest,
             "transformed_precision_digest": self.transformed_precision_digest,
+            "lineage_mode": self.lineage_mode,
+            "response_artifact_id": self.response_artifact_id,
+            "training_row_manifest_id": self.training_row_manifest_id,
+            "training_subject_ids": list(self.training_subject_ids),
+            "encoder_id": self.encoder_id,
             "lower_quantile": self.lower_quantile,
             "upper_quantile": self.upper_quantile,
             "lower_bound": self.lower_bound,
@@ -306,7 +481,7 @@ class PrecisionTransformResult:
         }
 
 
-def winsorized_normalized_precision(
+def _fit_precision_transform(
     raw_precision: np.ndarray,
     *,
     feature_ids: Sequence[str],
@@ -316,9 +491,12 @@ def winsorized_normalized_precision(
     lower_quantile: float = 0.05,
     upper_quantile: float = 0.95,
     min_positive_features: int = 2,
+    lineage_mode: str,
+    response_artifact_id: str | None,
+    training_row_manifest_id: str | None,
+    training_subject_ids: Sequence[str],
+    encoder_id: str | None,
 ) -> PrecisionTransformResult:
-    """Winsorize precision while binding every fit input to one fold scope."""
-
     raw = np.asarray(raw_precision, dtype=np.float64).copy()
     features = _names(feature_ids, field_name="feature_ids")
     if raw.ndim != 1:
@@ -381,4 +559,70 @@ def winsorized_normalized_precision(
         normalization_median=normalization_median,
         min_positive_features=minimum_support,
         raw_precision_digest=_raw_vector_digest(raw),
+        lineage_mode=lineage_mode,
+        response_artifact_id=response_artifact_id,
+        training_row_manifest_id=training_row_manifest_id,
+        training_subject_ids=training_subject_ids,
+        encoder_id=encoder_id,
     )
+
+
+def winsorized_normalized_precision(
+    raw_precision: np.ndarray,
+    *,
+    feature_ids: Sequence[str],
+    receiver: str,
+    contrast_name: str,
+    fold_id: str,
+    lower_quantile: float = 0.05,
+    upper_quantile: float = 0.95,
+    min_positive_features: int = 2,
+) -> PrecisionTransformResult:
+    """Fit an exploratory transform without a response-artifact parent."""
+
+    return _fit_precision_transform(
+        raw_precision,
+        feature_ids=feature_ids,
+        receiver=receiver,
+        contrast_name=contrast_name,
+        fold_id=fold_id,
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        min_positive_features=min_positive_features,
+        lineage_mode=_EXPLORATORY_LINEAGE_MODE,
+        response_artifact_id=None,
+        training_row_manifest_id=None,
+        training_subject_ids=(),
+        encoder_id=None,
+    )
+
+
+def fit_response_precision(
+    response_artifact: FoldGeneResponseArtifact,
+    *,
+    lower_quantile: float = 0.05,
+    upper_quantile: float = 0.95,
+    min_positive_features: int = 2,
+) -> PrecisionTransformResult:
+    """Fit precision from one intact training-fold response artifact."""
+
+    if not isinstance(response_artifact, FoldGeneResponseArtifact):
+        raise TypeError("response_artifact must be a FoldGeneResponseArtifact")
+    response_artifact._require_intact()
+    result = _fit_precision_transform(
+        response_artifact.raw_precision,
+        feature_ids=response_artifact.feature_ids,
+        receiver=response_artifact.receiver,
+        contrast_name=response_artifact.contrast_name,
+        fold_id=response_artifact.fold_id,
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        min_positive_features=min_positive_features,
+        lineage_mode=_RESPONSE_LINEAGE_MODE,
+        response_artifact_id=response_artifact.artifact_id,
+        training_row_manifest_id=(response_artifact.training_sample_manifest_digest),
+        training_subject_ids=response_artifact.training_subject_ids,
+        encoder_id=response_artifact.encoder_id,
+    )
+    result.require_response_compatible(response_artifact)
+    return result

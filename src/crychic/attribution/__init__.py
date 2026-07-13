@@ -46,7 +46,11 @@ from .model import (
     downstream_attribution_support,
     fit_positive_attribution,
 )
-from .precision import PrecisionTransformResult, winsorized_normalized_precision
+from .precision import (
+    PrecisionTransformResult,
+    fit_response_precision,
+    winsorized_normalized_precision,
+)
 from .solver import ElasticNetSolution, solve_nonnegative_elastic_net
 
 __all__ = [
@@ -88,6 +92,7 @@ __all__ = [
     "fit_positive_attribution",
     "fit_receiver_family_training_artifact",
     "fit_receiver_family_training_artifacts",
+    "fit_response_precision",
     "solve_nonnegative_elastic_net",
     "winsorized_normalized_precision",
 ]

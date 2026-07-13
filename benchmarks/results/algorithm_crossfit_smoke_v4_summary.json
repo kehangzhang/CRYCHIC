@@ -1,0 +1,107 @@
+{
+  "schema_version": "crychic-algorithm-crossfit-smoke-summary-v2",
+  "generated_on": "2026-07-13",
+  "base_revision": "d14b61e50f2d842f9e8f8d66da8032a129d9f708",
+  "scope": "typed_public_crossfit_algorithm_smoke_not_full_benchmark",
+  "full_artifact": {
+    "canonical_sha256": "e57de8ade9b3f6c3ebb6ccddfa7c0f66d3baf63c96a235465ba4bb7a86bec8dd",
+    "file_sha256": "827cd26a86497cf0e61db71af059f0096d1f29e9d4f7ddd1f596b2e63951226f",
+    "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v4.json",
+    "size_bytes": 7132
+  },
+  "implemented_stages": [
+    "availability_filter",
+    "contrast_common_sender_functional",
+    "frozen_design_encoder",
+    "condition_blind_hard_receptor_gate",
+    "strict_medoid_receiver_family_basis",
+    "training_reference_receiver_program_transform",
+    "fold_receiver_response",
+    "response_parented_precision",
+    "formula_nuisance_incremental_diagnostic"
+  ],
+  "exact_oof_coverage_audit_scope": [
+    "availability_filter",
+    "contrast_common_sender_functional",
+    "receiver_incremental_application_diagnostic"
+  ],
+  "process_performance": {
+    "peak_rss_kib": 523428,
+    "wall_clock_seconds": 25.331078762188554
+  },
+  "records": [
+    {
+      "dataset": "synthetic_active",
+      "n_cells": 3733,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 12.625338909216225,
+      "crossfit_id": "subject_crossfit_ce20161c6d4c03bad8866c33914435a2",
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_6fa9afb6e82bcb0068f3a13d7c5d85d4",
+      "n_receiver_response_artifacts": 6,
+      "n_response_precision_artifacts": 6,
+      "n_receiver_incremental_training_artifacts": 6,
+      "n_receiver_incremental_applications": 6,
+      "n_oof_receiver_coverage_rows": 48,
+      "response_precision_status_counts": {
+        "estimable": 6
+      },
+      "incremental_diagnostic_application_status_counts": {
+        "not_estimable": 4,
+        "observed": 2
+      },
+      "official_incremental_status_counts": {
+        "not_estimable": 48
+      },
+      "observed_incremental_diagnostic_count": 2,
+      "mean_bounded_incremental_diagnostic_gain": 0.003032471778552118,
+      "mean_raw_incremental_diagnostic_gain": -0.0038757899559804946
+    },
+    {
+      "dataset": "synthetic_ligand_only",
+      "n_cells": 3886,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 12.705739852972329,
+      "crossfit_id": "subject_crossfit_c2fbf59a084d8578e230ed2efab5661d",
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_971e50b15bc0a41fedfde58bfeb14a46",
+      "n_receiver_response_artifacts": 6,
+      "n_response_precision_artifacts": 6,
+      "n_receiver_incremental_training_artifacts": 6,
+      "n_receiver_incremental_applications": 6,
+      "n_oof_receiver_coverage_rows": 48,
+      "response_precision_status_counts": {
+        "estimable": 6
+      },
+      "incremental_diagnostic_application_status_counts": {
+        "not_estimable": 4,
+        "observed": 2
+      },
+      "official_incremental_status_counts": {
+        "not_estimable": 48
+      },
+      "observed_incremental_diagnostic_count": 2,
+      "mean_bounded_incremental_diagnostic_gain": 0.00045881372732274535,
+      "mean_raw_incremental_diagnostic_gain": -0.00819247311583664
+    }
+  ],
+  "remaining_stages": [
+    "attribution_tuning",
+    "common_scoring_functional",
+    "family_attribution",
+    "incremental_downstream",
+    "receiver_autonomous_nuisance",
+    "subject_blocked_inner_tuning"
+  ],
+  "interpretation": "The typed public path and exact receiver audit executed. Diagnostic gains are formula-nuisance development outputs; negative raw means and the missing autonomous nuisance model preclude an incremental, biological, or superiority claim.",
+  "guardrails": {
+    "active_vs_ligand_only_mechanism_claim_allowed": false,
+    "biological_claim_allowed": false,
+    "complete_pipeline_oof_claim_allowed": false,
+    "official_incremental_gain_claim_allowed": false,
+    "method_superiority_claim_allowed": false,
+    "p_or_q_reported": false
+  }
+}

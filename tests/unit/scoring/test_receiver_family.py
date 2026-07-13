@@ -20,6 +20,7 @@ from crychic.availability import (
     InteractionFilterApplication,
     InteractionFilterPolicy,
 )
+from crychic.core import ContractError
 from crychic.resources import (
     GeneNamespace,
     MappingReport,
@@ -145,8 +146,8 @@ def _multi_receiver_availability() -> BatchAvailability:
     first = _availability()
     second = first.sample_interactions.copy(deep=True)
     second["receiver"] = "ReceiverB"
-    second["receptor_availability"] = (
-        1.0 - second["receptor_availability"].astype(float)
+    second["receptor_availability"] = 1.0 - second["receptor_availability"].astype(
+        float
     )
     return BatchAvailability(
         sample_interactions=pd.concat(
@@ -528,6 +529,98 @@ def test_batch_receiver_fit_is_stable_to_receiver_order() -> None:
     )
 
 
+def test_training_artifact_owns_immutable_basis_buffers() -> None:
+    artifact = _receiver_family()
+
+    arrays = (
+        artifact.source_basis.normalized_profiles.data,
+        artifact.source_basis.normalized_profiles.indices,
+        artifact.source_basis.normalized_profiles.indptr,
+        artifact.source_basis.matrix.data,
+        artifact.source_basis.matrix.indices,
+        artifact.source_basis.matrix.indptr,
+        artifact.source_basis.receptor_gates,
+        artifact.source_basis.receptor_eligible,
+        artifact.source_basis.pre_normalization_norms,
+        artifact.family_basis.matrix.data,
+        artifact.family_basis.matrix.indices,
+        artifact.family_basis.matrix.indptr,
+        artifact.family_basis.family_eligible,
+    )
+    for values in arrays:
+        base: object = values
+        while isinstance(base, np.ndarray):
+            base = base.base
+        assert values.flags.writeable is False
+        assert isinstance(base, bytes)
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            values.setflags(write=True)
+
+    artifact._require_producer_owned()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "poisoned"),
+    [
+        ("training_artifact_id", "receiver_family_training_artifact_poisoned"),
+        ("receiver", "poisoned-receiver"),
+        ("fold_id", "poisoned-fold"),
+        ("training_subject_ids", ("p1", "p2", "poisoned-subject")),
+        ("receptor_gate_manifest_id", "receiver_gate_manifest_poisoned"),
+        ("source_basis_digest", "receiver_source_basis_poisoned"),
+        ("family_basis_digest", "receiver_family_basis_poisoned"),
+    ],
+)
+def test_training_artifact_rejects_poisoned_identity_fields(
+    field_name: str, poisoned: object
+) -> None:
+    artifact = _receiver_family()
+    object.__setattr__(artifact, field_name, poisoned)
+
+    with pytest.raises(ContractError) as caught:
+        artifact._require_producer_owned()
+
+    assert caught.value.details.code == "receiver_family_integrity_violation"
+
+
+@pytest.mark.parametrize("buffer_name", ["data", "indices", "indptr"])
+def test_training_artifact_rejects_poisoned_family_csc_buffers(
+    buffer_name: str,
+) -> None:
+    artifact = _receiver_family()
+    poisoned = getattr(artifact.family_basis.matrix, buffer_name).copy()
+    if poisoned.size:
+        poisoned[0] = poisoned[0] + 1
+    setattr(artifact.family_basis.matrix, buffer_name, poisoned)
+
+    with pytest.raises(ContractError) as caught:
+        artifact._require_producer_owned()
+
+    assert caught.value.details.code == "receiver_family_integrity_violation"
+
+
+def test_training_artifact_rejects_writeable_family_matrix_copy() -> None:
+    artifact = _receiver_family()
+    object.__setattr__(
+        artifact.family_basis, "matrix", artifact.family_basis.matrix.copy()
+    )
+
+    with pytest.raises(ContractError) as caught:
+        artifact._require_producer_owned()
+
+    assert caught.value.details.code == "receiver_family_integrity_violation"
+
+
+def test_training_artifact_rejects_poisoned_source_basis_metadata() -> None:
+    artifact = _receiver_family()
+    object.__setattr__(artifact.source_basis, "basis_id", "target_basis_poisoned")
+
+    with pytest.raises(ContractError) as caught:
+        artifact._require_producer_owned()
+
+    assert caught.value.details.code == "receiver_family_integrity_violation"
+
+
 def test_batch_receiver_fit_rejects_ambiguous_or_duplicate_receiver_input() -> None:
     availability = _multi_receiver_availability()
     prior = _prior({"A": {"G1": 1.0}, "B": {"G1": 4.0}, "C": {"G2": 1.0}})
@@ -567,8 +660,6 @@ def test_contracts_are_producer_owned_and_apply_has_no_availability_input() -> N
         "feature_ids",
         "sample_subject_ids",
     }
-    fit_parameters = inspect.signature(
-        fit_receiver_family_scoring_artifact
-    ).parameters
+    fit_parameters = inspect.signature(fit_receiver_family_scoring_artifact).parameters
     assert "reference_input_digest" not in fit_parameters
     assert "sample_ids" in fit_parameters

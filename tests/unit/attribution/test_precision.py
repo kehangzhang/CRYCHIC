@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
+from scipy import sparse
 
 from crychic.attribution import (
     PrecisionTransformResult,
+    fit_response_precision,
     winsorized_normalized_precision,
 )
 from crychic.core import ContractError
+from crychic.design import balanced_contrast, fit_frozen_design_encoder
+from crychic.pseudobulk import PseudobulkDataset
+from crychic.response import FoldGeneResponseArtifact, fit_fold_gene_response
 
 
 def _fit(raw: np.ndarray, **kwargs: object) -> PrecisionTransformResult:
@@ -19,6 +25,70 @@ def _fit(raw: np.ndarray, **kwargs: object) -> PrecisionTransformResult:
     }
     parameters.update(kwargs)
     return winsorized_normalized_precision(raw, **parameters)  # type: ignore[arg-type]
+
+
+def _response_artifact(
+    *, training_input_digest: str = "precision-training-input"
+) -> FoldGeneResponseArtifact:
+    metadata_rows: list[dict[str, str]] = []
+    unit_rows: list[dict[str, object]] = []
+    count_rows: list[tuple[int, int]] = []
+    matrix_unit_ids: list[str] = []
+    for subject_index in range(4):
+        subject = f"p{subject_index}"
+        for condition in ("ctrl", "stim"):
+            sample = f"{subject}:{condition}"
+            metadata_rows.append(
+                {
+                    "sample_id": sample,
+                    "subject_id": subject,
+                    "condition": condition,
+                }
+            )
+            unit_id = f"unit:{sample}"
+            first = (
+                10 + subject_index if condition == "ctrl" else 24 + 2 * subject_index
+            )
+            count_rows.append((first, 100 - first))
+            matrix_unit_ids.append(unit_id)
+            unit_rows.append(
+                {
+                    "unit_id": unit_id,
+                    "sample_id": sample,
+                    "subject_id": subject,
+                    "cell_type": "Receiver",
+                    "context": (("condition", condition),),
+                    "matrix_row": len(count_rows) - 1,
+                    "n_cells": 20,
+                    "cell_proportion": 1.0,
+                    "state_eligible": True,
+                    "abundance_eligible": True,
+                    "missingness_reason": "observed",
+                }
+            )
+    metadata = pd.DataFrame(metadata_rows)
+    encoder = fit_frozen_design_encoder(
+        metadata,
+        contrast=balanced_contrast(("stim",), ("ctrl",), name="stim_vs_ctrl"),
+        context_keys=("condition",),
+        formula="~ condition",
+    )
+    counts = sparse.csr_matrix(np.asarray(count_rows, dtype=np.int64))
+    aggregate = PseudobulkDataset(
+        counts=counts,
+        detection_fraction=counts.astype(bool).astype(float),
+        unit_metadata=pd.DataFrame(unit_rows),
+        feature_ids=("G0", "G1"),
+        matrix_unit_ids=tuple(matrix_unit_ids),
+        source_location="synthetic",
+    )
+    return fit_fold_gene_response(
+        aggregate,
+        encoder,
+        receiver="Receiver",
+        fold_id="fold-1",
+        training_input_digest=training_input_digest,
+    )
 
 
 def test_precision_is_winsorized_and_positive_median_normalized() -> None:
@@ -33,6 +103,9 @@ def test_precision_is_winsorized_and_positive_median_normalized() -> None:
     assert result.n_positive_features == 3
     assert result.estimable
     assert result.reason_code is None
+    assert result.lineage_mode == "exploratory_unparented_v2"
+    assert result.response_artifact_id is None
+    assert result.training_subject_ids == ()
 
 
 def test_precision_transform_records_insufficient_support() -> None:
@@ -186,3 +259,79 @@ def test_precision_transform_rejects_invalid_minimum_support(
             np.asarray([1.0, 2.0]),
             min_positive_features=minimum,
         )
+
+
+def test_response_precision_binds_complete_training_parent_lineage() -> None:
+    response = _response_artifact()
+
+    result = fit_response_precision(response)
+
+    result.require_response_compatible(response)
+    assert result.lineage_mode == "fold_gene_response_parented_v1"
+    assert result.response_artifact_id == response.artifact_id
+    assert result.training_row_manifest_id == response.training_sample_manifest_digest
+    assert result.training_subject_ids == response.training_subject_ids
+    assert result.encoder_id == response.encoder_id
+    assert result.feature_ids == response.feature_ids
+    assert result.raw_precision_digest
+    assert result.values.flags.writeable is False
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        result.values.setflags(write=True)
+
+
+def test_response_precision_same_scope_different_parent_has_distinct_identity() -> None:
+    first_parent = _response_artifact(training_input_digest="first-input")
+    second_parent = _response_artifact(training_input_digest="second-input")
+
+    first = fit_response_precision(first_parent)
+    second = fit_response_precision(second_parent)
+
+    assert first.feature_ids == second.feature_ids
+    assert first.receiver == second.receiver
+    assert first.contrast_name == second.contrast_name
+    assert first.fold_id == second.fold_id
+    assert first.raw_precision_digest == second.raw_precision_digest
+    assert first.response_artifact_id != second.response_artifact_id
+    assert first.precision_transform_id != second.precision_transform_id
+
+
+def test_response_precision_rejects_parent_mismatch() -> None:
+    first_parent = _response_artifact(training_input_digest="first-input")
+    second_parent = _response_artifact(training_input_digest="second-input")
+    result = fit_response_precision(first_parent)
+
+    with pytest.raises(ContractError) as error:
+        result.require_response_compatible(second_parent)
+
+    assert error.value.details.code == "precision_transform_parent_mismatch"
+
+
+def test_exploratory_precision_rejects_response_parent_compatibility() -> None:
+    response = _response_artifact()
+    result = _fit(response.raw_precision)
+
+    with pytest.raises(ContractError) as error:
+        result.require_response_compatible(response)
+
+    assert error.value.details.code == "precision_transform_parent_mismatch"
+
+
+def test_response_precision_detects_lineage_mutation() -> None:
+    response = _response_artifact()
+    result = fit_response_precision(response)
+    object.__setattr__(result, "response_artifact_id", "poisoned-parent")
+
+    with pytest.raises(ContractError) as error:
+        result.to_dict()
+
+    assert error.value.details.code == "precision_transform_integrity_violation"
+
+
+def test_response_precision_rejects_mutated_response_parent() -> None:
+    response = _response_artifact()
+    object.__setattr__(response, "artifact_id", "poisoned-response")
+
+    with pytest.raises(ContractError) as error:
+        fit_response_precision(response)
+
+    assert error.value.details.code == "fold_gene_response_integrity_violation"

@@ -19,24 +19,22 @@ The current branch adds more explicit evidence and provenance contracts while
 preserving the exploratory v0.1 behavior:
 
 - downstream output separates the source-agnostic `receiver_program_score`
-  from `incremental_downstream`. Training/application primitives for held-out
-  receiver-null loss gain and subject-fold contracts are available, while the
-  public workflow still reports this field as `not_estimable` until every
-  upstream data-driven transform is fitted inside the training fold;
+  from `incremental_downstream`. Public cross-fit now fits a typed fold response,
+  response-parented precision and formula-nuisance incremental diagnostic. The
+  official component remains `not_estimable` because receiver-autonomous
+  programs and inner-fold tuning are not yet frozen;
 - attribution now consumes a producer-owned v2 winsorized, median-normalized
-  response-precision artifact whose identity binds the raw/transformed ordered
-  feature vector and receiver/contrast/fold scope. The exploratory solver path
-  validates artifact compatibility and exact consumed weights; training-subject
-  provenance remains a public cross-fit integration requirement;
+  response-precision artifact. Its public cross-fit form binds the exact
+  fold-response parent, training rows, subjects, encoder, ordered features and
+  values. The legacy full-data API is explicitly unparented and exploratory;
 - low-level incremental downstream v2 uses explicit sample-subject-context row
   manifests, keyed response/design alignment, full training-input digests,
   sample diagnostics and technical-row-mean/equal-context/equal-subject
   held-out losses, signed diagnostic gains and bounded score gains. It rejects
-  training sample/subject reuse, freezes the contrast context universe, and
-  requires caller-declared design IDs to match. Authentic design lineage still
-  requires direct `FrozenDesignApplication` integration; the primitive remains
-  partial until autonomous nuisance, inner tuning and public cross-fit coverage
-  are connected;
+  training sample/subject reuse and freezes the contrast context universe. A
+  workflow adapter now derives matrices, reference masks, eligible family bases
+  and IDs from producer-owned parents. The array API remains a research
+  primitive; autonomous nuisance and inner tuning are still missing;
 - opt-in attribution candidates provide hard receptor eligibility, directional
   response channels, strict family-first bases, and evidence-weighted member
   allocation without changing the legacy default;
@@ -64,19 +62,18 @@ preserving the exploratory v0.1 behavior:
   folds, creates physical sanitized train/test scopes, calls the producer-owned
   train/apply primitives, and audits exact OOF coverage for the frozen
   interaction universe and contrast-common sender functional. Fold artifacts
-  also freeze nuisance encoders, condition-blind hard receptor gates, strict
-  medoid family bases, and training-reference receiver-program transforms,
-  then apply them without refitting. Planned receiver coverage gaps are explicit
-  `not_estimable` results. These receiver artifacts do not yet have their own
-  exact-coverage audit; response precision, family attribution/tuning,
-  incremental downstream gain, and common scoring remain unconnected. The
-  aggregate status is `verified_train_only_oof_partial_pipeline`, while
-  `is_oof_certified` remains false and low-level rows retain `partial_not_oof`;
+  also freeze nuisance encoders, receptor gates, strict family bases,
+  receiver-program transforms, fold responses and response precision. A second
+  audit covers every planned held-out `fold x contrast x receiver x sample`
+  row, including receiver missingness. Formula-nuisance gains are diagnostic;
+  official rows remain `not_estimable` with
+  `receiver_autonomous_nuisance_not_frozen`. Family attribution/tuning and
+  common scoring remain unconnected, so `is_oof_certified` remains false;
 - frozen design encoding now uses the complete declared Patsy formula and an
   exact EMM-contrast reparameterization. Numeric-coded categorical covariates
-  can be declared with `categorical_covariates`; held-out levels are applied
-  through training `DesignInfo` without refitting, and sample/design matrices
-  participate in artifact identity;
+  can be declared with `categorical_covariates`; held-out levels are checked
+  against the frozen registry and the restricted formula must reproduce the
+  training column contract. Mutable Patsy state is not trusted;
 - strict complete-link family clustering uses an output-equivalent incremental
   minimum-update heap and shares the static partition once per fold feature
   universe. The v3 partial smoke completed active and ligand-only controls in
@@ -210,8 +207,8 @@ uv run python -m benchmarks.report.generate_multicondition_report \
   --output-dir reports/multicondition_v02 \
   --report-id multicondition_v02
 uv run python -m benchmarks.simulation.run_crossfit_smoke \
-  --workspace-root .. --include-kang-subset \
-  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v3.json
+  --workspace-root .. --scenarios active ligand_only \
+  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v4.json
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json
@@ -232,4 +229,5 @@ uv run --extra dev python -m build
 - [Train-only cross-fit boundary decision](docs/adr/ADR-004-train-only-crossfit-boundary.md)
 - [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
 - [Multi-condition v02 benchmark summary](benchmarks/results/multicondition_v02_summary.json)
+- [Typed public cross-fit smoke summary](benchmarks/results/algorithm_crossfit_smoke_v4_summary.json)
 - [Repository development instructions](AGENTS.md)

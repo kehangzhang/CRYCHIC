@@ -4,8 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from crychic.core import ContractError
 from crychic.design import (
     ContextGraph,
+    FrozenDesignApplication,
     FrozenDesignEncoder,
     apply_frozen_design_encoder,
     balanced_contrast,
@@ -46,6 +48,16 @@ def test_frozen_encoder_fits_reference_coding_and_fixed_contrast() -> None:
     )
 
     assert encoder.training_subject_ids == ("p1", "p2", "p3")
+    assert encoder.training_sample_subject_ids == (
+        "p1",
+        "p1",
+        "p2",
+        "p2",
+        "p3",
+        "p3",
+    )
+    assert len(encoder.training_sample_context_ids) == len(encoder.training_sample_ids)
+    assert len(set(encoder.training_sample_context_ids)) == 2
     assert len(encoder.nuisance_column_ids) == 3
     assert set(np.unique(encoder.training_context_regressor)) == {0.0, 1.0}
     assert np.isfinite(encoder.training_nuisance_matrix).all()
@@ -54,6 +66,8 @@ def test_frozen_encoder_fits_reference_coding_and_fixed_contrast() -> None:
     assert encoder.nuisance_design_id
     with pytest.raises(TypeError, match="producer-owned"):
         FrozenDesignEncoder()
+    with pytest.raises(TypeError, match="producer-owned"):
+        FrozenDesignApplication()
 
 
 def test_frozen_encoder_applies_train_levels_and_scales_without_refit() -> None:
@@ -72,8 +86,190 @@ def test_frozen_encoder_applies_train_levels_and_scales_without_refit() -> None:
     assert applied.status == "observed"
     assert applied.reason_code is None
     assert applied.encoder_id == encoder.encoder_id
+    assert applied.context_regressor_id == encoder.context_regressor_id
+    assert applied.nuisance_design_id == encoder.nuisance_design_id
+    assert applied.application_id
+    assert applied.sample_subject_ids == ("q1", "q1", "q2", "q2")
+    assert len(set(applied.sample_context_ids)) == 2
     assert applied.nuisance_matrix.shape == (4, 3)
     assert np.max(applied.nuisance_matrix[:, 2]) > 5
+    applied.require_compatible(encoder)
+
+
+def test_application_identity_is_row_order_invariant_and_binds_rows() -> None:
+    training = _metadata(("p1", "p2", "p3"), site=("a", "b", "a"))
+    encoder = fit_frozen_design_encoder(
+        training,
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    heldout = _metadata(("q1", "q2"), site=("a", "b"))
+
+    original = apply_frozen_design_encoder(encoder, heldout)
+    shuffled = apply_frozen_design_encoder(
+        encoder, heldout.sample(frac=1.0, random_state=7)
+    )
+
+    assert shuffled.application_id == original.application_id
+    assert shuffled.sample_ids == original.sample_ids
+    assert shuffled.sample_subject_ids == original.sample_subject_ids
+    assert shuffled.sample_context_ids == original.sample_context_ids
+
+    poisoned = apply_frozen_design_encoder(encoder, heldout)
+    object.__setattr__(
+        poisoned,
+        "sample_subject_ids",
+        tuple(reversed(poisoned.sample_subject_ids)),
+    )
+    with pytest.raises(ContractError) as captured:
+        poisoned.to_dict()
+    assert (
+        captured.value.details.code == "frozen_design_application_integrity_violation"
+    )
+
+
+def test_frozen_design_arrays_are_byte_backed_and_poison_is_detected() -> None:
+    encoder = fit_frozen_design_encoder(
+        _metadata(("p1", "p2", "p3"), site=("a", "b", "a")),
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    applied = apply_frozen_design_encoder(
+        encoder,
+        _metadata(("q1", "q2"), site=("a", "b")),
+    )
+
+    for values in (
+        encoder.training_nuisance_matrix,
+        encoder.training_context_regressor,
+        applied.nuisance_matrix,
+        applied.context_regressor,
+    ):
+        assert values.flags.writeable is False
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            values.setflags(write=True)
+
+    object.__setattr__(
+        applied,
+        "context_regressor",
+        applied.context_regressor.copy(),
+    )
+    with pytest.raises(ContractError) as captured:
+        applied.require_compatible(encoder)
+    assert (
+        captured.value.details.code == "frozen_design_application_integrity_violation"
+    )
+
+
+def test_training_application_binds_encoder_matrices_and_rows() -> None:
+    encoder = fit_frozen_design_encoder(
+        _metadata(("p1", "p2", "p3"), site=("a", "b", "a")),
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+
+    training = encoder.training_application()
+
+    assert training.application_scope == "training"
+    assert training.sample_ids == encoder.training_sample_ids
+    assert training.sample_subject_ids == encoder.training_sample_subject_ids
+    assert training.sample_context_ids == encoder.training_sample_context_ids
+    assert np.array_equal(
+        training.nuisance_matrix,
+        encoder.training_nuisance_matrix,
+    )
+    assert np.array_equal(
+        training.context_regressor,
+        encoder.training_context_regressor,
+    )
+    training.require_compatible(encoder)
+
+
+def test_encoder_integrity_rejects_poisoned_training_rows_and_matrix() -> None:
+    original = fit_frozen_design_encoder(
+        _metadata(("p1", "p2", "p3"), site=("a", "b", "a")),
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    row_poisoned = fit_frozen_design_encoder(
+        _metadata(("p1", "p2", "p3"), site=("a", "b", "a")),
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    object.__setattr__(
+        row_poisoned,
+        "training_sample_subject_ids",
+        tuple(reversed(row_poisoned.training_sample_subject_ids)),
+    )
+    with pytest.raises(ContractError) as row_error:
+        row_poisoned.training_application()
+    assert row_error.value.details.code == "frozen_design_encoder_integrity_violation"
+
+    matrix_poisoned = fit_frozen_design_encoder(
+        _metadata(("p1", "p2", "p3"), site=("a", "b", "a")),
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    changed = matrix_poisoned.training_nuisance_matrix.copy()
+    changed[0, 0] += 1.0
+    object.__setattr__(matrix_poisoned, "training_nuisance_matrix", changed)
+    with pytest.raises(ContractError) as matrix_error:
+        matrix_poisoned.training_application()
+    assert (
+        matrix_error.value.details.code == "frozen_design_encoder_integrity_violation"
+    )
+    original.training_application()
+
+
+def test_application_rejects_another_encoder_lineage() -> None:
+    training = _metadata(("p1", "p2", "p3"), site=("a", "b", "a"))
+    encoder = fit_frozen_design_encoder(
+        training,
+        contrast=_contrast(),
+        context_keys=("condition",),
+    )
+    different = fit_frozen_design_encoder(
+        training,
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("age",),
+    )
+    applied = apply_frozen_design_encoder(
+        encoder,
+        _metadata(("q1", "q2"), site=("a", "b")),
+    )
+
+    with pytest.raises(ContractError) as captured:
+        applied.require_compatible(different)
+    assert captured.value.details.code == "frozen_design_application_scope_mismatch"
+
+
+def test_heldout_encoding_does_not_trust_mutable_patsy_state() -> None:
+    training = _metadata(("p1", "p2", "p3"), site=("a", "b", "a"))
+    encoder = fit_frozen_design_encoder(
+        training,
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site",),
+        formula="~ site + condition",
+    )
+    heldout = _metadata(("q1", "q2"), site=("a", "b"))
+    expected = apply_frozen_design_encoder(encoder, heldout)
+
+    # Patsy state is deliberately not retained as a trusted encoder input.
+    assert not hasattr(encoder, "_design_info")
+    repeated = apply_frozen_design_encoder(encoder, heldout)
+
+    assert repeated.application_id == expected.application_id
+    np.testing.assert_array_equal(
+        repeated.context_regressor, expected.context_regressor
+    )
 
 
 def test_unseen_heldout_category_is_not_estimable_and_never_reference() -> None:
@@ -183,8 +379,10 @@ def test_unbalanced_three_context_coefficient_is_equal_context_emm() -> None:
     assert coefficient == pytest.approx(7.0)
 
     shifted = response + np.asarray(
-        [0.0 if value == "A" else (100.0 if value == "B" else -100.0)
-         for value in contexts]
+        [
+            0.0 if value == "A" else (100.0 if value == "B" else -100.0)
+            for value in contexts
+        ]
     )
     shifted_coefficient = np.linalg.lstsq(design, shifted, rcond=None)[0][-1]
     assert shifted_coefficient == pytest.approx(7.0)
@@ -194,9 +392,7 @@ def test_local_contrast_keeps_known_outside_contexts_observed() -> None:
     training = pd.DataFrame(
         {
             "sample_id": [
-                f"p{index}:{context}"
-                for index in range(2)
-                for context in "ABCD"
+                f"p{index}:{context}" for index in range(2) for context in "ABCD"
             ],
             "subject_id": [f"p{index}" for index in range(2) for _ in "ABCD"],
             "condition": list("ABCD") * 2,
@@ -283,10 +479,7 @@ def test_numeric_categorical_registry_freezes_levels() -> None:
     training = pd.DataFrame(
         {
             "sample_id": [
-                f"p{p}:{c}:{b}"
-                for p in range(2)
-                for c in (0, 1)
-                for b in (0, 1)
+                f"p{p}:{c}:{b}" for p in range(2) for c in (0, 1) for b in (0, 1)
             ],
             "subject_id": [f"p{p}" for p in range(2) for _ in range(4)],
             "condition": [c for _ in range(2) for c in (0, 1) for _ in range(2)],

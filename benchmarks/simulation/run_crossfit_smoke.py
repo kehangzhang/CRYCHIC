@@ -24,7 +24,7 @@ from crychic.workflow import (
     run_subject_crossfit,
 )
 
-_SCHEMA_VERSION = "crychic-crossfit-smoke-v3"
+_SCHEMA_VERSION = "crychic-crossfit-smoke-v4"
 
 
 def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
@@ -48,6 +48,52 @@ def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
         for fold in artifacts.folds
         for application in fold.receiver_family_applications
     )
+    response_training_statuses = Counter(
+        response.status
+        for fold in artifacts.folds
+        for response in fold.receiver_responses
+    )
+    response_application_statuses = Counter(
+        application.status
+        for fold in artifacts.folds
+        for application in fold.receiver_response_applications
+    )
+    precision_statuses = Counter(
+        "estimable" if precision.estimable else "not_estimable"
+        for fold in artifacts.folds
+        for precision in fold.response_precisions
+    )
+    diagnostic_training_statuses = Counter(
+        model.diagnostic_status
+        for fold in artifacts.folds
+        for model in fold.receiver_incremental_models
+    )
+    diagnostic_application_statuses = Counter(
+        application.diagnostic_status
+        for fold in artifacts.folds
+        for application in fold.receiver_incremental_applications
+    )
+    official_statuses = Counter(
+        str(value)
+        for value in artifacts.oof_receiver_coverage["official_incremental_status"]
+    )
+    observed_diagnostics = [
+        application.diagnostic_application
+        for fold in artifacts.folds
+        for application in fold.receiver_incremental_applications
+        if application.diagnostic_application is not None
+        and application.diagnostic_application.status == "observed"
+    ]
+    bounded_gains = [
+        float(application.model_gain)
+        for application in observed_diagnostics
+        if application.model_gain is not None
+    ]
+    raw_gains = [
+        float(application.raw_model_gain)
+        for application in observed_diagnostics
+        if application.raw_model_gain is not None
+    ]
     return {
         "n_design_encoders": sum(len(fold.design_encoders) for fold in artifacts.folds),
         "design_application_status_counts": dict(sorted(design_statuses.items())),
@@ -74,6 +120,41 @@ def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
             sum(len(model.active_family_ids) for model in fold.receiver_family_models)
             for fold in artifacts.folds
         ],
+        "n_receiver_response_artifacts": sum(
+            len(fold.receiver_responses) for fold in artifacts.folds
+        ),
+        "n_response_precision_artifacts": sum(
+            len(fold.response_precisions) for fold in artifacts.folds
+        ),
+        "n_receiver_incremental_training_artifacts": sum(
+            len(fold.receiver_incremental_models) for fold in artifacts.folds
+        ),
+        "n_receiver_incremental_applications": sum(
+            len(fold.receiver_incremental_applications) for fold in artifacts.folds
+        ),
+        "n_oof_receiver_coverage_rows": len(artifacts.oof_receiver_coverage),
+        "receiver_coverage_audit_id": artifacts.receiver_coverage_audit_id,
+        "receiver_response_training_status_counts": dict(
+            sorted(response_training_statuses.items())
+        ),
+        "receiver_response_application_status_counts": dict(
+            sorted(response_application_statuses.items())
+        ),
+        "response_precision_status_counts": dict(sorted(precision_statuses.items())),
+        "incremental_diagnostic_training_status_counts": dict(
+            sorted(diagnostic_training_statuses.items())
+        ),
+        "incremental_diagnostic_application_status_counts": dict(
+            sorted(diagnostic_application_statuses.items())
+        ),
+        "official_incremental_status_counts": dict(sorted(official_statuses.items())),
+        "observed_incremental_diagnostic_count": len(observed_diagnostics),
+        "mean_bounded_incremental_diagnostic_gain": (
+            float(np.mean(bounded_gains)) if bounded_gains else None
+        ),
+        "mean_raw_incremental_diagnostic_gain": (
+            float(np.mean(raw_gains)) if raw_gains else None
+        ),
         "remaining_stages": artifacts.to_manifest()["remaining_stages"],
     }
 
@@ -240,7 +321,7 @@ def run_smoke(
         )
     return {
         "schema_version": _SCHEMA_VERSION,
-        "scope": "algorithm_smoke_not_full_benchmark",
+        "scope": "typed_public_crossfit_algorithm_smoke_not_full_benchmark",
         "implemented_stages": [
             "availability_filter",
             "contrast_common_sender_functional",
@@ -248,22 +329,25 @@ def run_smoke(
             "condition_blind_hard_receptor_gate",
             "strict_medoid_receiver_family_basis",
             "training_reference_receiver_program_transform",
+            "fold_receiver_response",
+            "response_parented_precision",
+            "formula_nuisance_incremental_diagnostic",
         ],
         "exact_oof_coverage_audit_scope": [
             "availability_filter",
             "contrast_common_sender_functional",
+            "receiver_incremental_application_diagnostic",
         ],
         "excluded_claims": [
             "complete_pipeline_oof_certification",
-            "receiver_family_exact_coverage_certification",
-            "incremental_downstream_gain",
+            "official_incremental_downstream_gain",
+            "receiver_autonomous_nuisance_adjustment",
+            "subject_blocked_inner_tuning",
             "integrated_edge_recovery",
             "method_superiority",
         ],
         "target_prior_manifest_digest": prior.manifest_digest,
-        "process_peak_rss_kib": int(
-            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        ),
+        "process_peak_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
         "records": records,
     }
 

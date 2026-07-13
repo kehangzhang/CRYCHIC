@@ -24,6 +24,12 @@ from .persistence import (
     baseline_scoring_collections,
     write_baseline_result,
 )
+from .receiver_incremental import (
+    ReceiverIncrementalApplication,
+    ReceiverIncrementalTrainingArtifact,
+    apply_receiver_incremental_training_artifact,
+    fit_receiver_incremental_training_artifact,
+)
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
 
 __all__ = [
@@ -38,15 +44,19 @@ __all__ = [
     "EdgeEvidenceLedger",
     "FoldTrainingSpec",
     "PlanStatus",
+    "ReceiverIncrementalApplication",
+    "ReceiverIncrementalTrainingArtifact",
     "RunStatus",
     "StagePlan",
     "TrainingArtifactApplication",
     "TrainingArtifacts",
+    "apply_receiver_incremental_training_artifact",
     "apply_training_artifacts",
     "baseline_result_tables",
     "baseline_scoring_collections",
     "dry_run_baseline",
     "fit_baseline",
+    "fit_receiver_incremental_training_artifact",
     "fit_training_artifacts",
     "run_subject_crossfit",
     "write_baseline_result",

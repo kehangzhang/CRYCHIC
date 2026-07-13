@@ -1,14 +1,14 @@
 """Public subject-blocked orchestration for implemented train/apply stages.
 
-The current coverage audit verifies the frozen interaction universe and
-contrast-common sender rows.  Fold artifacts additionally preserve train-only
-design encoders and partial receiver-family applications, but those stages do
-not yet emit a separate exact-coverage audit and do not certify the still-
-missing incremental downstream or common scoring stages.
+Separate exact-coverage audits verify contrast-common sender rows and the
+typed receiver response/precision/incremental diagnostic chain.  The receiver
+chain remains officially not estimable until its autonomous nuisance model is
+fold-frozen, so these artifacts do not certify the complete scoring pipeline.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
 
@@ -17,8 +17,18 @@ import pandas as pd
 from anndata import AnnData
 from scipy import sparse
 
-from crychic.attribution import fit_receiver_family_training_artifacts
-from crychic.core import CrychicConfig, SeedLineage, stable_id
+from crychic.attribution import (
+    PrecisionTransformResult,
+    fit_receiver_family_training_artifacts,
+    fit_response_precision,
+)
+from crychic.core import (
+    ContractError,
+    CrychicConfig,
+    SeedLineage,
+    canonical_json,
+    stable_id,
+)
 from crychic.data import InputMode, validate_anndata
 from crychic.design import (
     ContrastSpec,
@@ -28,6 +38,7 @@ from crychic.design import (
     canonical_context,
     default_design_formula,
     fit_frozen_design_encoder,
+    node_context_fields,
     plain_context_value,
 )
 from crychic.pseudobulk import PseudobulkDataset
@@ -39,6 +50,12 @@ from crychic.resampling import (
     validate_oof_subject_coverage,
 )
 from crychic.resources import ResourceBundle, TargetPrior
+from crychic.response import (
+    FoldGeneResponseApplication,
+    FoldGeneResponseArtifact,
+    apply_fold_gene_response,
+    fit_fold_gene_response,
+)
 from crychic.scoring import (
     ReceiverFamilyScoringApplication,
     ReceiverFamilyScoringArtifact,
@@ -50,6 +67,12 @@ from crychic.scoring import (
 from crychic.sender import COMMON_SENDER_APPLICATION_COLUMNS
 
 from .application import TrainingArtifactApplication, apply_training_artifacts
+from .receiver_incremental import (
+    ReceiverIncrementalApplication,
+    ReceiverIncrementalTrainingArtifact,
+    apply_receiver_incremental_training_artifact,
+    fit_receiver_incremental_training_artifact,
+)
 from .training import (
     FoldTrainingSpec,
     TrainingArtifacts,
@@ -62,8 +85,17 @@ from .training import (
 )
 
 _STAGE_NAME = "contrast_common_sender_application"
+_RECEIVER_STAGE_NAME = "receiver_incremental_application_diagnostic"
 _STAGE_STATUS = "verified_train_only_oof_partial_pipeline"
 _PRODUCER_MARKER = "crychic.workflow.crossfit.v1"
+_REMAINING_PUBLIC_STAGES = (
+    "attribution_tuning",
+    "common_scoring_functional",
+    "family_attribution",
+    "incremental_downstream",
+    "receiver_autonomous_nuisance",
+    "subject_blocked_inner_tuning",
+)
 _CPM_SCALE = 1_000_000.0
 _COVERAGE_COLUMNS = (
     "subject_id",
@@ -85,6 +117,67 @@ _ASSIGNMENT_PROVENANCE_COLUMNS = (
     "functional_status",
     "stage",
 )
+_RECEIVER_COVERAGE_COLUMNS = (
+    "subject_id",
+    "sample_id",
+    "fold_id",
+    "contrast_id",
+    "contrast_context",
+    "receiver",
+    "response_artifact_id",
+    "precision_transform_id",
+    "incremental_training_artifact_id",
+    "response_application_id",
+    "design_application_id",
+    "incremental_application_id",
+    "diagnostic_status",
+    "diagnostic_reason_code",
+    "official_incremental_status",
+    "reason_code",
+    "stage",
+)
+
+
+def _table_cell_token(value: object) -> dict[str, object]:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return {"type": "missing", "value": None}
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float):
+        if math.isnan(value):
+            return {"type": "missing", "value": None}
+        if not math.isfinite(value):
+            raise ValueError("cross-fit tables cannot contain infinite values")
+        return {"type": "float", "value": value.hex()}
+    if isinstance(value, bool):
+        return {"type": "bool", "value": value}
+    if isinstance(value, int):
+        return {"type": "int", "value": value}
+    if isinstance(value, str):
+        return {"type": "str", "value": value}
+    return {
+        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+        "value": canonical_json(value),
+    }
+
+
+def _table_digest(table_name: str, table: pd.DataFrame) -> str:
+    rows = [
+        [_table_cell_token(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    rows.sort(key=canonical_json)
+    result: str = stable_id(
+        "crossfit_table",
+        {
+            "columns": [str(column) for column in table.columns],
+            "rows": rows,
+            "table_name": table_name,
+        },
+        schema_version="1",
+        digest_length=64,
+    )
+    return result
 
 
 def _contrast_id(contrast: ContrastSpec) -> str:
@@ -235,6 +328,11 @@ class CrossFitFoldArtifacts:
     design_applications: tuple[FrozenDesignApplication, ...]
     receiver_family_models: tuple[ReceiverFamilyScoringArtifact, ...]
     receiver_family_applications: tuple[ReceiverFamilyScoringApplication, ...]
+    receiver_responses: tuple[FoldGeneResponseArtifact, ...]
+    response_precisions: tuple[PrecisionTransformResult, ...]
+    receiver_incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...]
+    receiver_response_applications: tuple[FoldGeneResponseApplication, ...]
+    receiver_incremental_applications: tuple[ReceiverIncrementalApplication, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.fold_id, str) or not self.fold_id:
@@ -252,6 +350,8 @@ class CrossFitFoldArtifacts:
         if len({encoder.encoder_id for encoder in encoders}) != len(encoders):
             raise ValueError("fold design encoders must be contrast-unique")
         for encoder, design_application in zip(encoders, applications, strict=True):
+            encoder.to_dict()
+            design_application.require_compatible(encoder)
             if encoder.training_subject_ids != self.training.training_subject_ids:
                 raise ValueError("design encoder training subjects do not match fold")
             if design_application.encoder_id != encoder.encoder_id:
@@ -275,9 +375,20 @@ class CrossFitFoldArtifacts:
         ]
         if len(model_keys) != len(set(model_keys)):
             raise ValueError("fold receiver-family models must be receiver-unique")
+        expected_model_keys = {
+            (encoder.contrast.name, receiver)
+            for encoder in encoders
+            for receiver in self.training.cell_type_ids
+        }
+        if set(model_keys) != expected_model_keys:
+            raise ValueError(
+                "fold receiver-family models must cover every contrast and receiver"
+            )
         for model, receiver_application in zip(
             receiver_models, receiver_applications, strict=True
         ):
+            model._require_producer_owned()
+            model.receiver_family_artifact._require_producer_owned()
             if model.training_subject_ids != self.training.training_subject_ids:
                 raise ValueError(
                     "receiver-family training subjects do not match the fold"
@@ -300,6 +411,102 @@ class CrossFitFoldArtifacts:
                 )
         object.__setattr__(self, "receiver_family_models", receiver_models)
         object.__setattr__(self, "receiver_family_applications", receiver_applications)
+        responses = tuple(self.receiver_responses)
+        precisions = tuple(self.response_precisions)
+        incremental_models = tuple(self.receiver_incremental_models)
+        response_applications = tuple(self.receiver_response_applications)
+        incremental_applications = tuple(self.receiver_incremental_applications)
+        parent_groups = (
+            responses,
+            precisions,
+            incremental_models,
+            response_applications,
+            incremental_applications,
+        )
+        if any(len(group) != len(receiver_models) for group in parent_groups):
+            raise ValueError("fold receiver incremental parent chains must align")
+        design_by_name = {
+            encoder.contrast.name: (encoder, application)
+            for encoder, application in zip(encoders, applications, strict=True)
+        }
+        for (
+            family_model,
+            response,
+            precision,
+            incremental_model,
+            response_application,
+            incremental_application,
+        ) in zip(
+            receiver_models,
+            responses,
+            precisions,
+            incremental_models,
+            response_applications,
+            incremental_applications,
+            strict=True,
+        ):
+            receiver = family_model.receiver_family_artifact.receiver
+            key = (family_model.contrast_name, receiver)
+            if (response.contrast_name, response.receiver) != key or (
+                incremental_model.contrast_name,
+                incremental_model.receiver,
+            ) != key:
+                raise ValueError("receiver incremental training keys do not align")
+            encoder, design_application = design_by_name[family_model.contrast_name]
+            response.require_compatible(encoder)
+            precision.require_response_compatible(response)
+            incremental_model._require_intact()
+            response_application.require_compatible(response, design_application)
+            incremental_application._require_intact()
+            if (
+                response.fold_id != self.fold_id
+                or response.encoder_id != encoder.encoder_id
+                or response.training_subject_ids != self.training.training_subject_ids
+                or response.training_input_digest != self.training.training_input_digest
+                or precision.response_artifact_id != response.artifact_id
+                or precision.precision_transform_id
+                != incremental_model.precision_transform_id
+                or incremental_model.response_artifact_id != response.artifact_id
+                or incremental_model.receiver_family_training_artifact_id
+                != family_model.receiver_family_artifact.training_artifact_id
+                or incremental_model.encoder_id != encoder.encoder_id
+            ):
+                raise ValueError(
+                    "receiver incremental training parent chain is invalid"
+                )
+            if (
+                response_application.training_response_id != response.artifact_id
+                or response_application.design_application_id
+                != design_application.application_id
+                or incremental_application.training_artifact_id
+                != incremental_model.training_artifact_id
+                or incremental_application.response_application_id
+                != response_application.application_id
+                or incremental_application.design_application_id
+                != design_application.application_id
+            ):
+                raise ValueError(
+                    "receiver incremental held-out parent chain is invalid"
+                )
+            if (
+                response_application.subject_ids != self.application.heldout_subject_ids
+                or incremental_application.heldout_subject_ids
+                != self.application.heldout_subject_ids
+            ):
+                raise ValueError("receiver incremental applications do not cover fold")
+            if set(incremental_application.heldout_subject_ids).intersection(
+                incremental_model.training_subject_ids
+            ):
+                raise ValueError("receiver incremental application overlaps training")
+        object.__setattr__(self, "receiver_responses", responses)
+        object.__setattr__(self, "response_precisions", precisions)
+        object.__setattr__(self, "receiver_incremental_models", incremental_models)
+        object.__setattr__(
+            self, "receiver_response_applications", response_applications
+        )
+        object.__setattr__(
+            self, "receiver_incremental_applications", incremental_applications
+        )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -309,9 +516,14 @@ class CrossFitArtifacts:
     spec: CrossFitSpec
     fold_plan: SubjectFoldPlan
     folds: tuple[CrossFitFoldArtifacts, ...]
-    oof_coverage: pd.DataFrame
-    oof_sender_assignments: pd.DataFrame
+    _oof_coverage: pd.DataFrame = field(repr=False)
+    _oof_receiver_coverage: pd.DataFrame = field(repr=False)
+    _oof_sender_assignments: pd.DataFrame = field(repr=False)
     coverage_audit: OOFCoverageAudit
+    coverage_table_digest: str = field(init=False)
+    receiver_coverage_table_digest: str = field(init=False)
+    sender_assignment_table_digest: str = field(init=False)
+    receiver_coverage_audit_id: str = field(init=False)
     certification_status: str
     crossfit_id: str = field(init=False)
     _producer_marker: str = field(init=False, repr=False)
@@ -329,6 +541,7 @@ class CrossFitArtifacts:
         fold_plan: SubjectFoldPlan,
         folds: tuple[CrossFitFoldArtifacts, ...],
         oof_coverage: pd.DataFrame,
+        oof_receiver_coverage: pd.DataFrame,
         oof_sender_assignments: pd.DataFrame,
         coverage_audit: OOFCoverageAudit,
     ) -> CrossFitArtifacts:
@@ -337,8 +550,9 @@ class CrossFitArtifacts:
             "spec": spec,
             "fold_plan": fold_plan,
             "folds": folds,
-            "oof_coverage": oof_coverage,
-            "oof_sender_assignments": oof_sender_assignments,
+            "_oof_coverage": oof_coverage,
+            "_oof_receiver_coverage": oof_receiver_coverage,
+            "_oof_sender_assignments": oof_sender_assignments,
             "coverage_audit": coverage_audit,
             "certification_status": _STAGE_STATUS,
             "_producer_marker": _PRODUCER_MARKER,
@@ -358,6 +572,10 @@ class CrossFitArtifacts:
         if not isinstance(self.fold_plan, SubjectFoldPlan):
             raise TypeError("fold_plan must be a SubjectFoldPlan")
         folds = tuple(self.folds)
+        if any(not isinstance(item, CrossFitFoldArtifacts) for item in folds):
+            raise TypeError("folds must contain CrossFitFoldArtifacts")
+        for item in folds:
+            item.__post_init__()
         by_id = {fold.fold_id: fold for fold in self.fold_plan.folds}
         if len(folds) != len(by_id) or {item.fold_id for item in folds} != set(by_id):
             raise ValueError(
@@ -376,12 +594,12 @@ class CrossFitArtifacts:
             }
             if observed_contrasts != set(manifest.contrast_ids):
                 raise ValueError("design encoders do not match planned fold contrasts")
-        coverage = self.oof_coverage.copy(deep=True)
+        coverage = self._oof_coverage.copy(deep=True)
         if tuple(coverage.columns) != _COVERAGE_COLUMNS:
             raise ValueError("oof_coverage columns do not match the stage contract")
         if set(coverage["functional_status"].astype(str)) != {"out_of_fold"}:
             raise ValueError("stage coverage must contain only out-of-fold rows")
-        assignments = self.oof_sender_assignments.copy(deep=True)
+        assignments = self._oof_sender_assignments.copy(deep=True)
         expected_assignment_columns = (
             *COMMON_SENDER_APPLICATION_COLUMNS,
             *_ASSIGNMENT_PROVENANCE_COLUMNS,
@@ -414,6 +632,131 @@ class CrossFitArtifacts:
         if repeated_audit.audit_id != self.coverage_audit.audit_id:
             raise ValueError("coverage audit identity does not match its table")
         fold_artifacts = {item.fold_id: item for item in folds}
+        receiver_coverage = self._oof_receiver_coverage.copy(deep=True)
+        if tuple(receiver_coverage.columns) != _RECEIVER_COVERAGE_COLUMNS:
+            raise ValueError(
+                "oof_receiver_coverage columns do not match the stage contract"
+            )
+        grain = ["fold_id", "sample_id", "contrast_id", "receiver"]
+        if receiver_coverage.duplicated(grain).any():
+            raise ValueError("receiver coverage contains duplicate expected-grain rows")
+        expected_grain: set[tuple[str, str, str, str]] = set()
+        expected_parent_by_grain: dict[
+            tuple[str, str, str, str], tuple[object, ...]
+        ] = {}
+        for item in folds:
+            for (
+                response,
+                precision,
+                incremental_model,
+                response_application,
+                incremental_application,
+            ) in zip(
+                item.receiver_responses,
+                item.response_precisions,
+                item.receiver_incremental_models,
+                item.receiver_response_applications,
+                item.receiver_incremental_applications,
+                strict=True,
+            ):
+                encoder, design_application = next(
+                    (encoder, application)
+                    for encoder, application in zip(
+                        item.design_encoders,
+                        item.design_applications,
+                        strict=True,
+                    )
+                    if encoder.contrast.name == response.contrast_name
+                )
+                contrast_id = _contrast_id(encoder.contrast)
+                valid_context_ids = {
+                    node_context_fields(node, encoder.context_keys)[0]
+                    for node in encoder.contrast.weights
+                }
+                for sample_id, subject_id, context_id in zip(
+                    design_application.sample_ids,
+                    design_application.sample_subject_ids,
+                    design_application.sample_context_ids,
+                    strict=True,
+                ):
+                    if context_id not in valid_context_ids:
+                        continue
+                    key = (item.fold_id, sample_id, contrast_id, response.receiver)
+                    expected_grain.add(key)
+                    expected_parent_by_grain[key] = (
+                        subject_id,
+                        canonical_json(
+                            next(
+                                node
+                                for node in encoder.contrast.weights
+                                if node_context_fields(node, encoder.context_keys)[0]
+                                == context_id
+                            )
+                        ),
+                        response.artifact_id,
+                        precision.precision_transform_id,
+                        incremental_model.training_artifact_id,
+                        response_application.application_id,
+                        design_application.application_id,
+                        incremental_application.application_id,
+                        incremental_application.diagnostic_status,
+                        incremental_application.diagnostic_reason_code,
+                        incremental_application.official_incremental_status,
+                        incremental_application.reason_code,
+                    )
+        observed_grain = {
+            tuple(map(str, values))
+            for values in receiver_coverage.loc[:, grain].itertuples(
+                index=False, name=None
+            )
+        }
+        if observed_grain != expected_grain:
+            raise ValueError("receiver coverage does not match the planned exact grain")
+        for row in receiver_coverage.itertuples(index=False):
+            key = (
+                str(row.fold_id),
+                str(row.sample_id),
+                str(row.contrast_id),
+                str(row.receiver),
+            )
+            expected = expected_parent_by_grain[key]
+            observed = (
+                str(row.subject_id),
+                canonical_json(row.contrast_context),
+                str(row.response_artifact_id),
+                str(row.precision_transform_id),
+                str(row.incremental_training_artifact_id),
+                str(row.response_application_id),
+                str(row.design_application_id),
+                str(row.incremental_application_id),
+                str(row.diagnostic_status),
+                (
+                    None
+                    if pd.isna(row.diagnostic_reason_code)
+                    else str(row.diagnostic_reason_code)
+                ),
+                str(row.official_incremental_status),
+                str(row.reason_code),
+            )
+            if observed != expected:
+                raise ValueError(
+                    "receiver coverage parent lineage is incompatible: "
+                    f"{observed!r} != {expected!r}"
+                )
+            manifest = by_id[str(row.fold_id)]
+            if (
+                str(row.subject_id) not in manifest.test_subject_ids
+                or str(row.subject_id) in manifest.train_subject_ids
+                or str(row.official_incremental_status) != "not_estimable"
+                or str(row.reason_code) != "receiver_autonomous_nuisance_not_frozen"
+                or str(row.stage) != _RECEIVER_STAGE_NAME
+            ):
+                raise ValueError(
+                    "receiver coverage status or held-out scope is invalid"
+                )
+        receiver_audit_id = _receiver_coverage_identity(
+            receiver_coverage, fold_plan_id=self.fold_plan.plan_id
+        )
         for row in assignments.itertuples(index=False):
             fold_id = str(row.fold_id)
             if fold_id not in fold_artifacts:
@@ -461,8 +804,18 @@ class CrossFitArtifacts:
                 or str(row.design_status) != design_application.status
             ):
                 raise ValueError("coverage row design provenance is incompatible")
+        coverage_table_digest = _table_digest("oof_coverage", coverage)
+        receiver_coverage_table_digest = _table_digest(
+            "oof_receiver_coverage", receiver_coverage
+        )
+        sender_assignment_table_digest = _table_digest(
+            "oof_sender_assignments", assignments
+        )
         payload = {
             "coverage_audit_id": self.coverage_audit.audit_id,
+            "coverage_table_digest": coverage_table_digest,
+            "receiver_coverage_audit_id": receiver_audit_id,
+            "receiver_coverage_table_digest": receiver_coverage_table_digest,
             "fold_applications": [
                 {
                     "fold_id": item.fold_id,
@@ -474,6 +827,10 @@ class CrossFitArtifacts:
                     "design_application_statuses": [
                         application.status for application in item.design_applications
                     ],
+                    "design_application_ids": [
+                        application.application_id
+                        for application in item.design_applications
+                    ],
                     "receiver_family_training_artifact_ids": [
                         model.training_artifact_id
                         for model in item.receiver_family_models
@@ -482,17 +839,113 @@ class CrossFitArtifacts:
                         application.application_status
                         for application in item.receiver_family_applications
                     ],
+                    "receiver_response_ids": [
+                        response.artifact_id for response in item.receiver_responses
+                    ],
+                    "response_precision_ids": [
+                        precision.precision_transform_id
+                        for precision in item.response_precisions
+                    ],
+                    "receiver_incremental_training_ids": [
+                        model.training_artifact_id
+                        for model in item.receiver_incremental_models
+                    ],
+                    "receiver_response_application_ids": [
+                        application.application_id
+                        for application in item.receiver_response_applications
+                    ],
+                    "receiver_incremental_application_ids": [
+                        application.application_id
+                        for application in item.receiver_incremental_applications
+                    ],
                 }
                 for item in sorted(folds, key=lambda value: value.fold_id)
             ],
             "fold_plan_id": self.fold_plan.plan_id,
+            "sender_application_ids": sorted(
+                assignments["sender_application_id"].astype(str).tolist()
+            ),
+            "sender_assignment_table_digest": sender_assignment_table_digest,
             "spec_id": self.spec.spec_id,
             "status": self.certification_status,
         }
         object.__setattr__(self, "folds", folds)
-        object.__setattr__(self, "oof_coverage", coverage)
-        object.__setattr__(self, "oof_sender_assignments", assignments)
+        object.__setattr__(self, "_oof_coverage", coverage)
+        object.__setattr__(self, "_oof_receiver_coverage", receiver_coverage)
+        object.__setattr__(self, "_oof_sender_assignments", assignments)
+        object.__setattr__(self, "coverage_table_digest", coverage_table_digest)
+        object.__setattr__(
+            self, "receiver_coverage_table_digest", receiver_coverage_table_digest
+        )
+        object.__setattr__(
+            self, "sender_assignment_table_digest", sender_assignment_table_digest
+        )
+        object.__setattr__(self, "receiver_coverage_audit_id", receiver_audit_id)
         object.__setattr__(self, "crossfit_id", stable_id("subject_crossfit", payload))
+
+    @property
+    def oof_coverage(self) -> pd.DataFrame:
+        """Return a defensive copy of the sender-stage OOF coverage table."""
+
+        return self._oof_coverage.copy(deep=True)
+
+    @property
+    def oof_receiver_coverage(self) -> pd.DataFrame:
+        """Return a defensive copy of the exact receiver-stage coverage table."""
+
+        return self._oof_receiver_coverage.copy(deep=True)
+
+    @property
+    def oof_sender_assignments(self) -> pd.DataFrame:
+        """Return a defensive copy of held-out common-sender assignments."""
+
+        return self._oof_sender_assignments.copy(deep=True)
+
+    def _require_intact(self) -> None:
+        try:
+            repeated = CrossFitArtifacts._from_workflow(
+                spec=self.spec,
+                fold_plan=self.fold_plan,
+                folds=self.folds,
+                oof_coverage=self._oof_coverage,
+                oof_receiver_coverage=self._oof_receiver_coverage,
+                oof_sender_assignments=self._oof_sender_assignments,
+                coverage_audit=self.coverage_audit,
+            )
+            valid = (
+                self._producer_marker == _PRODUCER_MARKER
+                and self.certification_status == _STAGE_STATUS
+                and repeated.crossfit_id == self.crossfit_id
+                and repeated.receiver_coverage_audit_id
+                == self.receiver_coverage_audit_id
+                and repeated.coverage_table_digest == self.coverage_table_digest
+                and repeated.receiver_coverage_table_digest
+                == self.receiver_coverage_table_digest
+                and repeated.sender_assignment_table_digest
+                == self.sender_assignment_table_digest
+            )
+        except (
+            AttributeError,
+            ContractError,
+            KeyError,
+            RuntimeError,
+            StopIteration,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise ContractError(
+                "Cross-fit artifact failed table or lineage integrity validation",
+                code="crossfit_artifact_integrity_violation",
+                field="crossfit_id",
+                remediation="Rerun subject cross-fit from intact raw inputs",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Cross-fit artifact failed table or lineage integrity validation",
+                code="crossfit_artifact_integrity_violation",
+                field="crossfit_id",
+                remediation="Rerun subject cross-fit from intact raw inputs",
+            )
 
     @property
     def completed_stage_oof_verified(self) -> bool:
@@ -509,6 +962,7 @@ class CrossFitArtifacts:
     def to_manifest(self) -> dict[str, object]:
         """Return an auditable summary without embedding tabular payloads."""
 
+        self._require_intact()
         return {
             "crossfit_id": self.crossfit_id,
             "certification_status": self.certification_status,
@@ -518,6 +972,10 @@ class CrossFitArtifacts:
             "spec": self.spec.to_dict(),
             "fold_plan": self.fold_plan.to_dict(),
             "coverage_audit": self.coverage_audit.to_dict(),
+            "coverage_table_digest": self.coverage_table_digest,
+            "receiver_coverage_audit_id": self.receiver_coverage_audit_id,
+            "receiver_coverage_table_digest": self.receiver_coverage_table_digest,
+            "sender_assignment_table_digest": self.sender_assignment_table_digest,
             "fold_artifacts": [
                 {
                     "fold_id": item.fold_id,
@@ -539,19 +997,63 @@ class CrossFitArtifacts:
                             strict=True,
                         )
                     ],
+                    "receiver_incremental_artifacts": [
+                        {
+                            "receiver": model.receiver,
+                            "contrast_name": model.contrast_name,
+                            "response_artifact_id": response.artifact_id,
+                            "precision_transform_id": precision.precision_transform_id,
+                            "training_artifact_id": model.training_artifact_id,
+                            "response_application_id": (
+                                response_application.application_id
+                            ),
+                            "application_id": application.application_id,
+                            "diagnostic_status": application.diagnostic_status,
+                            "official_incremental_status": (
+                                application.official_incremental_status
+                            ),
+                            "reason_code": application.reason_code,
+                        }
+                        for (
+                            response,
+                            precision,
+                            model,
+                            response_application,
+                            application,
+                        ) in zip(
+                            item.receiver_responses,
+                            item.response_precisions,
+                            item.receiver_incremental_models,
+                            item.receiver_response_applications,
+                            item.receiver_incremental_applications,
+                            strict=True,
+                        )
+                    ],
                 }
                 for item in self.folds
             ],
-            "n_oof_coverage_rows": len(self.oof_coverage),
-            "n_oof_sender_assignment_rows": len(self.oof_sender_assignments),
-            "remaining_stages": sorted(
-                {
-                    stage
-                    for item in self.folds
-                    for model in item.receiver_family_models
-                    for stage in model.remaining_stages
-                }
-            ),
+            "n_oof_coverage_rows": len(self._oof_coverage),
+            "n_oof_receiver_coverage_rows": len(self._oof_receiver_coverage),
+            "n_oof_sender_assignment_rows": len(self._oof_sender_assignments),
+            "receiver_coverage_status_counts": {
+                "diagnostic_status": {
+                    str(status): int(count)
+                    for status, count in sorted(
+                        self._oof_receiver_coverage["diagnostic_status"]
+                        .value_counts()
+                        .items()
+                    )
+                },
+                "official_incremental_status": {
+                    str(status): int(count)
+                    for status, count in sorted(
+                        self._oof_receiver_coverage["official_incremental_status"]
+                        .value_counts()
+                        .items()
+                    )
+                },
+            },
+            "remaining_stages": list(_REMAINING_PUBLIC_STAGES),
         }
 
 
@@ -788,6 +1290,80 @@ def _apply_receiver_families(
     return tuple(applications)
 
 
+def _fit_receiver_incremental_chains(
+    models: tuple[ReceiverFamilyScoringArtifact, ...],
+    *,
+    aggregate: PseudobulkDataset,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    training_input_digest: str,
+    fold_id: str,
+    minimum_scale: float,
+    min_subjects_per_context: int,
+) -> tuple[
+    tuple[FoldGeneResponseArtifact, ...],
+    tuple[PrecisionTransformResult, ...],
+    tuple[ReceiverIncrementalTrainingArtifact, ...],
+]:
+    encoder_by_name = {encoder.contrast.name: encoder for encoder in design_encoders}
+    responses: list[FoldGeneResponseArtifact] = []
+    precisions: list[PrecisionTransformResult] = []
+    incremental_models: list[ReceiverIncrementalTrainingArtifact] = []
+    for model in models:
+        encoder = encoder_by_name[model.contrast_name]
+        response = fit_fold_gene_response(
+            aggregate,
+            encoder,
+            receiver=model.receiver_family_artifact.receiver,
+            fold_id=fold_id,
+            training_input_digest=training_input_digest,
+            min_subjects_per_context=max(2, min_subjects_per_context),
+        )
+        precision = fit_response_precision(response)
+        incremental_model = fit_receiver_incremental_training_artifact(
+            encoder,
+            response,
+            precision,
+            model.receiver_family_artifact,
+            minimum_scale=minimum_scale,
+        )
+        responses.append(response)
+        precisions.append(precision)
+        incremental_models.append(incremental_model)
+    return tuple(responses), tuple(precisions), tuple(incremental_models)
+
+
+def _apply_receiver_incremental_chains(
+    responses: tuple[FoldGeneResponseArtifact, ...],
+    incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
+    *,
+    aggregate: PseudobulkDataset,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    design_applications: tuple[FrozenDesignApplication, ...],
+) -> tuple[
+    tuple[FoldGeneResponseApplication, ...],
+    tuple[ReceiverIncrementalApplication, ...],
+]:
+    design_by_name = {
+        encoder.contrast.name: application
+        for encoder, application in zip(
+            design_encoders, design_applications, strict=True
+        )
+    }
+    response_applications: list[FoldGeneResponseApplication] = []
+    incremental_applications: list[ReceiverIncrementalApplication] = []
+    for response, model in zip(responses, incremental_models, strict=True):
+        design_application = design_by_name[response.contrast_name]
+        response_application = apply_fold_gene_response(
+            aggregate, response, design_application
+        )
+        incremental_application = apply_receiver_incremental_training_artifact(
+            model, response_application, design_application
+        )
+        response_applications.append(response_application)
+        incremental_applications.append(incremental_application)
+    return tuple(response_applications), tuple(incremental_applications)
+
+
 def _fold_coverage_rows(
     sample_metadata: pd.DataFrame,
     *,
@@ -834,6 +1410,109 @@ def _fold_coverage_rows(
                 }
             )
     return rows
+
+
+def _receiver_coverage_rows(
+    *,
+    fold_id: str,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    design_applications: tuple[FrozenDesignApplication, ...],
+    responses: tuple[FoldGeneResponseArtifact, ...],
+    precisions: tuple[PrecisionTransformResult, ...],
+    incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
+    response_applications: tuple[FoldGeneResponseApplication, ...],
+    incremental_applications: tuple[ReceiverIncrementalApplication, ...],
+) -> list[dict[str, object]]:
+    encoder_by_name = {
+        encoder.contrast.name: (encoder, application)
+        for encoder, application in zip(
+            design_encoders, design_applications, strict=True
+        )
+    }
+    rows: list[dict[str, object]] = []
+    for response, precision, model, response_application, application in zip(
+        responses,
+        precisions,
+        incremental_models,
+        response_applications,
+        incremental_applications,
+        strict=True,
+    ):
+        encoder, design_application = encoder_by_name[response.contrast_name]
+        context_by_id = {
+            node_context_fields(node, encoder.context_keys)[0]: node
+            for node in encoder.contrast.weights
+        }
+        for sample_id, subject_id, context_id in zip(
+            design_application.sample_ids,
+            design_application.sample_subject_ids,
+            design_application.sample_context_ids,
+            strict=True,
+        ):
+            if context_id not in context_by_id:
+                continue
+            rows.append(
+                {
+                    "subject_id": subject_id,
+                    "sample_id": sample_id,
+                    "fold_id": fold_id,
+                    "contrast_id": _contrast_id(encoder.contrast),
+                    "contrast_context": context_by_id[context_id],
+                    "receiver": response.receiver,
+                    "response_artifact_id": response.artifact_id,
+                    "precision_transform_id": precision.precision_transform_id,
+                    "incremental_training_artifact_id": model.training_artifact_id,
+                    "response_application_id": response_application.application_id,
+                    "design_application_id": design_application.application_id,
+                    "incremental_application_id": application.application_id,
+                    "diagnostic_status": application.diagnostic_status,
+                    "diagnostic_reason_code": application.diagnostic_reason_code,
+                    "official_incremental_status": (
+                        application.official_incremental_status
+                    ),
+                    "reason_code": application.reason_code,
+                    "stage": _RECEIVER_STAGE_NAME,
+                }
+            )
+    return rows
+
+
+def _receiver_coverage_identity(
+    coverage: pd.DataFrame,
+    *,
+    fold_plan_id: str,
+) -> str:
+    ordered = coverage.sort_values(
+        ["fold_id", "sample_id", "contrast_id", "receiver", "subject_id"],
+        kind="mergesort",
+        ignore_index=True,
+    )
+    canonical_rows = [
+        {
+            column: (
+                canonical_json(value)
+                if column == "contrast_context"
+                else None
+                if pd.isna(value)
+                else value
+            )
+            for column, value in row.items()
+        }
+        for row in ordered.to_dict(orient="records")
+    ]
+    payload = {
+        "fold_plan_id": fold_plan_id,
+        "grain": [
+            "fold_id",
+            "sample_id",
+            "contrast_id",
+            "receiver",
+        ],
+        "rows": canonical_rows,
+        "stage": _RECEIVER_STAGE_NAME,
+    }
+    result: str = stable_id("receiver_oof_coverage_audit", payload, schema_version="1")
+    return result
 
 
 def _fold_sender_rows(
@@ -925,6 +1604,7 @@ def run_subject_crossfit(
     sanitized = _sanitize_validated_input(validated)
     fold_artifacts: list[CrossFitFoldArtifacts] = []
     coverage_rows: list[dict[str, object]] = []
+    receiver_coverage_rows: list[dict[str, object]] = []
     sender_parts: list[pd.DataFrame] = []
     for fold in fold_plan:
         training_scope = _physical_subject_scope(
@@ -945,31 +1625,6 @@ def run_subject_crossfit(
             spec=spec.training_spec,
         )
         application = apply_training_artifacts(training, heldout_scope)
-        prepared_training = _prepare_raw_fold(
-            training_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            cell_types=training.cell_type_ids,
-        )
-        prepared_heldout = _prepare_raw_fold(
-            heldout_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            cell_types=training.cell_type_ids,
-        )
-        receiver_family_models = _training_receiver_families(
-            prepared=prepared_training,
-            training=training,
-            resource_bundle=resource_bundle,
-            target_prior=target_prior,
-            spec=spec,
-            fold_id=fold.fold_id,
-        )
-        receiver_family_applications = _apply_receiver_families(
-            receiver_family_models,
-            prepared=prepared_heldout,
-            contrasts=spec.contrasts,
-        )
         sample_metadata = validated.report.sample_metadata
         training_metadata = sample_metadata.loc[
             sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
@@ -995,6 +1650,62 @@ def run_subject_crossfit(
             apply_frozen_design_encoder(encoder, heldout_metadata)
             for encoder in design_encoders
         )
+        prepared_training = _prepare_raw_fold(
+            training_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            cell_types=training.cell_type_ids,
+        )
+        prepared_heldout = _prepare_raw_fold(
+            heldout_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            cell_types=training.cell_type_ids,
+        )
+        training_aggregate = prepared_training.aggregate
+        heldout_aggregate = prepared_heldout.aggregate
+        if not isinstance(training_aggregate, PseudobulkDataset) or not isinstance(
+            heldout_aggregate, PseudobulkDataset
+        ):
+            raise RuntimeError(
+                "raw-count cross-fitting requires inferential pseudobulk aggregates"
+            )
+        receiver_family_models = _training_receiver_families(
+            prepared=prepared_training,
+            training=training,
+            resource_bundle=resource_bundle,
+            target_prior=target_prior,
+            spec=spec,
+            fold_id=fold.fold_id,
+        )
+        receiver_family_applications = _apply_receiver_families(
+            receiver_family_models,
+            prepared=prepared_heldout,
+            contrasts=spec.contrasts,
+        )
+        (
+            receiver_responses,
+            response_precisions,
+            receiver_incremental_models,
+        ) = _fit_receiver_incremental_chains(
+            receiver_family_models,
+            aggregate=training_aggregate,
+            design_encoders=design_encoders,
+            training_input_digest=prepared_training.input_digest,
+            fold_id=fold.fold_id,
+            minimum_scale=spec.downstream_minimum_scale,
+            min_subjects_per_context=spec.min_train_subjects_per_context,
+        )
+        (
+            receiver_response_applications,
+            receiver_incremental_applications,
+        ) = _apply_receiver_incremental_chains(
+            receiver_responses,
+            receiver_incremental_models,
+            aggregate=heldout_aggregate,
+            design_encoders=design_encoders,
+            design_applications=design_applications,
+        )
         observed_contrasts = {
             _contrast_id(functional.contrast)
             for functional in training.sender_functionals
@@ -1012,6 +1723,11 @@ def run_subject_crossfit(
                 design_applications=design_applications,
                 receiver_family_models=receiver_family_models,
                 receiver_family_applications=receiver_family_applications,
+                receiver_responses=receiver_responses,
+                response_precisions=response_precisions,
+                receiver_incremental_models=receiver_incremental_models,
+                receiver_response_applications=receiver_response_applications,
+                receiver_incremental_applications=(receiver_incremental_applications),
             )
         )
         coverage_rows.extend(
@@ -1025,6 +1741,18 @@ def run_subject_crossfit(
                 design_applications=design_applications,
             )
         )
+        receiver_coverage_rows.extend(
+            _receiver_coverage_rows(
+                fold_id=fold.fold_id,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
+                responses=receiver_responses,
+                precisions=response_precisions,
+                incremental_models=receiver_incremental_models,
+                response_applications=receiver_response_applications,
+                incremental_applications=receiver_incremental_applications,
+            )
+        )
         sender_parts.extend(
             _fold_sender_rows(
                 fold_id=fold.fold_id,
@@ -1034,6 +1762,9 @@ def run_subject_crossfit(
         )
 
     coverage = pd.DataFrame(coverage_rows, columns=_COVERAGE_COLUMNS)
+    receiver_coverage = pd.DataFrame(
+        receiver_coverage_rows, columns=_RECEIVER_COVERAGE_COLUMNS
+    )
     sender_columns = (
         *COMMON_SENDER_APPLICATION_COLUMNS,
         *_ASSIGNMENT_PROVENANCE_COLUMNS,
@@ -1059,6 +1790,7 @@ def run_subject_crossfit(
         fold_plan=fold_plan,
         folds=tuple(fold_artifacts),
         oof_coverage=coverage,
+        oof_receiver_coverage=receiver_coverage,
         oof_sender_assignments=assignments,
         coverage_audit=audit,
     )

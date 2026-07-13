@@ -2,11 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-07-13
-- Implementation status: Partial; the public orchestrator now verifies
-  subject-blocked OOF coverage for the frozen interaction-universe and
-  contrast-common sender stages. It also preserves train-only frozen design,
-  receptor-family and reference-program artifacts, but these have no separate
-  exact-coverage audit and incremental downstream/common scoring remain absent
+- Implementation status: Partial; the public orchestrator verifies the frozen
+  interaction/common-sender stages and exact planned receiver-row coverage for
+  a typed design/response/precision/incremental diagnostic chain. The official
+  incremental component remains unavailable until autonomous nuisance, inner
+  tuning, family attribution and common scoring are implemented.
 
 ## Context
 
@@ -139,41 +139,37 @@ creates physical sanitized train/test copies, calls the producer-owned
 and audits exact subject/fold/contrast/context coverage for availability and the
 common-sender stage. The same physical boundary now fits a frozen nuisance
 encoder from the complete declared formula, condition-blind hard receptor
-gates, strict complete-link/medoid family
-bases, and a reference-arm receiver-program transform. Held-out application
-uses the frozen feature order and transform; subject overlap, feature drift,
-unseen nuisance levels and incomplete receiver coverage fail closed. These
-receiver artifacts are retained in the fold manifest but do not yet have a
-separate exact-coverage table. Held-out sender rows
+gates, strict complete-link/medoid family bases, a reference-arm receiver
+program, fold response and response-parented precision. A typed adapter derives
+design rows, reference masks and eligible family bases without caller matrices
+or IDs. Held-out application uses the exact parent chain; subject overlap,
+feature drift, unseen levels and incomplete receiver coverage fail closed. A
+separate table verifies each planned fold/contrast/receiver/sample row.
+Held-out sender rows
 retain their low-level `partial_not_oof` assignment mode; the aggregate result
 separately reports `verified_train_only_oof_partial_pipeline` and
 `is_oof_certified=false`. This distinction verifies the implemented stages
 without certifying the complete method.
 
-Response precision, fitted family attribution/tuning, incremental downstream
-gain, a common scoring manifest, and exact receiver-stage coverage still remain.
-Until that complete path exists and passes every poison test above, incremental
-downstream evidence remains `not_estimable` in the public baseline workflow and
-no default-method switch is eligible. The legacy sender assignment remains
-unchanged and context-specific.
+The formula-nuisance incremental gain is now executed only as a development
+diagnostic. It is not a receiver-autonomous null model, so every official row
+is `not_estimable` with `receiver_autonomous_nuisance_not_frozen`. Family
+attribution, subject-blocked inner tuning, autonomous programs and a common
+scoring manifest remain. No default-method switch is eligible.
 
 The low-level precision and incremental primitives were hardened before their
-public integration. Precision v2 is producer-owned and binds the raw and
-transformed ordered feature vector plus receiver/contrast/fold scope. The
-incremental v2 primitive requires explicit sample-to-subject-to-context row
-manifests and independently keyed design rows, hashes every raw training input,
-rejects held-out reuse of training samples or subjects, reports signed and
-bounded gains, requires matching nuisance/regressor lineage, averages technical
-rows within subject/context before squared loss, and then weights contexts and
-subjects equally. The low-level design check is only a caller-declared ID
-assertion; authentic lineage requires the future public consumer to accept a
-producer-owned `FrozenDesignApplication` from the same encoder. These contracts
-make direct research calls auditable, but they do not prove OOF provenance:
-neither primitive is accepted as caller input by the public workflow, and
-incremental v2 remains
-`partial_not_oof_certified` until training response precision, autonomous
-nuisance, inner tuning and exact receiver coverage are connected inside the
-physical fold boundary.
+public integration. Precision v2 binds the raw and transformed ordered feature
+vector plus receiver/contrast/fold scope. Incremental v2 requires explicit
+sample-to-subject-to-context manifests and independently keyed design rows,
+hashes every raw training input, rejects held-out sample or subject reuse,
+reports signed and bounded gains, averages technical rows within
+subject/context, and then weights contexts and subjects equally. Direct calls
+still rely on caller-declared design IDs and remain exploratory. The public
+adapter closes that lineage gap by accepting only producer-owned encoder,
+fold-response, response-precision and receiver-family parents and by deriving
+all matrices and IDs internally. This establishes train/apply provenance for
+the diagnostic, but not an official incremental estimand: autonomous nuisance,
+inner tuning, family attribution and common scoring are still absent.
 
 The nuisance encoder reparameterizes the full training Patsy matrix as
 `[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast
@@ -181,5 +177,7 @@ direction satisfies `l^T q = 1`. Consequently, the final regression coefficient
 is exactly the declared equal-context EMM contrast even for unbalanced sample
 counts and local contrasts over a larger context universe. Training sample
 mappings, full design matrices, formula/type registries and input key schema
-are hashed into the producer-owned identity. Held-out application uses the
-training `DesignInfo` and fixed reparameterization only.
+are hashed into the producer-owned identity. Held-out application checks the
+frozen level registry, rebuilds the restricted formula, requires the exact
+training column contract and applies the frozen reparameterization. Mutable
+Patsy `DesignInfo` is not trusted.

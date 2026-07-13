@@ -12,7 +12,7 @@ import crychic.scoring.receiver_family as receiver_scoring_module
 import crychic.sender.common as common_sender_module
 import crychic.workflow.crossfit as crossfit_module
 import crychic.workflow.training as training_module
-from crychic.core import CrychicConfig
+from crychic.core import ContractError, CrychicConfig
 from crychic.design import balanced_contrast
 from crychic.resources import (
     GeneNamespace,
@@ -208,6 +208,20 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     assert set(result.oof_sender_assignments["functional_status"]) == {"out_of_fold"}
     assert set(result.oof_coverage["design_status"]) == {"observed"}
     assert result.oof_coverage["design_encoder_id"].notna().all()
+    expected_receiver_rows = result.coverage_audit.n_rows * len(
+        result.folds[0].training.cell_type_ids
+    )
+    assert len(result.oof_receiver_coverage) == expected_receiver_rows
+    assert not result.oof_receiver_coverage.duplicated(
+        ["fold_id", "sample_id", "contrast_id", "receiver"]
+    ).any()
+    assert set(result.oof_receiver_coverage["official_incremental_status"]) == {
+        "not_estimable"
+    }
+    assert set(result.oof_receiver_coverage["reason_code"]) == {
+        "receiver_autonomous_nuisance_not_frozen"
+    }
+    assert result.receiver_coverage_audit_id
     assert all(len(fold.design_encoders) == 1 for fold in result.folds)
     assert all(
         application.status == "observed"
@@ -215,6 +229,15 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
         for application in fold.design_applications
     )
     assert all(fold.receiver_family_models for fold in result.folds)
+    assert all(
+        len(fold.receiver_responses)
+        == len(fold.response_precisions)
+        == len(fold.receiver_incremental_models)
+        == len(fold.receiver_response_applications)
+        == len(fold.receiver_incremental_applications)
+        == len(fold.receiver_family_models)
+        for fold in result.folds
+    )
     assert all(
         model.training_subject_ids == fold.training.training_subject_ids
         and not model.is_oof_certified
@@ -238,10 +261,113 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
         manifest = manifests[str(row.fold_id)]
         assert str(row.subject_id) in manifest.test_subject_ids
         assert str(row.subject_id) not in manifest.train_subject_ids
+    for fold in result.folds:
+        for response, precision, model, response_application, application in zip(
+            fold.receiver_responses,
+            fold.response_precisions,
+            fold.receiver_incremental_models,
+            fold.receiver_response_applications,
+            fold.receiver_incremental_applications,
+            strict=True,
+        ):
+            assert precision.response_artifact_id == response.artifact_id
+            assert model.response_artifact_id == response.artifact_id
+            assert model.precision_transform_id == precision.precision_transform_id
+            assert response_application.training_response_id == response.artifact_id
+            assert application.training_artifact_id == model.training_artifact_id
+            assert (
+                application.response_application_id
+                == response_application.application_id
+            )
     manifest = result.to_manifest()
     assert manifest["completed_stage_oof_verified"] is True
     assert manifest["complete_pipeline_oof_certified"] is False
+    assert manifest["receiver_coverage_audit_id"] == (result.receiver_coverage_audit_id)
+    assert manifest["receiver_coverage_status_counts"] == {
+        "diagnostic_status": {
+            str(status): int(count)
+            for status, count in result.oof_receiver_coverage["diagnostic_status"]
+            .value_counts()
+            .items()
+        },
+        "official_incremental_status": {"not_estimable": expected_receiver_rows},
+    }
     assert "common_scoring_functional" in manifest["remaining_stages"]
+    assert "response_precision" not in manifest["remaining_stages"]
+    assert "receiver_autonomous_nuisance" in manifest["remaining_stages"]
+    assert "subject_blocked_inner_tuning" in manifest["remaining_stages"]
+
+
+def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() -> None:
+    result = _run(_adata())
+    reversed_rows = result.oof_receiver_coverage.iloc[::-1].reset_index(drop=True)
+
+    assert (
+        crossfit_module._receiver_coverage_identity(
+            reversed_rows, fold_plan_id=result.fold_plan.plan_id
+        )
+        == result.receiver_coverage_audit_id
+    )
+
+    poisoned = result.oof_receiver_coverage.copy(deep=True)
+    poisoned.loc[poisoned.index[0], "contrast_context"] = "poisoned-context"
+    with pytest.raises(ValueError, match="parent lineage"):
+        CrossFitArtifacts._from_workflow(
+            spec=result.spec,
+            fold_plan=result.fold_plan,
+            folds=result.folds,
+            oof_coverage=result.oof_coverage,
+            oof_receiver_coverage=poisoned,
+            oof_sender_assignments=result.oof_sender_assignments,
+            coverage_audit=result.coverage_audit,
+        )
+
+
+@pytest.mark.parametrize(
+    ("property_name", "column_name", "poison"),
+    [
+        ("oof_coverage", "functional_status", "poisoned"),
+        ("oof_receiver_coverage", "official_incremental_status", "observed"),
+        ("oof_sender_assignments", "functional_status", "poisoned"),
+    ],
+)
+def test_crossfit_tables_are_defensive_copies(
+    property_name: str,
+    column_name: str,
+    poison: str,
+) -> None:
+    result = _run(_adata())
+    crossfit_id = result.crossfit_id
+    manifest = result.to_manifest()
+    exported = getattr(result, property_name)
+
+    exported.loc[exported.index[0], column_name] = poison
+
+    assert result.crossfit_id == crossfit_id
+    assert result.to_manifest() == manifest
+    assert getattr(result, property_name).loc[0, column_name] != poison
+
+
+@pytest.mark.parametrize(
+    ("private_name", "column_name", "poison"),
+    [
+        ("_oof_coverage", "functional_status", "poisoned"),
+        ("_oof_receiver_coverage", "official_incremental_status", "observed"),
+        ("_oof_sender_assignments", "functional_status", "poisoned"),
+    ],
+)
+def test_manifest_rejects_forced_private_table_poison(
+    private_name: str,
+    column_name: str,
+    poison: str,
+) -> None:
+    result = _run(_adata())
+    private_table = object.__getattribute__(result, private_name)
+    private_table.loc[private_table.index[0], column_name] = poison
+
+    with pytest.raises(ContractError) as error:
+        result.to_manifest()
+    assert error.value.details.code == "crossfit_artifact_integrity_violation"
 
 
 def test_orchestrator_passes_only_disjoint_sanitized_scopes(
@@ -348,6 +474,21 @@ def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() 
         for model in unchanged.receiver_family_models
         if model.downstream_functional is not None
     )
+    assert tuple(
+        response.artifact_id for response in changed_application.receiver_responses
+    ) == tuple(response.artifact_id for response in unchanged.receiver_responses)
+    assert tuple(
+        precision.precision_transform_id
+        for precision in changed_application.response_precisions
+    ) == tuple(
+        precision.precision_transform_id for precision in unchanged.response_precisions
+    )
+    assert tuple(
+        model.training_artifact_id
+        for model in changed_application.receiver_incremental_models
+    ) == tuple(
+        model.training_artifact_id for model in unchanged.receiver_incremental_models
+    )
     first_rows = first.oof_sender_assignments.loc[
         first.oof_sender_assignments["fold_id"].eq(target_fold.fold_id)
     ].reset_index(drop=True)
@@ -377,6 +518,33 @@ def test_heldout_receiver_target_poison_changes_apply_not_training_models() -> N
     assert tuple(
         model.training_artifact_id for model in before.receiver_family_models
     ) == (tuple(model.training_artifact_id for model in after.receiver_family_models))
+    assert tuple(
+        response.artifact_id for response in before.receiver_responses
+    ) == tuple(response.artifact_id for response in after.receiver_responses)
+    assert tuple(
+        precision.precision_transform_id for precision in before.response_precisions
+    ) == tuple(
+        precision.precision_transform_id for precision in after.response_precisions
+    )
+    assert tuple(
+        model.training_artifact_id for model in before.receiver_incremental_models
+    ) == tuple(
+        model.training_artifact_id for model in after.receiver_incremental_models
+    )
+    assert tuple(
+        application.application_id
+        for application in before.receiver_response_applications
+    ) != tuple(
+        application.application_id
+        for application in after.receiver_response_applications
+    )
+    assert tuple(
+        application.application_id
+        for application in before.receiver_incremental_applications
+    ) != tuple(
+        application.application_id
+        for application in after.receiver_incremental_applications
+    )
     before_scores = [
         application.downstream_application.receiver_program_score
         for application in before.receiver_family_applications
@@ -425,6 +593,35 @@ def test_receiver_family_heldout_application_cannot_call_fit(
     result = _run(_adata())
 
     assert all(fold.receiver_family_applications for fold in result.folds)
+
+
+def test_receiver_incremental_heldout_application_cannot_call_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_apply = crossfit_module._apply_receiver_incremental_chains
+
+    def inspected_apply(*args: object, **kwargs: object):
+        def forbidden_fit(*inner_args: object, **inner_kwargs: object) -> None:
+            raise AssertionError("receiver incremental held-out application called fit")
+
+        with monkeypatch.context() as application_scope:
+            for name in (
+                "fit_fold_gene_response",
+                "fit_response_precision",
+                "fit_receiver_incremental_training_artifact",
+            ):
+                application_scope.setattr(crossfit_module, name, forbidden_fit)
+            return original_apply(*args, **kwargs)
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "_apply_receiver_incremental_chains",
+        inspected_apply,
+    )
+
+    result = _run(_adata())
+
+    assert all(fold.receiver_incremental_applications for fold in result.folds)
 
 
 def test_crossfit_batches_receiver_family_training_once_per_fold(
@@ -525,6 +722,17 @@ def test_missing_heldout_receiver_is_preserved_as_not_estimable() -> None:
     assert {model.receiver_family_artifact.receiver for model, _ in pairs} == set(
         target.training.cell_type_ids
     )
+    missing_rows = second.oof_receiver_coverage.loc[
+        second.oof_receiver_coverage["fold_id"].eq(target_fold.fold_id)
+        & second.oof_receiver_coverage["subject_id"].eq(poisoned_subject)
+        & second.oof_receiver_coverage["receiver"].eq("Receiver")
+    ]
+    assert len(missing_rows) == 2
+    assert set(missing_rows["diagnostic_status"]) == {"not_estimable"}
+    assert set(missing_rows["diagnostic_reason_code"]) == {
+        "incomplete_heldout_receiver_response"
+    }
+    assert set(missing_rows["official_incremental_status"]) == {"not_estimable"}
 
 
 def test_normalized_only_input_cannot_claim_stage_oof_verification() -> None:
