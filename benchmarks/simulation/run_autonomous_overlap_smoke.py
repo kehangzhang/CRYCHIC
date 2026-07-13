@@ -253,16 +253,105 @@ def run_smoke() -> dict[str, object]:
     }
 
 
+def build_artifact_metadata(
+    payload: dict[str, object],
+    *,
+    serialized: bytes,
+    relative_path: str,
+) -> dict[str, object]:
+    """Build deterministic full-artifact metadata for a compact summary."""
+
+    return {
+        "canonical_sha256": canonical_payload_sha256(payload),
+        "file_sha256": hashlib.sha256(serialized).hexdigest(),
+        "path": relative_path,
+        "size_bytes": len(serialized),
+        "tracked": False,
+    }
+
+
+def build_compact_summary(
+    payload: dict[str, object],
+    artifact_metadata: dict[str, object],
+) -> dict[str, object]:
+    """Derive the tracked compact summary from one complete smoke payload."""
+
+    records = cast(list[dict[str, Any]], payload["records"])
+    by_key = {
+        (str(record["scenario"]), float(record["baseline_scale"])): record
+        for record in records
+    }
+    active_difference = abs(
+        cast(float, by_key[("active_unique", 0.0)]["model_gain"])
+        - cast(float, by_key[("active_unique", 25.0)]["model_gain"])
+    )
+    generic_difference = abs(
+        cast(float, by_key[("generic_only", 0.0)]["model_gain"])
+        - cast(float, by_key[("generic_only", 25.0)]["model_gain"])
+    )
+    return {
+        "artifact": dict(artifact_metadata),
+        "checks": payload["checks"],
+        "claims": payload["claims"],
+        "interpretation": (
+            "Rerun under the v6 frozen response-coordinate contract. Generic-only "
+            "autonomous overlap remains zero-gain, the unique LR component remains "
+            "recoverable, and subject baseline magnitude does not change the result."
+        ),
+        "provenance": payload["provenance"],
+        "results": {
+            "active_unique_model_gain": {
+                "baseline_0": by_key[("active_unique", 0.0)]["model_gain"],
+                "baseline_25": by_key[("active_unique", 25.0)]["model_gain"],
+            },
+            "family_retained_norm_fraction": by_key[("active_unique", 0.0)][
+                "retained_norm_fraction"
+            ],
+            "generic_only_model_gain": {
+                "baseline_0": by_key[("generic_only", 0.0)]["model_gain"],
+                "baseline_25": by_key[("generic_only", 25.0)]["model_gain"],
+            },
+            "maximum_baseline_invariance_absolute_difference": max(
+                active_difference, generic_difference
+            ),
+        },
+        "schema_version": "crychic-autonomous-overlap-smoke-summary-v1",
+        "scope": payload["scope"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--summary-output", type=Path)
+    parser.add_argument(
+        "--artifact-relative-path",
+        default="benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
+    )
     args = parser.parse_args()
+    if args.summary_output is not None and args.output is None:
+        parser.error("--summary-output requires --output")
     payload = run_smoke()
     serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
         output = args.output.resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(serialized, encoding="utf-8")
+    if args.summary_output is not None:
+        summary = build_compact_summary(
+            payload,
+            build_artifact_metadata(
+                payload,
+                serialized=serialized.encode("utf-8"),
+                relative_path=args.artifact_relative_path,
+            ),
+        )
+        summary_output = args.summary_output.resolve()
+        summary_output.parent.mkdir(parents=True, exist_ok=True)
+        summary_output.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     print(serialized, end="")
 
 

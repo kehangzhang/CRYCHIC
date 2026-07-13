@@ -8,6 +8,8 @@ import pytest
 from benchmarks.simulation.run_autonomous_overlap_smoke import (
     AUTONOMOUS_SMOKE_SOURCE_PATHS,
     autonomous_smoke_source_sha256,
+    build_artifact_metadata,
+    build_compact_summary,
     canonical_payload_sha256,
     run_smoke,
 )
@@ -38,9 +40,7 @@ def test_autonomous_smoke_provenance_tracks_algorithm_contract_and_closure() -> 
         INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT
     )
     assert _REQUIRED_SOURCE_CLOSURE.issubset(AUTONOMOUS_SMOKE_SOURCE_PATHS)
-    assert set(autonomous_smoke_source_sha256()) == set(
-        AUTONOMOUS_SMOKE_SOURCE_PATHS
-    )
+    assert set(autonomous_smoke_source_sha256()) == set(AUTONOMOUS_SMOKE_SOURCE_PATHS)
 
 
 def test_autonomous_overlap_smoke_suppresses_false_gain_and_retains_unique_gain() -> (
@@ -69,42 +69,17 @@ def test_autonomous_overlap_smoke_suppresses_false_gain_and_retains_unique_gain(
 def test_tracked_summary_matches_current_semantic_smoke_payload() -> None:
     summary = json.loads(_SUMMARY_PATH.read_text(encoding="utf-8"))
     payload = run_smoke()
-
-    assert summary["artifact"]["canonical_sha256"] == (
-        canonical_payload_sha256(payload)
-    )
-    assert summary["provenance"] == payload["provenance"]
-    assert summary["provenance"]["source_sha256"] == (autonomous_smoke_source_sha256())
-    assert summary["checks"] == payload["checks"]
-    assert summary["claims"] == payload["claims"]
-    by_key = {
-        (record["scenario"], record["baseline_scale"]): record
-        for record in payload["records"]
-    }
-    active_difference = abs(
-        by_key[("active_unique", 0.0)]["model_gain"]
-        - by_key[("active_unique", 25.0)]["model_gain"]
-    )
-    generic_difference = abs(
-        by_key[("generic_only", 0.0)]["model_gain"]
-        - by_key[("generic_only", 25.0)]["model_gain"]
-    )
-    assert summary["results"] == {
-        "active_unique_model_gain": {
-            "baseline_0": by_key[("active_unique", 0.0)]["model_gain"],
-            "baseline_25": by_key[("active_unique", 25.0)]["model_gain"],
-        },
-        "family_retained_norm_fraction": by_key[("active_unique", 0.0)][
-            "retained_norm_fraction"
-        ],
-        "generic_only_model_gain": {
-            "baseline_0": by_key[("generic_only", 0.0)]["model_gain"],
-            "baseline_25": by_key[("generic_only", 25.0)]["model_gain"],
-        },
-        "maximum_baseline_invariance_absolute_difference": max(
-            active_difference, generic_difference
+    serialized = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+    expected = build_compact_summary(
+        payload,
+        build_artifact_metadata(
+            payload,
+            serialized=serialized,
+            relative_path="benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
         ),
-    }
+    )
+
+    assert summary == expected
 
 
 def test_workspace_full_autonomous_artifact_matches_live_payload_and_summary() -> None:

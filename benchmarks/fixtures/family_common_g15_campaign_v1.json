@@ -1,0 +1,205 @@
+{
+  "schema_version": "crychic-public-family-common-g1.5-campaign-inputs-v1",
+  "campaign_id": "public_family_common_g1_5_multiedge_v1",
+  "locked_at": "2026-07-14T04:08:27+08:00",
+  "lock_scope": "before_first_multiseed_execution",
+  "prelock_debug_policy": {
+    "single_seed_public_workflow_debug_was_run": true,
+    "debug_result_is_excluded_from_all_campaign_metrics": true,
+    "debug_result_may_not_change_edges_seeds_or_signal_policy": true,
+    "first_eligible_campaign_requires_at_least_two_frozen_seeds": true
+  },
+  "generator_schema_version": "crychic-public-family-common-g1.5-generator-v1",
+  "statistical_unit": "subject_id",
+  "paired_contexts": [
+    "ctrl",
+    "stim"
+  ],
+  "scenarios": [
+    "active",
+    "global_null",
+    "abundance_only",
+    "ligand_only",
+    "target_only",
+    "receiver_autonomous",
+    "receptor_knockout"
+  ],
+  "default_development_scenarios": [
+    "active",
+    "ligand_only",
+    "receiver_autonomous",
+    "global_null"
+  ],
+  "positive_scenario": "active",
+  "paired_margin_reference_scenario": "ligand_only",
+  "negative_integrated_scenarios": [
+    "global_null",
+    "abundance_only",
+    "ligand_only",
+    "target_only",
+    "receiver_autonomous",
+    "receptor_knockout"
+  ],
+  "profiles": {
+    "tiny": {
+      "n_subjects": 8,
+      "mean_cells_per_sample": 75
+    },
+    "quick": {
+      "n_subjects": 8,
+      "mean_cells_per_sample": 120
+    }
+  },
+  "seed_sets": [
+    {
+      "seed_id": "public-g15-001",
+      "input_seed": 2515875582,
+      "crossfit_seed": 2578925092
+    },
+    {
+      "seed_id": "public-g15-002",
+      "input_seed": 2087376340,
+      "crossfit_seed": 799844447
+    },
+    {
+      "seed_id": "public-g15-003",
+      "input_seed": 3364261018,
+      "crossfit_seed": 4109871368
+    }
+  ],
+  "known_edges": [
+    {
+      "known_edge_id": "synthetic_cxcl10_cxcr3",
+      "source_interaction_id": "CXCL10_CXCR3",
+      "ligand": "CXCL10",
+      "receptor": "CXCR3",
+      "target_genes": [
+        "IFNG",
+        "MMP9",
+        "MMP2",
+        "IL12B",
+        "MMP12",
+        "TNFSF11"
+      ]
+    },
+    {
+      "known_edge_id": "synthetic_ccl5_ccr5",
+      "source_interaction_id": "CCL5_CCR5",
+      "ligand": "CCL5",
+      "receptor": "CCR5",
+      "target_genes": [
+        "SOD1",
+        "IL6",
+        "IL1B",
+        "CCL2",
+        "ICAM3",
+        "CCL7"
+      ]
+    },
+    {
+      "known_edge_id": "synthetic_egf_egfr",
+      "source_interaction_id": "EGF_EGFR",
+      "ligand": "EGF",
+      "receptor": "EGFR",
+      "target_genes": [
+        "LIF",
+        "PTGS2",
+        "HBEGF",
+        "PLAUR",
+        "MYC",
+        "JUNB"
+      ]
+    }
+  ],
+  "expressed_decoy_edges": [
+    {
+      "source_interaction_id": "CXCL12_CXCR4",
+      "ligand": "CXCL12",
+      "receptor": "CXCR4"
+    },
+    {
+      "source_interaction_id": "VEGFA_VEGFR1",
+      "ligand": "VEGFA",
+      "receptor": "FLT1"
+    }
+  ],
+  "signal_policy": {
+    "sender_ligand_baseline": 0.8,
+    "receiver_receptor_baseline": 0.8,
+    "target_baseline": 0.05,
+    "active_ligand_fold_change": 8.0,
+    "active_target_fold_change": 7.0,
+    "autonomous_target_fold_change": 8.0,
+    "autonomous_target_genes": [
+      "FOS",
+      "JUN",
+      "DUSP1"
+    ]
+  },
+  "penalty_tuning_policy": {
+    "lambda1_fractions": [
+      1.0,
+      0.3,
+      0.1
+    ],
+    "lambda2_fractions": [
+      0.0
+    ],
+    "selection_rule": "subject_equal_paired_delta_one_se_l1_then_l2_sparsity_priority_v2",
+    "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
+    "inner_allowed_n_splits": [
+      2
+    ]
+  },
+  "evaluation_policy": {
+    "numerical_positive_tolerance": 1e-12,
+    "active_recovery_top_k": 3,
+    "maximum_allowed_coverage_loss": 0.05,
+    "macro_aggregation": "equal_edge_within_seed_then_across_seeds",
+    "development_only": true,
+    "default_switch_allowed": false
+  },
+  "component_truth": {
+    "active": {
+      "receiver_program": "positive",
+      "incremental_downstream": "positive",
+      "integrated": "positive"
+    },
+    "global_null": {
+      "receiver_program": "zero",
+      "incremental_downstream": "zero",
+      "integrated": "zero"
+    },
+    "abundance_only": {
+      "receiver_program": "zero",
+      "incremental_downstream": "zero",
+      "integrated": "zero"
+    },
+    "ligand_only": {
+      "receiver_program": "zero",
+      "incremental_downstream": "zero",
+      "integrated": "zero"
+    },
+    "target_only": {
+      "receiver_program": "positive",
+      "incremental_downstream": "positive",
+      "integrated": "zero"
+    },
+    "receiver_autonomous": {
+      "receiver_program": "allowed_positive",
+      "incremental_downstream": "zero",
+      "integrated": "zero"
+    },
+    "receptor_knockout": {
+      "receiver_program": "positive",
+      "incremental_downstream": "allowed_positive",
+      "integrated": "zero"
+    }
+  },
+  "component_estimands": {
+    "receiver_program": "subject_level_stim_minus_ctrl",
+    "incremental_downstream": "raw_heldout_family_gain",
+    "integrated": "subject_level_stim_minus_ctrl",
+    "raw_integrated_falsification_diagnostic": "raw_heldout_score_over_context_rows"
+  }
+}

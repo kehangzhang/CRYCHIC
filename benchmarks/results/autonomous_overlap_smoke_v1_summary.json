@@ -1,7 +1,7 @@
 {
   "artifact": {
-    "canonical_sha256": "e6c78e52738ea934dd600133fb9485193d6cb2783e034caafc15b7fdbc61326b",
-    "file_sha256": "9ef5bc663444a6e00774997c5b5c7f7551b13de2b76e65b393529ba43c20d66d",
+    "canonical_sha256": "681eeb78b29a5d0b55496307665a923610416b77eac7b13a4ecfa35fe3219735",
+    "file_sha256": "889170826280bf991e5427c39d78dd8013aefee94a61d7d8cbfa9c113bec6cf6",
     "path": "benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
     "size_bytes": 4332,
     "tracked": false
@@ -16,10 +16,11 @@
     "method_superiority": false,
     "official_incremental_certification": false
   },
+  "interpretation": "Rerun under the v6 frozen response-coordinate contract. Generic-only autonomous overlap remains zero-gain, the unique LR component remains recoverable, and subject baseline magnitude does not change the result.",
   "provenance": {
-    "algorithm_contract": "sample_keyed_autonomous_projected_incremental_v5",
+    "algorithm_contract": "sample_keyed_autonomous_projected_incremental_v7",
     "source_sha256": {
-      "benchmarks/simulation/run_autonomous_overlap_smoke.py": "0b18aef2694665168a6e963bb12a990bce344c417dd612cbfcb8a4b24745e3b1",
+      "benchmarks/simulation/run_autonomous_overlap_smoke.py": "6a41d71f3ff4687c93192e687afd39734ba32f0387540a31c3286aa370686dd3",
       "src/crychic/attribution/__init__.py": "f18950219625cc130ed1c911c9714c4e9c5023dc16ff1f80fc34b46f4821c6aa",
       "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
       "src/crychic/attribution/solver.py": "159e2099d9fbd8320706ea45db9647fee5d71b214b829ea54c74664c71992935",
@@ -33,9 +34,9 @@
       "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
       "src/crychic/response/__init__.py": "23b8f1b062d5fc40978fd5f2402186f6dead61e76d27d05f3014226f24846384",
       "src/crychic/response/autonomous.py": "ed21139eaa1a8939db08918d16094a0234a2616decffa3981aeb8dbc5ecbb9cf",
-      "src/crychic/scoring/__init__.py": "afccff4d8ac607a4709dd85c4e1b36920adfb1d5224fedc284ad20891aca3684",
+      "src/crychic/scoring/__init__.py": "7df08227d9fba1282a97f06ebcc69f6a7c97cde7fe6540ae347f207a13248129",
       "src/crychic/scoring/contracts.py": "5da2f37c2c7dbae5f96549ab8c9761d9f7a66b9a48771b1b7a95c4d81c8ea47c",
-      "src/crychic/scoring/downstream.py": "be9f383693ae2baa107205f3efd81c56b1fdd9a7ccccababcb62faad5a63f07c"
+      "src/crychic/scoring/downstream.py": "f4fee7ae12f7902db3d13f0ba575c08259497f99e3a618f9a6383af38eb5fed8"
     }
   },
   "results": {
@@ -48,7 +49,7 @@
       "baseline_0": 0.0,
       "baseline_25": 0.0
     },
-    "maximum_baseline_invariance_absolute_difference": 1.1102230246251565E-16
+    "maximum_baseline_invariance_absolute_difference": 1.1102230246251565e-16
   },
   "schema_version": "crychic-autonomous-overlap-smoke-summary-v1",
   "scope": "small_algorithm_counterexample_smoke_not_method_benchmark"

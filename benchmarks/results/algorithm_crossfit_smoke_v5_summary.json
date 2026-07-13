@@ -1,10 +1,10 @@
 {
-  "base_revision": "bd586d63776c7d7e52af6c71071bfa4fff285650",
+  "base_revision": "86a5213fcb87dff4383777c8f2dd3d8b53d34539",
   "full_artifact": {
-    "canonical_sha256": "0fd982bdd00e23c86ea5864dcf230eec9fedb8f267bcbf2944602211dee596bb",
-    "file_sha256": "f77f575db03fa99017ef1b8a06a0b32d56e510b094b2818158cd1abbd200d595",
+    "canonical_sha256": "ec2aa92852f97d7d1c0e6fae5b8b71d64cc66d35894bc243294885291fa1c594",
+    "file_sha256": "2a5faf2eb460faaa04d9c1b7982e798d7b886338a802dda02cda09e5b1af2f52",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
-    "size_bytes": 14957
+    "size_bytes": 14955
   },
   "generated_on": "2026-07-14",
   "guardrails": {
@@ -15,24 +15,24 @@
     "official_incremental_gain_claim_allowed": false,
     "p_or_q_reported": false
   },
-  "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract. Active has positive bounded and raw diagnostic gain (0.0279786), while ligand-only has zero bounded gain and negative raw gain (-0.00983186). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
+  "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract after the v7 coordinate, lineage, and factorized-nuisance updates. Active has positive bounded and raw diagnostic gain (0.0344750), while ligand-only has zero bounded gain and negative raw gain (-0.0107142). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
   "process_performance": {
-    "peak_rss_kib": 520344,
-    "wall_clock_seconds": 37.723550154827535
+    "peak_rss_kib": 1709816,
+    "wall_clock_seconds": 48.114043599925935
   },
   "records": [
     {
-      "crossfit_id": "subject_crossfit_888803b81d594dabc7dc8f138003c474",
+      "crossfit_id": "subject_crossfit_413bd285408112211c121c90f5ddaf60",
       "dataset": "synthetic_active",
-      "elapsed_seconds": 18.322058349847794,
+      "elapsed_seconds": 24.12579187564552,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
       "incremental_loss_design_counts": {
         "fully_paired_subject_contrasts_v1": 2
       },
-      "mean_bounded_incremental_diagnostic_gain": 0.027978630263190914,
-      "mean_raw_incremental_diagnostic_gain": 0.027978630263190914,
+      "mean_bounded_incremental_diagnostic_gain": 0.03447501667145987,
+      "mean_raw_incremental_diagnostic_gain": 0.03447501667145987,
       "n_cells": 3733,
       "n_folds": 2,
       "n_genes": 23,
@@ -41,12 +41,12 @@
       "official_incremental_status_counts": {
         "not_estimable": 48
       },
-      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_1d04df79eec097725664fd5f47a71071"
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_8ba744515c79f461c7ead7f1edec1b78"
     },
     {
-      "crossfit_id": "subject_crossfit_6c82ec437d321c2c4619c60a80b1967f",
+      "crossfit_id": "subject_crossfit_a7e94c8f75e00d09371071518593a062",
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 19.40149180497974,
+      "elapsed_seconds": 23.988251724280417,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -54,7 +54,7 @@
         "fully_paired_subject_contrasts_v1": 2
       },
       "mean_bounded_incremental_diagnostic_gain": 0.0,
-      "mean_raw_incremental_diagnostic_gain": -0.009831855448996351,
+      "mean_raw_incremental_diagnostic_gain": -0.01071419993228357,
       "n_cells": 3886,
       "n_folds": 2,
       "n_genes": 23,
@@ -63,7 +63,7 @@
       "official_incremental_status_counts": {
         "not_estimable": 48
       },
-      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_3f5bd182cd42bd1f306d8e67b215aaba"
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_fe7b9604a46905a74872400c134fefe2"
     }
   ],
   "remaining_stages": [
@@ -129,12 +129,12 @@
     "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
     "src/crychic/response/fold.py": "98d140745ed6b324ef108e1792da71b9019271ebd18b2aba296b160a0910f734",
     "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
-    "src/crychic/scoring/__init__.py": "afccff4d8ac607a4709dd85c4e1b36920adfb1d5224fedc284ad20891aca3684",
+    "src/crychic/scoring/__init__.py": "7df08227d9fba1282a97f06ebcc69f6a7c97cde7fe6540ae347f207a13248129",
     "src/crychic/scoring/contracts.py": "5da2f37c2c7dbae5f96549ab8c9761d9f7a66b9a48771b1b7a95c4d81c8ea47c",
-    "src/crychic/scoring/downstream.py": "be9f383693ae2baa107205f3efd81c56b1fdd9a7ccccababcb62faad5a63f07c",
-    "src/crychic/scoring/family_common.py": "3a75fb3ac81c1af50db090e529c9a75aa2c740cd9c1116f0c457b7a0454c9365",
+    "src/crychic/scoring/downstream.py": "f4fee7ae12f7902db3d13f0ba575c08259497f99e3a618f9a6383af38eb5fed8",
+    "src/crychic/scoring/family_common.py": "72ada7ec6026a6498cadb2665f84d27329f88f9304f75bc6beb88781f4cb30b1",
     "src/crychic/scoring/integration.py": "b831ba63ad577243b79d4f7657aeda372e6c7d66c60da1bb3c65a95bec5da3db",
-    "src/crychic/scoring/receiver_family.py": "11b8c2a7f18cecabf2a4ab009ee63afb77d8ef2d8bd6863e5c6eabb684e5b347",
+    "src/crychic/scoring/receiver_family.py": "b019c67322587d510c116f5f082c542a363ca156bbeab16c5524ab7ac759314c",
     "src/crychic/sender/__init__.py": "30b542f3d81fe7c3724652fc4445a3b82707cbddb0ae29ab2a8f5c900bd68c5b",
     "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
     "src/crychic/sender/common.py": "9d859814f7b2a887015c3450d2ae01f14019d4a5f9b0fcc806fc1cbd348ba72d",
@@ -142,7 +142,7 @@
     "src/crychic/workflow/__init__.py": "f52bb074bf033861ff7bf31298f57a54392a76cbbf1885fb60e59ca06780589e",
     "src/crychic/workflow/application.py": "39dd7433102b5e52240fe1e6b433fd1b10c99c96654edd7ebff2052595c579f0",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "fa0738e4835c9f9be9e440e6b40d4bac8b6a2048ef4da7d26e5e90bb4786d4d8",
+    "src/crychic/workflow/crossfit.py": "0c31018e5da25f89de548aa2091721950f9bc9e72713aa9620053ed1d83681f7",
     "src/crychic/workflow/receiver_incremental.py": "0f23a4764f8ad7a3ec93db159948321085a9097190d0734bb936c18313ce6340",
     "src/crychic/workflow/training.py": "56941c867b1668bc1c6b184b4b37e60e965c6a2e2b88e0296bf0f547f9a434e3"
   }

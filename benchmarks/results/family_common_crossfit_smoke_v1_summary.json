@@ -13,16 +13,16 @@
     "simulation_source_interaction_id": "CXCL10_CXCR3",
     "simulation_source_namespace": "synthetic_cellchat_style_lr_id"
   },
-  "base_revision": "bd586d63776c7d7e52af6c71071bfa4fff285650",
+  "base_revision": "86a5213fcb87dff4383777c8f2dd3d8b53d34539",
   "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
-  "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; source-agnostic receiver-program scoring remains unconnected",
+  "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; receiver-program scoring is connected as a diagnostic-only component",
   "checks": {
     "active_has_nonzero_families_in_both_folds": true,
     "active_interaction_unique_top_member_in_both_modes": true,
     "active_interaction_unique_top_sender_in_both_modes": true,
     "active_selects_weaker_penalty_in_both_folds": true,
-    "global_null_family_scores_all_structural_zero": true,
-    "ligand_only_selects_strongest_and_stays_zero": true,
+    "all_control_family_scores_structural_zero": true,
+    "all_controls_select_strongest_and_stay_zero": true,
     "tracked_active_interaction_zero_in_all_controls": true
   },
   "claims": {
@@ -33,21 +33,34 @@
     "method_superiority": false
   },
   "full_artifact": {
-    "canonical_sha256": "55f24553da618f6ccd2046f63028a14373e55c57c89b68784069e1344ca808c1",
-    "file_sha256": "f3a12dd2754355977ff9a66f1e2cc1764d53b7058e6a44fecd22e0b782d4476f",
+    "canonical_sha256": "46716b4008203a2d6b4e524d85e3375c9a2419cd008c903125464f22df29da5b",
+    "file_sha256": "c7cf7f253ed916b61391084717f78414b1dae7b10fb103f4cd1e89edb0f22a24",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
-    "size_bytes": 217167,
+    "size_bytes": 215580,
     "tracked": false
   },
   "generated_on": "2026-07-14",
-  "interpretation": "Single-seed paired synthetic development smoke. Paired-delta v2 with explicit L1-first sparsity priority recovers the known CXCL10-CXCR3 interaction as a unique positive rank 1 in both state/ecosystem member and sender summaries; the tracked interaction remains zero in all controls. Ligand-only selects the strongest candidate in both folds and stays zero. Receiver-autonomous and global-null each select the weaker candidate in one fold; receiver-autonomous emits 16 nonzero family-score rows for another family, while global-null has one nonzero training coefficient but all family-score rows remain structural zero. This exposes family-level false-positive and split sensitivity. The result is synthetic algorithm evidence only: family-common objects remain noncertifying and the registered autonomous fixture is not a biological reference.",
+  "interpretation": "Single-seed paired synthetic development smoke after the v6 frozen response-coordinate correction. The known CXCL10-CXCR3 interaction is uniquely rank 1 in both released modes, while ligand-only, receiver-autonomous, and global-null controls select the strongest penalty and retain no nonzero family. This is synthetic algorithm evidence only and does not certify biological discovery or method superiority.",
   "limitations": {
-    "global_null_family_score_ok_rows": 0,
-    "global_null_nonzero_coefficient_in_one_fold": true,
-    "global_null_selects_weaker_in_one_fold": true,
-    "receiver_autonomous_family_score_ok_rows": 16,
-    "receiver_autonomous_nonzero_family_in_one_fold": true,
-    "receiver_autonomous_selects_weaker_in_one_fold": true,
+    "control_family_score_ok_rows": {
+      "global_null": 0,
+      "ligand_only": 0,
+      "receiver_autonomous": 0
+    },
+    "control_final_nonzero_family_counts": {
+      "global_null": [
+        0,
+        0
+      ],
+      "ligand_only": [
+        0,
+        0
+      ],
+      "receiver_autonomous": [
+        0,
+        0
+      ]
+    },
     "single_seed_two_candidate_grid": true
   },
   "records": [
@@ -55,72 +68,72 @@
       "active_interaction_member_modes": [
         {
           "dense_rank": 1,
-          "mean": 0.05027215368555851,
+          "mean": 0.041836724112885,
           "mode": "state",
           "n_interactions_tied_at_rank": 1,
           "reason_counts": {
-            "incremental_downstream_gain_zero": 4,
-            "none": 12
+            "incremental_downstream_gain_zero": 2,
+            "none": 14
           },
           "status_counts": {
-            "ok": 12,
-            "structural_zero": 4
+            "ok": 14,
+            "structural_zero": 2
           }
         },
         {
           "dense_rank": 1,
-          "mean": 0.04714818842782468,
+          "mean": 0.039508184766132715,
           "mode": "ecosystem",
           "n_interactions_tied_at_rank": 1,
           "reason_counts": {
-            "incremental_downstream_gain_zero": 4,
-            "none": 12
+            "incremental_downstream_gain_zero": 2,
+            "none": 14
           },
           "status_counts": {
-            "ok": 12,
-            "structural_zero": 4
+            "ok": 14,
+            "structural_zero": 2
           }
         }
       ],
       "active_interaction_sender_modes": [
         {
           "dense_rank": 1,
-          "mean": 0.02588328498194962,
+          "mean": 0.021451430006476056,
           "mode": "state",
           "n_interactions_tied_at_rank": 1,
           "reason_counts": {
-            "incremental_downstream_gain_zero": 4,
-            "none": 12
+            "incremental_downstream_gain_zero": 2,
+            "none": 14
           },
           "status_counts": {
-            "ok": 12,
-            "structural_zero": 4
+            "ok": 14,
+            "structural_zero": 2
           }
         },
         {
           "dense_rank": 1,
-          "mean": 0.024451103584277836,
+          "mean": 0.020399714713672946,
           "mode": "ecosystem",
           "n_interactions_tied_at_rank": 1,
           "reason_counts": {
-            "incremental_downstream_gain_zero": 4,
-            "none": 12
+            "incremental_downstream_gain_zero": 2,
+            "none": 14
           },
           "status_counts": {
-            "ok": 12,
-            "structural_zero": 4
+            "ok": 14,
+            "structural_zero": 2
           }
         }
       ],
       "dataset": "synthetic_active",
-      "elapsed_seconds": 33.67638784926385,
+      "elapsed_seconds": 57.34468505065888,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
       },
       "family_score_status_counts": {
-        "ok": 24,
-        "structural_zero": 456
+        "ok": 28,
+        "structural_zero": 452
       },
       "incremental_training_official_status_counts": {
         "not_estimable": 4,
@@ -131,7 +144,7 @@
       "n_subjects": 8,
       "receiver_final_nonzero_family_counts": [
         1,
-        2
+        1
       ],
       "scenario": "active",
       "scenario_seed": 779404205,
@@ -209,7 +222,7 @@
         }
       ],
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 31.925278346054256,
+      "elapsed_seconds": 54.674073924310505,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -253,10 +266,10 @@
     {
       "active_interaction_member_modes": [
         {
-          "dense_rank": 2,
+          "dense_rank": 1,
           "mean": 0.0,
           "mode": "state",
-          "n_interactions_tied_at_rank": 4,
+          "n_interactions_tied_at_rank": 5,
           "reason_counts": {
             "family_not_selected": 16
           },
@@ -265,10 +278,10 @@
           }
         },
         {
-          "dense_rank": 2,
+          "dense_rank": 1,
           "mean": 0.0,
           "mode": "ecosystem",
-          "n_interactions_tied_at_rank": 4,
+          "n_interactions_tied_at_rank": 5,
           "reason_counts": {
             "family_not_selected": 16
           },
@@ -279,10 +292,10 @@
       ],
       "active_interaction_sender_modes": [
         {
-          "dense_rank": 2,
+          "dense_rank": 1,
           "mean": 0.0,
           "mode": "state",
-          "n_interactions_tied_at_rank": 4,
+          "n_interactions_tied_at_rank": 5,
           "reason_counts": {
             "family_not_selected": 16
           },
@@ -291,10 +304,10 @@
           }
         },
         {
-          "dense_rank": 2,
+          "dense_rank": 1,
           "mean": 0.0,
           "mode": "ecosystem",
-          "n_interactions_tied_at_rank": 4,
+          "n_interactions_tied_at_rank": 5,
           "reason_counts": {
             "family_not_selected": 16
           },
@@ -304,14 +317,13 @@
         }
       ],
       "dataset": "synthetic_receiver_autonomous",
-      "elapsed_seconds": 31.6873872410506,
+      "elapsed_seconds": 55.397405214607716,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
       },
       "family_score_status_counts": {
-        "ok": 16,
-        "structural_zero": 464
+        "structural_zero": 480
       },
       "incremental_training_official_status_counts": {
         "not_estimable": 4,
@@ -322,18 +334,13 @@
       "n_subjects": 8,
       "receiver_final_nonzero_family_counts": [
         0,
-        1
+        0
       ],
       "scenario": "receiver_autonomous",
       "scenario_seed": 4285072227,
       "selected_penalty_fractions": [
         {
-          "count": 1,
-          "lambda1_fraction": 0.1,
-          "lambda2_fraction": 0.0
-        },
-        {
-          "count": 1,
+          "count": 2,
           "lambda1_fraction": 1.0,
           "lambda2_fraction": 0.0
         }
@@ -405,7 +412,7 @@
         }
       ],
       "dataset": "synthetic_global_null",
-      "elapsed_seconds": 31.92748961597681,
+      "elapsed_seconds": 55.08324526343495,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -421,19 +428,14 @@
       "n_samples": 16,
       "n_subjects": 8,
       "receiver_final_nonzero_family_counts": [
-        1,
+        0,
         0
       ],
       "scenario": "global_null",
       "scenario_seed": 1817746471,
       "selected_penalty_fractions": [
         {
-          "count": 1,
-          "lambda1_fraction": 0.1,
-          "lambda2_fraction": 0.0
-        },
-        {
-          "count": 1,
+          "count": 2,
           "lambda1_fraction": 1.0,
           "lambda2_fraction": 0.0
         }
@@ -472,7 +474,7 @@
     "benchmarks/fixtures/synthetic_receiver_autonomous_program/manifest.json": "b4e0a4b2e28b991bf54ee6f0b50eb470147a9c4fc921d9da46bad2fe5b87814f",
     "benchmarks/fixtures/synthetic_receiver_autonomous_program/programs.tsv": "2b65b3d6199f3229fe40343ede3973a494be9e557f9488e3b62e5a040eed310e",
     "benchmarks/simulation/run_crossfit_smoke.py": "a3da38b307a10aa87903b36a64ddd1ef36ad2441e93d71f29e91321470e019f7",
-    "benchmarks/simulation/run_family_common_crossfit_smoke.py": "1393d1be7e5a2e56e9a1cd7efe4eebcae04cea4556aa0a0326b77aa7be0d094a",
+    "benchmarks/simulation/run_family_common_crossfit_smoke.py": "97174b87bf08622e55022609441b364f3cbd29cc1c2a52506cf8ddb3eab1251f",
     "src/crychic/__init__.py": "f5b2fc90ab93fe76d1d760b623d8842eeaafa54db2635ee95be36008b6cda2a4",
     "src/crychic/attribution/__init__.py": "f18950219625cc130ed1c911c9714c4e9c5023dc16ff1f80fc34b46f4821c6aa",
     "src/crychic/attribution/basis.py": "79a33dae2fca754a368ed7a6d724a62879902ffb3dba7b8ccd7f301ba2cd93da",
@@ -522,12 +524,13 @@
     "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
     "src/crychic/response/fold.py": "98d140745ed6b324ef108e1792da71b9019271ebd18b2aba296b160a0910f734",
     "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
-    "src/crychic/scoring/__init__.py": "afccff4d8ac607a4709dd85c4e1b36920adfb1d5224fedc284ad20891aca3684",
+    "src/crychic/scoring/__init__.py": "7df08227d9fba1282a97f06ebcc69f6a7c97cde7fe6540ae347f207a13248129",
     "src/crychic/scoring/contracts.py": "5da2f37c2c7dbae5f96549ab8c9761d9f7a66b9a48771b1b7a95c4d81c8ea47c",
-    "src/crychic/scoring/downstream.py": "be9f383693ae2baa107205f3efd81c56b1fdd9a7ccccababcb62faad5a63f07c",
-    "src/crychic/scoring/family_common.py": "3a75fb3ac81c1af50db090e529c9a75aa2c740cd9c1116f0c457b7a0454c9365",
+    "src/crychic/scoring/downstream.py": "f4fee7ae12f7902db3d13f0ba575c08259497f99e3a618f9a6383af38eb5fed8",
+    "src/crychic/scoring/family_common.py": "72ada7ec6026a6498cadb2665f84d27329f88f9304f75bc6beb88781f4cb30b1",
     "src/crychic/scoring/integration.py": "b831ba63ad577243b79d4f7657aeda372e6c7d66c60da1bb3c65a95bec5da3db",
-    "src/crychic/scoring/receiver_family.py": "11b8c2a7f18cecabf2a4ab009ee63afb77d8ef2d8bd6863e5c6eabb684e5b347",
+    "src/crychic/scoring/receiver_family.py": "b019c67322587d510c116f5f082c542a363ca156bbeab16c5524ab7ac759314c",
+    "src/crychic/scoring/receiver_program.py": "d54e292935c3b9d685db9e72670edc30d5a7dc8f6fc263596ecfd67878ca7798",
     "src/crychic/sender/__init__.py": "30b542f3d81fe7c3724652fc4445a3b82707cbddb0ae29ab2a8f5c900bd68c5b",
     "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
     "src/crychic/sender/common.py": "9d859814f7b2a887015c3450d2ae01f14019d4a5f9b0fcc806fc1cbd348ba72d",
@@ -535,7 +538,7 @@
     "src/crychic/workflow/__init__.py": "f52bb074bf033861ff7bf31298f57a54392a76cbbf1885fb60e59ca06780589e",
     "src/crychic/workflow/application.py": "39dd7433102b5e52240fe1e6b433fd1b10c99c96654edd7ebff2052595c579f0",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "fa0738e4835c9f9be9e440e6b40d4bac8b6a2048ef4da7d26e5e90bb4786d4d8",
+    "src/crychic/workflow/crossfit.py": "0c31018e5da25f89de548aa2091721950f9bc9e72713aa9620053ed1d83681f7",
     "src/crychic/workflow/receiver_incremental.py": "0f23a4764f8ad7a3ec93db159948321085a9097190d0734bb936c18313ce6340",
     "src/crychic/workflow/training.py": "56941c867b1668bc1c6b184b4b37e60e965c6a2e2b88e0296bf0f547f9a434e3"
   },

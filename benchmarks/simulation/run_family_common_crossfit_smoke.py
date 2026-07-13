@@ -9,6 +9,7 @@ import resource as process_resource
 import time
 from collections import Counter
 from collections.abc import Iterable
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -51,9 +52,7 @@ ALLOWED_SCENARIOS = (
     "target_only",
     "receptor_knockout",
 )
-AUTONOMOUS_REGISTRATION_ID = (
-    "crychic.synthetic_receiver_autonomous_program.v1"
-)
+AUTONOMOUS_REGISTRATION_ID = "crychic.synthetic_receiver_autonomous_program.v1"
 ACTIVE_SOURCE_INTERACTION_ID = "CXCL10_CXCR3"
 ACTIVE_LIGAND = "CXCL10"
 ACTIVE_RECEPTOR = "CXCR3"
@@ -88,6 +87,7 @@ FAMILY_COMMON_SMOKE_SOURCE_PATHS = tuple(
             "benchmarks/simulation/run_family_common_crossfit_smoke.py",
             "src/crychic/resources/autonomous_registry.py",
             "src/crychic/scoring/family_common.py",
+            "src/crychic/scoring/receiver_program.py",
         }
     )
 )
@@ -231,11 +231,7 @@ def _rank_interaction_table(
                 }
             )
         finite_mean_values = sorted(
-            {
-                cast(float, row["mean"])
-                for row in rows
-                if row["mean"] is not None
-            },
+            {cast(float, row["mean"]) for row in rows if row["mean"] is not None},
             reverse=True,
         )
         rank_by_mean = {
@@ -247,9 +243,7 @@ def _rank_interaction_table(
                 None if mean is None else rank_by_mean[cast(float, mean)]
             )
             row["n_interactions_tied_at_rank"] = (
-                None
-                if mean is None
-                else sum(other["mean"] == mean for other in rows)
+                None if mean is None else sum(other["mean"] == mean for other in rows)
             )
         leaderboard = sorted(
             rows,
@@ -294,9 +288,7 @@ def _rank_interaction_table(
                 "all_finite_interaction_means_exactly_zero": (
                     None
                     if not finite_mean_values
-                    else bool(
-                        all(value == 0.0 for value in finite_mean_values)
-                    )
+                    else bool(all(value == 0.0 for value in finite_mean_values))
                 ),
                 "active_interaction": active,
                 "leaderboard": leaderboard,
@@ -366,16 +358,12 @@ def _tuning_candidate_audit(
                 "is_empirical_best": (
                     candidate.candidate_id == tuning.best_candidate_id
                 ),
-                "is_selected": (
-                    candidate.candidate_id == tuning.selected_candidate_id
-                ),
+                "is_selected": (candidate.candidate_id == tuning.selected_candidate_id),
                 "summary_status": None if summary is None else summary.status,
                 "summary_reason_code": (
                     None if summary is None else summary.reason_code
                 ),
-                "subject_ids": (
-                    [] if summary is None else list(summary.subject_ids)
-                ),
+                "subject_ids": ([] if summary is None else list(summary.subject_ids)),
                 "subject_losses": (
                     [] if summary is None else summary.subject_losses.tolist()
                 ),
@@ -384,9 +372,7 @@ def _tuning_candidate_audit(
                     None if summary is None else summary.standard_error
                 ),
                 "mean_loss_difference_to_best": (
-                    None
-                    if comparison is None
-                    else comparison.mean_loss_difference
+                    None if comparison is None else comparison.mean_loss_difference
                 ),
                 "paired_delta_standard_error": (
                     None if comparison is None else comparison.standard_error
@@ -488,9 +474,7 @@ def _selected_penalty_summary(artifacts: CrossFitArtifacts) -> dict[str, object]
                     "final_nonzero_families": [
                         {
                             "family_id": diagnostic.family_ids[index],
-                            "coefficient": float(
-                                diagnostic.family_coefficients[index]
-                            ),
+                            "coefficient": float(diagnostic.family_coefficients[index]),
                         }
                         for index in nonzero_family_indices
                     ]
@@ -518,9 +502,7 @@ def _algorithm_audit(
     active_interaction_id: str,
 ) -> dict[str, object]:
     models = [
-        model
-        for fold in artifacts.folds
-        for model in fold.receiver_incremental_models
+        model for fold in artifacts.folds for model in fold.receiver_incremental_models
     ]
     incremental_applications = [
         application
@@ -618,9 +600,7 @@ def _algorithm_audit(
             functional.incremental_reason_code for functional in functionals
         ),
         "family_common_application_status_counts": _count_strings(
-            "observed"
-            if application.heldout_reason_code is None
-            else "not_estimable"
+            "observed" if application.heldout_reason_code is None else "not_estimable"
             for application in common_applications
         ),
         "family_common_application_reason_counts": _count_reasons(
@@ -640,9 +620,7 @@ def _algorithm_audit(
             },
             "subject_differential": {
                 "n_rows": len(subject_differential),
-                "status_counts": _table_status_counts(
-                    subject_differential, "status"
-                ),
+                "status_counts": _table_status_counts(subject_differential, "status"),
                 "reason_counts": _table_reason_counts(subject_differential),
             },
             "family": {
@@ -689,8 +667,7 @@ def _active_interaction_mapping(
 ) -> dict[str, object]:
     table = pd.read_csv(table_path, sep="\t", dtype=str)
     selected = table.loc[
-        (table["ligand"] == ACTIVE_LIGAND)
-        & (table["receptor"] == ACTIVE_RECEPTOR)
+        (table["ligand"] == ACTIVE_LIGAND) & (table["receptor"] == ACTIVE_RECEPTOR)
     ]
     if len(selected) != 1:
         raise ValueError("synthetic active LR must map to exactly one harmonized row")
@@ -707,9 +684,7 @@ def _active_interaction_mapping(
         "ligand": ACTIVE_LIGAND,
         "receptor": ACTIVE_RECEPTOR,
         "harmonized_interaction_id": interaction_id,
-        "cellchat_source_interaction_id": str(
-            row["cellchat_source_interaction_id"]
-        ),
+        "cellchat_source_interaction_id": str(row["cellchat_source_interaction_id"]),
         "cellphonedb_source_interaction_id": str(
             row["cellphonedb_source_interaction_id"]
         ),
@@ -749,10 +724,7 @@ def _synthetic_manifest_records(
     if observed_records != registry_records:
         raise ValueError("synthetic control records do not match input registry")
     by_scenario = {str(record["scenario"]): record for record in records}
-    if (
-        len(by_scenario) != len(records)
-        or set(by_scenario) != set(ALLOWED_SCENARIOS)
-    ):
+    if len(by_scenario) != len(records) or set(by_scenario) != set(ALLOWED_SCENARIOS):
         raise ValueError("synthetic control manifest scenarios are not unique")
     return by_scenario, {
         "registry_relative_path": INPUT_REGISTRY_RELATIVE_PATH,
@@ -818,8 +790,7 @@ def run_smoke(
 
     repository_root = Path(__file__).resolve().parents[2]
     fixture_root = (
-        repository_root
-        / "benchmarks/fixtures/synthetic_receiver_autonomous_program"
+        repository_root / "benchmarks/fixtures/synthetic_receiver_autonomous_program"
     )
     autonomous = load_receiver_autonomous_program_resource(
         fixture_root,
@@ -889,18 +860,14 @@ def run_smoke(
                     "expected_receiver_response": bool(
                         truth["expected_receiver_response"]
                     ),
-                    "expected_integrated_edge": bool(
-                        truth["expected_integrated_edge"]
-                    ),
+                    "expected_integrated_edge": bool(truth["expected_integrated_edge"]),
                     "tracked_active_source_interaction_is_positive_truth": (
                         truth["active_interaction"] == ACTIVE_SOURCE_INTERACTION_ID
                     ),
                 },
                 "elapsed_seconds": elapsed,
                 "process_peak_rss_kib_after_scenario": int(
-                    process_resource.getrusage(
-                        process_resource.RUSAGE_SELF
-                    ).ru_maxrss
+                    process_resource.getrusage(process_resource.RUSAGE_SELF).ru_maxrss
                 ),
                 **_algorithm_audit(
                     artifacts,
@@ -915,7 +882,7 @@ def run_smoke(
         "claims": dict(AUDIT_CLAIMS),
         "certification_boundary": (
             "outer-heldout family-common diagnostics remain explicitly noncertifying; "
-            "source-agnostic receiver-program scoring remains unconnected"
+            "receiver-program scoring is connected as a diagnostic-only component"
         ),
         "statistical_unit": "subject_id",
         "single_seed_development_diagnostic": True,
@@ -945,6 +912,206 @@ def run_smoke(
     }
 
 
+def _compact_active_modes(
+    tracking: dict[str, object], *, score_kind: str
+) -> list[dict[str, object]]:
+    score_table = cast(dict[str, object], tracking[score_kind])
+    modes = cast(list[dict[str, object]], score_table["modes"])
+    compact: list[dict[str, object]] = []
+    for mode in modes:
+        active = cast(dict[str, object], mode["active_interaction"])
+        compact.append(
+            {
+                "mode": mode["mode"],
+                "mean": active["mean"],
+                "dense_rank": active["dense_rank"],
+                "n_interactions_tied_at_rank": active["n_interactions_tied_at_rank"],
+                "status_counts": active["status_counts"],
+                "reason_counts": active["reason_counts"],
+            }
+        )
+    return compact
+
+
+def compact_family_common_record(record: dict[str, object]) -> dict[str, object]:
+    """Reduce one complete scenario audit to its tracked diagnostic surface."""
+
+    penalties = cast(dict[str, object], record["selected_penalties"])
+    penalty_records = cast(list[dict[str, object]], penalties["records"])
+    tracking = cast(dict[str, object], record["active_interaction_tracking"])
+    score_tables = cast(dict[str, object], record["score_tables"])
+    family_scores = cast(dict[str, object], score_tables["family"])
+    return {
+        "scenario": record["scenario"],
+        "dataset": record["dataset"],
+        "scenario_seed": record["scenario_seed"],
+        "input_sha256": record["input_sha256"],
+        "simulation_truth": record["simulation_truth"],
+        "n_subjects": record["n_subjects"],
+        "n_samples": record["n_samples"],
+        "elapsed_seconds": record["elapsed_seconds"],
+        "tuning_status_counts": record["tuning_status_counts"],
+        "incremental_training_official_status_counts": record[
+            "incremental_training_official_status_counts"
+        ],
+        "family_common_application_status_counts": record[
+            "family_common_application_status_counts"
+        ],
+        "selected_penalty_fractions": penalties["selected_fraction_counts"],
+        "receiver_final_nonzero_family_counts": [
+            item["final_n_nonzero_families"]
+            for item in penalty_records
+            if item["receiver"] == PRIMARY_RECEIVER
+        ],
+        "family_score_status_counts": family_scores["status_counts"],
+        "active_interaction_member_modes": _compact_active_modes(
+            tracking, score_kind="member_unresolved"
+        ),
+        "active_interaction_sender_modes": _compact_active_modes(
+            tracking, score_kind="sender_resolved"
+        ),
+    }
+
+
+def build_artifact_metadata(
+    payload: dict[str, object],
+    *,
+    serialized: bytes,
+    relative_workspace_path: str,
+) -> dict[str, object]:
+    """Build deterministic full-artifact metadata for a compact summary."""
+
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return {
+        "canonical_sha256": hashlib.sha256(canonical).hexdigest(),
+        "file_sha256": hashlib.sha256(serialized).hexdigest(),
+        "relative_workspace_path": relative_workspace_path,
+        "size_bytes": len(serialized),
+        "tracked": False,
+    }
+
+
+def _mode_check(record: dict[str, object], *, positive: bool) -> bool:
+    for key in ("active_interaction_member_modes", "active_interaction_sender_modes"):
+        modes = cast(list[dict[str, object]], record[key])
+        for mode in modes:
+            mean = float(cast(float, mode["mean"]))
+            if positive:
+                if not (
+                    mean > 0.0
+                    and mode["dense_rank"] == 1
+                    and mode["n_interactions_tied_at_rank"] == 1
+                ):
+                    return False
+            elif mean != 0.0:
+                return False
+    return True
+
+
+def build_compact_summary(
+    payload: dict[str, object],
+    artifact_metadata: dict[str, object],
+    *,
+    base_revision: str,
+    generated_on: str,
+) -> dict[str, object]:
+    """Derive the tracked compact summary from one complete smoke payload."""
+
+    records = [
+        compact_family_common_record(record)
+        for record in cast(list[dict[str, object]], payload["records"])
+    ]
+    by_scenario = {str(record["scenario"]): record for record in records}
+    active = by_scenario["active"]
+    controls = tuple(by_scenario[name] for name in DEFAULT_SCENARIOS[1:])
+    strongest = [{"count": 2, "lambda1_fraction": 1.0, "lambda2_fraction": 0.0}]
+    weaker = [{"count": 2, "lambda1_fraction": 0.1, "lambda2_fraction": 0.0}]
+    checks = {
+        "active_has_nonzero_families_in_both_folds": all(
+            int(value) > 0
+            for value in cast(list[int], active["receiver_final_nonzero_family_counts"])
+        ),
+        "active_interaction_unique_top_member_in_both_modes": _mode_check(
+            active, positive=True
+        ),
+        "active_interaction_unique_top_sender_in_both_modes": _mode_check(
+            active, positive=True
+        ),
+        "active_selects_weaker_penalty_in_both_folds": (
+            active["selected_penalty_fractions"] == weaker
+        ),
+        "all_controls_select_strongest_and_stay_zero": all(
+            control["selected_penalty_fractions"] == strongest
+            and cast(list[int], control["receiver_final_nonzero_family_counts"])
+            == [0, 0]
+            for control in controls
+        ),
+        "all_control_family_scores_structural_zero": all(
+            control["family_score_status_counts"] == {"structural_zero": 480}
+            for control in controls
+        ),
+        "tracked_active_interaction_zero_in_all_controls": all(
+            _mode_check(control, positive=False) for control in controls
+        ),
+    }
+    crossfit_spec = cast(dict[str, object], payload["crossfit_spec"])
+    tuning_spec = cast(dict[str, object], crossfit_spec["penalty_tuning_spec"])
+    resource_provenance = cast(dict[str, object], payload["resource_provenance"])
+    return {
+        "active_interaction_source_mapping": payload[
+            "active_interaction_source_mapping"
+        ],
+        "base_revision": base_revision,
+        "candidate_priority": tuning_spec["candidate_priority"],
+        "certification_boundary": payload["certification_boundary"],
+        "checks": checks,
+        "claims": payload["claims"],
+        "full_artifact": dict(artifact_metadata),
+        "generated_on": generated_on,
+        "interpretation": (
+            "Single-seed paired synthetic development smoke after the v6 frozen "
+            "response-coordinate correction. The known CXCL10-CXCR3 interaction "
+            "is uniquely rank 1 in both released modes, while ligand-only, "
+            "receiver-autonomous, and global-null controls select the strongest "
+            "penalty and retain no nonzero family. This is synthetic algorithm "
+            "evidence only and does not certify biological discovery or method "
+            "superiority."
+        ),
+        "limitations": {
+            "control_family_score_ok_rows": {
+                str(control["scenario"]): int(
+                    cast(dict[str, int], control["family_score_status_counts"]).get(
+                        "ok", 0
+                    )
+                )
+                for control in controls
+            },
+            "control_final_nonzero_family_counts": {
+                str(control["scenario"]): control[
+                    "receiver_final_nonzero_family_counts"
+                ]
+                for control in controls
+            },
+            "single_seed_two_candidate_grid": True,
+        },
+        "records": records,
+        "resource_boundary": cast(
+            dict[str, object], resource_provenance["receiver_autonomous_program"]
+        ),
+        "schema_version": "crychic-family-common-crossfit-smoke-summary-v1",
+        "scope": payload["scope"],
+        "selection_rule": tuning_spec["selection_rule"],
+        "source_sha256": payload["source_sha256"],
+        "synthetic_input_registry": payload["synthetic_input_registry"],
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser without running the benchmark."""
 
@@ -964,11 +1131,24 @@ def build_parser() -> argparse.ArgumentParser:
             "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json"
         ),
     )
+    parser.add_argument("--summary-output", type=Path)
+    parser.add_argument("--base-revision")
+    parser.add_argument("--generated-on", default=date.today().isoformat())
+    parser.add_argument(
+        "--artifact-relative-workspace-path",
+        default="benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
+    )
     return parser
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.summary_output is not None:
+        if not args.base_revision:
+            parser.error("--summary-output requires --base-revision")
+        if tuple(args.scenarios) != DEFAULT_SCENARIOS:
+            parser.error("--summary-output requires the canonical default scenarios")
     workspace_root = args.workspace_root.expanduser().resolve()
     payload = run_smoke(
         workspace_root=workspace_root,
@@ -979,13 +1159,42 @@ def main() -> None:
         output = workspace_root / output
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(
-        payload,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ) + "\n"
+    serialized = (
+        json.dumps(
+            payload,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
     output.write_text(serialized, encoding="utf-8")
+    if args.summary_output is not None:
+        summary = build_compact_summary(
+            payload,
+            build_artifact_metadata(
+                payload,
+                serialized=serialized.encode("utf-8"),
+                relative_workspace_path=args.artifact_relative_workspace_path,
+            ),
+            base_revision=args.base_revision,
+            generated_on=args.generated_on,
+        )
+        summary_output = args.summary_output.expanduser()
+        if not summary_output.is_absolute():
+            summary_output = Path(__file__).resolve().parents[2] / summary_output
+        summary_output = summary_output.resolve()
+        summary_output.parent.mkdir(parents=True, exist_ok=True)
+        summary_output.write_text(
+            json.dumps(
+                summary,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     print(serialized, end="")
 
 

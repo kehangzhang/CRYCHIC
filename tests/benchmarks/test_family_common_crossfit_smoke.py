@@ -18,6 +18,8 @@ from benchmarks.simulation.run_family_common_crossfit_smoke import (
     INPUT_REGISTRY_RELATIVE_PATH,
     _rank_interaction_table,
     _tuning_candidate_audit,
+    build_artifact_metadata,
+    build_compact_summary,
     build_family_common_smoke_spec,
     build_parser,
     family_common_smoke_source_sha256,
@@ -31,9 +33,7 @@ from crychic.attribution import (
 from crychic.response import load_receiver_autonomous_program_resource
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_ROOT = (
-    REPO_ROOT / "benchmarks/fixtures/synthetic_receiver_autonomous_program"
-)
+FIXTURE_ROOT = REPO_ROOT / "benchmarks/fixtures/synthetic_receiver_autonomous_program"
 SUMMARY_PATH = (
     REPO_ROOT / "benchmarks/results/family_common_crossfit_smoke_v1_summary.json"
 )
@@ -52,6 +52,7 @@ REQUIRED_SOURCE_CLOSURE = {
     "src/crychic/response/autonomous.py",
     "src/crychic/scoring/downstream.py",
     "src/crychic/scoring/family_common.py",
+    "src/crychic/scoring/receiver_program.py",
     "src/crychic/workflow/crossfit.py",
     "src/crychic/workflow/receiver_incremental.py",
 }
@@ -203,67 +204,6 @@ def test_cli_defaults_and_claim_boundary_are_explicit() -> None:
     }
 
 
-def _compact_active_modes(
-    tracking: dict[str, object], *, score_kind: str
-) -> list[dict[str, object]]:
-    score_table = cast(dict[str, object], tracking[score_kind])
-    modes = cast(list[dict[str, object]], score_table["modes"])
-    compact: list[dict[str, object]] = []
-    for mode in modes:
-        active = cast(dict[str, object], mode["active_interaction"])
-        compact.append(
-            {
-                "mode": mode["mode"],
-                "mean": active["mean"],
-                "dense_rank": active["dense_rank"],
-                "n_interactions_tied_at_rank": active[
-                    "n_interactions_tied_at_rank"
-                ],
-                "status_counts": active["status_counts"],
-                "reason_counts": active["reason_counts"],
-            }
-        )
-    return compact
-
-
-def _compact_record(record: dict[str, object]) -> dict[str, object]:
-    penalties = cast(dict[str, object], record["selected_penalties"])
-    penalty_records = cast(list[dict[str, object]], penalties["records"])
-    tracking = cast(dict[str, object], record["active_interaction_tracking"])
-    score_tables = cast(dict[str, object], record["score_tables"])
-    family_scores = cast(dict[str, object], score_tables["family"])
-    return {
-        "scenario": record["scenario"],
-        "dataset": record["dataset"],
-        "scenario_seed": record["scenario_seed"],
-        "input_sha256": record["input_sha256"],
-        "simulation_truth": record["simulation_truth"],
-        "n_subjects": record["n_subjects"],
-        "n_samples": record["n_samples"],
-        "elapsed_seconds": record["elapsed_seconds"],
-        "tuning_status_counts": record["tuning_status_counts"],
-        "incremental_training_official_status_counts": record[
-            "incremental_training_official_status_counts"
-        ],
-        "family_common_application_status_counts": record[
-            "family_common_application_status_counts"
-        ],
-        "selected_penalty_fractions": penalties["selected_fraction_counts"],
-        "receiver_final_nonzero_family_counts": [
-            item["final_n_nonzero_families"]
-            for item in penalty_records
-            if item["receiver"] == "Receiver"
-        ],
-        "family_score_status_counts": family_scores["status_counts"],
-        "active_interaction_member_modes": _compact_active_modes(
-            tracking, score_kind="member_unresolved"
-        ),
-        "active_interaction_sender_modes": _compact_active_modes(
-            tracking, score_kind="sender_resolved"
-        ),
-    }
-
-
 def test_tracked_family_common_summary_is_semantically_pinned() -> None:
     summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
     registry = json.loads(INPUT_REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -283,9 +223,7 @@ def test_tracked_family_common_summary_is_semantically_pinned() -> None:
     assert summary["candidate_priority"] == (
         "l1_fraction_desc_then_l2_fraction_desc_v1"
     )
-    assert summary["resource_boundary"]["review_scope"] == (
-        "synthetic_benchmark_only"
-    )
+    assert summary["resource_boundary"]["review_scope"] == ("synthetic_benchmark_only")
     assert summary["resource_boundary"]["biological_reference_trusted"] is False
     assert summary["synthetic_input_registry"] == {
         "registry_relative_path": INPUT_REGISTRY_RELATIVE_PATH,
@@ -330,35 +268,30 @@ def test_tracked_family_common_summary_is_semantically_pinned() -> None:
             and mode["n_interactions_tied_at_rank"] == 1
             for mode in active[key]
         )
-    ligand_only = by_scenario["ligand_only"]
-    assert ligand_only["selected_penalty_fractions"] == [
-        {"count": 2, "lambda1_fraction": 1.0, "lambda2_fraction": 0.0}
-    ]
-    assert ligand_only["receiver_final_nonzero_family_counts"] == [0, 0]
     for scenario in ("ligand_only", "receiver_autonomous", "global_null"):
         control = by_scenario[scenario]
+        assert control["selected_penalty_fractions"] == [
+            {"count": 2, "lambda1_fraction": 1.0, "lambda2_fraction": 0.0}
+        ]
+        assert control["receiver_final_nonzero_family_counts"] == [0, 0]
+        assert control["family_score_status_counts"] == {"structural_zero": 480}
         for key in (
             "active_interaction_member_modes",
             "active_interaction_sender_modes",
         ):
             assert all(mode["mean"] == 0 for mode in control[key])
 
-    receiver_autonomous = by_scenario["receiver_autonomous"]
-    assert sorted(receiver_autonomous["receiver_final_nonzero_family_counts"]) == [
-        0,
-        1,
-    ]
-    assert receiver_autonomous["family_score_status_counts"]["ok"] == 16
-    global_null = by_scenario["global_null"]
-    assert sorted(global_null["receiver_final_nonzero_family_counts"]) == [0, 1]
-    assert global_null["family_score_status_counts"] == {"structural_zero": 480}
     assert summary["limitations"] == {
-        "global_null_family_score_ok_rows": 0,
-        "global_null_nonzero_coefficient_in_one_fold": True,
-        "global_null_selects_weaker_in_one_fold": True,
-        "receiver_autonomous_family_score_ok_rows": 16,
-        "receiver_autonomous_nonzero_family_in_one_fold": True,
-        "receiver_autonomous_selects_weaker_in_one_fold": True,
+        "control_family_score_ok_rows": {
+            "global_null": 0,
+            "ligand_only": 0,
+            "receiver_autonomous": 0,
+        },
+        "control_final_nonzero_family_counts": {
+            "global_null": [0, 0],
+            "ligand_only": [0, 0],
+            "receiver_autonomous": [0, 0],
+        },
         "single_seed_two_candidate_grid": True,
     }
 
@@ -369,16 +302,16 @@ def test_workspace_family_common_artifact_matches_tracked_summary() -> None:
     summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
     raw = FULL_ARTIFACT_PATH.read_bytes()
     full = json.loads(raw)
-    canonical = json.dumps(
-        full,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("ascii")
     artifact = summary["full_artifact"]
+    expected = build_compact_summary(
+        full,
+        build_artifact_metadata(
+            full,
+            serialized=raw,
+            relative_workspace_path=artifact["relative_workspace_path"],
+        ),
+        base_revision=summary["base_revision"],
+        generated_on=summary["generated_on"],
+    )
 
-    assert hashlib.sha256(canonical).hexdigest() == artifact["canonical_sha256"]
-    assert hashlib.sha256(raw).hexdigest() == artifact["file_sha256"]
-    assert len(raw) == artifact["size_bytes"]
-    assert summary["records"] == [_compact_record(record) for record in full["records"]]
+    assert summary == expected
