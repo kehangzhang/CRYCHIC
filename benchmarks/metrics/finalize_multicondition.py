@@ -23,6 +23,9 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.compute as pc  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import yaml  # type: ignore[import-untyped]
 
 from benchmarks.metrics.multicondition import (
@@ -102,10 +105,10 @@ TRACK_METADATA_COLUMNS = (
     "resource_version",
     "resource_mode",
     "universe_id",
-    "sample_id",
-    "subject_id",
     "score_name",
 )
+
+PARQUET_METADATA_BATCH_SIZE = 65_536
 
 REAL_TRUTH_METRIC_NAMES = frozenset(
     {
@@ -265,6 +268,151 @@ def _read_table(path: Path) -> pd.DataFrame:
     if suffix in {".tsv", ".txt"}:
         return pd.read_csv(path, sep="\t")
     raise ValueError(f"unsupported table format: {path}")
+
+
+def _canonical_run_id(value: object, *, field_name: str = "run_id") -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field_name} must contain canonical non-empty strings")
+    return value
+
+
+def _validate_parquet_adapter_schema(
+    parquet: Any,
+    *,
+    require_universe_member: bool = False,
+) -> None:
+    """Reject adapter identifiers and membership flags with lossy Arrow types."""
+
+    schema = parquet.schema_arrow
+    if "run_id" not in schema.names:
+        raise ValueError("adapter long table is missing required column: 'run_id'")
+    run_id_type = schema.field("run_id").type
+    if not (pa.types.is_string(run_id_type) or pa.types.is_large_string(run_id_type)):
+        raise ValueError(
+            "adapter long table run_id must use an Arrow string type; "
+            f"got {run_id_type}"
+        )
+    if not require_universe_member:
+        return
+    if "universe_member" not in schema.names:
+        raise ValueError(
+            "adapter long table is missing required column: 'universe_member'"
+        )
+    universe_type = schema.field("universe_member").type
+    if not pa.types.is_boolean(universe_type):
+        raise ValueError(
+            "adapter long table universe_member must use an Arrow boolean type; "
+            f"got {universe_type}"
+        )
+
+
+def _validate_universe_member_values(values: pd.Series) -> None:
+    """Require a null-free logical boolean before any dtype conversion."""
+
+    if values.isna().any() or not pd.api.types.is_bool_dtype(values.dtype):
+        raise ValueError(
+            "adapter long table universe_member must be null-free boolean values"
+        )
+
+
+def _read_unique_parquet_metadata(
+    path: Path,
+    columns: Sequence[str],
+    *,
+    batch_size: int = PARQUET_METADATA_BATCH_SIZE,
+) -> pd.DataFrame:
+    """Scan identity metadata with memory bounded by one Arrow batch.
+
+    Adapter long tables repeat identity metadata for every edge. Reading those
+    columns through pandas still materializes one value per edge, which can be
+    a large allocation before any score view is selected. Arrow computes unique
+    scalars per batch; non-view identity columns are checked immediately and a
+    compact one-row-per-run frame is returned to the existing validators.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    parquet = pq.ParquetFile(path)
+    missing = set(columns).difference(parquet.schema_arrow.names)
+    if missing:
+        raise ValueError(
+            f"adapter long table is missing metadata columns: {sorted(missing)}"
+        )
+    if "run_id" not in columns:
+        raise ValueError("metadata projection must include run_id")
+    _validate_parquet_adapter_schema(parquet)
+    unique: dict[str, dict[tuple[object, ...], object]] = {
+        column: {} for column in columns
+    }
+
+    def value_key(value: object) -> tuple[object, ...]:
+        if isinstance(value, float) and math.isnan(value):
+            return ("missing", "nan")
+        try:
+            hash(value)
+        except TypeError:
+            return (type(value).__qualname__, repr(value))
+        return (type(value).__qualname__, value)
+
+    for batch in parquet.iter_batches(
+        batch_size=batch_size,
+        columns=list(columns),
+        use_threads=True,
+    ):
+        for column in columns:
+            values = pc.unique(batch.column(batch.schema.get_field_index(column)))
+            for value in values.to_pylist():
+                if column == "run_id":
+                    value = _canonical_run_id(value)
+                unique[column].setdefault(value_key(value), value)
+            if column != "run_id" and len(unique[column]) > 1:
+                raise ValueError(
+                    f"adapter column {column!r} must contain one value"
+                )
+    run_ids = list(unique["run_id"].values())
+    if not run_ids:
+        return pd.DataFrame(columns=list(columns))
+    data = {
+        column: (
+            run_ids
+            if column == "run_id"
+            else [next(iter(unique[column].values()))] * len(run_ids)
+        )
+        for column in columns
+    }
+    return pd.DataFrame(data, columns=list(columns))
+
+
+def _read_parquet_score_view(
+    path: Path,
+    run_id: str,
+    *,
+    columns: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Read exactly one score view using a Parquet predicate and projection."""
+    run_id = _canonical_run_id(run_id, field_name="requested run_id")
+    if columns is not None and "run_id" not in columns:
+        raise ValueError("score-view projection must include run_id")
+    parquet = pq.ParquetFile(path)
+    _validate_parquet_adapter_schema(
+        parquet,
+        require_universe_member=(
+            columns is not None and "universe_member" in columns
+        ),
+    )
+    frame = pd.read_parquet(
+        path,
+        columns=None if columns is None else list(columns),
+        filters=[("run_id", "==", run_id)],
+        dtype_backend="pyarrow",
+    )
+    if frame.empty:
+        raise ValueError(f"adapter score view {run_id!r} contains no rows")
+    observed = tuple(_canonical_run_id(value) for value in frame["run_id"])
+    if any(value != run_id for value in observed):
+        raise RuntimeError(f"Parquet score-view boundary failed for {run_id!r}")
+    if "universe_member" in frame:
+        _validate_universe_member_values(frame["universe_member"])
+    return frame
 
 
 def _write_tsv(path: Path, table: pd.DataFrame) -> None:
@@ -918,7 +1066,7 @@ def _cross_dataset_primary(
     result["n_subjects_total"] = result["n_subjects_estimable"]
     result["truth_scope"] = "real_data"
     result["rank_scope"] = "global_common_functional"
-    return cast(pd.DataFrame, result)
+    return result
 
 
 def _track_b_reason(identity: RunIdentity) -> str:
@@ -1910,11 +2058,11 @@ def finalize(
 
                 source_records.append(_source_record(long_path, "adapter long table"))
                 source_digest = _validate_source_hash(long_path, manifest)
-                track_frame = pd.read_parquet(
-                    long_path, columns=list(TRACK_METADATA_COLUMNS)
+                track_metadata = _read_unique_parquet_metadata(
+                    long_path, TRACK_METADATA_COLUMNS
                 )
-                base_identity = _identity_from_track_metadata(track_frame, dataset)
-                views = _score_views(track_frame, dataset, run, manifest)
+                base_identity = _identity_from_track_metadata(track_metadata, dataset)
+                views = _score_views(track_metadata, dataset, run, manifest)
                 multiple_views = len(views) > 1
                 variant_rows.append(
                     {
@@ -1924,7 +2072,6 @@ def finalize(
                     }
                 )
                 if base_identity.analysis_track != "lr_stlr":
-                    track_table = pd.read_parquet(long_path)
                     for view_index, view in enumerate(views):
                         identity = _view_identity(
                             base_identity, view, multiple_views=multiple_views
@@ -1953,9 +2100,9 @@ def finalize(
                                 }
                             )
                             continue
-                        selected_track = track_table.loc[
-                            track_table["run_id"].astype(str).eq(view.run_id)
-                        ].copy()
+                        selected_track = _read_parquet_score_view(
+                            long_path, view.run_id
+                        )
                         selected_track["score_view_label"] = view.label
                         selected_track["score_view_role"] = view.role
                         selected_track["score_view_contrast_candidate"] = (
@@ -2037,17 +2184,16 @@ def finalize(
                                 else sensitivity_simulation_frames
                             )
                             target_frames.append(_annotate_view(truth_ne, view))
-                    del track_frame, track_table
+                        del selected_track
+                        gc.collect()
+                    del track_metadata
                     gc.collect()
                     continue
 
-                external = pd.read_parquet(long_path, columns=list(EXTERNAL_LR_COLUMNS))
-                del track_frame
                 for view_index, view in enumerate(views):
                     base_view_identity = _identity_from_track_metadata(
-                        external.loc[
-                            external["run_id"].astype(str).eq(view.run_id),
-                            list(TRACK_METADATA_COLUMNS),
+                        track_metadata.loc[
+                            track_metadata["run_id"].astype(str).eq(view.run_id)
                         ],
                         dataset,
                     )
@@ -2082,9 +2228,25 @@ def finalize(
                             }
                         )
                         continue
-                    selected_external = external.loc[
-                        external["run_id"].astype(str).eq(view.run_id)
-                    ].copy()
+                    selected_external = _read_parquet_score_view(
+                        long_path,
+                        view.run_id,
+                        columns=EXTERNAL_LR_COLUMNS,
+                    )
+                    # Keep high-cardinality strings Arrow-backed, while using
+                    # NumPy dtypes for arithmetic required by score validation.
+                    _validate_universe_member_values(
+                        selected_external["universe_member"]
+                    )
+                    selected_external["universe_member"] = selected_external[
+                        "universe_member"
+                    ].astype(bool)
+                    selected_external["universe_size"] = selected_external[
+                        "universe_size"
+                    ].astype("int64")
+                    selected_external["score"] = selected_external["score"].astype(
+                        "float64"
+                    )
                     selected_external["score_name"] = identity.score_semantics
                     mapped = external_long_to_score_table(
                         selected_external,
@@ -2093,6 +2255,10 @@ def finalize(
                         dataset=dataset.dataset,
                     )
                     del selected_external
+                    # Validation performs sorting/ranking using ordinary NumPy
+                    # dtypes where required. Return repeated string identifiers
+                    # to Arrow storage before downstream metric fan-out.
+                    mapped = mapped.convert_dtypes(dtype_backend="pyarrow")
                     mapped = _annotate_view(mapped, view)
                     mapped = _annotate_rank_scope(mapped, rank_scope)
                     output_name = (
@@ -2410,7 +2576,7 @@ def finalize(
                         truth_target.append(truth_result)
                     del mapped
                     gc.collect()
-                del external
+                del track_metadata
                 gc.collect()
 
         if paired_loso_frames:

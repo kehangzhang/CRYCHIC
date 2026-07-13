@@ -83,6 +83,7 @@ class CrychicConfig:
     subject_key: str = "subject_id"
     cell_type_key: str = "cell_type"
     covariates: Sequence[str] = ()
+    categorical_covariates: Sequence[str] = ()
     species: str | None = "human"
     gene_namespace: str | None = "hgnc_symbol"
     expression_layer: str | None = None
@@ -108,6 +109,22 @@ class CrychicConfig:
             field_name="covariates",
             allow_empty=True,
         )
+        categorical_covariates = _normalise_names(
+            self.categorical_covariates,
+            field_name="categorical_covariates",
+            allow_empty=True,
+        )
+        unknown_categorical = set(categorical_covariates).difference(covariates)
+        if unknown_categorical:
+            raise ConfigurationError(
+                "categorical_covariates must be declared in covariates",
+                code="invalid_categorical_covariate",
+                field="categorical_covariates",
+                remediation=(
+                    "Add categorical fields to covariates or remove them from "
+                    "categorical_covariates"
+                ),
+            )
         for field_name, name in (
             ("sample_key", self.sample_key),
             ("subject_key", self.subject_key),
@@ -224,6 +241,7 @@ class CrychicConfig:
 
         object.__setattr__(self, "context_keys", context_keys)
         object.__setattr__(self, "covariates", covariates)
+        object.__setattr__(self, "categorical_covariates", categorical_covariates)
         object.__setattr__(self, "expression_transform", transform)
         object.__setattr__(self, "communication_modes", modes)
 
@@ -250,6 +268,7 @@ class CrychicConfig:
             "cell_type_key": self.cell_type_key,
             "context_keys": list(self.context_keys),
             "covariates": list(self.covariates),
+            "categorical_covariates": list(self.categorical_covariates),
             "species": self.species,
             "gene_namespace": self.gene_namespace,
             "expression_layer": self.expression_layer,

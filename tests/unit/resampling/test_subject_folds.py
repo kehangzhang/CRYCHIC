@@ -177,6 +177,44 @@ def test_training_fold_design_rank_is_reaudited_and_can_block_all_k() -> None:
         )
 
 
+def test_fold_checker_propagates_explicit_categorical_covariates() -> None:
+    metadata = _paired_metadata(4)
+    contrast = balanced_contrast(("stim",), ("ctrl",), name="stim_vs_ctrl")
+    continuous = DesignFoldChecker(
+        context_keys=("condition",),
+        covariates=("batch",),
+        formula="~ batch + condition",
+        contrasts=(contrast,),
+    )(metadata)
+    categorical = DesignFoldChecker(
+        context_keys=("condition",),
+        covariates=("batch",),
+        categorical_covariates=("batch",),
+        formula="~ batch + condition",
+        contrasts=(contrast,),
+    )(metadata)
+
+    assert categorical.estimable
+    assert continuous.estimable
+    assert categorical.design_matrix_id != continuous.design_matrix_id
+
+
+def test_fold_checker_rejects_undeclared_categorical_covariates() -> None:
+    with pytest.raises(
+        ValueError,
+        match="categorical_covariates must be declared covariates",
+    ):
+        DesignFoldChecker(
+            context_keys=("condition",),
+            covariates=(),
+            categorical_covariates=("batch",),
+            formula="~ condition",
+            contrasts=(
+                balanced_contrast(("stim",), ("ctrl",), name="stim_vs_ctrl"),
+            ),
+        )
+
+
 def test_declared_strata_must_be_immutable_within_subject() -> None:
     metadata = _paired_metadata(4)
     metadata.loc[metadata["subject_id"].eq("p0"), "batch"] = [0, 1]

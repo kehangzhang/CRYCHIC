@@ -4,10 +4,107 @@ import numpy as np
 import pytest
 
 from crychic.attribution import (
+    DriverFamilyDefinition,
+    GatedTargetBasis,
     build_gated_target_basis,
     cluster_driver_families,
 )
-from crychic.core import ContractError
+from crychic.core import ContractError, stable_id
+
+_COSINE_TOLERANCE = 1e-12
+
+
+def _slow_cluster_driver_families(
+    basis: GatedTargetBasis,
+    *,
+    cosine_threshold: float,
+) -> tuple[DriverFamilyDefinition, ...]:
+    """Brute-force reference for the deterministic complete-link contract."""
+
+    cosine = (basis.normalized_profiles.T @ basis.normalized_profiles).tocsr()
+    clusters = [
+        (index,)
+        for index in sorted(
+            range(len(basis.driver_ids)), key=lambda index: basis.driver_ids[index]
+        )
+    ]
+    while True:
+        best: (
+            tuple[
+                tuple[float, tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+                int,
+                int,
+            ]
+            | None
+        ) = None
+        for left_offset, left in enumerate(clusters):
+            left_names = tuple(sorted(basis.driver_ids[index] for index in left))
+            for right_offset in range(left_offset + 1, len(clusters)):
+                right = clusters[right_offset]
+                similarity = min(
+                    min(
+                        1.0,
+                        max(0.0, float(cosine[left_index, right_index])),
+                    )
+                    for left_index in left
+                    for right_index in right
+                )
+                if similarity + _COSINE_TOLERANCE < cosine_threshold:
+                    continue
+                right_names = tuple(sorted(basis.driver_ids[index] for index in right))
+                merged_names = tuple(sorted((*left_names, *right_names)))
+                candidate = (
+                    (-similarity, merged_names, left_names, right_names),
+                    left_offset,
+                    right_offset,
+                )
+                if best is None or candidate[0] < best[0]:
+                    best = candidate
+        if best is None:
+            break
+        _, left_offset, right_offset = best
+        merged = tuple(sorted((*clusters[left_offset], *clusters[right_offset])))
+        clusters = [
+            cluster
+            for offset, cluster in enumerate(clusters)
+            if offset not in {left_offset, right_offset}
+        ]
+        clusters.append(merged)
+        clusters.sort(
+            key=lambda cluster: tuple(
+                sorted(basis.driver_ids[index] for index in cluster)
+            )
+        )
+
+    families: list[DriverFamilyDefinition] = []
+    for indices in clusters:
+        members = tuple(sorted(basis.driver_ids[index] for index in indices))
+        if len(indices) == 1:
+            mean_cosine = 0.0
+        else:
+            similarities = [
+                float(cosine[left, right])
+                for offset, left in enumerate(indices)
+                for right in indices[offset + 1 :]
+            ]
+            mean_cosine = float(np.clip(np.mean(similarities), 0.0, 1.0))
+        family_id = stable_id(
+            "driver_family",
+            {
+                "driver_ids": members,
+                "prior_resource_id": basis.prior_resource_id,
+                "prior_version": basis.prior_version,
+            },
+        )
+        families.append(
+            DriverFamilyDefinition(
+                family_id=family_id,
+                driver_ids=members,
+                mean_pairwise_cosine=mean_cosine,
+                assignment_uncertainty=mean_cosine,
+            )
+        )
+    return tuple(sorted(families, key=lambda family: family.family_id))
 
 
 def test_prior_columns_are_l2_normalized_before_receptor_gate(prior_factory) -> None:
@@ -46,9 +143,7 @@ def test_missing_target_overlap_is_reported_and_zero_column_preserved(
     prior_factory,
 ) -> None:
     prior = prior_factory({"L1": {"G1": 1.0}, "L2": {"OTHER": 2.0}})
-    basis = build_gated_target_basis(
-        prior, ("G1",), {"L1": 1.0, "L2": 1.0}
-    )
+    basis = build_gated_target_basis(prior, ("G1",), {"L1": 1.0, "L2": 1.0})
 
     assert basis.report.unmatched_prior_targets == ("OTHER",)
     assert basis.report.zero_norm_drivers == ("L2",)
@@ -150,6 +245,140 @@ def test_complete_link_family_is_deterministic_under_input_and_feature_order(
     reordered = cluster_driver_families(reordered_basis, cosine_threshold=0.85)
 
     assert first == repeated == reordered
+
+
+def test_heap_complete_link_matches_brute_force_on_random_sparse_profiles(
+    prior_factory,
+) -> None:
+    thresholds = (0.0, 0.5, 0.85, 0.95, 1.0)
+    for seed, n_drivers in enumerate((2, 5, 8, 10, 12), start=8100):
+        rng = np.random.default_rng(seed)
+        features = tuple(f"G{index:02d}" for index in range(9))
+        columns: dict[str, dict[str, float]] = {}
+        for driver_index in range(n_drivers):
+            mask = rng.random(len(features)) < 0.35
+            # Deliberately retain some zero-norm columns in the differential set.
+            if driver_index % 7 and not np.any(mask):
+                mask[int(rng.integers(0, len(features)))] = True
+            columns[f"D{driver_index:02d}"] = {
+                feature: float(weight)
+                for feature, weight, selected in zip(
+                    features,
+                    rng.uniform(0.05, 2.0, size=len(features)),
+                    mask,
+                    strict=True,
+                )
+                if selected
+            }
+        prior = prior_factory(columns, resource_id=f"random-prior-{seed}")
+        feature_order = tuple(np.asarray(features)[rng.permutation(len(features))])
+        basis = build_gated_target_basis(
+            prior,
+            feature_order,
+            dict.fromkeys(prior.driver_ids, 1.0),
+        )
+
+        for threshold in thresholds:
+            observed = cluster_driver_families(
+                basis,
+                cosine_threshold=threshold,
+            )
+            expected = _slow_cluster_driver_families(
+                basis,
+                cosine_threshold=threshold,
+            )
+            assert observed == expected, (seed, threshold)
+
+
+def test_equal_similarity_tie_uses_lexicographic_family_names(
+    prior_factory,
+) -> None:
+    prior = prior_factory(
+        {
+            "A": {"G1": 1.0},
+            "B": {"G1": 1.0, "G2": 1.0},
+            "C": {"G2": 1.0},
+        }
+    )
+    basis = build_gated_target_basis(
+        prior,
+        ("G1", "G2"),
+        dict.fromkeys(prior.driver_ids, 1.0),
+    )
+
+    observed = cluster_driver_families(basis, cosine_threshold=0.7)
+
+    assert observed == _slow_cluster_driver_families(
+        basis,
+        cosine_threshold=0.7,
+    )
+    assert {family.driver_ids for family in observed} == {("A", "B"), ("C",)}
+
+
+def test_zero_similarity_and_zero_norm_columns_merge_at_zero_threshold(
+    prior_factory,
+) -> None:
+    prior = prior_factory(
+        {
+            "A": {"G1": 1.0},
+            "B": {"G2": 1.0},
+            "ZERO": {"OUTSIDE": 1.0},
+        }
+    )
+    basis = build_gated_target_basis(
+        prior,
+        ("G1", "G2"),
+        dict.fromkeys(prior.driver_ids, 1.0),
+    )
+
+    observed = cluster_driver_families(basis, cosine_threshold=0.0)
+
+    assert observed == _slow_cluster_driver_families(
+        basis,
+        cosine_threshold=0.0,
+    )
+    assert basis.report.zero_norm_drivers == ("ZERO",)
+    assert len(observed) == 1
+    assert observed[0].driver_ids == ("A", "B", "ZERO")
+    assert observed[0].mean_pairwise_cosine == 0.0
+
+
+def test_complete_link_threshold_uses_declared_cosine_tolerance(
+    prior_factory,
+) -> None:
+    prior = prior_factory(
+        {
+            "A": {"G1": 1.0},
+            "B": {"G1": 4.0, "G2": 3.0},
+        }
+    )
+    basis = build_gated_target_basis(
+        prior,
+        ("G1", "G2"),
+        dict.fromkeys(prior.driver_ids, 1.0),
+    )
+    profiles = basis.normalized_profiles.toarray()
+    cosine = float(profiles[:, 0] @ profiles[:, 1])
+
+    within_tolerance = cluster_driver_families(
+        basis,
+        cosine_threshold=cosine + 0.5 * _COSINE_TOLERANCE,
+    )
+    outside_tolerance = cluster_driver_families(
+        basis,
+        cosine_threshold=cosine + 2.0 * _COSINE_TOLERANCE,
+    )
+
+    assert within_tolerance == _slow_cluster_driver_families(
+        basis,
+        cosine_threshold=cosine + 0.5 * _COSINE_TOLERANCE,
+    )
+    assert outside_tolerance == _slow_cluster_driver_families(
+        basis,
+        cosine_threshold=cosine + 2.0 * _COSINE_TOLERANCE,
+    )
+    assert [len(family.driver_ids) for family in within_tolerance] == [2]
+    assert sorted(len(family.driver_ids) for family in outside_tolerance) == [1, 1]
 
 
 def test_receptor_gate_must_cover_exact_driver_universe(prior_factory) -> None:

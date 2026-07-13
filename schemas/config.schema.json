@@ -56,6 +56,13 @@
       },
       "uniqueItems": true
     },
+    "categorical_covariates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fieldName"
+      },
+      "uniqueItems": true
+    },
     "species": {
       "type": ["string", "null"],
       "minLength": 1

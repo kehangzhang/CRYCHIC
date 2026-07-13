@@ -1,0 +1,261 @@
+{
+  "analysis_scope": "metadata_only_design_estimability_no_effect_fit",
+  "backend_policy": {
+    "min_subject_clusters": 6,
+    "min_subjects_per_context": 3,
+    "model": "categorical_ols_subject_cluster_cr1_v1",
+    "paired_unpaired_policy": "retain_both_with_subject_cluster",
+    "replicate_policy": "mean_within_subject_context_adjustment_cell",
+    "uncertainty": "diagnostic_only_not_run_by_this_design_audit"
+  },
+  "condition_manifest_sha256": "f7ff151528b2c0061d2523adbb849bcfc19f906f4e8f490ba395664f47c2576d",
+  "condition_region_adjusted_model": {
+    "condition_field": "patient_group_mapped_to_condition",
+    "contrast_count": 3,
+    "contrasts": [
+      {
+        "complete_score_coverage_status": "not_estimable",
+        "contrast": "ischemic_vs_myogenic",
+        "design_id": "repeated_measures_design_0077a09baabbeab5a1749e284ecde29d",
+        "design_kind": "mixed_paired_unpaired_subject_cluster_ols",
+        "design_rank": 6,
+        "n_contrast_subject_clusters": 15,
+        "n_model_columns": 7,
+        "n_paired_subjects": 3,
+        "n_reference_subjects": 11,
+        "n_target_subjects": 7,
+        "reason_code": "rank_deficient_declared_design"
+      },
+      {
+        "complete_score_coverage_status": "not_estimable",
+        "contrast": "fibrotic_vs_myogenic",
+        "design_id": "repeated_measures_design_c13e3ec39a05de5a8986242f0cefd9a0",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 6,
+        "n_contrast_subject_clusters": 16,
+        "n_model_columns": 7,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 11,
+        "n_target_subjects": 5,
+        "reason_code": "rank_deficient_declared_design"
+      },
+      {
+        "complete_score_coverage_status": "not_estimable",
+        "contrast": "fibrotic_vs_ischemic",
+        "design_id": "repeated_measures_design_619f87c49d600eb95552e6c45bdf4878",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 6,
+        "n_contrast_subject_clusters": 12,
+        "n_model_columns": 7,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 7,
+        "n_target_subjects": 5,
+        "reason_code": "rank_deficient_declared_design"
+      }
+    ],
+    "region_role": "declared_categorical_adjustment_not_batch",
+    "status_counts": {
+      "not_estimable": 3
+    }
+  },
+  "dataset_id": "Kuppe_MI_Zenodo6578047",
+  "full_audit_canonical_sha256": "24d8553196ce209cb3e22759d71a92921c5a7fc9b6dffdf4ed6bee65aee7ecfe",
+  "guardrails": {
+    "biological_effect_claim_allowed": false,
+    "complete_score_coverage_is_an_assumption_not_an_observation": true,
+    "effect_estimated": false,
+    "expression_matrix_accessed": false,
+    "p_or_q_reported": false,
+    "standard_error_estimated": false
+  },
+  "interpretation_limits": {
+    "batch_result": "no_auditable_batch_field_declared",
+    "condition_result": "not_estimable_after_declared_region_adjustment_due_to_rank_deficient_design",
+    "effect_or_biological_claim": false,
+    "region_estimability_assumption": "complete_score_coverage_for_each_method_edge"
+  },
+  "lineage": {
+    "expression_matrix_accessed": false,
+    "input_kind": "h5ad_obs_backed_r",
+    "source_filename": "snRNA-seq-submission.h5ad",
+    "source_shape": [
+      191795,
+      29126
+    ],
+    "source_size_bytes": 7873528926
+  },
+  "region_model": {
+    "contrast_count": 10,
+    "contrasts": [
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "RZ_vs_CTRL",
+        "design_id": "repeated_measures_design_9cf31b4f34ea1b6227e5aabeff268e1a",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 9,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 4,
+        "n_target_subjects": 5,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "BZ_vs_CTRL",
+        "design_id": "repeated_measures_design_d9e820ac438c9c104c1373e77f6870ef",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 7,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 4,
+        "n_target_subjects": 3,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "IZ_vs_CTRL",
+        "design_id": "repeated_measures_design_b0a10abcdb60fdedd3c227628bfb3299",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 11,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 4,
+        "n_target_subjects": 7,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "FZ_vs_CTRL",
+        "design_id": "repeated_measures_design_8ada586c3312e68ab50df4d1322835eb",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 10,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 4,
+        "n_target_subjects": 6,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "BZ_vs_RZ",
+        "design_id": "repeated_measures_design_2d5c9c972edb6254204dbefdbcade2bb",
+        "design_kind": "mixed_paired_unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 6,
+        "n_model_columns": 5,
+        "n_paired_subjects": 2,
+        "n_reference_subjects": 5,
+        "n_target_subjects": 3,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "IZ_vs_RZ",
+        "design_id": "repeated_measures_design_a40a44d3d9b0c80e45c07bce7ee763dc",
+        "design_kind": "mixed_paired_unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 9,
+        "n_model_columns": 5,
+        "n_paired_subjects": 3,
+        "n_reference_subjects": 5,
+        "n_target_subjects": 7,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "FZ_vs_RZ",
+        "design_id": "repeated_measures_design_2c8cc60a982f5d19378608b9d3f179f7",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 11,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 5,
+        "n_target_subjects": 6,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "IZ_vs_BZ",
+        "design_id": "repeated_measures_design_6556bcb76eaab140455167ea9cbada8f",
+        "design_kind": "mixed_paired_unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 8,
+        "n_model_columns": 5,
+        "n_paired_subjects": 2,
+        "n_reference_subjects": 3,
+        "n_target_subjects": 7,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "FZ_vs_BZ",
+        "design_id": "repeated_measures_design_4301dbe077547f92afb739b9693ce316",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 9,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 3,
+        "n_target_subjects": 6,
+        "reason_code": null
+      },
+      {
+        "complete_score_coverage_status": "estimable_under_complete_score_coverage",
+        "contrast": "FZ_vs_IZ",
+        "design_id": "repeated_measures_design_fb5bc1032c41186b4471d90dff2e2dd3",
+        "design_kind": "unpaired_subject_cluster_ols",
+        "design_rank": 5,
+        "n_contrast_subject_clusters": 13,
+        "n_model_columns": 5,
+        "n_paired_subjects": 0,
+        "n_reference_subjects": 7,
+        "n_target_subjects": 6,
+        "reason_code": null
+      }
+    ],
+    "formula_semantics": "categorical_region_fixed_effect_all_five_regions",
+    "status_counts": {
+      "estimable_under_complete_score_coverage": 10
+    }
+  },
+  "sample_manifest_sha256": "76eefdd0d91a0f437245e6297999a7260ff35a27169cd3788e568bab34e1e8ed",
+  "schema_version": "crychic-kuppe-repeated-measures-design-summary-v1",
+  "support": {
+    "batch_key": null,
+    "batch_status": "not_declared_no_auditable_batch_field_in_source_obs",
+    "n_regions": 5,
+    "n_samples": 29,
+    "n_subjects": 20,
+    "regions": [
+      "CTRL",
+      "RZ",
+      "BZ",
+      "IZ",
+      "FZ"
+    ],
+    "samples_by_region": {
+      "BZ": 3,
+      "CTRL": 4,
+      "FZ": 6,
+      "IZ": 11,
+      "RZ": 5
+    },
+    "subjects_by_region": {
+      "BZ": 3,
+      "CTRL": 4,
+      "FZ": 6,
+      "IZ": 7,
+      "RZ": 5
+    },
+    "within_subject_region_replicates": {
+      "P15|IZ": 2,
+      "P16|IZ": 2,
+      "P9|IZ": 3
+    }
+  }
+}

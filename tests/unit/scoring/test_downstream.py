@@ -27,6 +27,8 @@ def _functional() -> DownstreamFunctional:
         fold_id="fold-1",
         feature_ids=("G1", "G2"),
         family_ids=("F1", "F2"),
+        reference_sample_ids=("s3", "s1", "s2"),
+        reference_subject_ids=("p3", "p1", "p2"),
         training_subject_ids=("p3", "p1", "p2"),
         target_weight_matrix=sparse.eye(2, format="csc"),
         family_support=np.asarray([1.0, 0.5]),
@@ -98,6 +100,8 @@ def test_feature_order_and_training_support_are_strict() -> None:
             fold_id="f",
             feature_ids=("G1", "G2"),
             family_ids=("F",),
+            reference_sample_ids=("s1",),
+            reference_subject_ids=("p1",),
             training_subject_ids=("p1",),
             target_weight_matrix=np.asarray([[1.0], [0.0]]),
             family_support=np.asarray([1.0]),
@@ -112,6 +116,8 @@ def test_target_weights_are_normalized_and_invalid_columns_are_rejected() -> Non
         fold_id="f",
         feature_ids=("G1", "G2"),
         family_ids=("F",),
+        reference_sample_ids=("s1", "s2"),
+        reference_subject_ids=("p1", "p2"),
         training_subject_ids=("p1", "p2"),
         target_weight_matrix=np.asarray([[1.0], [3.0]]),
         family_support=np.asarray([0.4]),
@@ -128,6 +134,8 @@ def test_target_weights_are_normalized_and_invalid_columns_are_rejected() -> Non
             fold_id="f",
             feature_ids=("G1", "G2"),
             family_ids=("F",),
+            reference_sample_ids=("s1", "s2"),
+            reference_subject_ids=("p1", "p2"),
             training_subject_ids=("p1", "p2"),
             target_weight_matrix=np.zeros((2, 1)),
             family_support=np.asarray([0.4]),
@@ -143,6 +151,8 @@ def test_functional_identity_changes_with_learned_artifacts() -> None:
         fold_id="fold-1",
         feature_ids=("G1", "G2"),
         family_ids=("F1", "F2"),
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
         training_subject_ids=("p1", "p2", "p3"),
         target_weight_matrix=sparse.eye(2, format="csc"),
         family_support=np.asarray([1.0, 0.5]),
@@ -150,6 +160,80 @@ def test_functional_identity_changes_with_learned_artifacts() -> None:
     )
 
     assert changed.downstream_functional_id != first.downstream_functional_id
+
+
+def test_reference_identity_covers_full_matrix_and_row_manifest() -> None:
+    common = {
+        "receiver": "Receiver",
+        "contrast_name": "stim_vs_ctrl",
+        "fold_id": "fold-1",
+        "feature_ids": ("G1", "G2"),
+        "family_ids": ("F1", "F2"),
+        "training_subject_ids": ("p1", "p2", "p3"),
+        "target_weight_matrix": sparse.eye(2, format="csc"),
+        "family_support": np.asarray([1.0, 0.5]),
+        "minimum_scale": 0.5,
+    }
+    first_expression = np.asarray([[0.0, 3.0], [1.0, 3.0], [2.0, 3.0]])
+    same_summary = np.asarray([[0.0, 3.0], [1.0, 3.0], [5.0, 3.0]])
+    first = fit_downstream_functional(
+        first_expression,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        **common,
+    )
+    changed_matrix = fit_downstream_functional(
+        same_summary,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        **common,
+    )
+    changed_mapping = fit_downstream_functional(
+        first_expression,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p3", "p2", "p1"),
+        **common,
+    )
+
+    np.testing.assert_array_equal(first.feature_center, changed_matrix.feature_center)
+    np.testing.assert_array_equal(first.feature_scale, changed_matrix.feature_scale)
+    assert first.reference_input_digest != changed_matrix.reference_input_digest
+    assert first.downstream_functional_id != changed_matrix.downstream_functional_id
+    assert first.reference_input_digest != changed_mapping.reference_input_digest
+    assert first.downstream_functional_id != changed_mapping.downstream_functional_id
+
+
+def test_reference_identity_is_invariant_to_input_row_order() -> None:
+    expression = np.asarray([[1.0, 3.0], [2.0, 5.0], [3.0, 7.0]])
+    common = {
+        "receiver": "Receiver",
+        "contrast_name": "stim_vs_ctrl",
+        "fold_id": "fold-1",
+        "feature_ids": ("G1", "G2"),
+        "family_ids": ("F1", "F2"),
+        "training_subject_ids": ("p1", "p2", "p3"),
+        "target_weight_matrix": sparse.eye(2, format="csc"),
+        "family_support": np.asarray([1.0, 0.5]),
+        "minimum_scale": 0.5,
+    }
+    first = fit_downstream_functional(
+        expression,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        **common,
+    )
+    order = np.asarray([2, 0, 1])
+    reordered = fit_downstream_functional(
+        expression[order],
+        reference_sample_ids=("s3", "s1", "s2"),
+        reference_subject_ids=("p3", "p1", "p2"),
+        **common,
+    )
+
+    assert first.reference_sample_ids == ("s1", "s2", "s3")
+    assert reordered.reference_sample_ids == first.reference_sample_ids
+    assert reordered.reference_input_digest == first.reference_input_digest
+    assert reordered.downstream_functional_id == first.downstream_functional_id
 
 
 def test_missing_target_feature_propagates_only_to_affected_family() -> None:

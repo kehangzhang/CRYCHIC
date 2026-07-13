@@ -1,0 +1,127 @@
+{
+  "schema_version": "crychic-algorithm-crossfit-smoke-summary-v1",
+  "generated_on": "2026-07-13",
+  "base_revision": "d1b1e1f6916e2c4915467fab9efadd631d56ed39",
+  "scope": "partial_public_crossfit_algorithm_smoke_not_full_benchmark",
+  "full_artifact": {
+    "canonical_sha256": "24c7b38b36c249aa6583ff5579decc56690db13c7ab30171babd5bed80e285f9",
+    "file_sha256": "b68b5d871c2b9b3c914e42e44ff60f502b928f0d9d11ca70a14f02a242540916",
+    "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v3.json",
+    "size_bytes": 6610
+  },
+  "implemented_stages": [
+    "availability_filter",
+    "contrast_common_sender_functional",
+    "frozen_design_encoder",
+    "condition_blind_hard_receptor_gate",
+    "strict_medoid_receiver_family_basis",
+    "training_reference_receiver_program_transform"
+  ],
+  "exact_oof_coverage_audit_scope": [
+    "availability_filter",
+    "contrast_common_sender_functional"
+  ],
+  "process_performance": {
+    "peak_rss_kib": 828464,
+    "wall_clock_seconds": 54.99
+  },
+  "strict_complete_link_optimization": {
+    "algorithm": "incremental_complete_link_min_update_with_deterministic_heap",
+    "differential_reference_cases": 6000,
+    "differential_reference_status": "exact_partition_match",
+    "synthetic_feature_universe": 23,
+    "target_prior_drivers": 1225,
+    "gram_density": 0.9528909620991254,
+    "threshold_edges": 126159,
+    "largest_threshold_component": 927,
+    "optimized_single_partition_seconds": 2.643464651890099,
+    "optimized_partition_family_count": 337,
+    "optimized_partition_largest_family": 223,
+    "batch_reuse": "one_static_partition_per_fold_feature_universe"
+  },
+  "records": [
+    {
+      "dataset": "synthetic_active",
+      "n_cells": 3733,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 11.857150841504335,
+      "pre_batch_reuse_elapsed_seconds": 22.21201532986015,
+      "crossfit_id": "subject_crossfit_92d0b6a034199261b5f081d2fa4cc9a5",
+      "interactions_by_fold": [5, 5],
+      "eligible_receiver_families_by_fold": [5, 5],
+      "design_application_status_counts": {
+        "observed": 2
+      },
+      "receiver_family_application_reason_counts": {
+        "no_training_eligible_receiver_family": 4,
+        "observed": 2
+      },
+      "completed_stage_oof_verified": true,
+      "complete_pipeline_oof_certified": false
+    },
+    {
+      "dataset": "synthetic_ligand_only",
+      "n_cells": 3886,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 11.112020433880389,
+      "pre_batch_reuse_elapsed_seconds": 21.935132856480777,
+      "crossfit_id": "subject_crossfit_817e085e577413d83c45c671ab7c5f12",
+      "interactions_by_fold": [5, 5],
+      "eligible_receiver_families_by_fold": [5, 5],
+      "design_application_status_counts": {
+        "observed": 2
+      },
+      "receiver_family_application_reason_counts": {
+        "no_training_eligible_receiver_family": 4,
+        "observed": 2
+      },
+      "completed_stage_oof_verified": true,
+      "complete_pipeline_oof_certified": false
+    },
+    {
+      "dataset": "kang2018_4donor_3celltype",
+      "selected_subjects": ["101", "1015", "1016", "1256"],
+      "selected_cell_types": [
+        "B cells",
+        "CD4 T cells",
+        "CD14+ Monocytes"
+      ],
+      "n_cells": 10057,
+      "n_genes": 32938,
+      "n_subjects": 4,
+      "n_folds": 2,
+      "elapsed_seconds": 26.277598729357123,
+      "crossfit_id": "subject_crossfit_b0ef82133c044040f5bdb1dc771b02bb",
+      "interactions_by_fold": [97, 87],
+      "eligible_receiver_families_by_fold": [25, 23],
+      "design_application_status_counts": {
+        "observed": 2
+      },
+      "receiver_family_application_reason_counts": {
+        "observed": 6
+      },
+      "completed_stage_oof_verified": true,
+      "complete_pipeline_oof_certified": false
+    }
+  ],
+  "remaining_stages": [
+    "response_precision",
+    "family_attribution",
+    "attribution_tuning",
+    "incremental_downstream",
+    "common_scoring_functional",
+    "receiver_family_exact_coverage_certification"
+  ],
+  "guardrails": {
+    "active_vs_ligand_only_mechanism_claim_allowed": false,
+    "biological_claim_allowed": false,
+    "complete_pipeline_oof_claim_allowed": false,
+    "integrated_lr_score_evaluated": false,
+    "method_superiority_claim_allowed": false,
+    "p_or_q_reported": false
+  }
+}

@@ -420,6 +420,7 @@ def _build_dry_run_plan(
         validated.report.sample_metadata,
         context_keys=config.context_keys,
         covariates=config.covariates,
+        categorical_covariates=config.categorical_covariates,
         formula=config.design,
         sample_key=config.sample_key,
     )

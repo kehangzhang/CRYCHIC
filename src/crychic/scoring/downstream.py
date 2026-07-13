@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 from scipy import sparse
@@ -40,7 +40,7 @@ def _readonly_vector(
 
 
 def _matrix_digest(matrix: sparse.csc_matrix) -> str:
-    return stable_id(
+    result: str = stable_id(
         "sparse_matrix",
         {
             "data_digest": float64_array_digest(matrix.data),
@@ -48,6 +48,57 @@ def _matrix_digest(matrix: sparse.csc_matrix) -> str:
             "indptr": matrix.indptr.astype(int).tolist(),
             "shape": list(matrix.shape),
         },
+    )
+    return result
+
+
+def _canonical_reference_input(
+    expression: np.ndarray,
+    *,
+    sample_ids: tuple[str, ...],
+    subject_ids: tuple[str, ...],
+    feature_ids: tuple[str, ...],
+) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...], str]:
+    """Canonicalize reference rows and bind their full producer input."""
+
+    samples = _names(tuple(sample_ids), field_name="reference_sample_ids")
+    if len(subject_ids) != len(samples):
+        raise ValueError("reference subject IDs must align with sample IDs")
+    aligned_subjects = tuple(
+        value.strip()
+        for value in subject_ids
+        if isinstance(value, str) and value.strip()
+    )
+    if len(aligned_subjects) != len(samples):
+        raise ValueError("reference subject IDs must contain non-empty strings")
+    values = np.asarray(expression, dtype=np.float64)
+    expected_shape = (len(samples), len(feature_ids))
+    if values.shape != expected_shape or np.any(~np.isfinite(values)):
+        raise ValueError(
+            "reference expression must align with sample and feature identifiers"
+        )
+    order = np.asarray(sorted(range(len(samples)), key=samples.__getitem__), dtype=int)
+    canonical_samples = tuple(samples[index] for index in order)
+    canonical_subjects = tuple(aligned_subjects[index] for index in order)
+    canonical_expression = np.asarray(values[order], dtype=np.float64, order="C")
+    input_digest = stable_id(
+        "downstream_reference_input",
+        {
+            "expression_digest": float64_array_digest(canonical_expression),
+            "feature_ids": list(feature_ids),
+            "rows": [
+                {"sample_id": sample_id, "subject_id": subject_id}
+                for sample_id, subject_id in zip(
+                    canonical_samples, canonical_subjects, strict=True
+                )
+            ],
+        },
+    )
+    return (
+        canonical_expression,
+        canonical_samples,
+        canonical_subjects,
+        input_digest,
     )
 
 
@@ -61,17 +112,25 @@ class DownstreamFunctional:
     feature_ids: tuple[str, ...]
     family_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
+    reference_sample_ids: tuple[str, ...]
     feature_center: np.ndarray
     feature_scale: np.ndarray
     target_weight_matrix: sparse.csc_matrix
     family_support: np.ndarray
     minimum_scale: float
+    reference_expression: InitVar[np.ndarray]
+    reference_subject_ids: InitVar[tuple[str, ...]]
     center_method: str = "reference_context_feature_median_v1"
     scale_method: str = "reference_context_scaled_mad_floor_v1"
     program_transform: str = "positive_z_saturating_v1"
+    reference_input_digest: str = field(init=False)
     downstream_functional_id: str = field(init=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        reference_expression: np.ndarray,
+        reference_subject_ids: tuple[str, ...],
+    ) -> None:
         for field_name in (
             "receiver",
             "contrast_name",
@@ -93,6 +152,16 @@ class DownstreamFunctional:
                 )
             )
         )
+        reference, samples, reference_subjects, reference_input_digest = (
+            _canonical_reference_input(
+                reference_expression,
+                sample_ids=tuple(self.reference_sample_ids),
+                subject_ids=reference_subject_ids,
+                feature_ids=features,
+            )
+        )
+        if set(reference_subjects).difference(subjects):
+            raise ValueError("reference subjects must belong to training_subject_ids")
         if not math.isfinite(self.minimum_scale) or self.minimum_scale <= 0:
             raise ValueError("minimum_scale must be finite and positive")
         center = _readonly_vector(
@@ -108,6 +177,17 @@ class DownstreamFunctional:
         )
         if np.any(scale < self.minimum_scale - 1e-12):
             raise ValueError("feature_scale must respect minimum_scale")
+        expected_center = np.median(reference, axis=0)
+        expected_mad = np.median(np.abs(reference - expected_center), axis=0)
+        expected_scale = np.maximum(
+            _MAD_GAUSSIAN_CONSISTENCY * expected_mad, self.minimum_scale
+        )
+        if not np.array_equal(center, expected_center) or not np.array_equal(
+            scale, expected_scale
+        ):
+            raise ValueError(
+                "feature center and scale must derive from reference expression"
+            )
         matrix = sparse.csc_matrix(self.target_weight_matrix, dtype=np.float64).copy()
         if matrix.shape != (len(features), len(families)):
             raise ValueError(
@@ -140,6 +220,8 @@ class DownstreamFunctional:
             "minimum_scale": self.minimum_scale,
             "program_transform": self.program_transform,
             "receiver": self.receiver,
+            "reference_input_digest": reference_input_digest,
+            "reference_sample_ids": list(samples),
             "scale_digest": float64_array_digest(scale),
             "scale_method": self.scale_method,
             "target_weight_matrix_id": _matrix_digest(matrix),
@@ -148,6 +230,8 @@ class DownstreamFunctional:
         object.__setattr__(self, "feature_ids", features)
         object.__setattr__(self, "family_ids", families)
         object.__setattr__(self, "training_subject_ids", subjects)
+        object.__setattr__(self, "reference_sample_ids", samples)
+        object.__setattr__(self, "reference_input_digest", reference_input_digest)
         object.__setattr__(self, "feature_center", center)
         object.__setattr__(self, "feature_scale", scale)
         object.__setattr__(self, "target_weight_matrix", matrix)
@@ -169,6 +253,8 @@ class DownstreamFunctional:
             "feature_ids": list(self.feature_ids),
             "family_ids": list(self.family_ids),
             "training_subject_ids": list(self.training_subject_ids),
+            "reference_sample_ids": list(self.reference_sample_ids),
+            "reference_input_digest": self.reference_input_digest,
             "feature_center_digest": float64_array_digest(self.feature_center),
             "feature_scale_digest": float64_array_digest(self.feature_scale),
             "target_weight_matrix_id": _matrix_digest(self.target_weight_matrix),
@@ -707,6 +793,8 @@ def fit_downstream_functional(
     fold_id: str,
     feature_ids: tuple[str, ...],
     family_ids: tuple[str, ...],
+    reference_sample_ids: tuple[str, ...],
+    reference_subject_ids: tuple[str, ...],
     training_subject_ids: tuple[str, ...],
     target_weight_matrix: sparse.spmatrix | np.ndarray,
     family_support: np.ndarray,
@@ -714,13 +802,21 @@ def fit_downstream_functional(
 ) -> DownstreamFunctional:
     """Fit median/MAD transforms using training reference samples only."""
 
-    expression = np.asarray(reference_expression, dtype=np.float64)
-    if expression.ndim != 2 or expression.shape[1] != len(feature_ids):
-        raise ValueError("reference_expression must be samples x declared feature_ids")
-    if expression.shape[0] < 2 or np.any(~np.isfinite(expression)):
+    expression, samples, subjects, _ = (
+        _canonical_reference_input(
+            reference_expression,
+            sample_ids=reference_sample_ids,
+            subject_ids=reference_subject_ids,
+            feature_ids=feature_ids,
+        )
+    )
+    if expression.shape[0] < 2:
         raise ValueError(
             "reference_expression requires at least two complete finite samples"
         )
+    declared_training_subjects = tuple(sorted(set(training_subject_ids)))
+    if set(subjects).difference(declared_training_subjects):
+        raise ValueError("reference subjects must belong to training_subject_ids")
     if not math.isfinite(minimum_scale) or minimum_scale <= 0:
         raise ValueError("minimum_scale must be finite and positive")
     center = np.median(expression, axis=0)
@@ -741,12 +837,15 @@ def fit_downstream_functional(
         fold_id=fold_id,
         feature_ids=feature_ids,
         family_ids=family_ids,
-        training_subject_ids=training_subject_ids,
+        training_subject_ids=declared_training_subjects,
+        reference_sample_ids=samples,
         feature_center=center,
         feature_scale=scale,
         target_weight_matrix=matrix,
         family_support=family_support,
         minimum_scale=minimum_scale,
+        reference_expression=expression,
+        reference_subject_ids=subjects,
     )
 
 

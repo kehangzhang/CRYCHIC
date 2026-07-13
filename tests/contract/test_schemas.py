@@ -22,10 +22,23 @@ def test_config_schema_accepts_runtime_contract() -> None:
     config = CrychicConfig(
         context_keys=["treatment", "region"],
         covariates=["batch"],
+        categorical_covariates=["batch"],
         design="~ batch + treatment * region",
     )
 
     Draft202012Validator(schema).validate(config.to_dict())
+
+
+def test_config_schema_accepts_legacy_contract_without_categorical_registry() -> None:
+    schema = _load_schema("config.schema.json")
+    value = CrychicConfig(
+        context_keys=["condition"],
+        covariates=["batch"],
+        categorical_covariates=["batch"],
+    ).to_dict()
+    del value["categorical_covariates"]
+
+    Draft202012Validator(schema).validate(value)
 
 
 def test_config_schema_rejects_incomplete_normalized_input() -> None:

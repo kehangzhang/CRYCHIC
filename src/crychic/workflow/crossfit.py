@@ -1,8 +1,10 @@
 """Public subject-blocked orchestration for implemented train/apply stages.
 
-The current path verifies out-of-fold application of the frozen interaction
-universe and contrast-common sender functional.  It deliberately does not
-certify the still-missing downstream and common scoring stages.
+The current coverage audit verifies the frozen interaction universe and
+contrast-common sender rows.  Fold artifacts additionally preserve train-only
+design encoders and partial receiver-family applications, but those stages do
+not yet emit a separate exact-coverage audit and do not certify the still-
+missing incremental downstream or common scoring stages.
 """
 
 from __future__ import annotations
@@ -10,17 +12,25 @@ from __future__ import annotations
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
 
+import numpy as np
 import pandas as pd
 from anndata import AnnData
+from scipy import sparse
 
+from crychic.attribution import fit_receiver_family_training_artifacts
 from crychic.core import CrychicConfig, SeedLineage, stable_id
 from crychic.data import InputMode, validate_anndata
 from crychic.design import (
     ContrastSpec,
+    FrozenDesignApplication,
+    FrozenDesignEncoder,
+    apply_frozen_design_encoder,
     canonical_context,
     default_design_formula,
+    fit_frozen_design_encoder,
     plain_context_value,
 )
+from crychic.pseudobulk import PseudobulkDataset
 from crychic.resampling import (
     DesignFoldChecker,
     OOFCoverageAudit,
@@ -29,13 +39,24 @@ from crychic.resampling import (
     validate_oof_subject_coverage,
 )
 from crychic.resources import ResourceBundle, TargetPrior
+from crychic.scoring import (
+    ReceiverFamilyScoringApplication,
+    ReceiverFamilyScoringArtifact,
+    apply_receiver_family_scoring_artifact,
+    fit_receiver_family_scoring_artifact,
+    mark_receiver_family_application_not_estimable,
+    mark_receiver_family_scoring_not_estimable,
+)
 from crychic.sender import COMMON_SENDER_APPLICATION_COLUMNS
 
 from .application import TrainingArtifactApplication, apply_training_artifacts
 from .training import (
     FoldTrainingSpec,
     TrainingArtifacts,
+    _fit_interaction_universe,
     _input_schema,
+    _prepare_raw_fold,
+    _PreparedRawFold,
     _sanitize_validated_input,
     fit_training_artifacts,
 )
@@ -43,6 +64,7 @@ from .training import (
 _STAGE_NAME = "contrast_common_sender_application"
 _STAGE_STATUS = "verified_train_only_oof_partial_pipeline"
 _PRODUCER_MARKER = "crychic.workflow.crossfit.v1"
+_CPM_SCALE = 1_000_000.0
 _COVERAGE_COLUMNS = (
     "subject_id",
     "sample_id",
@@ -51,6 +73,8 @@ _COVERAGE_COLUMNS = (
     "contrast_context",
     "functional_status",
     "sender_functional_id",
+    "design_encoder_id",
+    "design_status",
     "training_artifact_id",
     "stage",
 )
@@ -78,6 +102,9 @@ class CrossFitSpec:
     allowed_n_splits: tuple[int, ...] = (5, 4, 3, 2)
     min_train_subjects_per_context: int = 2
     min_test_subjects_per_context: int = 1
+    receptor_gate_threshold: float = 0.1
+    family_cosine_threshold: float = 0.95
+    downstream_minimum_scale: float = 0.25
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -96,6 +123,8 @@ class CrossFitSpec:
         identified = [(_contrast_id(contrast), contrast) for contrast in contrasts]
         if len({contrast_id for contrast_id, _ in identified}) != len(identified):
             raise ValueError("cross-fit contrasts must be unique")
+        if len({contrast.name for contrast in contrasts}) != len(contrasts):
+            raise ValueError("cross-fit contrast names must be unique")
         contrasts = tuple(
             contrast for _, contrast in sorted(identified, key=lambda item: item[0])
         )
@@ -136,6 +165,15 @@ class CrossFitSpec:
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{field_name} must be an integer >= 1")
+        gate_threshold = float(self.receptor_gate_threshold)
+        family_threshold = float(self.family_cosine_threshold)
+        minimum_scale = float(self.downstream_minimum_scale)
+        if not np.isfinite(gate_threshold) or not 0 < gate_threshold <= 1:
+            raise ValueError("receptor_gate_threshold must be finite in (0, 1]")
+        if not np.isfinite(family_threshold) or not 0 <= family_threshold <= 1:
+            raise ValueError("family_cosine_threshold must be finite in [0, 1]")
+        if not np.isfinite(minimum_scale) or minimum_scale <= 0:
+            raise ValueError("downstream_minimum_scale must be finite and positive")
         if self.schema_version != "1.0.0":
             raise ValueError("CrossFitSpec schema_version must be 1.0.0")
         payload = {
@@ -143,6 +181,9 @@ class CrossFitSpec:
             "contrasts": [contrast.to_dict() for contrast in contrasts],
             "min_test_subjects_per_context": self.min_test_subjects_per_context,
             "min_train_subjects_per_context": self.min_train_subjects_per_context,
+            "receptor_gate_threshold": gate_threshold,
+            "family_cosine_threshold": family_threshold,
+            "downstream_minimum_scale": minimum_scale,
             "schema_version": self.schema_version,
             "strata_keys": list(strata),
             "training_spec_id": training_spec.spec_id,
@@ -154,6 +195,9 @@ class CrossFitSpec:
         object.__setattr__(self, "training_spec", training_spec)
         object.__setattr__(self, "strata_keys", strata)
         object.__setattr__(self, "allowed_n_splits", allowed)
+        object.__setattr__(self, "receptor_gate_threshold", gate_threshold)
+        object.__setattr__(self, "family_cosine_threshold", family_threshold)
+        object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "spec_id", spec_id)
         object.__setattr__(
             self,
@@ -172,10 +216,11 @@ class CrossFitSpec:
             "training_spec_id": self.training_spec.spec_id,
             "strata_keys": list(self.strata_keys),
             "allowed_n_splits": list(self.allowed_n_splits),
-            "min_train_subjects_per_context": (
-                self.min_train_subjects_per_context
-            ),
+            "min_train_subjects_per_context": (self.min_train_subjects_per_context),
             "min_test_subjects_per_context": self.min_test_subjects_per_context,
+            "receptor_gate_threshold": self.receptor_gate_threshold,
+            "family_cosine_threshold": self.family_cosine_threshold,
+            "downstream_minimum_scale": self.downstream_minimum_scale,
         }
 
 
@@ -186,6 +231,10 @@ class CrossFitFoldArtifacts:
     fold_id: str
     training: TrainingArtifacts
     application: TrainingArtifactApplication
+    design_encoders: tuple[FrozenDesignEncoder, ...]
+    design_applications: tuple[FrozenDesignApplication, ...]
+    receiver_family_models: tuple[ReceiverFamilyScoringArtifact, ...]
+    receiver_family_applications: tuple[ReceiverFamilyScoringApplication, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.fold_id, str) or not self.fold_id:
@@ -196,11 +245,66 @@ class CrossFitFoldArtifacts:
             raise TypeError("application must be TrainingArtifactApplication")
         if self.application.training_artifact_id != self.training.training_artifact_id:
             raise ValueError("fold application is not bound to its training artifacts")
+        encoders = tuple(self.design_encoders)
+        applications = tuple(self.design_applications)
+        if not encoders or len(encoders) != len(applications):
+            raise ValueError("fold design encoders and applications must align")
+        if len({encoder.encoder_id for encoder in encoders}) != len(encoders):
+            raise ValueError("fold design encoders must be contrast-unique")
+        for encoder, design_application in zip(encoders, applications, strict=True):
+            if encoder.training_subject_ids != self.training.training_subject_ids:
+                raise ValueError("design encoder training subjects do not match fold")
+            if design_application.encoder_id != encoder.encoder_id:
+                raise ValueError("design application does not match its encoder")
+            if design_application.subject_ids != self.application.heldout_subject_ids:
+                raise ValueError(
+                    "design application subjects do not match heldout fold"
+                )
+        object.__setattr__(self, "design_encoders", encoders)
+        object.__setattr__(self, "design_applications", applications)
+        receiver_models = tuple(self.receiver_family_models)
+        receiver_applications = tuple(self.receiver_family_applications)
+        if not receiver_models or len(receiver_models) != len(receiver_applications):
+            raise ValueError("fold receiver-family models and applications must align")
+        model_keys = [
+            (
+                model.contrast_name,
+                model.receiver_family_artifact.receiver,
+            )
+            for model in receiver_models
+        ]
+        if len(model_keys) != len(set(model_keys)):
+            raise ValueError("fold receiver-family models must be receiver-unique")
+        for model, receiver_application in zip(
+            receiver_models, receiver_applications, strict=True
+        ):
+            if model.training_subject_ids != self.training.training_subject_ids:
+                raise ValueError(
+                    "receiver-family training subjects do not match the fold"
+                )
+            if receiver_application.training_artifact_id != model.training_artifact_id:
+                raise ValueError(
+                    "receiver-family application does not match its training model"
+                )
+            if not set(receiver_application.heldout_subject_ids).issubset(
+                self.application.heldout_subject_ids
+            ):
+                raise ValueError(
+                    "receiver-family application subjects are outside heldout fold"
+                )
+            if set(receiver_application.heldout_subject_ids).intersection(
+                model.training_subject_ids
+            ):
+                raise ValueError(
+                    "receiver-family application overlaps its training subjects"
+                )
+        object.__setattr__(self, "receiver_family_models", receiver_models)
+        object.__setattr__(self, "receiver_family_applications", receiver_applications)
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class CrossFitArtifacts:
-    """Verified OOF artifacts for implemented stages of the partial pipeline."""
+    """Partial artifacts with exact sender-stage OOF coverage verification."""
 
     spec: CrossFitSpec
     fold_plan: SubjectFoldPlan
@@ -267,6 +371,11 @@ class CrossFitArtifacts:
                 )
             if item.application.heldout_subject_ids != manifest.test_subject_ids:
                 raise ValueError("application subjects do not match the fold plan")
+            observed_contrasts = {
+                _contrast_id(encoder.contrast) for encoder in item.design_encoders
+            }
+            if observed_contrasts != set(manifest.contrast_ids):
+                raise ValueError("design encoders do not match planned fold contrasts")
         coverage = self.oof_coverage.copy(deep=True)
         if tuple(coverage.columns) != _COVERAGE_COLUMNS:
             raise ValueError("oof_coverage columns do not match the stage contract")
@@ -330,6 +439,28 @@ class CrossFitArtifacts:
                 raise ValueError(
                     "sender assignment functional does not match its fold contrast"
                 )
+        for row in coverage.itertuples(index=False):
+            item = fold_artifacts[str(row.fold_id)]
+            encoders = {
+                _contrast_id(encoder.contrast): (
+                    encoder,
+                    application,
+                )
+                for encoder, application in zip(
+                    item.design_encoders,
+                    item.design_applications,
+                    strict=True,
+                )
+            }
+            pair = encoders.get(str(row.contrast_id))
+            if pair is None:
+                raise ValueError("coverage row references an unknown design contrast")
+            encoder, design_application = pair
+            if (
+                str(row.design_encoder_id) != encoder.encoder_id
+                or str(row.design_status) != design_application.status
+            ):
+                raise ValueError("coverage row design provenance is incompatible")
         payload = {
             "coverage_audit_id": self.coverage_audit.audit_id,
             "fold_applications": [
@@ -337,6 +468,20 @@ class CrossFitArtifacts:
                     "fold_id": item.fold_id,
                     "heldout_input_digest": item.application.heldout_input_digest,
                     "training_artifact_id": item.training.training_artifact_id,
+                    "design_encoder_ids": [
+                        encoder.encoder_id for encoder in item.design_encoders
+                    ],
+                    "design_application_statuses": [
+                        application.status for application in item.design_applications
+                    ],
+                    "receiver_family_training_artifact_ids": [
+                        model.training_artifact_id
+                        for model in item.receiver_family_models
+                    ],
+                    "receiver_family_application_statuses": [
+                        application.application_status
+                        for application in item.receiver_family_applications
+                    ],
                 }
                 for item in sorted(folds, key=lambda value: value.fold_id)
             ],
@@ -351,7 +496,7 @@ class CrossFitArtifacts:
 
     @property
     def completed_stage_oof_verified(self) -> bool:
-        """Whether implemented availability/sender stages passed OOF audit."""
+        """Whether the availability/sender stage passed exact OOF coverage audit."""
 
         return True
 
@@ -380,12 +525,33 @@ class CrossFitArtifacts:
                     "heldout_input_digest": item.application.heldout_input_digest,
                     "training_subject_ids": list(item.training.training_subject_ids),
                     "heldout_subject_ids": list(item.application.heldout_subject_ids),
+                    "receiver_family_artifacts": [
+                        {
+                            "receiver": model.receiver_family_artifact.receiver,
+                            "contrast_name": model.contrast_name,
+                            "training_artifact_id": model.training_artifact_id,
+                            "certification_status": model.certification_status,
+                            "application_status": application.application_status,
+                        }
+                        for model, application in zip(
+                            item.receiver_family_models,
+                            item.receiver_family_applications,
+                            strict=True,
+                        )
+                    ],
                 }
                 for item in self.folds
             ],
             "n_oof_coverage_rows": len(self.oof_coverage),
             "n_oof_sender_assignment_rows": len(self.oof_sender_assignments),
-            "remaining_stages": list(self.folds[0].training.remaining_stages),
+            "remaining_stages": sorted(
+                {
+                    stage
+                    for item in self.folds
+                    for model in item.receiver_family_models
+                    for stage in model.remaining_stages
+                }
+            ),
         }
 
 
@@ -413,6 +579,215 @@ def _physical_subject_scope(
     return scope
 
 
+def _interaction_driver_mapping(
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+) -> dict[str, str]:
+    """Resolve only static resource/prior identities, never expression evidence."""
+
+    known = set(target_prior.driver_ids)
+    mapping: dict[str, str] = {}
+    for interaction in resource_bundle.interactions:
+        if target_prior.driver_kind == "interaction":
+            candidates = {interaction.interaction_id}
+        else:
+            candidates = {interaction.ligand_name}
+            if len(interaction.ligand_subunits) == 1:
+                candidates.add(interaction.ligand_subunits[0])
+        matches = sorted(candidates.intersection(known))
+        if len(matches) == 1:
+            mapping[interaction.interaction_id] = matches[0]
+    return mapping
+
+
+def _response_expression(
+    prepared: _PreparedRawFold,
+    *,
+    receiver: str,
+    contexts: set[Hashable] | None = None,
+) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...]]:
+    """Extract fixed log1p(CPM) sample expression for one receiver."""
+
+    aggregate = prepared.aggregate
+    if not isinstance(aggregate, PseudobulkDataset):
+        raise TypeError("public cross-fit receiver expression requires count aggregate")
+    metadata = aggregate.unit_metadata.copy(deep=True).reset_index(drop=True)
+    selected = metadata["cell_type"].map(lambda value: str(value) == receiver)
+    if contexts is not None:
+        context_nodes = metadata["context"].map(
+            lambda value: _context_node(
+                pd.Series(dict(value)), tuple(prepared.validated.schema.context_keys)
+            )
+        )
+        selected &= context_nodes.isin(contexts)
+    selected &= metadata["state_eligible"].astype(bool)
+    selected &= metadata["matrix_row"].notna()
+    units = metadata.loc[selected].copy()
+    if units.empty:
+        raise ValueError(f"receiver {receiver!r} has no eligible sample expression")
+    units["_sample_sort"] = units["sample_id"].astype(str)
+    units["_unit_sort"] = units["unit_id"].astype(str)
+    units = units.sort_values(
+        ["_sample_sort", "_unit_sort"], kind="stable", ignore_index=True
+    ).drop(columns=["_sample_sort", "_unit_sort"])
+    matrix_rows = units["matrix_row"].astype(int).to_numpy()
+    matrix = aggregate.counts[matrix_rows]
+    if sparse.issparse(matrix):
+        values = np.asarray(matrix.toarray(), dtype=np.float64)
+    else:  # pragma: no cover - count aggregates are sparse by contract
+        values = np.asarray(matrix, dtype=np.float64)
+    library_sizes = values.sum(axis=1)
+    if np.any(~np.isfinite(library_sizes)) or np.any(library_sizes <= 0):
+        raise ValueError("receiver sample expression contains zero library size")
+    values = np.log1p(values / library_sizes[:, None] * _CPM_SCALE)
+    sample_ids = tuple(units["sample_id"].astype(str))
+    subject_ids = tuple(units["subject_id"].astype(str))
+    return values, sample_ids, subject_ids
+
+
+def _training_receiver_families(
+    *,
+    prepared: _PreparedRawFold,
+    training: TrainingArtifacts,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    spec: CrossFitSpec,
+    fold_id: str,
+) -> tuple[ReceiverFamilyScoringArtifact, ...]:
+    availability = _fit_interaction_universe(
+        prepared,
+        resource_bundle,
+        spec.training_spec,
+    )
+    if (
+        availability.frozen_interaction_universe.to_dict()
+        != training.frozen_interaction_universe.to_dict()
+    ):
+        raise RuntimeError(
+            "receiver-family training did not reproduce the fold interaction universe"
+        )
+    mapping = _interaction_driver_mapping(resource_bundle, target_prior)
+    receivers = prepared.cell_type_ids
+    receiver_families = {
+        artifact.receiver: artifact
+        for artifact in fit_receiver_family_training_artifacts(
+            availability,
+            target_prior,
+            receivers=receivers,
+            fold_id=fold_id,
+            feature_ids=prepared.aggregate.feature_ids,
+            driver_by_interaction=mapping,
+            receptor_gate_threshold=spec.receptor_gate_threshold,
+            cosine_threshold=spec.family_cosine_threshold,
+        )
+    }
+    models: list[ReceiverFamilyScoringArtifact] = []
+    for contrast in spec.contrasts:
+        reference_contexts = {
+            context for context, weight in contrast.weights.items() if weight < 0
+        }
+        if not reference_contexts:  # pragma: no cover - balanced contrast contract
+            raise RuntimeError("balanced contrast is missing a reference context")
+        for receiver in receivers:
+            receiver_family = receiver_families[receiver]
+            try:
+                (
+                    reference_expression,
+                    reference_sample_ids,
+                    reference_subjects,
+                ) = _response_expression(
+                    prepared, receiver=receiver, contexts=reference_contexts
+                )
+            except ValueError as error:
+                if "no eligible sample expression" not in str(error):
+                    raise
+                models.append(
+                    mark_receiver_family_scoring_not_estimable(
+                        receiver_family,
+                        contrast_name=contrast.name,
+                        reason_code="training_reference_expression_not_estimable",
+                    )
+                )
+                continue
+            try:
+                scoring_model = fit_receiver_family_scoring_artifact(
+                    receiver_family,
+                    reference_expression,
+                    contrast_name=contrast.name,
+                    sample_ids=reference_sample_ids,
+                    sample_subject_ids=reference_subjects,
+                    minimum_scale=spec.downstream_minimum_scale,
+                )
+            except ValueError as error:
+                if "at least two complete finite samples" not in str(error):
+                    raise
+                scoring_model = mark_receiver_family_scoring_not_estimable(
+                    receiver_family,
+                    contrast_name=contrast.name,
+                    reason_code="training_reference_expression_not_estimable",
+                )
+            models.append(scoring_model)
+    return tuple(
+        sorted(
+            models,
+            key=lambda model: (
+                model.contrast_name,
+                model.receiver_family_artifact.receiver,
+            ),
+        )
+    )
+
+
+def _apply_receiver_families(
+    models: tuple[ReceiverFamilyScoringArtifact, ...],
+    *,
+    prepared: _PreparedRawFold,
+    contrasts: tuple[ContrastSpec, ...],
+) -> tuple[ReceiverFamilyScoringApplication, ...]:
+    contrast_contexts = {contrast.name: set(contrast.weights) for contrast in contrasts}
+    heldout_subject_ids = prepared.subject_ids
+    applications: list[ReceiverFamilyScoringApplication] = []
+    for model in models:
+        receiver = model.receiver_family_artifact.receiver
+        try:
+            expression, _, subject_ids = _response_expression(
+                prepared,
+                receiver=receiver,
+                contexts=contrast_contexts[model.contrast_name],
+            )
+        except ValueError as error:
+            if "no eligible sample expression" not in str(error):
+                raise
+            applications.append(
+                mark_receiver_family_application_not_estimable(
+                    model,
+                    heldout_subject_ids=heldout_subject_ids,
+                    reason_code="heldout_receiver_expression_not_estimable",
+                )
+            )
+            continue
+        observed_subjects = set(subject_ids)
+        missing_subjects = set(heldout_subject_ids).difference(observed_subjects)
+        if missing_subjects:
+            applications.append(
+                mark_receiver_family_application_not_estimable(
+                    model,
+                    heldout_subject_ids=heldout_subject_ids,
+                    reason_code="heldout_receiver_expression_incomplete_subject_coverage",
+                )
+            )
+            continue
+        applications.append(
+            apply_receiver_family_scoring_artifact(
+                model,
+                expression,
+                feature_ids=prepared.aggregate.feature_ids,
+                sample_subject_ids=subject_ids,
+            )
+        )
+    return tuple(applications)
+
+
 def _fold_coverage_rows(
     sample_metadata: pd.DataFrame,
     *,
@@ -420,13 +795,24 @@ def _fold_coverage_rows(
     fold_id: str,
     test_subject_ids: tuple[str, ...],
     training: TrainingArtifacts,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    design_applications: tuple[FrozenDesignApplication, ...],
 ) -> list[dict[str, object]]:
     heldout = sample_metadata.loc[
         sample_metadata[config.subject_key].astype(str).isin(test_subject_ids)
     ]
     rows: list[dict[str, object]] = []
+    design_by_contrast = {
+        _contrast_id(encoder.contrast): (encoder, application)
+        for encoder, application in zip(
+            design_encoders,
+            design_applications,
+            strict=True,
+        )
+    }
     for functional in training.sender_functionals:
         contrast_id = _contrast_id(functional.contrast)
+        encoder, design_application = design_by_contrast[contrast_id]
         contrast_nodes = set(functional.contrast.weights)
         for _, sample in heldout.iterrows():
             node = _context_node(sample, tuple(config.context_keys))
@@ -441,6 +827,8 @@ def _fold_coverage_rows(
                     "contrast_context": node,
                     "functional_status": "out_of_fold",
                     "sender_functional_id": functional.sender_functional_id,
+                    "design_encoder_id": encoder.encoder_id,
+                    "design_status": design_application.status,
                     "training_artifact_id": training.training_artifact_id,
                     "stage": _STAGE_NAME,
                 }
@@ -474,7 +862,7 @@ def run_subject_crossfit(
     *,
     spec: CrossFitSpec,
 ) -> CrossFitArtifacts:
-    """Run verified subject-blocked OOF application of implemented stages.
+    """Run subject-blocked train/apply and verify the current sender audit scope.
 
     The function accepts no caller-created folds, fitted values, matrices, or
     provenance identifiers.  Raw-count input is required because normalized
@@ -513,6 +901,7 @@ def run_subject_crossfit(
     checker = DesignFoldChecker(
         context_keys=tuple(config.context_keys),
         covariates=tuple(config.covariates),
+        categorical_covariates=tuple(config.categorical_covariates),
         formula=config.design
         or default_design_formula(config.context_keys, config.covariates),
         contrasts=spec.contrasts,
@@ -556,6 +945,56 @@ def run_subject_crossfit(
             spec=spec.training_spec,
         )
         application = apply_training_artifacts(training, heldout_scope)
+        prepared_training = _prepare_raw_fold(
+            training_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            cell_types=training.cell_type_ids,
+        )
+        prepared_heldout = _prepare_raw_fold(
+            heldout_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            cell_types=training.cell_type_ids,
+        )
+        receiver_family_models = _training_receiver_families(
+            prepared=prepared_training,
+            training=training,
+            resource_bundle=resource_bundle,
+            target_prior=target_prior,
+            spec=spec,
+            fold_id=fold.fold_id,
+        )
+        receiver_family_applications = _apply_receiver_families(
+            receiver_family_models,
+            prepared=prepared_heldout,
+            contrasts=spec.contrasts,
+        )
+        sample_metadata = validated.report.sample_metadata
+        training_metadata = sample_metadata.loc[
+            sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
+        ]
+        heldout_metadata = sample_metadata.loc[
+            sample_metadata[config.subject_key].astype(str).isin(fold.test_subject_ids)
+        ]
+        design_encoders = tuple(
+            fit_frozen_design_encoder(
+                training_metadata,
+                contrast=contrast,
+                context_keys=config.context_keys,
+                covariates=config.covariates,
+                categorical_covariates=config.categorical_covariates,
+                formula=config.design
+                or default_design_formula(config.context_keys, config.covariates),
+                sample_key=config.sample_key,
+                subject_key=config.subject_key,
+            )
+            for contrast in spec.contrasts
+        )
+        design_applications = tuple(
+            apply_frozen_design_encoder(encoder, heldout_metadata)
+            for encoder in design_encoders
+        )
         observed_contrasts = {
             _contrast_id(functional.contrast)
             for functional in training.sender_functionals
@@ -569,6 +1008,10 @@ def run_subject_crossfit(
                 fold_id=fold.fold_id,
                 training=training,
                 application=application,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
+                receiver_family_models=receiver_family_models,
+                receiver_family_applications=receiver_family_applications,
             )
         )
         coverage_rows.extend(
@@ -578,6 +1021,8 @@ def run_subject_crossfit(
                 fold_id=fold.fold_id,
                 test_subject_ids=fold.test_subject_ids,
                 training=training,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
             )
         )
         sender_parts.extend(

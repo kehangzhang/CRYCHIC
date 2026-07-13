@@ -197,9 +197,11 @@ class DesignFoldChecker:
     covariates: tuple[str, ...]
     formula: str
     contrasts: tuple[ContrastSpec, ...]
+    categorical_covariates: tuple[str, ...] = ()
     sample_key: str = "sample_id"
 
     def __post_init__(self) -> None:
+        categorical_covariates = tuple(self.categorical_covariates)
         if not self.context_keys:
             raise ValueError("context_keys must not be empty")
         if len(set((*self.context_keys, *self.covariates))) != len(
@@ -210,6 +212,15 @@ class DesignFoldChecker:
             raise ValueError("formula must be a non-empty string")
         if not self.contrasts:
             raise ValueError("contrasts must not be empty")
+        if len(set(categorical_covariates)) != len(categorical_covariates):
+            raise ValueError("categorical_covariates must contain unique fields")
+        unknown_categorical = set(categorical_covariates).difference(self.covariates)
+        if unknown_categorical:
+            raise ValueError(
+                "categorical_covariates must be declared covariates; unknown="
+                f"{sorted(unknown_categorical)}"
+            )
+        object.__setattr__(self, "categorical_covariates", categorical_covariates)
 
     @property
     def contrast_ids(self) -> tuple[str, ...]:
@@ -230,11 +241,13 @@ class DesignFoldChecker:
             training_metadata,
             context_keys=self.context_keys,
             covariates=self.covariates,
+            categorical_covariates=self.categorical_covariates,
             formula=self.formula,
             sample_key=self.sample_key,
         )
         matrix_payload = {
             "column_names": list(audit.column_names),
+            "categorical_covariates": list(audit.categorical_covariates),
             "context_nodes": list(audit.context_nodes),
             "formula": audit.formula,
             "matrix": audit.design_matrix.to_numpy(dtype=float).tolist(),

@@ -36,6 +36,11 @@ from .family_first import (
     build_family_first_basis,
     fit_family_first_attribution,
 )
+from .frozen_family import (
+    ReceiverFamilyTrainingArtifact,
+    fit_receiver_family_training_artifact,
+    fit_receiver_family_training_artifacts,
+)
 from .model import (
     attribute_target_prior,
     downstream_attribution_support,
@@ -66,6 +71,7 @@ __all__ = [
     "LRIdentifiabilityStatus",
     "ObjectiveTerms",
     "PrecisionTransformResult",
+    "ReceiverFamilyTrainingArtifact",
     "ReceptorGatePolicy",
     "ResponseDirection",
     "SolverDiagnostics",
@@ -80,6 +86,8 @@ __all__ = [
     "downstream_attribution_support",
     "fit_family_first_attribution",
     "fit_positive_attribution",
+    "fit_receiver_family_training_artifact",
+    "fit_receiver_family_training_artifacts",
     "solve_nonnegative_elastic_net",
     "winsorized_normalized_precision",
 ]

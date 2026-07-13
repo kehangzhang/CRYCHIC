@@ -41,6 +41,14 @@ from .ranking_stability import (
     top_k_stability_curve,
     weighted_kendall_tau,
 )
+from .repeated_measures import (
+    FrozenRepeatedMeasuresDesign,
+    RepeatedMeasuresFit,
+    RepeatedMeasuresSpec,
+    fit_repeated_measures_contrast,
+    freeze_repeated_measures_design,
+    repeated_measures_effects,
+)
 from .signed_track_b import (
     SignedTrackBTables,
     evaluate_signed_track_b,
@@ -49,11 +57,14 @@ from .signed_track_b import (
 
 __all__ = [
     "DCommonSpec",
+    "FrozenRepeatedMeasuresDesign",
     "RankAgreement",
     "RankInterval",
     "RankStabilityParameters",
     "RankStabilityTables",
     "Ranking",
+    "RepeatedMeasuresFit",
+    "RepeatedMeasuresSpec",
     "SignedTrackBTables",
     "StableTier",
     "TopKStabilityPoint",
@@ -65,6 +76,8 @@ __all__ = [
     "evaluate_multicondition_rank_stability",
     "evaluate_signed_track_b",
     "external_long_to_score_table",
+    "fit_repeated_measures_contrast",
+    "freeze_repeated_measures_design",
     "not_estimable_rank_stability",
     "paired_descriptive_effects",
     "paired_differential_loso_reproducibility",
@@ -72,6 +85,7 @@ __all__ = [
     "paired_proportion_stability",
     "rank_biased_overlap",
     "rank_concordance",
+    "repeated_measures_effects",
     "score_coverage_summary",
     "signed_track_b_truth_sha256",
     "summarize_loso_primary_endpoint",

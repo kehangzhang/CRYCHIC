@@ -586,6 +586,36 @@ def test_finalize_forbids_real_data_edge_truth(tmp_path: Path) -> None:
         module.finalize(spec, tmp_path / "invalid")
 
 
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "True",
+        1,
+    ],
+)
+def test_finalize_rejects_non_boolean_universe_member_schema(
+    tmp_path: Path,
+    replacement: object,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    run = payload["datasets"][0]["adapter_runs"][0]
+    table_path = tmp_path / run["long_table"]
+    table = pd.read_parquet(table_path)
+    table["universe_member"] = replacement
+    table.to_parquet(table_path, index=False)
+    manifest_path = tmp_path / run["manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["output"]["sha256"] = _sha256(table_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="universe_member must use an Arrow boolean type",
+    ):
+        module.finalize(spec, tmp_path / "invalid_membership")
+
+
 def test_common_functional_false_fails_closed_across_rank_endpoints(
     tmp_path: Path,
 ) -> None:

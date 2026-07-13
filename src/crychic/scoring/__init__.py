@@ -34,6 +34,14 @@ from .integration import (
     score_communication,
     weighted_geometric_strength,
 )
+from .receiver_family import (
+    ReceiverFamilyScoringApplication,
+    ReceiverFamilyScoringArtifact,
+    apply_receiver_family_scoring_artifact,
+    fit_receiver_family_scoring_artifact,
+    mark_receiver_family_application_not_estimable,
+    mark_receiver_family_scoring_not_estimable,
+)
 
 __all__ = [
     "CORE_COMPONENTS",
@@ -47,6 +55,8 @@ __all__ = [
     "DownstreamFunctional",
     "IncrementalDownstreamApplication",
     "IncrementalDownstreamFunctional",
+    "ReceiverFamilyScoringApplication",
+    "ReceiverFamilyScoringArtifact",
     "ReceiverScoringFunctionalManifest",
     "ScoringCollectionDocument",
     "ScoringCollectionManifest",
@@ -55,9 +65,13 @@ __all__ = [
     "ScoringModelManifest",
     "apply_downstream_functional",
     "apply_incremental_downstream_functional",
+    "apply_receiver_family_scoring_artifact",
     "fit_downstream_functional",
     "fit_incremental_downstream_functional",
+    "fit_receiver_family_scoring_artifact",
     "float64_array_digest",
+    "mark_receiver_family_application_not_estimable",
+    "mark_receiver_family_scoring_not_estimable",
     "mechanistic_strength",
     "pair_softmin",
     "score_communication",

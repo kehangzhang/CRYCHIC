@@ -51,11 +51,32 @@ preserving the exploratory v0.1 behavior:
 - the public `run_subject_crossfit` API now derives estimability-aware subject
   folds, creates physical sanitized train/test scopes, calls the producer-owned
   train/apply primitives, and audits exact OOF coverage for the frozen
-  interaction universe and contrast-common sender functional. The aggregate
-  status is `verified_train_only_oof_partial_pipeline`, while
+  interaction universe and contrast-common sender functional. Fold artifacts
+  also freeze nuisance encoders, condition-blind hard receptor gates, strict
+  medoid family bases, and training-reference receiver-program transforms,
+  then apply them without refitting. Planned receiver coverage gaps are explicit
+  `not_estimable` results. These receiver artifacts do not yet have their own
+  exact-coverage audit; response precision, family attribution/tuning,
+  incremental downstream gain, and common scoring remain unconnected. The
+  aggregate status is `verified_train_only_oof_partial_pipeline`, while
   `is_oof_certified` remains false and low-level rows retain `partial_not_oof`;
-  receptor, response, family, downstream, and common-scoring stages remain to
-  be connected before complete-pipeline certification;
+- frozen design encoding now uses the complete declared Patsy formula and an
+  exact EMM-contrast reparameterization. Numeric-coded categorical covariates
+  can be declared with `categorical_covariates`; held-out levels are applied
+  through training `DesignInfo` without refitting, and sample/design matrices
+  participate in artifact identity;
+- strict complete-link family clustering uses an output-equivalent incremental
+  minimum-update heap and shares the static partition once per fold feature
+  universe. The v3 partial smoke completed active and ligand-only controls in
+  11.86 and 11.11 seconds, and a 10,057-cell Kang subset in 26.28 seconds;
+  these are pipeline and performance checks, not integrated-edge accuracy or
+  biological claims;
+- the benchmark layer includes a frozen categorical repeated-measures backend
+  for mixed paired/unpaired subjects and within-subject technical replicates.
+  A metadata-only audit of the 29-sample Kuppe atlas found all 10 region
+  contrasts design-estimable under complete method-score coverage, but fitted
+  no effects and made no biological claim. Condition contrasts with region
+  adjustment were rank deficient and remain `not_estimable`;
 - benchmark utilities now provide frozen-universe RBO, weighted Kendall,
   top-k curves, rank intervals, and stable-tier assignments. The v02 real-data
   finalizer/report integration requires all frozen items and fixed receiver
@@ -176,6 +197,12 @@ uv run python -m benchmarks.report.generate_multicondition_report \
   --final-dir ../benchmark_work/multicondition_v02/final \
   --output-dir reports/multicondition_v02 \
   --report-id multicondition_v02
+uv run python -m benchmarks.simulation.run_crossfit_smoke \
+  --workspace-root .. --include-kang-subset \
+  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v3.json
+uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
+  --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
+  --output ../benchmark_work/kuppe_repeated_measures/design_audit.json
 ```
 
 ## Quality Checks

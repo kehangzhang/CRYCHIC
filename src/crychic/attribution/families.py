@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import heapq
 import math
+from collections.abc import Mapping
 
 import numpy as np
 from scipy import sparse
@@ -39,15 +41,29 @@ def _cluster_names(
     return tuple(sorted(driver_ids[index] for index in indices))
 
 
-def _complete_link_similarity(
-    left: tuple[int, ...],
-    right: tuple[int, ...],
-    cosine: sparse.csr_matrix,
-) -> float:
-    return min(
-        min(1.0, max(0.0, float(cosine[left_index, right_index])))
-        for left_index in left
-        for right_index in right
+def _pair_key(left: int, right: int) -> tuple[int, int]:
+    return (left, right) if left < right else (right, left)
+
+
+def _candidate_key(
+    left: int,
+    right: int,
+    *,
+    similarity: float,
+    names: Mapping[int, tuple[str, ...]],
+) -> tuple[float, tuple[str, ...], tuple[str, ...], tuple[str, ...], int, int]:
+    left_names = names[left]
+    right_names = names[right]
+    if right_names < left_names:
+        left, right = right, left
+        left_names, right_names = right_names, left_names
+    return (
+        -similarity,
+        tuple(sorted((*left_names, *right_names))),
+        left_names,
+        right_names,
+        left,
+        right,
     )
 
 
@@ -55,44 +71,69 @@ def _complete_link_split(
     indices: list[int],
     *,
     driver_ids: tuple[str, ...],
-    cosine: sparse.csr_matrix,
+    pairwise_similarity: dict[tuple[int, int], float],
     threshold: float,
 ) -> tuple[tuple[int, ...], ...]:
-    clusters: list[tuple[int, ...]] = [
-        (index,)
-        for index in sorted(indices, key=lambda index: driver_ids[index])
-    ]
-    while True:
-        best: tuple[
-            tuple[float, tuple[str, ...], tuple[str, ...], tuple[str, ...]],
-            int,
-            int,
-        ] | None = None
-        for left_index, left in enumerate(clusters):
-            left_names = _cluster_names(left, driver_ids)
-            for right_index in range(left_index + 1, len(clusters)):
-                right = clusters[right_index]
-                similarity = _complete_link_similarity(left, right, cosine)
-                if similarity + _COSINE_TOLERANCE < threshold:
-                    continue
-                right_names = _cluster_names(right, driver_ids)
-                merged_names = tuple(sorted((*left_names, *right_names)))
-                key = (-similarity, merged_names, left_names, right_names)
-                candidate = (key, left_index, right_index)
-                if best is None or candidate[0] < best[0]:
-                    best = candidate
-        if best is None:
-            break
-        _, left_index, right_index = best
-        merged = tuple(sorted((*clusters[left_index], *clusters[right_index])))
-        clusters = [
-            cluster
-            for index, cluster in enumerate(clusters)
-            if index not in {left_index, right_index}
-        ]
-        clusters.append(merged)
-        clusters.sort(key=lambda cluster: _cluster_names(cluster, driver_ids))
-    return tuple(clusters)
+    ordered = sorted(indices, key=lambda index: driver_ids[index])
+    clusters: dict[int, tuple[int, ...]] = {index: (index,) for index in ordered}
+    names: dict[int, tuple[str, ...]] = {
+        index: (driver_ids[index],) for index in ordered
+    }
+    active = set(ordered)
+    similarities: dict[tuple[int, int], float] = {}
+    candidates: list[
+        tuple[float, tuple[str, ...], tuple[str, ...], tuple[str, ...], int, int]
+    ] = []
+    for offset, left in enumerate(ordered):
+        for right in ordered[offset + 1 :]:
+            similarity = pairwise_similarity.get(_pair_key(left, right), 0.0)
+            if similarity + _COSINE_TOLERANCE < threshold:
+                continue
+            similarities[_pair_key(left, right)] = similarity
+            heapq.heappush(
+                candidates,
+                _candidate_key(
+                    left,
+                    right,
+                    similarity=similarity,
+                    names=names,
+                ),
+            )
+
+    next_cluster = max(ordered, default=-1) + 1
+    while candidates:
+        *_, left, right = heapq.heappop(candidates)
+        if left not in active or right not in active:
+            continue
+        merged = next_cluster
+        next_cluster += 1
+        clusters[merged] = tuple(sorted((*clusters[left], *clusters[right])))
+        names[merged] = tuple(sorted((*names[left], *names[right])))
+        remaining = active.difference({left, right})
+        active.remove(left)
+        active.remove(right)
+        for other in remaining:
+            left_similarity = similarities.get(_pair_key(left, other))
+            right_similarity = similarities.get(_pair_key(right, other))
+            if left_similarity is None or right_similarity is None:
+                continue
+            similarity = min(left_similarity, right_similarity)
+            if similarity + _COSINE_TOLERANCE < threshold:
+                continue
+            similarities[_pair_key(merged, other)] = similarity
+            heapq.heappush(
+                candidates,
+                _candidate_key(
+                    merged,
+                    other,
+                    similarity=similarity,
+                    names=names,
+                ),
+            )
+        active.add(merged)
+    return tuple(
+        clusters[index] for index in sorted(active, key=lambda value: names[value])
+    )
 
 
 def cluster_driver_families(
@@ -120,14 +161,20 @@ def cluster_driver_families(
     cosine = sparse.coo_matrix(
         basis.normalized_profiles.T @ basis.normalized_profiles
     )
+    pairwise_similarity: dict[tuple[int, int], float] = {}
     for left, right, raw_value in zip(
         cosine.row, cosine.col, cosine.data, strict=True
     ):
         if left >= right:
             continue
         value = min(1.0, max(0.0, float(raw_value)))
+        pairwise_similarity[(int(left), int(right))] = value
         if value + _COSINE_TOLERANCE >= cosine_threshold:
             disjoint.union(int(left), int(right))
+
+    if cosine_threshold <= _COSINE_TOLERANCE and n_drivers:
+        for index in range(1, n_drivers):
+            disjoint.union(0, index)
 
     components: dict[int, list[int]] = {}
     for index in range(n_drivers):
@@ -140,7 +187,7 @@ def cluster_driver_families(
         for cluster in _complete_link_split(
             indices,
             driver_ids=basis.driver_ids,
-            cosine=cosine_csr,
+            pairwise_similarity=pairwise_similarity,
             threshold=cosine_threshold,
         )
     )

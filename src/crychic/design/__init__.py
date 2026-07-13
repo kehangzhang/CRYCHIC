@@ -31,6 +31,13 @@ from .contrasts import (
     local_neighbor_contrast,
     marginal_factor_contrast,
 )
+from .frozen_encoder import (
+    FrozenCovariateEncoding,
+    FrozenDesignApplication,
+    FrozenDesignEncoder,
+    apply_frozen_design_encoder,
+    fit_frozen_design_encoder,
+)
 
 __all__ = [
     "CanonicalContext",
@@ -42,8 +49,12 @@ __all__ = [
     "DesignAudit",
     "DesignAuditError",
     "DesignStatus",
+    "FrozenCovariateEncoding",
+    "FrozenDesignApplication",
+    "FrozenDesignEncoder",
     "SubjectDesign",
     "SubjectDesignAudit",
+    "apply_frozen_design_encoder",
     "audit_sample_design",
     "audit_subject_design",
     "balanced_contrast",
@@ -53,6 +64,7 @@ __all__ = [
     "context_mapping",
     "default_design_formula",
     "factorial_interaction_contrast",
+    "fit_frozen_design_encoder",
     "global_contrasts",
     "global_one_vs_rest",
     "local_contrasts",

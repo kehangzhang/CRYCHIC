@@ -202,6 +202,7 @@ def _prepare_table(
     *,
     context_keys: tuple[str, ...],
     covariates: tuple[str, ...],
+    categorical_covariates: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     required = (*context_keys, *covariates)
     missing = set(required).difference(sample_metadata.columns)
@@ -221,12 +222,20 @@ def _prepare_table(
     for key in covariates:
         series = table[key]
         if (
-            pd.api.types.is_object_dtype(series.dtype)
+            key in categorical_covariates
+            or pd.api.types.is_object_dtype(series.dtype)
             or pd.api.types.is_string_dtype(series.dtype)
             or pd.api.types.is_bool_dtype(series.dtype)
             or isinstance(series.dtype, pd.CategoricalDtype)
         ):
             table[key] = pd.Categorical(series, categories=list(_levels(series)))
+        else:
+            numeric = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+            if np.any(~np.isfinite(numeric)):
+                raise DesignAuditError(
+                    f"continuous design field {key!r} must contain finite numbers"
+                )
+            table[key] = numeric
     return table
 
 
@@ -294,6 +303,7 @@ class DesignAudit:
     formula: str
     context_keys: tuple[str, ...]
     covariates: tuple[str, ...]
+    categorical_covariates: tuple[str, ...]
     factor_names: tuple[str, ...]
     status: DesignStatus
     reason_codes: tuple[str, ...]
@@ -307,6 +317,7 @@ class DesignAudit:
     reference_grid: pd.DataFrame
     emm_matrix: pd.DataFrame
     context_nodes: tuple[Hashable, ...]
+    design_info: Any
 
     def __post_init__(self) -> None:
         status = DesignStatus(self.status)
@@ -392,6 +403,7 @@ def audit_sample_design(
     *,
     context_keys: Sequence[str],
     covariates: Sequence[str] = (),
+    categorical_covariates: Sequence[str] = (),
     formula: str | None = None,
     sample_key: str | None = None,
     condition_number_warning: float = 1e8,
@@ -401,10 +413,19 @@ def audit_sample_design(
 
     contexts = tuple(context_keys)
     covariate_names = tuple(covariates)
+    categorical_names = tuple(categorical_covariates)
     if not contexts:
         raise DesignAuditError("context_keys must contain at least one field")
     if len(set((*contexts, *covariate_names))) != len((*contexts, *covariate_names)):
         raise DesignAuditError("context and covariate fields must be unique")
+    if len(set(categorical_names)) != len(categorical_names):
+        raise DesignAuditError("categorical_covariates must contain unique fields")
+    unknown_categorical = set(categorical_names).difference(covariate_names)
+    if unknown_categorical:
+        raise DesignAuditError(
+            "categorical_covariates must be declared covariates; unknown="
+            + ",".join(sorted(unknown_categorical))
+        )
     if not math.isfinite(condition_number_warning) or condition_number_warning <= 1:
         raise ValueError("condition_number_warning must be finite and greater than 1")
     if isinstance(max_reference_rows, bool) or max_reference_rows < 1:
@@ -415,6 +436,7 @@ def audit_sample_design(
         sample_metadata,
         context_keys=contexts,
         covariates=covariate_names,
+        categorical_covariates=categorical_names,
     )
     if sample_key is None:
         sample_ids: tuple[Hashable, ...] = tuple(sample_metadata.index)
@@ -479,6 +501,7 @@ def audit_sample_design(
         formula=declared_formula,
         context_keys=contexts,
         covariates=covariate_names,
+        categorical_covariates=categorical_names,
         factor_names=factor_names,
         status=status,
         reason_codes=tuple(reasons),
@@ -492,6 +515,7 @@ def audit_sample_design(
         reference_grid=grid,
         emm_matrix=pd.DataFrame(np.vstack(emm_rows), columns=column_names),
         context_nodes=tuple(context_nodes),
+        design_info=matrix.design_info,
     )
 
 

@@ -8,6 +8,7 @@ import pytest
 from anndata import AnnData
 from scipy import sparse
 
+import crychic.scoring.receiver_family as receiver_scoring_module
 import crychic.sender.common as common_sender_module
 import crychic.workflow.crossfit as crossfit_module
 import crychic.workflow.training as training_module
@@ -110,9 +111,7 @@ def _adata() -> AnnData:
                             "condition": condition,
                         }
                     )
-                    obs_names.append(
-                        f"{subject}-{condition}-{cell_type}-{cell_index}"
-                    )
+                    obs_names.append(f"{subject}-{condition}-{cell_type}-{cell_index}")
     counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
     adata = AnnData(
         X=sparse.csr_matrix(counts.shape, dtype=np.float64),
@@ -191,9 +190,7 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
 
     assert result.completed_stage_oof_verified
     assert result.is_oof_certified is False
-    assert result.certification_status == (
-        "verified_train_only_oof_partial_pipeline"
-    )
+    assert result.certification_status == ("verified_train_only_oof_partial_pipeline")
     assert result.coverage_audit.subject_ids == ("p1", "p2", "p3", "p4")
     assert result.coverage_audit.n_rows == 8
     assert result.coverage_audit.to_dict()["common_functional_validated"] is True
@@ -208,9 +205,34 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     assert set(result.oof_sender_assignments["assignment_mode"]) == {
         "frozen_contrast_common_partial_not_oof"
     }
-    assert set(result.oof_sender_assignments["functional_status"]) == {
-        "out_of_fold"
-    }
+    assert set(result.oof_sender_assignments["functional_status"]) == {"out_of_fold"}
+    assert set(result.oof_coverage["design_status"]) == {"observed"}
+    assert result.oof_coverage["design_encoder_id"].notna().all()
+    assert all(len(fold.design_encoders) == 1 for fold in result.folds)
+    assert all(
+        application.status == "observed"
+        for fold in result.folds
+        for application in fold.design_applications
+    )
+    assert all(fold.receiver_family_models for fold in result.folds)
+    assert all(
+        model.training_subject_ids == fold.training.training_subject_ids
+        and not model.is_oof_certified
+        for fold in result.folds
+        for model in fold.receiver_family_models
+    )
+    assert all(
+        not set(application.heldout_subject_ids).intersection(
+            model.training_subject_ids
+        )
+        and not application.is_oof_certified
+        for fold in result.folds
+        for model, application in zip(
+            fold.receiver_family_models,
+            fold.receiver_family_applications,
+            strict=True,
+        )
+    )
     manifests = {fold.fold_id: fold for fold in result.fold_plan.folds}
     for row in result.oof_sender_assignments.itertuples(index=False):
         manifest = manifests[str(row.fold_id)]
@@ -306,6 +328,26 @@ def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() 
     assert changed_application.training.frozen_interaction_universe.to_dict() == (
         unchanged.training.frozen_interaction_universe.to_dict()
     )
+    assert tuple(
+        model.receiver_family_artifact.receptor_gate_manifest_id
+        for model in changed_application.receiver_family_models
+    ) == tuple(
+        model.receiver_family_artifact.receptor_gate_manifest_id
+        for model in unchanged.receiver_family_models
+    )
+    assert tuple(
+        model.training_artifact_id
+        for model in changed_application.receiver_family_models
+    ) == tuple(model.training_artifact_id for model in unchanged.receiver_family_models)
+    assert tuple(
+        model.downstream_functional.downstream_functional_id
+        for model in changed_application.receiver_family_models
+        if model.downstream_functional is not None
+    ) == tuple(
+        model.downstream_functional.downstream_functional_id
+        for model in unchanged.receiver_family_models
+        if model.downstream_functional is not None
+    )
     first_rows = first.oof_sender_assignments.loc[
         first.oof_sender_assignments["fold_id"].eq(target_fold.fold_id)
     ].reset_index(drop=True)
@@ -313,6 +355,176 @@ def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() 
         second.oof_sender_assignments["fold_id"].eq(target_fold.fold_id)
     ].reset_index(drop=True)
     assert not second_rows.equals(first_rows)
+
+
+def test_heldout_receiver_target_poison_changes_apply_not_training_models() -> None:
+    original = _adata()
+    first = _run(original)
+    target_fold = first.fold_plan.folds[0]
+    poisoned = original.copy()
+    receiver_mask = (
+        poisoned.obs["subject_id"].astype(str).isin(target_fold.test_subject_ids)
+        & poisoned.obs["cell_type"].astype(str).eq("Receiver")
+    ).to_numpy()
+    counts = sparse.csr_matrix(poisoned.layers["counts"]).tolil(copy=True)
+    counts[receiver_mask, 4] = 10_000
+    poisoned.layers["counts"] = counts.tocsr()
+
+    second = _run(poisoned)
+    before = {fold.fold_id: fold for fold in first.folds}[target_fold.fold_id]
+    after = {fold.fold_id: fold for fold in second.folds}[target_fold.fold_id]
+
+    assert tuple(
+        model.training_artifact_id for model in before.receiver_family_models
+    ) == (tuple(model.training_artifact_id for model in after.receiver_family_models))
+    before_scores = [
+        application.downstream_application.receiver_program_score
+        for application in before.receiver_family_applications
+        if application.downstream_application is not None
+    ]
+    after_scores = [
+        application.downstream_application.receiver_program_score
+        for application in after.receiver_family_applications
+        if application.downstream_application is not None
+    ]
+    assert before_scores and len(before_scores) == len(after_scores)
+    assert any(
+        not np.array_equal(left, right)
+        for left, right in zip(before_scores, after_scores, strict=True)
+    )
+
+
+def test_receiver_family_heldout_application_cannot_call_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_apply = crossfit_module.apply_receiver_family_scoring_artifact
+
+    def inspected_apply(*args: object, **kwargs: object):
+        def forbidden_fit(*inner_args: object, **inner_kwargs: object) -> None:
+            raise AssertionError("receiver-family heldout application called fit")
+
+        with monkeypatch.context() as application_scope:
+            application_scope.setattr(
+                receiver_scoring_module,
+                "fit_downstream_functional",
+                forbidden_fit,
+            )
+            application_scope.setattr(
+                crossfit_module,
+                "fit_receiver_family_training_artifacts",
+                forbidden_fit,
+            )
+            return original_apply(*args, **kwargs)
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "apply_receiver_family_scoring_artifact",
+        inspected_apply,
+    )
+
+    result = _run(_adata())
+
+    assert all(fold.receiver_family_applications for fold in result.folds)
+
+
+def test_crossfit_batches_receiver_family_training_once_per_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_fit = crossfit_module.fit_receiver_family_training_artifacts
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def counted_fit(*args: object, **kwargs: object):
+        calls.append((str(kwargs["fold_id"]), tuple(kwargs["receivers"])))
+        return original_fit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "fit_receiver_family_training_artifacts",
+        counted_fit,
+    )
+
+    result = _run(_adata())
+
+    assert len(calls) == len(result.fold_plan.folds)
+    assert tuple(fold_id for fold_id, _ in calls) == tuple(
+        fold.fold_id for fold in result.fold_plan.folds
+    )
+    assert all(receivers == ("Receiver", "Sender") for _, receivers in calls)
+
+
+def test_missing_heldout_receiver_is_preserved_as_not_estimable() -> None:
+    original = _adata()
+    first = _run(original)
+    target_fold = first.fold_plan.folds[0]
+    poisoned_subject = target_fold.test_subject_ids[0]
+    target_rows = (
+        original.obs["subject_id"].astype(str).eq(poisoned_subject)
+        & original.obs["cell_type"].astype(str).eq("Receiver")
+    ).to_numpy()
+    missing_receiver = original[~target_rows].copy()
+    extra_rows: list[list[int]] = []
+    extra_obs: list[dict[str, str]] = []
+    for subject in (poisoned_subject,):
+        for condition in ("control", "stim"):
+            extra_rows.extend([[80, 0, 4, 0, 0, 0]] * 3)
+            extra_obs.append(
+                {
+                    "sample_id": f"sample-{subject}-{condition}",
+                    "subject_id": subject,
+                    "cell_type": "Sender",
+                    "condition": condition,
+                }
+            )
+            extra_obs.extend([extra_obs[-1].copy(), extra_obs[-1].copy()])
+    expanded_counts = sparse.vstack(
+        [
+            sparse.csr_matrix(missing_receiver.layers["counts"]),
+            sparse.csr_matrix(extra_rows, dtype=np.int64),
+        ],
+        format="csr",
+    )
+    expanded_obs = pd.concat(
+        [
+            missing_receiver.obs,
+            pd.DataFrame(
+                extra_obs,
+                index=[f"extra-sender-{index}" for index in range(len(extra_obs))],
+            ),
+        ]
+    )
+    missing_receiver = AnnData(
+        X=sparse.csr_matrix(expanded_counts.shape, dtype=np.float64),
+        obs=expanded_obs,
+        var=missing_receiver.var.copy(),
+    )
+    missing_receiver.layers["counts"] = expanded_counts
+    assert target_rows.any()
+    second = run_subject_crossfit(
+        missing_receiver,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+    )
+    target = {fold.fold_id: fold for fold in second.folds}[target_fold.fold_id]
+    pairs = tuple(
+        zip(
+            target.receiver_family_models,
+            target.receiver_family_applications,
+            strict=True,
+        )
+    )
+
+    assert any(
+        model.receiver_family_artifact.receiver == "Receiver"
+        and application.application_status == "frozen_application_partial_not_estimable"
+        and application.reason_code
+        == "heldout_receiver_expression_incomplete_subject_coverage"
+        for model, application in pairs
+    )
+    assert {model.receiver_family_artifact.receiver for model, _ in pairs} == set(
+        target.training.cell_type_ids
+    )
 
 
 def test_normalized_only_input_cannot_claim_stage_oof_verification() -> None:
@@ -336,3 +548,52 @@ def test_normalized_only_input_cannot_claim_stage_oof_verification() -> None:
             _prior(),
             spec=_spec(),
         )
+
+
+def test_heldout_covariate_poison_does_not_change_fold_encoder_identity() -> None:
+    original = _adata()
+    preliminary = _run(original)
+    site_by_subject: dict[str, str] = {}
+    for fold in preliminary.fold_plan.folds:
+        for index, subject in enumerate(fold.test_subject_ids):
+            site_by_subject[subject] = ("a", "b")[index]
+    original.obs["site"] = original.obs["subject_id"].astype(str).map(site_by_subject)
+    config = CrychicConfig(
+        context_keys=("condition",),
+        counts_layer="counts",
+        covariates=("site",),
+        design="~ site + condition",
+        random_seed=19,
+    )
+    first = run_subject_crossfit(
+        original,
+        config,
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+    )
+    target_fold = first.fold_plan.folds[0]
+    poisoned = original.copy()
+    poisoned_subject = target_fold.test_subject_ids[0]
+    poisoned.obs.loc[
+        poisoned.obs["subject_id"].astype(str).eq(poisoned_subject), "site"
+    ] = "test-only-level"
+
+    second = run_subject_crossfit(
+        poisoned,
+        config,
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+    )
+    first_by_fold = {fold.fold_id: fold for fold in first.folds}
+    second_by_fold = {fold.fold_id: fold for fold in second.folds}
+    before = first_by_fold[target_fold.fold_id]
+    after = second_by_fold[target_fold.fold_id]
+
+    assert before.design_encoders[0].encoder_id == after.design_encoders[0].encoder_id
+    assert before.design_applications[0].status == "observed"
+    assert after.design_applications[0].status == "not_estimable"
+    assert after.design_applications[0].reason_code == "unseen_heldout_level:site"
+    selected = second.oof_coverage["fold_id"].eq(target_fold.fold_id)
+    assert set(second.oof_coverage.loc[selected, "design_status"]) == {"not_estimable"}

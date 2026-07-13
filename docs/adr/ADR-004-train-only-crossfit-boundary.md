@@ -4,7 +4,9 @@
 - Date: 2026-07-13
 - Implementation status: Partial; the public orchestrator now verifies
   subject-blocked OOF coverage for the frozen interaction-universe and
-  contrast-common sender stages, but downstream/common scoring stages remain
+  contrast-common sender stages. It also preserves train-only frozen design,
+  receptor-family and reference-program artifacts, but these have no separate
+  exact-coverage audit and incremental downstream/common scoring remain absent
 
 ## Context
 
@@ -134,15 +136,32 @@ The partial implementation now includes a public `run_subject_crossfit` entry
 point. It derives an estimability-aware fold plan from declared sample metadata,
 creates physical sanitized train/test copies, calls the producer-owned
 `fit_training_artifacts` and `apply_training_artifacts` primitives per fold,
-and audits exact subject/fold/contrast/context coverage. Held-out sender rows
+and audits exact subject/fold/contrast/context coverage for availability and the
+common-sender stage. The same physical boundary now fits a frozen nuisance
+encoder from the complete declared formula, condition-blind hard receptor
+gates, strict complete-link/medoid family
+bases, and a reference-arm receiver-program transform. Held-out application
+uses the frozen feature order and transform; subject overlap, feature drift,
+unseen nuisance levels and incomplete receiver coverage fail closed. These
+receiver artifacts are retained in the fold manifest but do not yet have a
+separate exact-coverage table. Held-out sender rows
 retain their low-level `partial_not_oof` assignment mode; the aggregate result
 separately reports `verified_train_only_oof_partial_pipeline` and
 `is_oof_certified=false`. This distinction verifies the implemented stages
 without certifying the complete method.
 
-A fixed sample transform, frozen design encoder, receptor gate, response and
-precision stages, family-first attribution, incremental downstream model, and
-common scoring manifest still remain. Until that complete path exists and
-passes every poison test above, incremental downstream evidence remains
-`not_estimable` in the public baseline workflow and no default-method switch is
-eligible. The legacy sender assignment remains unchanged and context-specific.
+Response precision, fitted family attribution/tuning, incremental downstream
+gain, a common scoring manifest, and exact receiver-stage coverage still remain.
+Until that complete path exists and passes every poison test above, incremental
+downstream evidence remains `not_estimable` in the public baseline workflow and
+no default-method switch is eligible. The legacy sender assignment remains
+unchanged and context-specific.
+
+The nuisance encoder reparameterizes the full training Patsy matrix as
+`[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast
+direction satisfies `l^T q = 1`. Consequently, the final regression coefficient
+is exactly the declared equal-context EMM contrast even for unbalanced sample
+counts and local contrasts over a larger context universe. Training sample
+mappings, full design matrices, formula/type registries and input key schema
+are hashed into the producer-owned identity. Held-out application uses the
+training `DesignInfo` and fixed reparameterization only.
