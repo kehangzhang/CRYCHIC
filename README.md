@@ -57,8 +57,16 @@ preserving the exploratory v0.1 behavior:
   receptor, response, family, downstream, and common-scoring stages remain to
   be connected before certified cross-fitting;
 - benchmark utilities now provide frozen-universe RBO, weighted Kendall,
-  top-k curves, rank intervals, and stable-tier assignments. They are not yet
-  connected to the real-data report campaign.
+  top-k curves, rank intervals, and stable-tier assignments. The v02 real-data
+  finalizer/report integration requires all frozen items and fixed receiver
+  strata in every subject resample. No real-data rank agreement or stable-tier
+  row met that strict contract, so these endpoints remain explicit `NE` rather
+  than using a favorable shared-item intersection;
+- the uncapped H-common cSCC/MS campaign is complete. CRYCHIC coverage increased
+  modestly to `0.3118` and `0.5150`, but its receiver-row-union views contain
+  different receiver-specific functionals. The earlier global stability values
+  are therefore withdrawn from the valid primary comparison and v02 fails
+  closed with `receiver_child_functionals_not_globally_comparable`.
 
 `EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
 candidate. It allocates bounded model-level explained gain across driver
@@ -161,6 +169,13 @@ uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specifici
   --output-dir benchmark_work/g1_5_v2/independent_holdout
 uv run --extra resources --extra benchmark --extra plotting \
   python benchmarks/report/generate_canonical_report.py --workspace-root ..
+uv run python -m benchmarks.metrics.finalize_multicondition \
+  --spec benchmarks/configs/multicondition_v02_finalize.json \
+  --output-dir ../benchmark_work/multicondition_v02/final --overwrite
+uv run python -m benchmarks.report.generate_multicondition_report \
+  --final-dir ../benchmark_work/multicondition_v02/final \
+  --output-dir reports/multicondition_v02 \
+  --report-id multicondition_v02
 ```
 
 ## Quality Checks
@@ -177,4 +192,5 @@ uv run --extra dev python -m build
 - [Suggestion 1 implementation status](docs/methods/suggestion-1-implementation-status.md)
 - [Train-only cross-fit boundary decision](docs/adr/ADR-004-train-only-crossfit-boundary.md)
 - [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
+- [Multi-condition v02 benchmark summary](benchmarks/results/multicondition_v02_summary.json)
 - [Repository development instructions](AGENTS.md)

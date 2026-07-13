@@ -1,0 +1,173 @@
+{
+  "schema_version": "crychic-multicondition-v02-result-summary-v1",
+  "generated_on": "2026-07-13",
+  "code_revision": "a205385cb31c734c2344ce0b2ad7f984a038b04e",
+  "scope": "frozen_multi_condition_benchmark_with_fail_closed_receiver_functionals",
+  "superiority_claim": false,
+  "primary_resource_arm": "H-common_638_interactions",
+  "primary_result": {
+    "crychic_real_data_global_endpoint_status": "not_estimable",
+    "reason_code": "receiver_child_functionals_not_globally_comparable",
+    "interpretation": "Receiver-specific child functionals were row-unioned for adapter compatibility; they are not one common functional and cannot support a global cross-receiver contrast."
+  },
+  "datasets": [
+    {
+      "dataset": "GSE144236_Ji_cSCC",
+      "design": "paired",
+      "subjects": 10,
+      "crychic_comparison_coverage_fraction": 0.3117650822084319,
+      "previous_coverage_fraction": 0.3033918975113556,
+      "primary_endpoint": {
+        "crychic": {
+          "status": "not_estimable",
+          "reason_code": "receiver_child_functionals_not_globally_comparable"
+        },
+        "cellchat": {
+          "estimate": 0.2038456496,
+          "ci_lower": 0.1133338086,
+          "ci_upper": 0.2919896534,
+          "status": "observed"
+        },
+        "cellphonedb": {
+          "estimate": 0.1735601752,
+          "ci_lower": 0.1076292557,
+          "ci_upper": 0.2373886985,
+          "status": "observed"
+        },
+        "liana_rank_aggregate": {
+          "status": "not_estimable",
+          "reason_code": "fewer_than_two_estimable_subject_folds"
+        },
+        "nichenet_prior_activity": {
+          "status": "not_estimable",
+          "reason_code": "track_b_ligand_target_program_not_lr_stlr_comparable"
+        }
+      },
+      "receiver_scoped_supportive_biology": {
+        "rank_scope": "within_receiver_macro",
+        "strong_components": 0,
+        "directional_components": 2,
+        "opposite_components": 0,
+        "global_primary_claim_allowed": false
+      }
+    },
+    {
+      "dataset": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+      "design": "independent_equal_subject",
+      "subjects": 11,
+      "crychic_comparison_coverage_fraction": 0.5150112233445566,
+      "previous_coverage_fraction": 0.50815788794716,
+      "primary_endpoint": {
+        "crychic": {
+          "status": "not_estimable",
+          "reason_code": "receiver_child_functionals_not_globally_comparable"
+        },
+        "cellchat": {
+          "estimate": 0.2849242548,
+          "ci_lower": -0.0311892806,
+          "ci_upper": 0.4836139181,
+          "status": "observed"
+        },
+        "cellphonedb": {
+          "estimate": 0.3325216984,
+          "ci_lower": 0.0354037183,
+          "ci_upper": 0.4716726318,
+          "status": "observed"
+        },
+        "liana_rank_aggregate": {
+          "estimate": 0.3294431804,
+          "ci_lower": 0.1409161509,
+          "ci_upper": 0.4659087942,
+          "status": "observed"
+        },
+        "nichenet_prior_activity": {
+          "status": "not_estimable",
+          "reason_code": "track_b_ligand_target_program_not_lr_stlr_comparable"
+        }
+      },
+      "receiver_scoped_supportive_biology": {
+        "rank_scope": "within_receiver_macro",
+        "strong_components": 4,
+        "directional_components": 4,
+        "opposite_components": 0,
+        "supported_observations": [
+          "control_oligodendrocyte_network"
+        ],
+        "global_primary_claim_allowed": false
+      }
+    },
+    {
+      "dataset": "Kuppe_MI_Zenodo6578047",
+      "status": "not_estimable",
+      "reason_code": "mixed_paired_unpaired_multi_region_design_unsupported"
+    },
+    {
+      "dataset": "GSE244992_Panc02_PancVAX",
+      "status": "not_estimable",
+      "reason_code": "pooled_nonindependent_objects_no_subject_id"
+    }
+  ],
+  "ranking_stability": {
+    "split_repeats": 200,
+    "subject_bootstraps": 2000,
+    "observed_real_data_agreement_rows": 0,
+    "stable_top_k_items": 0,
+    "missing_policy": "all_frozen_items_and_fixed_receiver_strata_required",
+    "main_reason_codes": [
+      "insufficient_estimable_split_repeat_fraction",
+      "insufficient_estimable_bootstrap_fraction",
+      "receiver_child_functionals_not_globally_comparable",
+      "lr_family_mapping_not_available_in_score_contract"
+    ]
+  },
+  "performance": {
+    "cscc": {
+      "source_pipeline_total_seconds": 7023.141254775226,
+      "adapter_readback_seconds": 211.994165,
+      "peak_rss_mb": null,
+      "caveat": "The source total includes the historical fit and legacy failed readback attempt; it is not an isolated core-fit time."
+    },
+    "ms": {
+      "source_pipeline_total_seconds": 1031.5325923431665,
+      "adapter_readback_seconds": 80.814222,
+      "externally_observed_peak_rss_mib": 8401.3867
+    },
+    "adapter_readback_counted_as_method_runtime": false
+  },
+  "simulation": {
+    "track_a_active_differential_auroc": 0.9772727272727272,
+    "track_a_active_differential_average_precision": 0.5,
+    "known_cxcl10_cxcr3_rank": 2,
+    "g1_5_independent_holdout_active_minus_ligand_only": 0.34176133850023527,
+    "g1_5_holdout_ci_lower": 0.33553812697652546,
+    "g1_5_holdout_ci_upper": 0.34798455002394507,
+    "default_switch_allowed": false
+  },
+  "counts": {
+    "adapter_runs": 45,
+    "primary_endpoint_rows": 50,
+    "ranking_agreement_rows": 152,
+    "ranking_top_k_curve_rows": 3325,
+    "ranking_interval_rows": 4786,
+    "ranking_tier_rows": 4786,
+    "iteration_rows": 21,
+    "final_qa_passing_tests": 613,
+    "source_coverage_percent": 82,
+    "coverage_gate_percent": 85,
+    "coverage_gate_passed": false
+  },
+  "artifacts": {
+    "finalization_manifest_sha256": "3ca59f37a551b2af83d3fdf4b306219375b5bd63e8f90dd708565befa665d523",
+    "finalization_checksums_sha256": "d2fa27e2d84d2e46cfc19667187cd9236fc1a03eb1637bd5be16c1e14f2ab6d1",
+    "report_pdf_sha256": "92d95b0da4fe11a1a162bec3b7cdf1f1d674b343c8d3905442df009d077a8d1f",
+    "report_manifest_sha256": "fa3dabfbe62b15ef236b7ddec3bc35e858a66f1710b9f6126c2e2aa16e8d3411",
+    "report_id": "multicondition_v02"
+  },
+  "guardrails": {
+    "real_data_edge_auroc_reported": false,
+    "receiver_child_functionals_ranked_globally": false,
+    "ranking_missing_items_imputed_as_zero": false,
+    "supportive_biology_treated_as_edge_ground_truth": false,
+    "nichenet_track_b_mixed_with_lr_primary": false
+  }
+}

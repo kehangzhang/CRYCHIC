@@ -1,8 +1,8 @@
 # Suggestion 1 implementation status
 
 - Audit date: 2026-07-13
-- Starting audit baseline: `5e8b4b8`; this document also records the changes
-  delivered in its own implementation commit
+- Starting audit baseline: `5e8b4b8`; current evidence is frozen through
+  `a205385` and the multi-condition v02 report
 - Scope: implementation evidence, not a biological or superiority claim
 
 This matrix records which recommendations are present in the public workflow,
@@ -28,12 +28,12 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | Train/apply/cross-fit public workflow | Partial | Producer-owned sanitized train/apply APIs now fit and apply the frozen interaction universe and pass scope/poison tests, while explicitly remaining `partial_not_oof`. All later learned stages and the cross-fit orchestrator remain. |
 | Exact-zero complex soft-min | Implemented | Zero and missingness behavior are covered by tests. |
 | Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, and cap conflicts are tested. |
-| H-common data-driven cap ban | Partial | v0.2 specs reject caps; no v0.2 real-data run exists yet. |
+| H-common data-driven cap ban | Implemented | v0.2 specs reject caps and the cSCC/MS H-common real-data runs completed without a cap. The harmonized resource has 638 interactions, below the former cap of 800, so this run validates the uncapped path but does not demonstrate coverage expansion from removing the cap. |
 | Coverage-risk hierarchy | Partial | Nine-level candidate ledger and monotone threshold contract exist; no real threshold campaign has run. |
 | G1.5 multi-edge, multi-seed truth | Implemented | 50-seed development and 200-seed holdout both pass all frozen gates. |
 | G1.5 through public workflow | Missing | The simulation invokes candidate primitives directly, not the public cross-fit path. |
-| RBO, weighted Kendall, top-k curve, rank interval, stable tier | Partial | Frozen-universe APIs and the multi-condition finalizer/report integration are implemented with fixed `p=0.9`, Kendall power `1`, 200 split repeats, 2,000 subject bootstraps, 95% intervals, 0.80 selection threshold, and seed `20260712`. LR, sender, and explicitly named sender-receiver-pair rankings are supported. A true LR equivalence/driver-family identifier is absent from the score contract, so `lr_family` remains explicit `NE`; real cSCC/MS rank artifacts still require a new finalizer run. |
-| cSCC influence diagnostics | Partial | Paired LOSO, bootstrap, and influence tables exist; per-edge/family rank intervals and missingness trajectories do not. |
+| RBO, weighted Kendall, top-k curve, rank interval, stable tier | Partial | Frozen-universe APIs and the v02 finalizer/report run are complete with fixed `p=0.9`, Kendall power `1`, 200 split repeats, 2,000 subject bootstraps, 95% intervals, 0.80 top-k threshold, and seed `20260712`. All frozen members and receiver strata are required in every repeat. The real-data agreement rows are consequently all `NE`, rather than being inflated by shared-item intersection. A true LR equivalence/driver-family identifier remains absent, so `lr_family` is also explicit `NE`. |
+| cSCC influence diagnostics | Partial | Paired LOSO, bootstrap, rank intervals, availability frequency, and stable-tier tables now exist. Strict frozen-member propagation makes the new rank endpoints `NE`; explicit per-edge missingness trajectories and family identifiers remain absent. |
 | Persisted edge evidence | Partial | Optional versioned Parquet persistence, manifest linkage, semantic cross-table validation, lazy reads, and backward compatibility are implemented. Real cSCC opposite-edge root-cause analysis remains. |
 | Signed/reverse response | Partial | Directional semantics are implemented but not connected to the workflow. |
 | Track-B signed macro-AUPRC | Missing | Native NicheNet and signed target-program evaluation remain `not_estimable`. |
@@ -52,18 +52,29 @@ equal-edge active-minus-ligand-only margin is `0.341761` with 95% interval
 `[0.335538, 0.347985]`. This supports candidate mechanism specificity only;
 it does not establish real-data superiority.
 
-The completed v0.1 real-data benchmark is an exploratory, in-sample baseline.
-Its cSCC CRYCHIC stability estimate is `0.2986` with interval
-`[-0.1475, 0.7237]`; its MS CA-versus-control estimate is `0.7188` with
-interval `[0.6174, 0.7690]`. MS is a two-group analysis, and neither result is
-a candidate cross-fit noninferiority result.
+The v02 no-cap real-data campaign completed for cSCC and MS. CRYCHIC comparison
+coverage is `0.3118` and `0.5150`, respectively, versus `0.3034` and `0.5082`
+in v01. This small change reflects current scoring/status handling and receiver
+row-union output, not an expanded H-common interaction universe.
+
+The v01 cSCC and MS stability estimates (`0.2986` and `0.7188`) are now retained
+only as historical context. Independent review established that their adapter
+views row-unioned receiver-specific scoring functionals, so a global rank
+contrast was not scientifically comparable. The v02 primary, LOSO, concordance,
+rank-stability, and report-level biology endpoints therefore fail closed with
+`receiver_child_functionals_not_globally_comparable`. Receiver-scoped supportive
+diagnostics remain separate: cSCC has two directional and no opposite locked
+components; MS has four strong, four directional, and no opposite components,
+including support for the locked control oligodendrocyte network. These are
+silver-standard diagnostics, not a global primary or edge-truth claim.
 
 ## Execution order
 
 1. Complete the remaining ADR-004 stages and rerun G1.5 through the public workflow.
 2. Complete exact-equivalence sparse/block performance work.
-3. Freeze and run cSCC development followed by one locked MS holdout with the
-   no-cap candidate and legacy methods.
+3. Replace receiver row-union views with a true contrast-common OOF functional,
+   then rerun cSCC development and one locked MS holdout for a valid CRYCHIC
+   primary comparison.
 4. Persist edge evidence and finish opposite/rank diagnostics.
 5. Add native signed Track-B evaluation, then D-common and repeated-measures
    backends.
