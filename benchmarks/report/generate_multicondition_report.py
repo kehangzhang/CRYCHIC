@@ -34,7 +34,6 @@ import yaml  # type: ignore[import-untyped]
 from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 
-REPORT_ID = "multicondition_v01"
 REPORT_SCHEMA_VERSION = "multicondition-report.v1"
 INPUT_SCHEMA_VERSION = "multicondition-report-inputs.v1"
 
@@ -3023,6 +3022,7 @@ def generate(
     *,
     input_spec: Path | None = None,
     render_pdf: bool = True,
+    report_id: str | None = None,
 ) -> None:
     """Generate all report artifacts from a frozen multi-condition result root."""
 
@@ -3039,6 +3039,9 @@ def generate(
     output = (
         output_dir.resolve() if output_dir.is_absolute() else repo_root / output_dir
     )
+    resolved_report_id = (report_id or output.name).strip()
+    if not resolved_report_id:
+        raise ValueError("report_id must not be empty")
     figures_dir = output / "figures"
     source_dir = output / "source_data"
     output.mkdir(parents=True, exist_ok=True)
@@ -3250,7 +3253,7 @@ def generate(
     artifacts = _artifact_records(output, artifact_paths)
     payload = {
         "schema_version": REPORT_SCHEMA_VERSION,
-        "report_id": REPORT_ID,
+        "report_id": resolved_report_id,
         "generated_at": generated_at,
         "input_schema_version": INPUT_SCHEMA_VERSION,
         "environment": environment,
@@ -3386,6 +3389,11 @@ def main() -> None:
         help="ISO-8601 report timestamp; defaults to current local time",
     )
     parser.add_argument(
+        "--report-id",
+        default=None,
+        help="Stable report identifier; defaults to the output directory name",
+    )
+    parser.add_argument(
         "--skip-pdf",
         action="store_true",
         help="Development-only: do not render REPORT.pdf",
@@ -3400,6 +3408,7 @@ def main() -> None:
         generated_at,
         input_spec=args.input_spec,
         render_pdf=not args.skip_pdf,
+        report_id=args.report_id,
     )
 
 

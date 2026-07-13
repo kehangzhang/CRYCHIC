@@ -515,6 +515,7 @@ def test_generate_multicondition_report_from_frozen_fixture(tmp_path: Path) -> N
     assert "data:image/png;base64," in report_html
     assert "Real-data AUROC/AUPRC are not calculated" in report_html
     manifest = json.loads((output / "report_manifest.json").read_text())
+    assert manifest["report_id"] == "report"
     assert not manifest["guardrails"]["real_data_edge_auroc_reported"]
     assert not manifest["guardrails"]["preregistered_track_b_primary_reported"]
     assert manifest["endpoint_status_counts"]["loso_not_estimable"] == 1
