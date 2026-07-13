@@ -1219,6 +1219,12 @@ def _biology_source(
             "source_biology_file": _text(
                 table, ("source_biology_file",), ""
             ),
+            "rank_scope": _text(
+                table, ("rank_scope",), "annotation_only_unbound_rank_scope"
+            ),
+            "evidence_rank_scope": _text(
+                table, ("evidence_rank_scope",), "not_recorded"
+            ),
             "n_components_estimable": _numeric(
                 table, ("n_components_estimable",)
             ),
@@ -2743,7 +2749,7 @@ supportive silver standard, not comprehensive edge truth and not a basis for
 real-data AUROC. Cells with reverse-direction components are annotated with the
 number of `opp` components, including mixed partial-support rows.
 
-{_markdown_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "observed_direction", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
+{_markdown_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "rank_scope", "evidence_rank_scope", "support_status", "observed_direction", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
 
 ## Synthetic and perturbation truth
 
@@ -2935,7 +2941,7 @@ target-program macro-AUPRC primary endpoint was not completed and remains
 <h2>Primary subject-level endpoint</h2>
 {_html_table(loso, ("dataset", "method", "resource_mode", "contrast", "estimate", "ci_lower", "ci_upper", "n_subjects_estimable", "status", "reason_code"))}
 <h2>Supportive biology table</h2>
-{_html_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
+{_html_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "rank_scope", "evidence_rank_scope", "support_status", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
 <h2>Simulation truth table</h2>
 {_html_table(simulation, ("dataset", "scenario", "method", "resource_mode", "estimand", "record_source", "truth_scope", "metric", "estimate", "status", "reason_code"))}
 <h2>Iteration comparison</h2>

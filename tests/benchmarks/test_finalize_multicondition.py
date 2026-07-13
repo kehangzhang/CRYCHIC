@@ -605,6 +605,25 @@ def test_common_functional_false_fails_closed_across_rank_endpoints(
         ]
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    biology_path = tmp_path / "receiver_scoped_biology.tsv"
+    pd.DataFrame(
+        [
+            {
+                "dataset": "real_unpaired",
+                "observation_id": "known_program",
+                "method": "m1",
+                "resource_mode": "H-common",
+                "rank_scope": "within_receiver_macro",
+                "support_status": "partial",
+                "observed_direction": "Case_up",
+                "evidence_note": "receiver-scoped diagnostic",
+                "status": "observed",
+                "reason_code": "supportive_silver_standard",
+                "source_biology_file": "receiver_scoped_biology.tsv",
+            }
+        ]
+    ).to_csv(biology_path, sep="\t", index=False)
+    payload["biology_support"] = biology_path.name
     spec.write_text(json.dumps(payload), encoding="utf-8")
 
     output = tmp_path / "rank_scope_ne"
@@ -644,6 +663,12 @@ def test_common_functional_false_fails_closed_across_rank_endpoints(
     ]
     assert set(selected_biology["support_status"]) == {"not_estimable"}
     assert set(selected_biology["reason_code"]) == {reason}
+    assert set(selected_biology["evidence_rank_scope"]) == {
+        "within_receiver_macro"
+    }
+    assert set(selected_biology["source_biology_file"]) == {
+        "receiver_scoped_biology.tsv"
+    }
 
     score_index = pd.read_csv(
         output / "score_tables/score_table_index.tsv", sep="\t"

@@ -23,6 +23,7 @@ def _row(*, method: str, support_status: str = "supported") -> dict[str, object]
         "resource_mode": "native",
         "score_semantics": "strength",
         "universe_id": "universe_a",
+        "rank_scope": "global_common_functional",
     }
     return identity | {
         "support_status": support_status,
@@ -91,3 +92,13 @@ def test_read_source_list_resolves_relative_paths(tmp_path: Path) -> None:
 
     assert read_source_list(source_list) == (source.resolve(),)
     assert set(BIOLOGY_IDENTITY_COLUMNS).issubset(_row(method="m1"))
+
+
+def test_merge_normalizes_legacy_tables_to_global_rank_scope(tmp_path: Path) -> None:
+    legacy_row = _row(method="m1")
+    del legacy_row["rank_scope"]
+    source = _write(tmp_path / "legacy.tsv", [legacy_row])
+
+    merged = merge_biology_support([source], tmp_path / "merged.tsv")
+
+    assert merged["rank_scope"].tolist() == ["global_common_functional"]

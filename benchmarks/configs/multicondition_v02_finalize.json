@@ -53,7 +53,7 @@
     "native_sensitivity_index_records": 6,
     "native_coverage_summary_sha256": "e20e32f33d7aef20c746de84f63fa2f0e94f07da0e311762b64662a5d49a3b72",
     "native_coverage_summary_records": 6,
-    "biology_support_v02_sha256": "2b6ac5314de193e9714bcc1150fdf7f7ade59f388466110b113137a9abff6b8c",
+    "biology_support_v02_sha256": "6038e1c5dc94560005505b3ed8d23707a6246a937141d478fe334d464d38b4db",
     "biology_support_v02_records": 72,
     "cscc_compact_manifest_sha256": "e9891b127fb2b562674a62a2a188d936c96d3af8675a8580765295e358f8a2ec",
     "cscc_source_pipeline_manifest_sha256": "f9059dd23120a6e1461ee1d5ff6d5e3ea39c9820da6214a6c21802c29669a734",
@@ -104,6 +104,7 @@
           "manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc_compact/manifest.json",
           "long_table": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc_compact/interactions_long.parquet",
           "arm_role": "primary_hcommon",
+          "rank_scope": "within_receiver_macro",
           "performance_role": "adapter_readback",
           "performance_override": {
             "source_manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc/manifest.json",
@@ -178,6 +179,7 @@
           "manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms_compact/manifest.json",
           "long_table": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms_compact/interactions_long.parquet",
           "arm_role": "primary_hcommon",
+          "rank_scope": "within_receiver_macro",
           "performance_role": "adapter_readback",
           "performance_override": {
             "source_manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms/manifest.json",

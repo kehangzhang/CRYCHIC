@@ -1334,6 +1334,12 @@ def _biology_support_table(
             raise ValueError("biology support evidence contains duplicate rows")
         evidence = evidence.copy(deep=True)
         evidence["dataset"] = evidence["dataset"].astype(str).replace(aliases)
+        if "rank_scope" in evidence:
+            evidence = evidence.rename(
+                columns={"rank_scope": "evidence_rank_scope"}
+            )
+        else:
+            evidence["evidence_rank_scope"] = "global_common_functional"
         if evidence.duplicated(key).any():
             raise ValueError(
                 "supportive biology aliases create duplicate evidence rows"
@@ -1381,12 +1387,19 @@ def _biology_support_table(
     grid = pd.concat(grids, ignore_index=True)
     result = grid.merge(evidence, on=key, how="left", validate="one_to_one")
     result = result.merge(
-        rank_scope_policy,
+        rank_scope_policy.rename(columns={"rank_scope": "benchmark_rank_scope"}),
         on=variant_columns,
         how="left",
         validate="many_to_one",
     )
-    result["rank_scope"] = result["rank_scope"].fillna(
+    if "evidence_rank_scope" not in result:
+        result["evidence_rank_scope"] = "not_recorded"
+    result["evidence_rank_scope"] = result["evidence_rank_scope"].fillna(
+        "not_recorded"
+    )
+    result["rank_scope"] = result["benchmark_rank_scope"].fillna(
+        result["evidence_rank_scope"].replace("not_recorded", pd.NA)
+    ).fillna(
         "annotation_only_unbound_rank_scope"
     )
     defaults: dict[str, str] = {
@@ -1410,6 +1423,20 @@ def _biology_support_table(
     )
     result.loc[invalid_scope, "evidence_note"] = (
         "supportive_biology_evidence_rejected_by_rank_scope_guard"
+    )
+    scope_mismatch = (
+        result["benchmark_rank_scope"].notna()
+        & result["evidence_rank_scope"].ne("not_recorded")
+        & result["benchmark_rank_scope"].ne(result["evidence_rank_scope"])
+        & ~invalid_scope
+    )
+    result.loc[scope_mismatch, "support_status"] = "not_estimable"
+    result.loc[scope_mismatch, "status"] = "not_estimable"
+    result.loc[scope_mismatch, "reason_code"] = (
+        "supportive_biology_rank_scope_mismatch"
+    )
+    result.loc[scope_mismatch, "evidence_note"] = (
+        "supportive_biology_evidence_scope_does_not_match_benchmark_estimand"
     )
     return result
 

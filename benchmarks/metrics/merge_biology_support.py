@@ -22,6 +22,7 @@ BIOLOGY_IDENTITY_COLUMNS = (
     "resource_mode",
     "score_semantics",
     "universe_id",
+    "rank_scope",
 )
 
 
@@ -64,6 +65,13 @@ def merge_biology_support(
         if not source.is_file():
             raise FileNotFoundError(source)
         table = pd.read_csv(source, sep="\t")
+        if "rank_scope" not in table:
+            insertion = (
+                table.columns.get_loc("evidence_class")
+                if "evidence_class" in table
+                else len(table.columns)
+            )
+            table.insert(insertion, "rank_scope", "global_common_functional")
         columns = tuple(map(str, table.columns))
         if expected_columns is None:
             expected_columns = columns
