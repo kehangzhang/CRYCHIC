@@ -27,6 +27,10 @@ from .downstream import (
     IncrementalDownstreamFunctional,
 )
 from .integration import pair_softmin
+from .receiver_program import (
+    ReceiverProgramApplication,
+    ReceiverProgramTrainingArtifact,
+)
 
 FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS = (
     "sample_id",
@@ -321,6 +325,7 @@ class FamilyCommonScoringFunctional:
     """One producer-owned scoring function for a ContrastSpec by fold."""
 
     receiver_family: ReceiverFamilyTrainingArtifact
+    receiver_program_artifact: ReceiverProgramTrainingArtifact | None
     incremental_functional: IncrementalDownstreamFunctional | None
     sender_functional: ContrastCommonSenderFunctional
     receiver: str
@@ -337,6 +342,7 @@ class FamilyCommonScoringFunctional:
     tuning_manifest_id: str
     selected_penalty_id: str | None
     autonomous_program_resource_id: str | None
+    receiver_program_reason_code: str | None
     incremental_reason_code: str | None
     family_selection_threshold: float
     softmin_power: float
@@ -381,6 +387,12 @@ class FamilyCommonScoringFunctional:
             "interactions": [item.to_dict() for item in self.interactions],
             "member_allocation_method": _MEMBER_ALLOCATION_METHOD,
             "receiver": self.receiver,
+            "receiver_program_training_artifact_id": (
+                None
+                if self.receiver_program_artifact is None
+                else self.receiver_program_artifact.training_artifact_id
+            ),
+            "receiver_program_reason_code": self.receiver_program_reason_code,
             "receiver_incremental_training_artifact_id": (
                 self.receiver_incremental_training_artifact_id
             ),
@@ -400,6 +412,22 @@ class FamilyCommonScoringFunctional:
         try:
             self.receiver_family._require_producer_owned()
             self.sender_functional._require_intact()
+            if self.receiver_program_artifact is None:
+                if not self.receiver_program_reason_code:
+                    raise ValueError(
+                        "missing receiver-program parent requires a reason"
+                    )
+            else:
+                self.receiver_program_artifact._require_intact()
+                _validate_receiver_program_parent(
+                    self.receiver_family,
+                    self.receiver_program_artifact,
+                    self.sender_functional,
+                )
+                if self.receiver_program_reason_code != (
+                    self.receiver_program_artifact.reason_code
+                ):
+                    raise ValueError("receiver-program parent reason changed")
             if self.incremental_functional is None:
                 if not self.incremental_reason_code:
                     raise ValueError("missing incremental functional requires a reason")
@@ -494,8 +522,11 @@ class FamilyCommonScoringFunctional:
                 "subject_receiver_null_vs_single_family_loss_ratio_v1"
             ),
             "receiver_program_status": (
-                "not_estimable_source_agnostic_parent_not_connected"
+                "not_estimable"
+                if self.receiver_program_artifact is None
+                else self.receiver_program_artifact.status
             ),
+            "receiver_program_reason_code": self.receiver_program_reason_code,
             "is_oof_certified": self.is_oof_certified,
         }
 
@@ -554,6 +585,44 @@ def _validate_parent_lineage(
         )
 
 
+def _validate_receiver_program_parent(
+    receiver_family: ReceiverFamilyTrainingArtifact,
+    receiver_program: ReceiverProgramTrainingArtifact,
+    sender_functional: ContrastCommonSenderFunctional,
+) -> None:
+    """Bind target-program semantics without consulting receptor eligibility."""
+
+    receiver_program._require_intact()
+    expected = (
+        receiver_family.training_artifact_id,
+        receiver_family.receiver,
+        receiver_family.fold_id,
+        receiver_family.training_subject_ids,
+        receiver_family.family_basis.family_ids,
+        receiver_family.source_basis.feature_ids,
+        sender_functional.contrast_name,
+    )
+    observed = (
+        receiver_program.receiver_family_artifact.training_artifact_id,
+        receiver_program.receiver,
+        receiver_program.fold_id,
+        receiver_program.training_subject_ids,
+        receiver_program.family_ids,
+        receiver_program.feature_ids,
+        receiver_program.contrast_name,
+    )
+    if observed != expected:
+        raise ContractError(
+            "Receiver-program parent does not share the family-common fold lineage",
+            code="family_common_parent_mismatch",
+            field="receiver_program_training_artifact_id",
+            remediation=(
+                "Use the source-agnostic receiver program from the same receiver, "
+                "contrast, and physical fold"
+            ),
+        )
+
+
 def _frozen_interactions(
     receiver_family: ReceiverFamilyTrainingArtifact,
 ) -> tuple[FrozenFamilyInteraction, ...]:
@@ -599,6 +668,7 @@ def fit_family_common_scoring_functional(
     tuning_manifest_id: str,
     selected_penalty_id: str,
     autonomous_program_resource_id: str | None,
+    receiver_program_artifact: ReceiverProgramTrainingArtifact | None = None,
     family_selection_threshold: float = 0.0,
     softmin_power: float = 4.0,
     epsilon: float = 1e-12,
@@ -622,6 +692,16 @@ def fit_family_common_scoring_functional(
         sender_functional,
         autonomous_program_resource_id=autonomous_program_resource_id,
     )
+    if receiver_program_artifact is not None:
+        if not isinstance(
+            receiver_program_artifact, ReceiverProgramTrainingArtifact
+        ):
+            raise TypeError(
+                "receiver_program_artifact must be ReceiverProgramTrainingArtifact"
+            )
+        _validate_receiver_program_parent(
+            receiver_family, receiver_program_artifact, sender_functional
+        )
     lineage_names = {
         "receiver_incremental_training_artifact_id": (
             receiver_incremental_training_artifact_id
@@ -643,6 +723,7 @@ def fit_family_common_scoring_functional(
     self = object.__new__(FamilyCommonScoringFunctional)
     values: dict[str, Any] = {
         "receiver_family": receiver_family,
+        "receiver_program_artifact": receiver_program_artifact,
         "incremental_functional": incremental_functional,
         "sender_functional": sender_functional,
         "receiver": receiver_family.receiver,
@@ -657,6 +738,11 @@ def fit_family_common_scoring_functional(
         "interactions": _frozen_interactions(receiver_family),
         **lineage_names,
         "autonomous_program_resource_id": autonomous_program_resource_id,
+        "receiver_program_reason_code": (
+            "source_agnostic_receiver_program_parent_not_connected"
+            if receiver_program_artifact is None
+            else receiver_program_artifact.reason_code
+        ),
         "incremental_reason_code": None,
         "family_selection_threshold": threshold,
         "softmin_power": power,
@@ -689,6 +775,7 @@ def mark_family_common_scoring_not_estimable(
     selected_penalty_id: str | None,
     autonomous_program_resource_id: str | None,
     reason_code: str,
+    receiver_program_artifact: ReceiverProgramTrainingArtifact | None = None,
     family_selection_threshold: float = 0.0,
     softmin_power: float = 4.0,
     epsilon: float = 1e-12,
@@ -701,6 +788,16 @@ def mark_family_common_scoring_not_estimable(
         raise TypeError("sender_functional must be ContrastCommonSenderFunctional")
     receiver_family._require_producer_owned()
     sender_functional._require_intact()
+    if receiver_program_artifact is not None:
+        if not isinstance(
+            receiver_program_artifact, ReceiverProgramTrainingArtifact
+        ):
+            raise TypeError(
+                "receiver_program_artifact must be ReceiverProgramTrainingArtifact"
+            )
+        _validate_receiver_program_parent(
+            receiver_family, receiver_program_artifact, sender_functional
+        )
     normalized_fold = _required_name(fold_id, field_name="fold_id")
     normalized_reason = _required_name(reason_code, field_name="reason_code")
     if receiver_family.fold_id != normalized_fold:
@@ -748,6 +845,7 @@ def mark_family_common_scoring_not_estimable(
     self = object.__new__(FamilyCommonScoringFunctional)
     values: dict[str, Any] = {
         "receiver_family": receiver_family,
+        "receiver_program_artifact": receiver_program_artifact,
         "incremental_functional": None,
         "sender_functional": sender_functional,
         "receiver": receiver_family.receiver,
@@ -762,6 +860,11 @@ def mark_family_common_scoring_not_estimable(
         "interactions": _frozen_interactions(receiver_family),
         **lineage_names,
         "autonomous_program_resource_id": autonomous_program_resource_id,
+        "receiver_program_reason_code": (
+            "source_agnostic_receiver_program_parent_not_connected"
+            if receiver_program_artifact is None
+            else receiver_program_artifact.reason_code
+        ),
         "incremental_reason_code": normalized_reason,
         "family_selection_threshold": threshold,
         "softmin_power": power,
@@ -1001,6 +1104,94 @@ def _validated_edge_evidence(
     return table.sort_values(key, kind="stable", ignore_index=True)
 
 
+def _validated_receiver_program_application(
+    functional: FamilyCommonScoringFunctional,
+    application: ReceiverProgramApplication | None,
+    edge_evidence: pd.DataFrame,
+) -> pd.DataFrame | None:
+    parent = functional.receiver_program_artifact
+    if parent is None:
+        if application is not None:
+            raise ContractError(
+                "Functional without a receiver-program parent cannot accept one",
+                code="family_common_application_parent_mismatch",
+                field="receiver_program_application_id",
+                remediation="Refit the family-common functional with that parent",
+            )
+        return None
+    if application is None:
+        raise ContractError(
+            "Receiver-program parent requires an explicit held-out application",
+            code="family_common_application_parent_mismatch",
+            field="receiver_program_application_id",
+            remediation=(
+                "Apply or explicitly mark the source-agnostic receiver program "
+                "on the exact held-out rows"
+            ),
+        )
+    if not isinstance(application, ReceiverProgramApplication):
+        raise TypeError(
+            "receiver_program_application must be ReceiverProgramApplication"
+        )
+    application._require_intact()
+    if (
+        application.training_artifact.training_artifact_id
+        != parent.training_artifact_id
+    ):
+        raise ContractError(
+            "Receiver-program application does not match the frozen parent",
+            code="family_common_application_parent_mismatch",
+            field="receiver_program_application_id",
+            remediation="Apply the exact receiver-program parent from this fold",
+        )
+    expected_samples = {
+        str(sample_id): (
+            str(group["subject_id"].iloc[0]),
+            str(group["context_id"].iloc[0]),
+        )
+        for sample_id, group in edge_evidence.groupby(
+            "sample_id", observed=True, sort=False
+        )
+    }
+    observed_samples = {
+        sample_id: (subject_id, context_id)
+        for sample_id, subject_id, context_id in zip(
+            application.sample_ids,
+            application.sample_subject_ids,
+            application.sample_context_ids,
+            strict=True,
+        )
+    }
+    if observed_samples != expected_samples:
+        raise ContractError(
+            "Receiver-program and edge evidence do not share exact held-out rows",
+            code="family_common_application_parent_mismatch",
+            field="receiver_program_application_id",
+            remediation="Restore the exact sample/subject/context row manifest",
+        )
+    table = application.to_table()
+    expected_keys = {
+        (sample_id, family_id)
+        for sample_id in expected_samples
+        for family_id in functional.family_ids
+    }
+    observed_keys = set(
+        zip(table["sample_id"], table["family_id"], strict=True)
+    )
+    if (
+        observed_keys != expected_keys
+        or set(table["receiver"]) != {functional.receiver}
+        or table.duplicated(["sample_id", "family_id"]).any()
+    ):
+        raise ContractError(
+            "Receiver-program application lacks exact sample-family coverage",
+            code="family_common_application_parent_mismatch",
+            field="family_id",
+            remediation="Emit every frozen family once per held-out receiver sample",
+        )
+    return table
+
+
 def _heldout_attribution_table(
     functional: FamilyCommonScoringFunctional,
     application: IncrementalDownstreamApplication | None,
@@ -1186,6 +1377,7 @@ def _score_tables(
     edge_evidence: pd.DataFrame,
     attribution: pd.DataFrame,
     subject_differential: pd.DataFrame,
+    receiver_program: pd.DataFrame | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     membership = pd.DataFrame([item.to_dict() for item in functional.interactions])
     edges = edge_evidence.merge(
@@ -1198,6 +1390,11 @@ def _score_tables(
     attribution_by_family = attribution.set_index("family_id", drop=False)
     differential_by_subject_family = subject_differential.set_index(
         ["subject_id", "family_id"], drop=False
+    )
+    program_by_sample_family = (
+        None
+        if receiver_program is None
+        else receiver_program.set_index(["sample_id", "family_id"], drop=False)
     )
     family_rows: list[dict[str, object]] = []
     member_rows: list[dict[str, object]] = []
@@ -1216,6 +1413,32 @@ def _score_tables(
             pd.Series,
             differential_by_subject_family.loc[(str(subject_id), str(family_id))],
         )
+        program_row = (
+            None
+            if program_by_sample_family is None
+            else cast(
+                pd.Series,
+                program_by_sample_family.loc[(str(sample_id), str(family_id))],
+            )
+        )
+        if program_row is None:
+            receiver_program_score: float | None = None
+            receiver_program_status = "not_estimable"
+            receiver_program_reason = functional.receiver_program_reason_code
+        else:
+            raw_program_score = program_row["receiver_program_score"]
+            receiver_program_score = (
+                None
+                if pd.isna(raw_program_score)
+                else _unit_value(
+                    raw_program_score, field_name="receiver_program_score"
+                )
+            )
+            receiver_program_status = str(program_row["status"])
+            raw_program_reason = program_row["reason_code"]
+            receiver_program_reason = (
+                None if pd.isna(raw_program_reason) else str(raw_program_reason)
+            )
         eligible = group["receptor_eligible"].astype(bool)
         family_receptor_eligible = bool(eligible.any())
         availability_values = [
@@ -1328,11 +1551,9 @@ def _score_tables(
                 "availability_score": family_availability,
                 "family_availability": family_availability,
                 "receptor_eligible": family_receptor_eligible,
-                "receiver_program_score": None,
-                "receiver_program_status": "not_estimable",
-                "receiver_program_reason_code": (
-                    "source_agnostic_receiver_program_parent_not_connected"
-                ),
+                "receiver_program_score": receiver_program_score,
+                "receiver_program_status": receiver_program_status,
+                "receiver_program_reason_code": receiver_program_reason,
                 "incremental_downstream_gain": family_gain,
                 "differential_effect": differential_effect,
                 "family_coefficient": family_attribution["family_coefficient"],
@@ -1552,6 +1773,7 @@ class FamilyCommonScoringApplication:
     """Producer-owned held-out family/member/sender score collection."""
 
     functional: FamilyCommonScoringFunctional
+    receiver_program_application_id: str | None
     incremental_application_id: str | None
     heldout_reason_code: str | None
     edge_evidence_digest: str
@@ -1591,6 +1813,9 @@ class FamilyCommonScoringApplication:
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "heldout_reason_code": self.heldout_reason_code,
             "incremental_application_id": self.incremental_application_id,
+            "receiver_program_application_id": (
+                self.receiver_program_application_id
+            ),
             "member_scores_digest": self.member_scores_digest,
             "sender_application_digest": self.sender_application_digest,
             "sender_scores_digest": self.sender_scores_digest,
@@ -1659,6 +1884,16 @@ class FamilyCommonScoringApplication:
                 and (
                     self.incremental_application_id is not None
                     or bool(self.heldout_reason_code)
+                )
+                and (
+                    (
+                        self.functional.receiver_program_artifact is None
+                        and self.receiver_program_application_id is None
+                    )
+                    or (
+                        self.functional.receiver_program_artifact is not None
+                        and bool(self.receiver_program_application_id)
+                    )
                 )
                 and not self.is_oof_certified
                 and stable_id(
@@ -1739,6 +1974,7 @@ def apply_family_common_scoring_functional(
     edge_evidence: pd.DataFrame,
     sender_application: CommonSenderApplication,
     *,
+    receiver_program_application: ReceiverProgramApplication | None = None,
     heldout_reason_code: str | None = None,
 ) -> FamilyCommonScoringApplication:
     """Apply one common function to held-out family and sender evidence."""
@@ -1753,6 +1989,9 @@ def apply_family_common_scoring_functional(
     )
     sender = _validated_sender_application(functional, sender_application)
     edges = _validated_edge_evidence(functional, incremental_application, edge_evidence)
+    receiver_program = _validated_receiver_program_application(
+        functional, receiver_program_application, edges
+    )
     sender_samples = {
         str(sample_id): (
             str(group["subject_id"].iloc[0]),
@@ -1797,6 +2036,7 @@ def apply_family_common_scoring_functional(
         edges,
         attribution,
         subject_differential,
+        receiver_program,
     )
     sender_scores = _sender_score_table(functional, member_scores, sender)
     edge_evidence_digest = family_common_edge_evidence_digest(edges)
@@ -1823,6 +2063,11 @@ def apply_family_common_scoring_functional(
     self = object.__new__(FamilyCommonScoringApplication)
     values: dict[str, Any] = {
         "functional": functional,
+        "receiver_program_application_id": (
+            None
+            if receiver_program_application is None
+            else receiver_program_application.application_id
+        ),
         "incremental_application_id": (
             None
             if incremental_application is None
@@ -1871,6 +2116,7 @@ def mark_family_common_scoring_application_not_estimable(
     sender_application: CommonSenderApplication,
     *,
     heldout_reason_code: str,
+    receiver_program_application: ReceiverProgramApplication | None = None,
 ) -> FamilyCommonScoringApplication:
     """Emit exact held-out coverage for a planned unavailable receiver model."""
 
@@ -1885,6 +2131,7 @@ def mark_family_common_scoring_application_not_estimable(
         None,
         edge_evidence,
         sender_application,
+        receiver_program_application=receiver_program_application,
         heldout_reason_code=normalized_reason,
     )
 

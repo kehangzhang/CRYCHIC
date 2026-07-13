@@ -33,10 +33,12 @@ from crychic.scoring import (
     IncrementalDownstreamFunctional,
     apply_family_common_scoring_functional,
     apply_incremental_downstream_functional,
+    apply_receiver_program_training_artifact,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
     fit_family_common_scoring_functional,
     fit_incremental_downstream_functional,
+    fit_receiver_program_training_artifact,
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
 )
@@ -432,6 +434,70 @@ def test_heldout_subject_family_gain_drives_family_first_conserved_scores() -> N
             key, "sender_unresolved_strength"
         ]
         assert group["sender_resolved_strength"].sum() == pytest.approx(unresolved)
+
+
+def test_receiver_program_stays_observed_when_incremental_parent_is_unavailable() -> (
+    None
+):
+    receiver_family = _receiver_family()
+    sender = _sender_functional(receiver_family)
+    program = fit_receiver_program_training_artifact(
+        receiver_family,
+        np.asarray([[0.0, 1.0], [0.1, 1.0], [0.0, 1.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("p1-reference", "p2-reference", "p3-reference"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    manifest = _manifest(prefix="heldout", subjects=("h1", "h2"))
+    program_application = apply_receiver_program_training_artifact(
+        program,
+        np.asarray([[2.0, 3.0]] * len(manifest.sample_ids)),
+        feature_ids=("G1", "G2"),
+        sample_ids=manifest.sample_ids,
+        sample_subject_ids=manifest.subject_ids,
+        sample_context_ids=manifest.context_ids,
+    )
+    functional = mark_family_common_scoring_not_estimable(
+        receiver_family,
+        sender,
+        fold_id="fold-1",
+        receiver_incremental_training_artifact_id="incremental-ne-1",
+        tuning_manifest_id="tuning-ne-1",
+        selected_penalty_id=None,
+        autonomous_program_resource_id=None,
+        reason_code="incremental_parent_not_estimable",
+        receiver_program_artifact=program,
+    )
+    sender_application = apply_contrast_common_sender_functional(
+        sender, _sender_heldout()
+    )
+    application = mark_family_common_scoring_application_not_estimable(
+        functional,
+        _edge_evidence(),
+        sender_application,
+        heldout_reason_code="incremental_application_not_estimable",
+        receiver_program_application=program_application,
+    )
+    family = application.family_scores
+    active = family.loc[
+        lambda frame: frame["family_id"].isin(functional.active_family_ids)
+    ]
+
+    assert len(program_application.to_table()) == (
+        len(manifest.sample_ids) * len(functional.family_ids)
+    )
+    assert set(family["receiver_program_status"]) == {"observed"}
+    assert family["receiver_program_score"].gt(0).all()
+    assert active["integrated_lr_score"].isna().all()
+    assert set(active["status"]) == {"not_estimable"}
+    assert "receiver_program_score" not in application.sender_scores.columns
+    assert (
+        family.groupby(
+            ["sample_id", "family_id"], observed=True
+        )["receiver_program_score"].nunique()
+        == 1
+    ).all()
 
 
 def test_application_input_digests_are_order_stable_and_value_sensitive() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -18,6 +18,7 @@ from .downstream import (
 )
 
 _PRODUCER_MARKER = "crychic.receiver_family_scoring.v1"
+_APPLICATION_PRODUCER_MARKER = "crychic.receiver_family_scoring_application.v2"
 _TRAINING_STATUS = "training_only_partial_receiver_family_downstream_v1"
 _NOT_ESTIMABLE_STATUS = "training_only_partial_receiver_family_not_estimable_v1"
 _APPLICATION_STATUS = "frozen_application_partial_not_oof"
@@ -52,6 +53,7 @@ class ReceiverFamilyScoringArtifact:
     contrast_name: str
     reference_sample_ids: tuple[str, ...]
     reference_subject_ids: tuple[str, ...]
+    reference_context_ids: tuple[str, ...]
     active_family_ids: tuple[str, ...]
     downstream_functional: DownstreamFunctional | None
     completed_stages: tuple[str, ...]
@@ -75,6 +77,7 @@ class ReceiverFamilyScoringArtifact:
         contrast_name: str,
         reference_sample_ids: tuple[str, ...],
         reference_subject_ids: tuple[str, ...],
+        reference_context_ids: tuple[str, ...],
         active_family_ids: tuple[str, ...],
         downstream_functional: DownstreamFunctional | None,
         reason_code: str | None,
@@ -92,6 +95,12 @@ class ReceiverFamilyScoringArtifact:
             if (
                 downstream_functional.receiver != receiver_family_artifact.receiver
                 or downstream_functional.fold_id != receiver_family_artifact.fold_id
+                or downstream_functional.reference_sample_ids
+                != reference_sample_ids
+                or downstream_functional.reference_sample_context_ids
+                != reference_context_ids
+                or downstream_functional.reference_summary_subject_ids
+                != reference_subject_ids
             ):
                 raise ValueError("downstream provenance does not match receiver family")
             completed = (
@@ -116,6 +125,7 @@ class ReceiverFamilyScoringArtifact:
                     receiver_family_artifact.training_artifact_id
                 ),
                 "reference_subject_ids": list(reference_subject_ids),
+                "reference_context_ids": list(reference_context_ids),
                 "reference_sample_ids": list(reference_sample_ids),
                 "reference_input_digest": (
                     None
@@ -130,6 +140,7 @@ class ReceiverFamilyScoringArtifact:
             "contrast_name": contrast_name,
             "reference_sample_ids": reference_sample_ids,
             "reference_subject_ids": reference_subject_ids,
+            "reference_context_ids": reference_context_ids,
             "active_family_ids": active_family_ids,
             "downstream_functional": downstream_functional,
             "completed_stages": completed,
@@ -176,6 +187,7 @@ class ReceiverFamilyScoringArtifact:
                 self.receiver_family_artifact.training_artifact_id
             ),
             "reference_subject_ids": list(self.reference_subject_ids),
+            "reference_context_ids": list(self.reference_context_ids),
             "reference_sample_ids": list(self.reference_sample_ids),
             "reference_input_digest": (
                 None
@@ -194,12 +206,17 @@ class ReceiverFamilyScoringArtifact:
             active = tuple(self.active_family_ids)
             samples = tuple(self.reference_sample_ids)
             subjects = tuple(self.reference_subject_ids)
+            contexts = tuple(self.reference_context_ids)
             if (
                 not isinstance(self.active_family_ids, tuple)
                 or not isinstance(self.reference_sample_ids, tuple)
                 or not isinstance(self.reference_subject_ids, tuple)
+                or not isinstance(self.reference_context_ids, tuple)
+                or len(contexts) != len(samples)
                 or len(active) != len(set(active))
-                or any(not value for value in (*active, *samples, *subjects))
+                or any(
+                    not value for value in (*active, *samples, *subjects, *contexts)
+                )
             ):
                 raise ValueError("invalid receiver-family identifiers")
             has_functional = self.downstream_functional is not None
@@ -214,6 +231,11 @@ class ReceiverFamilyScoringArtifact:
                     != self.receiver_family_artifact.receiver
                     or self.downstream_functional.fold_id
                     != self.receiver_family_artifact.fold_id
+                    or self.downstream_functional.reference_sample_ids != samples
+                    or self.downstream_functional.reference_sample_context_ids
+                    != contexts
+                    or self.downstream_functional.reference_summary_subject_ids
+                    != subjects
                 ):
                     raise ValueError("downstream functional lineage mismatch")
                 expected_completed = (
@@ -273,63 +295,100 @@ def mark_receiver_family_scoring_not_estimable(
         contrast_name=contrast_name.strip(),
         reference_sample_ids=(),
         reference_subject_ids=receiver_family_artifact.training_subject_ids,
+        reference_context_ids=(),
         active_family_ids=receiver_family_artifact.eligible_family_ids,
         downstream_functional=None,
         reason_code=reason_code.strip(),
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ReceiverFamilyScoringApplication:
     """Held-out receiver-family programs produced without any refitting."""
 
+    training_artifact: ReceiverFamilyScoringArtifact
     training_artifact_id: str
     heldout_subject_ids: tuple[str, ...]
     active_family_ids: tuple[str, ...]
     downstream_application: DownstreamApplication | None
     reason_code: str | None
     application_status: str
-    application_id: str = field(init=False)
+    application_id: str
+    _producer_marker: str
 
-    def __post_init__(self) -> None:
-        if not self.training_artifact_id:
-            raise ValueError("training_artifact_id must not be empty")
-        if not self.heldout_subject_ids:
-            raise ValueError("heldout_subject_ids must not be empty")
-        observed = self.downstream_application is not None
-        if observed == (self.reason_code is not None):
+    def __init__(self) -> None:
+        raise TypeError(
+            "ReceiverFamilyScoringApplication is producer-owned; use "
+            "apply_receiver_family_scoring_artifact()"
+        )
+
+    @classmethod
+    def _from_application(
+        cls,
+        *,
+        training_artifact: ReceiverFamilyScoringArtifact,
+        heldout_subject_ids: tuple[str, ...],
+        downstream_application: DownstreamApplication | None,
+        reason_code: str | None,
+    ) -> ReceiverFamilyScoringApplication:
+        if not isinstance(training_artifact, ReceiverFamilyScoringArtifact):
+            raise TypeError("training_artifact must be ReceiverFamilyScoringArtifact")
+        training_artifact._require_producer_owned()
+        subjects = tuple(sorted(set(heldout_subject_ids)))
+        if not subjects or any(
+            not isinstance(value, str) or not value.strip() for value in subjects
+        ):
+            raise ValueError("heldout_subject_ids must contain non-empty strings")
+        overlap = set(subjects).intersection(training_artifact.training_subject_ids)
+        if overlap:
+            raise ValueError(
+                "held-out subjects overlap training subjects: "
+                + ", ".join(sorted(overlap))
+            )
+        observed = downstream_application is not None
+        if observed == (reason_code is not None):
             raise ValueError(
                 "reason_code must be present exactly when application is unavailable"
             )
-        expected_status = (
+        application_status = (
             _APPLICATION_STATUS if observed else _APPLICATION_NOT_ESTIMABLE
         )
-        if self.application_status != expected_status:
-            raise ValueError(
-                "application status does not match downstream availability"
-            )
-        subjects = tuple(sorted(set(self.heldout_subject_ids)))
-        active = tuple(self.active_family_ids)
-        if (
-            not subjects
-            or len(active) != len(set(active))
-            or any(not isinstance(value, str) or not value.strip() for value in active)
-        ):
-            raise ValueError("receiver-family application identifiers are invalid")
+        active = training_artifact.active_family_ids
         if observed:
-            assert self.downstream_application is not None
-            self.downstream_application._require_intact()
-            if self.downstream_application.raw_program.shape[1] != len(active):
+            assert downstream_application is not None
+            downstream_application._require_intact()
+            expected_functional = training_artifact.downstream_functional
+            if expected_functional is None:
                 raise ValueError(
-                    "downstream application columns do not match active families"
+                    "unavailable receiver-family training cannot produce an application"
                 )
-        object.__setattr__(self, "heldout_subject_ids", subjects)
-        object.__setattr__(self, "active_family_ids", active)
+            if (
+                downstream_application.downstream_functional_id
+                != expected_functional.downstream_functional_id
+                or downstream_application.raw_program.shape[1] != len(active)
+            ):
+                raise ValueError(
+                    "downstream application does not match the training functional"
+                )
+        self = object.__new__(cls)
+        values: dict[str, Any] = {
+            "training_artifact": training_artifact,
+            "training_artifact_id": training_artifact.training_artifact_id,
+            "heldout_subject_ids": subjects,
+            "active_family_ids": active,
+            "downstream_application": downstream_application,
+            "reason_code": reason_code,
+            "application_status": application_status,
+            "_producer_marker": _APPLICATION_PRODUCER_MARKER,
+        }
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
         object.__setattr__(
             self,
             "application_id",
             stable_id("receiver_family_scoring_application", self._identity_payload()),
         )
+        return self
 
     def _identity_payload(self) -> dict[str, object]:
         return {
@@ -349,35 +408,25 @@ class ReceiverFamilyScoringApplication:
         """Reject forced mutation of held-out receiver-family values."""
 
         try:
-            observed = self.downstream_application is not None
-            if observed:
-                assert self.downstream_application is not None
-                self.downstream_application._require_intact()
-            expected_status = (
-                _APPLICATION_STATUS if observed else _APPLICATION_NOT_ESTIMABLE
+            repeated = ReceiverFamilyScoringApplication._from_application(
+                training_artifact=self.training_artifact,
+                heldout_subject_ids=self.heldout_subject_ids,
+                downstream_application=self.downstream_application,
+                reason_code=self.reason_code,
             )
             valid = (
-                bool(self.training_artifact_id)
-                and isinstance(self.heldout_subject_ids, tuple)
-                and isinstance(self.active_family_ids, tuple)
-                and self.heldout_subject_ids
-                == tuple(sorted(set(self.heldout_subject_ids)))
-                and len(self.active_family_ids) == len(set(self.active_family_ids))
-                and observed == (self.reason_code is None)
-                and self.application_status == expected_status
-                and (
-                    not observed
-                    or (
-                        self.downstream_application is not None
-                        and self.downstream_application.raw_program.shape[1]
-                        == len(self.active_family_ids)
-                    )
-                )
+                self._producer_marker == _APPLICATION_PRODUCER_MARKER
+                and self.training_artifact_id
+                == self.training_artifact.training_artifact_id
+                and self.heldout_subject_ids == repeated.heldout_subject_ids
+                and self.active_family_ids == repeated.active_family_ids
+                and self.application_status == repeated.application_status
                 and stable_id(
                     "receiver_family_scoring_application",
                     self._identity_payload(),
                 )
                 == self.application_id
+                and repeated.application_id == self.application_id
                 and not self.is_oof_certified
             )
         except (AttributeError, ContractError, TypeError, ValueError) as error:
@@ -409,6 +458,7 @@ def fit_receiver_family_scoring_artifact(
     contrast_name: str,
     sample_ids: tuple[str, ...],
     sample_subject_ids: tuple[str, ...],
+    sample_context_ids: tuple[str, ...],
     minimum_scale: float = 0.25,
 ) -> ReceiverFamilyScoringArtifact:
     """Fit a family program transform using training-reference expression only."""
@@ -434,6 +484,13 @@ def fit_receiver_family_scoring_artifact(
     )
     if len(sample_ids) != expression.shape[0]:
         raise ValueError("sample_ids must align one-to-one with expression rows")
+    if len(sample_context_ids) != expression.shape[0] or any(
+        not isinstance(value, str) or not value.strip()
+        for value in sample_context_ids
+    ):
+        raise ValueError(
+            "sample_context_ids must align one-to-one with expression rows"
+        )
     unknown = set(reference_subjects).difference(
         receiver_family_artifact.training_subject_ids
     )
@@ -446,11 +503,15 @@ def fit_receiver_family_scoring_artifact(
     active_indices = np.flatnonzero(basis.family_eligible)
     active_family_ids = tuple(basis.family_ids[index] for index in active_indices)
     if len(active_indices) == 0:
+        order = sorted(range(len(sample_ids)), key=tuple(sample_ids).__getitem__)
         return ReceiverFamilyScoringArtifact._from_training(
             receiver_family_artifact=receiver_family_artifact,
             contrast_name=contrast_name.strip(),
-            reference_sample_ids=tuple(sample_ids),
+            reference_sample_ids=tuple(sample_ids[index] for index in order),
             reference_subject_ids=reference_subjects,
+            reference_context_ids=tuple(
+                sample_context_ids[index].strip() for index in order
+            ),
             active_family_ids=(),
             downstream_functional=None,
             reason_code="no_training_eligible_receiver_family",
@@ -465,7 +526,8 @@ def fit_receiver_family_scoring_artifact(
         family_ids=active_family_ids,
         reference_sample_ids=tuple(sample_ids),
         reference_subject_ids=aligned_subjects,
-        training_subject_ids=reference_subjects,
+        reference_context_ids=tuple(sample_context_ids),
+        training_subject_ids=receiver_family_artifact.training_subject_ids,
         target_weight_matrix=target_weights,
         family_support=np.ones(len(active_family_ids), dtype=np.float64),
         minimum_scale=minimum_scale,
@@ -475,6 +537,7 @@ def fit_receiver_family_scoring_artifact(
         contrast_name=contrast_name.strip(),
         reference_sample_ids=downstream.reference_sample_ids,
         reference_subject_ids=reference_subjects,
+        reference_context_ids=downstream.reference_sample_context_ids,
         active_family_ids=active_family_ids,
         downstream_functional=downstream,
         reason_code=None,
@@ -510,26 +573,22 @@ def apply_receiver_family_scoring_artifact(
     if tuple(feature_ids) != artifact.receiver_family_artifact.source_basis.feature_ids:
         raise ValueError("test feature_ids must exactly match frozen features")
     if artifact.downstream_functional is None:
-        return ReceiverFamilyScoringApplication(
-            training_artifact_id=artifact.training_artifact_id,
+        return ReceiverFamilyScoringApplication._from_application(
+            training_artifact=artifact,
             heldout_subject_ids=heldout_subjects,
-            active_family_ids=artifact.active_family_ids,
             downstream_application=None,
             reason_code=artifact.reason_code,
-            application_status=_APPLICATION_NOT_ESTIMABLE,
         )
     application = apply_downstream_functional(
         artifact.downstream_functional,
         expression,
         feature_ids=feature_ids,
     )
-    return ReceiverFamilyScoringApplication(
-        training_artifact_id=artifact.training_artifact_id,
+    return ReceiverFamilyScoringApplication._from_application(
+        training_artifact=artifact,
         heldout_subject_ids=heldout_subjects,
-        active_family_ids=artifact.active_family_ids,
         downstream_application=application,
         reason_code=None,
-        application_status=_APPLICATION_STATUS,
     )
 
 
@@ -554,13 +613,11 @@ def mark_receiver_family_application_not_estimable(
         )
     if not isinstance(reason_code, str) or not reason_code.strip():
         raise ValueError("reason_code must be a non-empty string")
-    return ReceiverFamilyScoringApplication(
-        training_artifact_id=artifact.training_artifact_id,
+    return ReceiverFamilyScoringApplication._from_application(
+        training_artifact=artifact,
         heldout_subject_ids=subjects,
-        active_family_ids=artifact.active_family_ids,
         downstream_application=None,
         reason_code=reason_code.strip(),
-        application_status=_APPLICATION_NOT_ESTIMABLE,
     )
 
 

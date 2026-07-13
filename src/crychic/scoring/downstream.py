@@ -19,8 +19,8 @@ from crychic.attribution import (
 )
 from crychic.core import ContractError, stable_id
 from crychic.response import (
+    AutonomousProgramSupportError,
     ReceiverAutonomousProgramResource,
-    residualize_against_autonomous_programs,
 )
 from crychic.response.autonomous import _precision_weighted_span_residual
 
@@ -28,11 +28,15 @@ from .contracts import float64_array_digest
 
 _MAD_GAUSSIAN_CONSISTENCY = 1.4826
 INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT = (
-    "sample_keyed_autonomous_projected_incremental_v5"
+    "sample_keyed_autonomous_projected_incremental_v7"
 )
 _INCREMENTAL_METHOD = INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT
-_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v5"
-_FAMILY_GAIN_ESTIMAND = "autonomous_orthogonal_family_only_prediction_v3"
+_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v7"
+_FAMILY_GAIN_ESTIMAND = "autonomous_orthogonal_family_only_prediction_v4"
+_BASIS_COORDINATE_TRANSFORM = (
+    "raw_family_basis_l2_normalize_then_divide_by_frozen_reference_mad_scale_v1"
+)
+_NUISANCE_FACTORIZATION = "null_plus_residualized_context_outer_family_effect_v1"
 _UNIDENTIFIABLE_FAMILY_REASON = (
     "family_basis_not_identifiable_after_autonomous_projection"
 )
@@ -42,6 +46,10 @@ _LOSS_DESIGNS = frozenset({_PAIRED_LOSS_DESIGN, _INDEPENDENT_LOSS_DESIGN})
 _POSITIVE_GAIN_DENOMINATOR = "positive_receiver_null_loss_ratio_v1"
 _STRUCTURAL_ZERO_GAIN = "zero_receiver_contrast_structural_zero_v1"
 _NOT_ESTIMABLE_GAIN = "not_estimable"
+_REFERENCE_SUMMARY_METHOD = "technical_row_mean_then_context_equal_subject_mean_v1"
+_REFERENCE_CENTER_METHOD = "reference_subject_equal_feature_median_v2"
+_REFERENCE_SCALE_METHOD = "reference_subject_equal_scaled_mad_floor_v2"
+_DOWNSTREAM_APPLICATION_PRODUCER = "crychic.scoring.downstream_application.v2"
 
 
 def _names(values: tuple[str, ...], *, field_name: str) -> tuple[str, ...]:
@@ -80,25 +88,52 @@ def _matrix_digest(matrix: sparse.csc_matrix) -> str:
     return result
 
 
+def _aligned_reference_names(
+    values: tuple[str, ...], *, length: int, field_name: str
+) -> tuple[str, ...]:
+    if len(values) != length or any(
+        not isinstance(value, str) or not value.strip() for value in values
+    ):
+        raise ValueError(
+            f"{field_name} must contain {length} aligned non-empty strings"
+        )
+    return tuple(value.strip() for value in values)
+
+
+@dataclass(frozen=True, slots=True)
+class _CanonicalReferenceInput:
+    expression: np.ndarray
+    sample_ids: tuple[str, ...]
+    subject_ids: tuple[str, ...]
+    context_ids: tuple[str, ...]
+    row_manifest_id: str
+    input_digest: str
+    subject_summary: np.ndarray
+    summary_subject_ids: tuple[str, ...]
+    subject_summary_digest: str
+
+
 def _canonical_reference_input(
     expression: np.ndarray,
     *,
     sample_ids: tuple[str, ...],
     subject_ids: tuple[str, ...],
+    context_ids: tuple[str, ...],
     feature_ids: tuple[str, ...],
-) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...], str]:
-    """Canonicalize reference rows and bind their full producer input."""
+) -> _CanonicalReferenceInput:
+    """Canonicalize rows and derive subject-equal reference summaries."""
 
     samples = _names(tuple(sample_ids), field_name="reference_sample_ids")
-    if len(subject_ids) != len(samples):
-        raise ValueError("reference subject IDs must align with sample IDs")
-    aligned_subjects = tuple(
-        value.strip()
-        for value in subject_ids
-        if isinstance(value, str) and value.strip()
+    aligned_subjects = _aligned_reference_names(
+        tuple(subject_ids),
+        length=len(samples),
+        field_name="reference_subject_ids",
     )
-    if len(aligned_subjects) != len(samples):
-        raise ValueError("reference subject IDs must contain non-empty strings")
+    aligned_contexts = _aligned_reference_names(
+        tuple(context_ids),
+        length=len(samples),
+        field_name="reference_context_ids",
+    )
     values = np.asarray(expression, dtype=np.float64)
     expected_shape = (len(samples), len(feature_ids))
     if values.shape != expected_shape or np.any(~np.isfinite(values)):
@@ -108,25 +143,96 @@ def _canonical_reference_input(
     order = np.asarray(sorted(range(len(samples)), key=samples.__getitem__), dtype=int)
     canonical_samples = tuple(samples[index] for index in order)
     canonical_subjects = tuple(aligned_subjects[index] for index in order)
+    canonical_contexts = tuple(aligned_contexts[index] for index in order)
     canonical_expression = np.asarray(values[order], dtype=np.float64, order="C")
+    rows = [
+        {
+            "context_id": context_id,
+            "sample_id": sample_id,
+            "subject_id": subject_id,
+        }
+        for sample_id, subject_id, context_id in zip(
+            canonical_samples,
+            canonical_subjects,
+            canonical_contexts,
+            strict=True,
+        )
+    ]
+    row_manifest_id = stable_id(
+        "downstream_reference_row_manifest",
+        {"rows": rows},
+        schema_version="1",
+    )
     input_digest = stable_id(
         "downstream_reference_input",
         {
             "expression_digest": float64_array_digest(canonical_expression),
             "feature_ids": list(feature_ids),
-            "rows": [
-                {"sample_id": sample_id, "subject_id": subject_id}
-                for sample_id, subject_id in zip(
-                    canonical_samples, canonical_subjects, strict=True
-                )
-            ],
+            "row_manifest_id": row_manifest_id,
         },
+        schema_version="2",
     )
-    return (
-        canonical_expression,
-        canonical_samples,
-        canonical_subjects,
-        input_digest,
+    summary_subject_ids = tuple(sorted(set(canonical_subjects)))
+    if len(summary_subject_ids) < 2:
+        raise ValueError(
+            "reference_expression requires at least two unique reference subjects"
+        )
+    subject_summaries: list[np.ndarray] = []
+    for subject_id in summary_subject_ids:
+        subject_contexts = tuple(
+            sorted(
+                {
+                    context_id
+                    for row_subject, context_id in zip(
+                        canonical_subjects, canonical_contexts, strict=True
+                    )
+                    if row_subject == subject_id
+                }
+            )
+        )
+        context_means = np.vstack(
+            [
+                np.mean(
+                    canonical_expression[
+                        np.asarray(
+                            [
+                                row_subject == subject_id and row_context == context_id
+                                for row_subject, row_context in zip(
+                                    canonical_subjects,
+                                    canonical_contexts,
+                                    strict=True,
+                                )
+                            ],
+                            dtype=bool,
+                        )
+                    ],
+                    axis=0,
+                )
+                for context_id in subject_contexts
+            ]
+        )
+        subject_summaries.append(np.mean(context_means, axis=0))
+    subject_summary = np.asarray(subject_summaries, dtype=np.float64, order="C")
+    subject_summary_digest = stable_id(
+        "downstream_reference_subject_summary",
+        {
+            "feature_ids": list(feature_ids),
+            "method": _REFERENCE_SUMMARY_METHOD,
+            "subject_ids": list(summary_subject_ids),
+            "values_digest": float64_array_digest(subject_summary),
+        },
+        schema_version="1",
+    )
+    return _CanonicalReferenceInput(
+        expression=canonical_expression,
+        sample_ids=canonical_samples,
+        subject_ids=canonical_subjects,
+        context_ids=canonical_contexts,
+        row_manifest_id=row_manifest_id,
+        input_digest=input_digest,
+        subject_summary=subject_summary,
+        summary_subject_ids=summary_subject_ids,
+        subject_summary_digest=subject_summary_digest,
     )
 
 
@@ -141,6 +247,9 @@ class DownstreamFunctional:
     family_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
     reference_sample_ids: tuple[str, ...]
+    reference_sample_subject_ids: tuple[str, ...] = field(init=False)
+    reference_sample_context_ids: tuple[str, ...] = field(init=False)
+    reference_summary_subject_ids: tuple[str, ...] = field(init=False)
     feature_center: np.ndarray
     feature_scale: np.ndarray
     target_weight_matrix: sparse.csc_matrix
@@ -148,21 +257,28 @@ class DownstreamFunctional:
     minimum_scale: float
     reference_expression: InitVar[np.ndarray]
     reference_subject_ids: InitVar[tuple[str, ...]]
-    center_method: str = "reference_context_feature_median_v1"
-    scale_method: str = "reference_context_scaled_mad_floor_v1"
+    reference_context_ids: InitVar[tuple[str, ...]]
+    reference_summary_method: str = _REFERENCE_SUMMARY_METHOD
+    center_method: str = _REFERENCE_CENTER_METHOD
+    scale_method: str = _REFERENCE_SCALE_METHOD
     program_transform: str = "positive_z_saturating_v1"
+    reference_row_manifest_id: str = field(init=False)
     reference_input_digest: str = field(init=False)
+    reference_subject_summary_digest: str = field(init=False)
+    reference_transform_id: str = field(init=False)
     downstream_functional_id: str = field(init=False)
 
     def __post_init__(
         self,
         reference_expression: np.ndarray,
         reference_subject_ids: tuple[str, ...],
+        reference_context_ids: tuple[str, ...],
     ) -> None:
         for field_name in (
             "receiver",
             "contrast_name",
             "fold_id",
+            "reference_summary_method",
             "center_method",
             "scale_method",
             "program_transform",
@@ -171,6 +287,12 @@ class DownstreamFunctional:
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must be a non-empty string")
             object.__setattr__(self, field_name, value.strip())
+        if (
+            self.reference_summary_method != _REFERENCE_SUMMARY_METHOD
+            or self.center_method != _REFERENCE_CENTER_METHOD
+            or self.scale_method != _REFERENCE_SCALE_METHOD
+        ):
+            raise ValueError("downstream reference transform methods are unsupported")
         features = _names(tuple(self.feature_ids), field_name="feature_ids")
         families = _names(tuple(self.family_ids), field_name="family_ids")
         subjects = tuple(
@@ -180,15 +302,14 @@ class DownstreamFunctional:
                 )
             )
         )
-        reference, samples, reference_subjects, reference_input_digest = (
-            _canonical_reference_input(
-                reference_expression,
-                sample_ids=tuple(self.reference_sample_ids),
-                subject_ids=reference_subject_ids,
-                feature_ids=features,
-            )
+        reference = _canonical_reference_input(
+            reference_expression,
+            sample_ids=tuple(self.reference_sample_ids),
+            subject_ids=reference_subject_ids,
+            context_ids=reference_context_ids,
+            feature_ids=features,
         )
-        if set(reference_subjects).difference(subjects):
+        if set(reference.subject_ids).difference(subjects):
             raise ValueError("reference subjects must belong to training_subject_ids")
         if not math.isfinite(self.minimum_scale) or self.minimum_scale <= 0:
             raise ValueError("minimum_scale must be finite and positive")
@@ -205,8 +326,10 @@ class DownstreamFunctional:
         )
         if np.any(scale < self.minimum_scale - 1e-12):
             raise ValueError("feature_scale must respect minimum_scale")
-        expected_center = np.median(reference, axis=0)
-        expected_mad = np.median(np.abs(reference - expected_center), axis=0)
+        expected_center = np.median(reference.subject_summary, axis=0)
+        expected_mad = np.median(
+            np.abs(reference.subject_summary - expected_center), axis=0
+        )
         expected_scale = np.maximum(
             _MAD_GAUSSIAN_CONSISTENCY * expected_mad, self.minimum_scale
         )
@@ -237,6 +360,20 @@ class DownstreamFunctional:
         matrix.data.setflags(write=False)
         matrix.indices.setflags(write=False)
         matrix.indptr.setflags(write=False)
+        reference_transform_id = stable_id(
+            "downstream_reference_transform",
+            {
+                "center_digest": float64_array_digest(center),
+                "center_method": self.center_method,
+                "minimum_scale": self.minimum_scale,
+                "reference_row_manifest_id": reference.row_manifest_id,
+                "reference_subject_summary_digest": (reference.subject_summary_digest),
+                "reference_summary_method": self.reference_summary_method,
+                "scale_digest": float64_array_digest(scale),
+                "scale_method": self.scale_method,
+            },
+            schema_version="1",
+        )
         payload = {
             "center_digest": float64_array_digest(center),
             "center_method": self.center_method,
@@ -248,8 +385,15 @@ class DownstreamFunctional:
             "minimum_scale": self.minimum_scale,
             "program_transform": self.program_transform,
             "receiver": self.receiver,
-            "reference_input_digest": reference_input_digest,
-            "reference_sample_ids": list(samples),
+            "reference_input_digest": reference.input_digest,
+            "reference_row_manifest_id": reference.row_manifest_id,
+            "reference_sample_context_ids": list(reference.context_ids),
+            "reference_sample_ids": list(reference.sample_ids),
+            "reference_sample_subject_ids": list(reference.subject_ids),
+            "reference_subject_summary_digest": (reference.subject_summary_digest),
+            "reference_transform_id": reference_transform_id,
+            "reference_summary_method": self.reference_summary_method,
+            "reference_summary_subject_ids": list(reference.summary_subject_ids),
             "scale_digest": float64_array_digest(scale),
             "scale_method": self.scale_method,
             "target_weight_matrix_id": _matrix_digest(matrix),
@@ -258,8 +402,20 @@ class DownstreamFunctional:
         object.__setattr__(self, "feature_ids", features)
         object.__setattr__(self, "family_ids", families)
         object.__setattr__(self, "training_subject_ids", subjects)
-        object.__setattr__(self, "reference_sample_ids", samples)
-        object.__setattr__(self, "reference_input_digest", reference_input_digest)
+        object.__setattr__(self, "reference_sample_ids", reference.sample_ids)
+        object.__setattr__(self, "reference_sample_subject_ids", reference.subject_ids)
+        object.__setattr__(self, "reference_sample_context_ids", reference.context_ids)
+        object.__setattr__(
+            self, "reference_summary_subject_ids", reference.summary_subject_ids
+        )
+        object.__setattr__(self, "reference_row_manifest_id", reference.row_manifest_id)
+        object.__setattr__(self, "reference_input_digest", reference.input_digest)
+        object.__setattr__(
+            self,
+            "reference_subject_summary_digest",
+            reference.subject_summary_digest,
+        )
+        object.__setattr__(self, "reference_transform_id", reference_transform_id)
         object.__setattr__(self, "feature_center", center)
         object.__setattr__(self, "feature_scale", scale)
         object.__setattr__(self, "target_weight_matrix", matrix)
@@ -283,12 +439,19 @@ class DownstreamFunctional:
             "family_ids": list(self.family_ids),
             "training_subject_ids": list(self.training_subject_ids),
             "reference_sample_ids": list(self.reference_sample_ids),
+            "reference_sample_subject_ids": list(self.reference_sample_subject_ids),
+            "reference_sample_context_ids": list(self.reference_sample_context_ids),
+            "reference_summary_subject_ids": list(self.reference_summary_subject_ids),
+            "reference_row_manifest_id": self.reference_row_manifest_id,
             "reference_input_digest": self.reference_input_digest,
+            "reference_subject_summary_digest": (self.reference_subject_summary_digest),
+            "reference_transform_id": self.reference_transform_id,
             "feature_center_digest": float64_array_digest(self.feature_center),
             "feature_scale_digest": float64_array_digest(self.feature_scale),
             "target_weight_matrix_id": _matrix_digest(self.target_weight_matrix),
             "family_support_digest": float64_array_digest(self.family_support),
             "minimum_scale": self.minimum_scale,
+            "reference_summary_method": self.reference_summary_method,
             "center_method": self.center_method,
             "scale_method": self.scale_method,
             "program_transform": self.program_transform,
@@ -310,6 +473,40 @@ class DownstreamFunctional:
             )
             samples = _names(
                 tuple(self.reference_sample_ids), field_name="reference_sample_ids"
+            )
+            sample_subjects = _aligned_reference_names(
+                tuple(self.reference_sample_subject_ids),
+                length=len(samples),
+                field_name="reference_sample_subject_ids",
+            )
+            sample_contexts = _aligned_reference_names(
+                tuple(self.reference_sample_context_ids),
+                length=len(samples),
+                field_name="reference_sample_context_ids",
+            )
+            summary_subjects = tuple(
+                sorted(
+                    _names(
+                        tuple(self.reference_summary_subject_ids),
+                        field_name="reference_summary_subject_ids",
+                    )
+                )
+            )
+            expected_row_manifest_id = stable_id(
+                "downstream_reference_row_manifest",
+                {
+                    "rows": [
+                        {
+                            "context_id": context_id,
+                            "sample_id": sample_id,
+                            "subject_id": subject_id,
+                        }
+                        for sample_id, subject_id, context_id in zip(
+                            samples, sample_subjects, sample_contexts, strict=True
+                        )
+                    ]
+                },
+                schema_version="1",
             )
             center = np.asarray(self.feature_center, dtype=np.float64)
             scale = np.asarray(self.feature_scale, dtype=np.float64)
@@ -344,7 +541,11 @@ class DownstreamFunctional:
                 "receiver",
                 "contrast_name",
                 "fold_id",
+                "reference_row_manifest_id",
                 "reference_input_digest",
+                "reference_subject_summary_digest",
+                "reference_transform_id",
+                "reference_summary_method",
                 "center_method",
                 "scale_method",
                 "program_transform",
@@ -364,7 +565,16 @@ class DownstreamFunctional:
                 "program_transform": self.program_transform,
                 "receiver": self.receiver,
                 "reference_input_digest": self.reference_input_digest,
+                "reference_row_manifest_id": self.reference_row_manifest_id,
+                "reference_sample_context_ids": list(sample_contexts),
                 "reference_sample_ids": list(samples),
+                "reference_sample_subject_ids": list(sample_subjects),
+                "reference_subject_summary_digest": (
+                    self.reference_subject_summary_digest
+                ),
+                "reference_transform_id": self.reference_transform_id,
+                "reference_summary_method": self.reference_summary_method,
+                "reference_summary_subject_ids": list(summary_subjects),
                 "scale_digest": float64_array_digest(scale),
                 "scale_method": self.scale_method,
                 "target_weight_matrix_id": _matrix_digest(matrix),
@@ -375,14 +585,41 @@ class DownstreamFunctional:
                 and isinstance(self.family_ids, tuple)
                 and isinstance(self.training_subject_ids, tuple)
                 and isinstance(self.reference_sample_ids, tuple)
+                and isinstance(self.reference_sample_subject_ids, tuple)
+                and isinstance(self.reference_sample_context_ids, tuple)
+                and isinstance(self.reference_summary_subject_ids, tuple)
                 and self.feature_ids == features
                 and self.family_ids == families
                 and self.training_subject_ids == subjects
                 and self.reference_sample_ids == samples
+                and self.reference_sample_subject_ids == sample_subjects
+                and self.reference_sample_context_ids == sample_contexts
+                and self.reference_summary_subject_ids == summary_subjects
+                and set(sample_subjects) == set(summary_subjects)
+                and set(sample_subjects).issubset(subjects)
+                and len(summary_subjects) >= 2
+                and self.reference_row_manifest_id == expected_row_manifest_id
+                and self.reference_transform_id
+                == stable_id(
+                    "downstream_reference_transform",
+                    {
+                        "center_digest": float64_array_digest(center),
+                        "center_method": self.center_method,
+                        "minimum_scale": self.minimum_scale,
+                        "reference_row_manifest_id": self.reference_row_manifest_id,
+                        "reference_subject_summary_digest": (
+                            self.reference_subject_summary_digest
+                        ),
+                        "reference_summary_method": self.reference_summary_method,
+                        "scale_digest": float64_array_digest(scale),
+                        "scale_method": self.scale_method,
+                    },
+                    schema_version="1",
+                )
                 and stable_id("downstream_functional", payload)
                 == self.downstream_functional_id
             )
-        except (AttributeError, TypeError, ValueError) as error:
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
             raise ContractError(
                 "Downstream functional failed integrity validation",
                 code="downstream_functional_integrity_violation",
@@ -398,47 +635,120 @@ class DownstreamFunctional:
             )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, init=False)
 class DownstreamApplication:
     """Held-out receiver-program values produced by one frozen functional."""
 
+    functional: DownstreamFunctional
     downstream_functional_id: str
+    input_expression_digest: str
+    input_row_manifest_id: str | None
     raw_program: np.ndarray
     receiver_program_score: np.ndarray
     supported_program_score: np.ndarray
+    _family_support: np.ndarray = field(repr=False)
     application_id: str = field(init=False)
+    _producer_marker: str = field(repr=False)
 
-    def __post_init__(self) -> None:
-        if not self.downstream_functional_id:
-            raise ValueError("downstream_functional_id must not be empty")
-        arrays = (
-            np.asarray(self.raw_program, dtype=np.float64).copy(),
-            np.asarray(self.receiver_program_score, dtype=np.float64).copy(),
-            np.asarray(self.supported_program_score, dtype=np.float64).copy(),
+    def __init__(self) -> None:
+        raise TypeError(
+            "DownstreamApplication is producer-owned; use apply_downstream_functional()"
         )
-        if any(array.ndim != 2 for array in arrays):
-            raise ValueError("downstream application arrays must be two-dimensional")
-        if len({array.shape for array in arrays}) != 1:
-            raise ValueError("downstream application arrays must share one shape")
-        finite_or_nan = all(
-            not np.any(np.isinf(array)) and not np.any(array < 0) for array in arrays
+
+    @classmethod
+    def _from_application(
+        cls,
+        *,
+        functional: DownstreamFunctional,
+        sample_expression: np.ndarray,
+        feature_ids: tuple[str, ...],
+        input_row_manifest_id: str | None,
+    ) -> DownstreamApplication:
+        if not isinstance(functional, DownstreamFunctional):
+            raise TypeError("functional must be DownstreamFunctional")
+        functional._require_intact()
+        if tuple(feature_ids) != functional.feature_ids:
+            raise ValueError(
+                "test feature_ids must exactly match the frozen functional"
+            )
+        expression = np.asarray(sample_expression, dtype=np.float64, order="C")
+        if expression.ndim == 1:
+            expression = expression.reshape(1, -1)
+        if expression.ndim != 2 or expression.shape[1] != len(
+            functional.feature_ids
+        ):
+            raise ValueError("sample_expression must be samples x frozen features")
+        if np.any(np.isinf(expression)):
+            raise ValueError("sample_expression must not contain infinite values")
+        if input_row_manifest_id is None:
+            normalized_row_manifest_id = None
+        elif (
+            not isinstance(input_row_manifest_id, str)
+            or not input_row_manifest_id.strip()
+            or input_row_manifest_id != input_row_manifest_id.strip()
+        ):
+            raise ValueError("input_row_manifest_id must be a canonical identifier")
+        else:
+            normalized_row_manifest_id = input_row_manifest_id
+        standardized = (expression - functional.feature_center) / (
+            functional.feature_scale
         )
-        if not finite_or_nan:
-            raise ValueError("downstream application values must be non-negative")
+        directional = np.maximum(standardized, 0.0)
+        raw = np.asarray(
+            directional @ functional.target_weight_matrix,
+            dtype=np.float64,
+            order="C",
+        ).copy(order="C")
+        if (
+            raw.ndim != 2
+            or raw.shape[1] != len(functional.family_ids)
+            or np.any(np.isinf(raw))
+            or np.any(raw < 0)
+        ):
+            raise ValueError(
+                "raw_program must be a non-negative samples x frozen-families matrix"
+            )
+        score = raw / (1.0 + raw)
+        support = np.asarray(
+            functional.family_support, dtype=np.float64, order="C"
+        ).copy(order="C")
+        supported = score * support
+        arrays = (raw, score, supported, support)
         for array in arrays:
             array.setflags(write=False)
-        object.__setattr__(self, "raw_program", arrays[0])
-        object.__setattr__(self, "receiver_program_score", arrays[1])
-        object.__setattr__(self, "supported_program_score", arrays[2])
+        self = object.__new__(cls)
+        values: dict[str, Any] = {
+            "functional": functional,
+            "downstream_functional_id": functional.downstream_functional_id,
+            "input_expression_digest": downstream_input_expression_digest(
+                expression
+            ),
+            "input_row_manifest_id": normalized_row_manifest_id,
+            "raw_program": raw,
+            "receiver_program_score": score,
+            "supported_program_score": supported,
+            "_family_support": support,
+            "_producer_marker": _DOWNSTREAM_APPLICATION_PRODUCER,
+        }
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
         object.__setattr__(
             self,
             "application_id",
-            stable_id("downstream_application", self._identity_payload()),
+            stable_id(
+                "downstream_application",
+                self._identity_payload(),
+                schema_version="2",
+            ),
         )
+        return self
 
     def _identity_payload(self) -> dict[str, object]:
         return {
             "downstream_functional_id": self.downstream_functional_id,
+            "family_support_digest": float64_array_digest(self._family_support),
+            "input_expression_digest": self.input_expression_digest,
+            "input_row_manifest_id": self.input_row_manifest_id,
             "raw_program_digest": _numeric_array_digest(self.raw_program),
             "receiver_program_score_digest": _numeric_array_digest(
                 self.receiver_program_score
@@ -452,25 +762,56 @@ class DownstreamApplication:
         """Reject forced mutation of held-out downstream values."""
 
         try:
+            self.functional._require_intact()
             arrays = (
                 np.asarray(self.raw_program, dtype=np.float64),
                 np.asarray(self.receiver_program_score, dtype=np.float64),
                 np.asarray(self.supported_program_score, dtype=np.float64),
             )
+            support = np.asarray(self._family_support, dtype=np.float64)
+            expected_score = arrays[0] / (1.0 + arrays[0])
+            expected_supported = expected_score * support
             valid = (
-                bool(self.downstream_functional_id)
+                self._producer_marker == _DOWNSTREAM_APPLICATION_PRODUCER
+                and self.downstream_functional_id
+                == self.functional.downstream_functional_id
+                and isinstance(self.input_expression_digest, str)
+                and bool(self.input_expression_digest)
+                and self.input_expression_digest == self.input_expression_digest.strip()
+                and (
+                    self.input_row_manifest_id is None
+                    or (
+                        isinstance(self.input_row_manifest_id, str)
+                        and bool(self.input_row_manifest_id)
+                        and self.input_row_manifest_id
+                        == self.input_row_manifest_id.strip()
+                    )
+                )
                 and all(array.ndim == 2 for array in arrays)
                 and len({array.shape for array in arrays}) == 1
+                and arrays[0].shape[1] == len(self.functional.family_ids)
+                and support.shape == (arrays[0].shape[1],)
+                and np.array_equal(
+                    support,
+                    np.asarray(self.functional.family_support, dtype=np.float64),
+                )
                 and all(
                     not np.any(np.isinf(array))
                     and not np.any(array < 0)
                     and not array.flags.writeable
                     for array in arrays
                 )
-                and stable_id("downstream_application", self._identity_payload())
+                and not support.flags.writeable
+                and np.array_equal(arrays[1], expected_score, equal_nan=True)
+                and np.array_equal(arrays[2], expected_supported, equal_nan=True)
+                and stable_id(
+                    "downstream_application",
+                    self._identity_payload(),
+                    schema_version="2",
+                )
                 == self.application_id
             )
-        except (AttributeError, TypeError, ValueError) as error:
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
             raise ContractError(
                 "Downstream application failed integrity validation",
                 code="downstream_application_integrity_violation",
@@ -562,6 +903,15 @@ def _numeric_array_digest(values: np.ndarray) -> str:
         digest_length=64,
     )
     return result
+
+
+def downstream_input_expression_digest(values: np.ndarray) -> str:
+    """Return the canonical numeric digest bound to a downstream application."""
+
+    expression = np.asarray(values, dtype=np.float64, order="C")
+    if expression.ndim != 2:
+        raise ValueError("downstream input expression must be two-dimensional")
+    return _numeric_array_digest(expression)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -913,6 +1263,10 @@ class IncrementalDownstreamFunctional:
     autonomous_program_ids: tuple[str, ...]
     autonomous_basis_id: str | None
     autonomous_basis: np.ndarray
+    basis_coordinate_transform: str
+    basis_coordinate_transform_id: str
+    raw_input_family_basis_id: str
+    coordinate_family_basis_id: str
     autonomous_projection_id: str
     identifiability_tolerance: float
     original_family_basis_id: str
@@ -922,8 +1276,8 @@ class IncrementalDownstreamFunctional:
     family_retained_norm_fraction: np.ndarray
     family_coefficients: np.ndarray
     null_nuisance_coefficients: np.ndarray
-    full_nuisance_coefficients: np.ndarray
-    family_nuisance_coefficients: np.ndarray
+    context_regressor_nuisance_coefficients: np.ndarray
+    nuisance_factorization: str
     precision_weights: np.ndarray
     minimum_scale: float
     null_loss_floor: float
@@ -970,6 +1324,10 @@ class IncrementalDownstreamFunctional:
         autonomous_program_ids: tuple[str, ...],
         autonomous_basis_id: str | None,
         autonomous_basis: np.ndarray,
+        basis_coordinate_transform: str,
+        basis_coordinate_transform_id: str,
+        raw_input_family_basis_id: str,
+        coordinate_family_basis_id: str,
         autonomous_projection_id: str,
         identifiability_tolerance: float,
         original_family_basis_id: str,
@@ -979,8 +1337,7 @@ class IncrementalDownstreamFunctional:
         family_retained_norm_fraction: np.ndarray,
         family_coefficients: np.ndarray,
         null_nuisance_coefficients: np.ndarray,
-        full_nuisance_coefficients: np.ndarray,
-        family_nuisance_coefficients: np.ndarray,
+        context_regressor_nuisance_coefficients: np.ndarray,
         precision_weights: np.ndarray,
         minimum_scale: float,
         null_loss_floor: float,
@@ -999,6 +1356,10 @@ class IncrementalDownstreamFunctional:
             ("nuisance_design_id", nuisance_design_id),
             ("training_row_manifest_id", training_row_manifest_id),
             ("training_input_digest", training_input_digest),
+            ("basis_coordinate_transform", basis_coordinate_transform),
+            ("basis_coordinate_transform_id", basis_coordinate_transform_id),
+            ("raw_input_family_basis_id", raw_input_family_basis_id),
+            ("coordinate_family_basis_id", coordinate_family_basis_id),
             ("autonomous_projection_id", autonomous_projection_id),
             ("original_family_basis_id", original_family_basis_id),
         ):
@@ -1009,6 +1370,12 @@ class IncrementalDownstreamFunctional:
             ):
                 raise ValueError(f"{field_name} must be a canonical non-empty string")
             names[field_name] = scope_value
+        if names["basis_coordinate_transform"] != _BASIS_COORDINATE_TRANSFORM:
+            raise ValueError("basis_coordinate_transform is not supported")
+        if names["raw_input_family_basis_id"] != names["original_family_basis_id"]:
+            raise ValueError(
+                "original_family_basis_id must alias the raw input family basis"
+            )
         features = _names(feature_ids, field_name="feature_ids")
         families = _names(family_ids, field_name="family_ids")
         nuisance_ids = _names(nuisance_column_ids, field_name="nuisance_column_ids")
@@ -1106,9 +1473,7 @@ class IncrementalDownstreamFunctional:
             strict=True,
         ):
             if value is not None and (
-                not isinstance(value, str)
-                or not value
-                or value != value.strip()
+                not isinstance(value, str) or not value or value != value.strip()
             ):
                 raise ValueError(f"{field_name} must be a canonical non-empty string")
         n_features = len(features)
@@ -1174,15 +1539,10 @@ class IncrementalDownstreamFunctional:
             shape=(n_nuisance, n_features),
             field_name="null_nuisance_coefficients",
         )
-        full_coefficients = _readonly_array(
-            full_nuisance_coefficients,
-            shape=(n_nuisance, n_features),
-            field_name="full_nuisance_coefficients",
-        )
-        family_nuisance = _readonly_array(
-            family_nuisance_coefficients,
-            shape=(n_families, n_nuisance, n_features),
-            field_name="family_nuisance_coefficients",
+        context_nuisance_coefficients = _readonly_array(
+            context_regressor_nuisance_coefficients,
+            shape=(n_nuisance,),
+            field_name="context_regressor_nuisance_coefficients",
         )
         precision = _readonly_array(
             precision_weights,
@@ -1211,6 +1571,10 @@ class IncrementalDownstreamFunctional:
             "autonomous_program_ids": program_ids,
             "autonomous_basis_id": autonomous_basis_id,
             "autonomous_basis": autonomous,
+            "basis_coordinate_transform": basis_coordinate_transform,
+            "basis_coordinate_transform_id": basis_coordinate_transform_id,
+            "raw_input_family_basis_id": raw_input_family_basis_id,
+            "coordinate_family_basis_id": coordinate_family_basis_id,
             "autonomous_projection_id": autonomous_projection_id,
             "identifiability_tolerance": identifiability_tolerance,
             "original_family_basis_id": original_family_basis_id,
@@ -1220,8 +1584,8 @@ class IncrementalDownstreamFunctional:
             "family_retained_norm_fraction": retained,
             "family_coefficients": coefficients,
             "null_nuisance_coefficients": null_coefficients,
-            "full_nuisance_coefficients": full_coefficients,
-            "family_nuisance_coefficients": family_nuisance,
+            "context_regressor_nuisance_coefficients": context_nuisance_coefficients,
+            "nuisance_factorization": _NUISANCE_FACTORIZATION,
             "precision_weights": precision,
             "minimum_scale": minimum_scale,
             "null_loss_floor": null_loss_floor,
@@ -1230,7 +1594,7 @@ class IncrementalDownstreamFunctional:
             "resolved_penalty_id": resolved_penalty_id,
             "lambda1": lambda1,
             "lambda2": lambda2,
-            "identity_scope": "sample_keyed_v2",
+            "identity_scope": "sample_keyed_factorized_v4",
             "family_gain_estimand": _FAMILY_GAIN_ESTIMAND,
             "certification_status": (
                 "autonomous_program_projected_partial_not_oof_certified"
@@ -1247,7 +1611,7 @@ class IncrementalDownstreamFunctional:
             stable_id(
                 "incremental_downstream_functional",
                 self._identity_payload(),
-                schema_version="3",
+                schema_version="5",
             ),
         )
         return self
@@ -1265,9 +1629,16 @@ class IncrementalDownstreamFunctional:
             "autonomous_basis_digest": float64_array_digest(self.autonomous_basis),
             "autonomous_basis_id": self.autonomous_basis_id,
             "autonomous_program_ids": list(self.autonomous_program_ids),
+            "basis_coordinate_transform": self.basis_coordinate_transform,
+            "basis_coordinate_transform_id": self.basis_coordinate_transform_id,
+            "raw_input_family_basis_id": self.raw_input_family_basis_id,
+            "coordinate_family_basis_id": self.coordinate_family_basis_id,
             "autonomous_projection_id": self.autonomous_projection_id,
             "certification_status": self.certification_status,
             "context_regressor_id": self.context_regressor_id,
+            "context_regressor_nuisance_digest": float64_array_digest(
+                self.context_regressor_nuisance_coefficients
+            ),
             "contrast_name": self.contrast_name,
             "family_basis_id": _matrix_digest(self.family_basis),
             "family_coefficient_digest": float64_array_digest(self.family_coefficients),
@@ -1278,14 +1649,8 @@ class IncrementalDownstreamFunctional:
             "family_retained_norm_fraction_digest": float64_array_digest(
                 self.family_retained_norm_fraction
             ),
-            "family_nuisance_digest": float64_array_digest(
-                self.family_nuisance_coefficients
-            ),
             "feature_ids": list(self.feature_ids),
             "fold_id": self.fold_id,
-            "full_nuisance_digest": float64_array_digest(
-                self.full_nuisance_coefficients
-            ),
             "identity_scope": self.identity_scope,
             "identifiability_tolerance": self.identifiability_tolerance,
             "lambda1": self.lambda1,
@@ -1297,6 +1662,7 @@ class IncrementalDownstreamFunctional:
             "minimum_scale": self.minimum_scale,
             "nuisance_column_ids": list(self.nuisance_column_ids),
             "nuisance_design_id": self.nuisance_design_id,
+            "nuisance_factorization": self.nuisance_factorization,
             "null_loss_floor": self.null_loss_floor,
             "null_nuisance_digest": float64_array_digest(
                 self.null_nuisance_coefficients
@@ -1335,7 +1701,7 @@ class IncrementalDownstreamFunctional:
             expected = stable_id(
                 "incremental_downstream_functional",
                 self._identity_payload(),
-                schema_version="3",
+                schema_version="5",
             )
         except (ValueError, TypeError) as error:
             raise ContractError(
@@ -1377,6 +1743,10 @@ class IncrementalDownstreamFunctional:
             "autonomous_program_ids": list(self.autonomous_program_ids),
             "autonomous_basis_id": self.autonomous_basis_id,
             "autonomous_basis_digest": float64_array_digest(self.autonomous_basis),
+            "basis_coordinate_transform": self.basis_coordinate_transform,
+            "basis_coordinate_transform_id": self.basis_coordinate_transform_id,
+            "raw_input_family_basis_id": self.raw_input_family_basis_id,
+            "coordinate_family_basis_id": self.coordinate_family_basis_id,
             "autonomous_projection_id": self.autonomous_projection_id,
             "family_basis_id": _matrix_digest(self.family_basis),
             "original_family_basis_id": self.original_family_basis_id,
@@ -1389,12 +1759,10 @@ class IncrementalDownstreamFunctional:
             "null_nuisance_digest": float64_array_digest(
                 self.null_nuisance_coefficients
             ),
-            "full_nuisance_digest": float64_array_digest(
-                self.full_nuisance_coefficients
+            "context_regressor_nuisance_digest": float64_array_digest(
+                self.context_regressor_nuisance_coefficients
             ),
-            "family_nuisance_digest": float64_array_digest(
-                self.family_nuisance_coefficients
-            ),
+            "nuisance_factorization": self.nuisance_factorization,
             "precision_digest": float64_array_digest(self.precision_weights),
             "minimum_scale": self.minimum_scale,
             "null_loss_floor": self.null_loss_floor,
@@ -1806,7 +2174,7 @@ class IncrementalDownstreamApplication:
         }
 
 
-def _normalize_family_basis(
+def _canonical_family_basis(
     matrix: sparse.spmatrix | np.ndarray,
     *,
     n_features: int,
@@ -1817,6 +2185,22 @@ def _normalize_family_basis(
         raise ValueError("family_basis shape must equal features x families")
     if np.any(~np.isfinite(basis.data)) or np.any(basis.data < 0):
         raise ValueError("family_basis must be finite and non-negative")
+    basis.sum_duplicates()
+    basis.sort_indices()
+    return basis
+
+
+def _normalize_family_basis(
+    matrix: sparse.spmatrix | np.ndarray,
+    *,
+    n_features: int,
+    n_families: int,
+) -> sparse.csc_matrix:
+    basis = _canonical_family_basis(
+        matrix,
+        n_features=n_features,
+        n_families=n_families,
+    )
     norms = np.sqrt(np.asarray(basis.power(2).sum(axis=0)).ravel())
     if np.any(norms <= 0):
         raise ValueError("every family basis column must have positive L2 norm")
@@ -1985,28 +2369,23 @@ def fit_incremental_downstream_functional(
         or not 0 < identifiability_tolerance < 1
     ):
         raise ValueError("identifiability_tolerance must be finite in (0, 1)")
-    original_basis = _normalize_family_basis(
+    raw_input_family_basis = _canonical_family_basis(
         family_basis,
         n_features=n_features,
         n_families=len(families),
     )
+    raw_input_family_basis_id = _matrix_digest(raw_input_family_basis)
+    original_basis = _normalize_family_basis(
+        raw_input_family_basis,
+        n_features=n_features,
+        n_families=len(families),
+    )
+    normalized_raw_family_basis_id = _matrix_digest(original_basis)
+    original_family_basis_id = raw_input_family_basis_id
     if autonomous_program_resource is None:
         autonomous_program_ids: tuple[str, ...] = ()
         autonomous_basis_id: str | None = None
-        programs = np.empty((n_features, 0), dtype=np.float64)
-        basis = original_basis
-        retained: np.ndarray = np.ones(len(families), dtype=np.float64)
-        family_estimable: np.ndarray = np.ones(len(families), dtype=bool)
-        residualization_id = stable_id(
-            "autonomous_feature_projection",
-            {
-                "feature_ids": list(features),
-                "mode": "no_autonomous_resource_diagnostic",
-                "original_family_basis_id": _matrix_digest(original_basis),
-                "precision_digest": _dense_input_digest(precision),
-            },
-            schema_version="1",
-        )
+        raw_programs = np.empty((n_features, 0), dtype=np.float64)
     else:
         if not isinstance(
             autonomous_program_resource, ReceiverAutonomousProgramResource
@@ -2018,26 +2397,123 @@ def fit_incremental_downstream_functional(
         autonomous_program_resource._require_producer_owned()
         autonomous_program_ids = autonomous_program_resource.program_ids
         autonomous_basis_id = autonomous_program_resource.artifact_id
-        programs = autonomous_program_resource.matrix_for_features(features)
-        residualization = residualize_against_autonomous_programs(
-            np.asarray(original_basis.toarray(), dtype=np.float64),
-            feature_ids=features,
-            candidate_ids=families,
-            precision=precision,
-            program_resource=autonomous_program_resource,
-            projection_rcond=1e-12,
-            identifiability_tolerance=identifiability_tolerance,
+        raw_programs = autonomous_program_resource.matrix_for_features(features)
+
+    coordinate_family_basis = sparse.csc_matrix(
+        sparse.diags(1.0 / scale, format="csc") @ original_basis
+    )
+    coordinate_family_basis.sum_duplicates()
+    coordinate_family_basis.sort_indices()
+    coordinate_family_basis_id = _matrix_digest(coordinate_family_basis)
+    programs = raw_programs / scale[:, np.newaxis]
+    basis_coordinate_transform_id = stable_id(
+        "downstream_basis_coordinate_transform",
+        {
+            "autonomous_basis_id": autonomous_basis_id,
+            "autonomous_program_ids": list(autonomous_program_ids),
+            "coordinate_autonomous_basis_digest": _dense_input_digest(programs),
+            "coordinate_family_basis_id": coordinate_family_basis_id,
+            "feature_ids": list(features),
+            "feature_scale_digest": _dense_input_digest(scale),
+            "normalized_raw_family_basis_id": normalized_raw_family_basis_id,
+            "original_family_basis_id": original_family_basis_id,
+            "raw_input_family_basis_id": raw_input_family_basis_id,
+            "raw_autonomous_basis_digest": _dense_input_digest(raw_programs),
+            "transform": _BASIS_COORDINATE_TRANSFORM,
+        },
+        schema_version="1",
+    )
+
+    if autonomous_program_resource is None:
+        coordinate_norms = np.sqrt(
+            np.asarray(coordinate_family_basis.power(2).sum(axis=0)).ravel()
         )
-        retained = np.asarray(residualization.retained_fractions, dtype=np.float64)
-        family_estimable = np.asarray(residualization.identifiable, dtype=bool)
-        projected = np.asarray(
-            residualization.residualized_basis, dtype=np.float64
-        ).copy()
+        basis = sparse.csc_matrix(
+            coordinate_family_basis @ sparse.diags(1.0 / coordinate_norms, format="csc")
+        )
+        weighted_support_norms = np.sqrt(
+            np.asarray(
+                (
+                    sparse.diags(precision, format="csc")
+                    @ coordinate_family_basis.power(2)
+                ).sum(axis=0)
+            ).ravel()
+        )
+        family_estimable = weighted_support_norms > 0.0
+        retained = family_estimable.astype(np.float64)
+        basis = sparse.csc_matrix(
+            basis @ sparse.diags(family_estimable.astype(np.float64), format="csc")
+        )
+        residualization_id = stable_id(
+            "autonomous_feature_projection",
+            {
+                "basis_coordinate_transform_id": basis_coordinate_transform_id,
+                "coordinate_family_basis_id": coordinate_family_basis_id,
+                "family_basis_id": _matrix_digest(basis),
+                "family_estimable": family_estimable.astype(bool).tolist(),
+                "feature_ids": list(features),
+                "mode": "no_autonomous_resource_diagnostic",
+                "original_family_basis_id": original_family_basis_id,
+                "precision_digest": _dense_input_digest(precision),
+                "weighted_support_norms_digest": _dense_input_digest(
+                    weighted_support_norms
+                ),
+            },
+            schema_version="2",
+        )
+    else:
+        coordinate_family_dense = np.asarray(
+            coordinate_family_basis.toarray(), dtype=np.float64
+        )
+        projected, numerical_rank = _precision_weighted_span_residual(
+            coordinate_family_dense,
+            span_basis=programs,
+            precision=precision,
+            projection_rcond=1e-12,
+        )
+        if numerical_rank != len(autonomous_program_ids):
+            raise AutonomousProgramSupportError(
+                "autonomous programs lack full rank on precision-supported features"
+            )
+        sqrt_precision = np.sqrt(precision)[:, np.newaxis]
+        original_weighted_norms = np.linalg.norm(
+            sqrt_precision * coordinate_family_dense, axis=0
+        )
+        residual_weighted_norms = np.linalg.norm(sqrt_precision * projected, axis=0)
+        retained = np.zeros_like(original_weighted_norms)
+        supported = original_weighted_norms > 0.0
+        retained[supported] = (
+            residual_weighted_norms[supported] / original_weighted_norms[supported]
+        )
+        retained = np.minimum(retained, 1.0)
+        family_estimable = retained > identifiability_tolerance
+        projected = np.asarray(projected, dtype=np.float64).copy()
         projected[:, ~family_estimable] = 0.0
         norms = np.linalg.norm(projected, axis=0)
         projected[:, family_estimable] /= norms[family_estimable]
         basis = sparse.csc_matrix(projected)
-        residualization_id = residualization.residualization_id
+        residualization_id = stable_id(
+            "autonomous_feature_projection",
+            {
+                "autonomous_basis_id": autonomous_basis_id,
+                "autonomous_program_ids": list(autonomous_program_ids),
+                "basis_coordinate_transform_id": basis_coordinate_transform_id,
+                "coordinate_autonomous_basis_digest": _dense_input_digest(programs),
+                "coordinate_family_basis_id": coordinate_family_basis_id,
+                "family_basis_id": _matrix_digest(basis),
+                "family_estimable": family_estimable.astype(bool).tolist(),
+                "feature_ids": list(features),
+                "identifiability_tolerance": identifiability_tolerance,
+                "original_family_basis_id": original_family_basis_id,
+                "precision_digest": _dense_input_digest(precision),
+                "projection_rcond": 1e-12,
+                "residual_weighted_norms_digest": _dense_input_digest(
+                    residual_weighted_norms
+                ),
+                "retained_fraction_digest": _dense_input_digest(retained),
+            },
+            schema_version="2",
+        )
     if not np.any(family_estimable):
         raise ContractError(
             "No family basis is identifiable after autonomous projection",
@@ -2119,20 +2595,6 @@ def fit_incremental_downstream_functional(
         )
     family_coefficients: np.ndarray = np.zeros(len(families), dtype=np.float64)
     family_coefficients[estimable_indices] = solution.coefficients
-    predicted_effect = np.asarray(basis @ family_coefficients).ravel()
-    full_adjusted = projected_standardized - np.outer(regressor, predicted_effect)
-    full_coefficients = _weighted_lstsq(nuisance, full_adjusted, training_weights)
-    family_nuisance = np.empty(
-        (len(families), nuisance.shape[1], n_features), dtype=np.float64
-    )
-    for family_index, coefficient in enumerate(family_coefficients):
-        contribution = (
-            np.asarray(basis.getcol(family_index).toarray()).ravel() * coefficient
-        )
-        adjusted = projected_standardized - np.outer(regressor, contribution)
-        family_nuisance[family_index] = _weighted_lstsq(
-            nuisance, adjusted, training_weights
-        )
     declared_subjects = tuple(
         sorted(_names(training_subject_ids, field_name="training_subject_ids"))
     )
@@ -2153,12 +2615,17 @@ def fit_incremental_downstream_functional(
             "autonomous_basis_digest": _dense_input_digest(programs),
             "autonomous_basis_id": autonomous_basis_id,
             "autonomous_program_ids": list(autonomous_program_ids),
+            "basis_coordinate_transform": _BASIS_COORDINATE_TRANSFORM,
+            "basis_coordinate_transform_id": basis_coordinate_transform_id,
+            "coordinate_family_basis_id": coordinate_family_basis_id,
             "family_basis_id": _matrix_digest(basis),
-            "original_family_basis_id": _matrix_digest(original_basis),
+            "original_family_basis_id": original_family_basis_id,
+            "raw_input_family_basis_id": raw_input_family_basis_id,
             "family_retained_norm_fraction": retained.tolist(),
             "feature_ids": list(features),
             "nuisance_column_ids": list(nuisance_ids),
             "nuisance_digest": _dense_input_digest(nuisance),
+            "nuisance_factorization": _NUISANCE_FACTORIZATION,
             "loss_context_weights_digest": _dense_input_digest(loss_context_weights),
             "loss_design": loss_design,
             "penalty_candidate_id": penalty_candidate_id,
@@ -2170,7 +2637,7 @@ def fit_incremental_downstream_functional(
             "response_digest": _dense_input_digest(response),
             "row_manifest_id": row_manifest.manifest_id,
         },
-        schema_version="3",
+        schema_version="5",
     )
     autonomous_projection_id = residualization_id
     return IncrementalDownstreamFunctional._from_training(
@@ -2196,9 +2663,13 @@ def fit_incremental_downstream_functional(
         autonomous_program_ids=tuple(autonomous_program_ids),
         autonomous_basis_id=autonomous_basis_id,
         autonomous_basis=programs,
+        basis_coordinate_transform=_BASIS_COORDINATE_TRANSFORM,
+        basis_coordinate_transform_id=basis_coordinate_transform_id,
+        raw_input_family_basis_id=raw_input_family_basis_id,
+        coordinate_family_basis_id=coordinate_family_basis_id,
         autonomous_projection_id=autonomous_projection_id,
         identifiability_tolerance=identifiability_tolerance,
-        original_family_basis_id=_matrix_digest(original_basis),
+        original_family_basis_id=original_family_basis_id,
         family_basis=basis,
         family_estimable=family_estimable,
         family_reason_codes=tuple(
@@ -2208,8 +2679,7 @@ def fit_incremental_downstream_functional(
         family_retained_norm_fraction=retained,
         family_coefficients=family_coefficients,
         null_nuisance_coefficients=null_coefficients,
-        full_nuisance_coefficients=full_coefficients,
-        family_nuisance_coefficients=family_nuisance,
+        context_regressor_nuisance_coefficients=regressor_nuisance,
         precision_weights=precision,
         minimum_scale=minimum_scale,
         null_loss_floor=null_loss_floor,
@@ -2551,6 +3021,9 @@ def apply_incremental_downstream_functional(
         precision_weights=functional.precision_weights,
     )
     null_prediction = nuisance @ functional.null_nuisance_coefficients
+    residualized_context = (
+        regressor - nuisance @ functional.context_regressor_nuisance_coefficients
+    )
     sample_null_losses = _prediction_losses(
         standardized, null_prediction, functional.precision_weights
     )
@@ -2583,9 +3056,7 @@ def apply_incremental_downstream_functional(
     predicted_effect = np.asarray(
         functional.family_basis @ functional.family_coefficients
     ).ravel()
-    full_prediction = nuisance @ functional.full_nuisance_coefficients + np.outer(
-        regressor, predicted_effect
-    )
+    full_prediction = null_prediction + np.outer(residualized_context, predicted_effect)
     sample_full_losses = _prediction_losses(
         standardized, full_prediction, functional.precision_weights
     )
@@ -2632,9 +3103,7 @@ def apply_incremental_downstream_functional(
             np.asarray(functional.family_basis.getcol(family_index).toarray()).ravel()
             * coefficient
         )
-        prediction = nuisance @ functional.family_nuisance_coefficients[
-            family_index
-        ] + np.outer(regressor, contribution)
+        prediction = null_prediction + np.outer(residualized_context, contribution)
         sample_loss = _prediction_losses(
             standardized, prediction, functional.precision_weights
         )
@@ -2701,6 +3170,7 @@ def fit_downstream_functional(
     family_ids: tuple[str, ...],
     reference_sample_ids: tuple[str, ...],
     reference_subject_ids: tuple[str, ...],
+    reference_context_ids: tuple[str, ...],
     training_subject_ids: tuple[str, ...],
     target_weight_matrix: sparse.spmatrix | np.ndarray,
     family_support: np.ndarray,
@@ -2708,23 +3178,20 @@ def fit_downstream_functional(
 ) -> DownstreamFunctional:
     """Fit median/MAD transforms using training reference samples only."""
 
-    expression, samples, subjects, _ = _canonical_reference_input(
+    reference = _canonical_reference_input(
         reference_expression,
         sample_ids=reference_sample_ids,
         subject_ids=reference_subject_ids,
+        context_ids=reference_context_ids,
         feature_ids=feature_ids,
     )
-    if expression.shape[0] < 2:
-        raise ValueError(
-            "reference_expression requires at least two complete finite samples"
-        )
     declared_training_subjects = tuple(sorted(set(training_subject_ids)))
-    if set(subjects).difference(declared_training_subjects):
+    if set(reference.subject_ids).difference(declared_training_subjects):
         raise ValueError("reference subjects must belong to training_subject_ids")
     if not math.isfinite(minimum_scale) or minimum_scale <= 0:
         raise ValueError("minimum_scale must be finite and positive")
-    center = np.median(expression, axis=0)
-    mad = np.median(np.abs(expression - center), axis=0)
+    center = np.median(reference.subject_summary, axis=0)
+    mad = np.median(np.abs(reference.subject_summary - center), axis=0)
     scale = np.maximum(_MAD_GAUSSIAN_CONSISTENCY * mad, minimum_scale)
     matrix = sparse.csc_matrix(target_weight_matrix, dtype=np.float64).copy()
     if matrix.shape != (len(feature_ids), len(family_ids)):
@@ -2742,14 +3209,15 @@ def fit_downstream_functional(
         feature_ids=feature_ids,
         family_ids=family_ids,
         training_subject_ids=declared_training_subjects,
-        reference_sample_ids=samples,
+        reference_sample_ids=reference.sample_ids,
         feature_center=center,
         feature_scale=scale,
         target_weight_matrix=matrix,
         family_support=family_support,
         minimum_scale=minimum_scale,
-        reference_expression=expression,
-        reference_subject_ids=subjects,
+        reference_expression=reference.expression,
+        reference_subject_ids=reference.subject_ids,
+        reference_context_ids=reference.context_ids,
     )
 
 
@@ -2758,31 +3226,15 @@ def apply_downstream_functional(
     sample_expression: np.ndarray,
     *,
     feature_ids: tuple[str, ...],
+    input_row_manifest_id: str | None = None,
 ) -> DownstreamApplication:
     """Apply a training-fold receiver-program transform without refitting."""
 
-    if tuple(feature_ids) != functional.feature_ids:
-        raise ValueError("test feature_ids must exactly match the frozen functional")
-    expression = np.asarray(sample_expression, dtype=np.float64)
-    if expression.ndim == 1:
-        expression = expression.reshape(1, -1)
-    if expression.ndim != 2 or expression.shape[1] != len(functional.feature_ids):
-        raise ValueError("sample_expression must be samples x frozen features")
-    if np.any(np.isinf(expression)):
-        raise ValueError("sample_expression must not contain infinite values")
-    standardized = (expression - functional.feature_center) / functional.feature_scale
-    directional = np.maximum(standardized, 0.0)
-    raw_program = np.asarray(
-        directional @ functional.target_weight_matrix,
-        dtype=np.float64,
-    )
-    program_score = raw_program / (1.0 + raw_program)
-    supported = program_score * functional.family_support
-    return DownstreamApplication(
-        downstream_functional_id=functional.downstream_functional_id,
-        raw_program=raw_program,
-        receiver_program_score=program_score,
-        supported_program_score=supported,
+    return DownstreamApplication._from_application(
+        functional=functional,
+        sample_expression=sample_expression,
+        feature_ids=feature_ids,
+        input_row_manifest_id=input_row_manifest_id,
     )
 
 
@@ -2794,6 +3246,7 @@ __all__ = [
     "IncrementalDownstreamFunctional",
     "apply_downstream_functional",
     "apply_incremental_downstream_functional",
+    "downstream_input_expression_digest",
     "fit_downstream_functional",
     "fit_incremental_downstream_functional",
 ]

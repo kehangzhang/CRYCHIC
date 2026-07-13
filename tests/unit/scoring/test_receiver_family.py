@@ -29,8 +29,13 @@ from crychic.resources import (
 )
 from crychic.scoring import (
     ReceiverFamilyScoringArtifact,
+    ReceiverProgramApplication,
+    ReceiverProgramTrainingArtifact,
     apply_receiver_family_scoring_artifact,
+    apply_receiver_program_training_artifact,
+    fit_downstream_functional,
     fit_receiver_family_scoring_artifact,
+    fit_receiver_program_training_artifact,
 )
 
 
@@ -177,6 +182,7 @@ def _scoring_artifact(
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
         minimum_scale=0.25,
     )
 
@@ -208,6 +214,7 @@ def test_training_freezes_hard_gates_strict_families_and_downstream() -> None:
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
     assert scoring.downstream_functional is not None
     assert scoring.active_family_ids == receiver_family.eligible_family_ids
@@ -217,6 +224,322 @@ def test_training_freezes_hard_gates_strict_families_and_downstream() -> None:
     )
     assert "common_scoring_functional" in scoring.remaining_stages
     assert not scoring.is_oof_certified
+
+
+def test_receiver_program_remains_observed_when_every_receptor_is_ineligible() -> None:
+    receiver_family = _receiver_family(
+        _availability(
+            receptor_values={
+                "iA": (0.01, 0.02, 0.03),
+                "iB": (0.01, 0.02, 0.03),
+                "iC": (0.01, 0.02, 0.03),
+            }
+        )
+    )
+    assert receiver_family.eligible_family_ids == ()
+
+    training = fit_receiver_program_training_artifact(
+        receiver_family,
+        np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    application = apply_receiver_program_training_artifact(
+        training,
+        np.asarray([[4.0, 5.0]]),
+        feature_ids=("G1", "G2"),
+        sample_ids=("h1-stim",),
+        sample_subject_ids=("h1",),
+        sample_context_ids=("stim",),
+    )
+    table = application.to_table()
+
+    assert training.family_ids == receiver_family.family_basis.family_ids
+    assert training.estimable_family_ids == training.family_ids
+    assert training.status == "observed"
+    assert application.status == "observed"
+    assert set(table["status"]) == {"observed"}
+    assert table["receiver_program_score"].gt(0).all()
+    assert training.to_dict()["receptor_agnostic"] is True
+    assert training.to_dict()["integrated_edge_evidence"] is False
+
+
+def test_receiver_program_retains_zero_target_family_as_explicit_not_estimable() -> (
+    None
+):
+    receiver_family = fit_receiver_family_training_artifact(
+        _availability(),
+        _prior({"A": {"G1": 1.0}, "B": {"G1": 4.0}, "C": {"G2": 1.0}}),
+        receiver="Receiver",
+        fold_id="fold-1",
+        feature_ids=("G1",),
+        driver_by_interaction={"iA": "A", "iB": "B", "iC": "C"},
+        receptor_gate_threshold=0.1,
+        cosine_threshold=0.999,
+    )
+    training = fit_receiver_program_training_artifact(
+        receiver_family,
+        np.asarray([[1.0], [2.0], [3.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    application = apply_receiver_program_training_artifact(
+        training,
+        np.asarray([[4.0]]),
+        feature_ids=("G1",),
+        sample_ids=("h1-stim",),
+        sample_subject_ids=("h1",),
+        sample_context_ids=("stim",),
+    )
+    table = application.to_table().set_index("family_id")
+    zero_profile_family = next(
+        family.family_id
+        for family in receiver_family.family_basis.family_definitions
+        if "C" in family.driver_ids
+    )
+
+    assert table.loc[zero_profile_family, "status"] == "not_estimable"
+    assert table.loc[zero_profile_family, "reason_code"] == (
+        "target_profile_not_estimable"
+    )
+    assert pd.isna(table.loc[zero_profile_family, "receiver_program_score"])
+
+
+def test_receiver_program_application_binds_canonical_rows_values_and_integrity() -> (
+    None
+):
+    training = fit_receiver_program_training_artifact(
+        _receiver_family(),
+        np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    expression = np.asarray([[4.0, 5.0], [3.0, 2.0]])
+    first = apply_receiver_program_training_artifact(
+        training,
+        expression,
+        feature_ids=("G1", "G2"),
+        sample_ids=("h2-stim", "h1-control"),
+        sample_subject_ids=("h2", "h1"),
+        sample_context_ids=("stim", "control"),
+    )
+    order = np.asarray([1, 0])
+    reordered = apply_receiver_program_training_artifact(
+        training,
+        expression[order],
+        feature_ids=("G1", "G2"),
+        sample_ids=("h1-control", "h2-stim"),
+        sample_subject_ids=("h1", "h2"),
+        sample_context_ids=("control", "stim"),
+    )
+    changed = apply_receiver_program_training_artifact(
+        training,
+        expression + 1.0,
+        feature_ids=("G1", "G2"),
+        sample_ids=("h2-stim", "h1-control"),
+        sample_subject_ids=("h2", "h1"),
+        sample_context_ids=("stim", "control"),
+    )
+
+    assert reordered.application_id == first.application_id
+    assert reordered.heldout_row_manifest_id == first.heldout_row_manifest_id
+    assert changed.application_id != first.application_id
+    assert changed.heldout_input_digest != first.heldout_input_digest
+    assert changed.training_artifact.training_artifact_id == (
+        first.training_artifact.training_artifact_id
+    )
+
+    object.__setattr__(first, "sample_context_ids", ("poisoned", "stim"))
+    with pytest.raises(ContractError) as error:
+        first.to_dict()
+    assert error.value.details.code == (
+        "receiver_program_application_integrity_violation"
+    )
+
+
+def test_receiver_program_application_rejects_child_expression_swap() -> None:
+    training = fit_receiver_program_training_artifact(
+        _receiver_family(),
+        np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    rows = {
+        "feature_ids": ("G1", "G2"),
+        "sample_ids": ("h1-control", "h2-stim"),
+        "sample_subject_ids": ("h1", "h2"),
+        "sample_context_ids": ("control", "stim"),
+    }
+    expected = apply_receiver_program_training_artifact(
+        training,
+        np.asarray([[4.0, 5.0], [3.0, 2.0]]),
+        **rows,
+    )
+    changed = apply_receiver_program_training_artifact(
+        training,
+        np.asarray([[40.0, 50.0], [30.0, 20.0]]),
+        **rows,
+    )
+    assert expected.downstream_application is not None
+    assert changed.downstream_application is not None
+    assert expected.heldout_expression_digest != changed.heldout_expression_digest
+
+    with pytest.raises(ValueError, match="do not match parent"):
+        ReceiverProgramApplication._from_application(
+            training_artifact=training,
+            sample_ids=expected.sample_ids,
+            sample_subject_ids=expected.sample_subject_ids,
+            sample_context_ids=expected.sample_context_ids,
+            heldout_row_manifest_id=expected.heldout_row_manifest_id,
+            heldout_expression_digest=expected.heldout_expression_digest,
+            heldout_input_digest=expected.heldout_input_digest,
+            downstream_application=changed.downstream_application,
+            reason_code=None,
+        )
+
+
+def test_receiver_program_application_rejects_child_row_manifest_swap() -> None:
+    training = fit_receiver_program_training_artifact(
+        _receiver_family(),
+        np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]]),
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    expression = np.asarray([[4.0, 5.0], [3.0, 2.0]])
+    first = apply_receiver_program_training_artifact(
+        training,
+        expression,
+        feature_ids=("G1", "G2"),
+        sample_ids=("h1-control", "h2-stim"),
+        sample_subject_ids=("h1", "h2"),
+        sample_context_ids=("control", "stim"),
+    )
+    other_rows = apply_receiver_program_training_artifact(
+        training,
+        expression,
+        feature_ids=("G1", "G2"),
+        sample_ids=("h3-control", "h4-stim"),
+        sample_subject_ids=("h3", "h4"),
+        sample_context_ids=("control", "stim"),
+    )
+    assert first.downstream_application is not None
+    assert other_rows.downstream_application is not None
+    assert (
+        first.downstream_application.input_expression_digest
+        == other_rows.downstream_application.input_expression_digest
+    )
+    assert (
+        first.downstream_application.input_row_manifest_id
+        != other_rows.downstream_application.input_row_manifest_id
+    )
+
+    with pytest.raises(ValueError, match="do not match parent"):
+        ReceiverProgramApplication._from_application(
+            training_artifact=training,
+            sample_ids=other_rows.sample_ids,
+            sample_subject_ids=other_rows.sample_subject_ids,
+            sample_context_ids=other_rows.sample_context_ids,
+            heldout_row_manifest_id=other_rows.heldout_row_manifest_id,
+            heldout_expression_digest=other_rows.heldout_expression_digest,
+            heldout_input_digest=other_rows.heldout_input_digest,
+            downstream_application=first.downstream_application,
+            reason_code=None,
+        )
+
+
+def test_receiver_program_training_rejects_wrong_target_profile_matrix() -> None:
+    receiver_family = _receiver_family()
+    reference_expression = np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]])
+    training = fit_receiver_program_training_artifact(
+        receiver_family,
+        reference_expression,
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    assert training.downstream_functional is not None
+    wrong_target_matrix = training.downstream_functional.target_weight_matrix.toarray()[
+        ::-1
+    ].copy()
+    assert not np.array_equal(
+        wrong_target_matrix,
+        training.downstream_functional.target_weight_matrix.toarray(),
+    )
+    forged_functional = fit_downstream_functional(
+        reference_expression,
+        receiver=training.receiver,
+        contrast_name=training.contrast_name,
+        fold_id=training.fold_id,
+        feature_ids=training.feature_ids,
+        family_ids=training.estimable_family_ids,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+        training_subject_ids=training.training_subject_ids,
+        target_weight_matrix=wrong_target_matrix,
+        family_support=np.ones(len(training.estimable_family_ids)),
+    )
+
+    with pytest.raises(ValueError, match="target profiles"):
+        ReceiverProgramTrainingArtifact._from_training(
+            receiver_family_artifact=receiver_family,
+            contrast_name=training.contrast_name,
+            estimable_family_ids=training.estimable_family_ids,
+            family_estimable=training.family_estimable,
+            family_reason_codes=training.family_reason_codes,
+            downstream_functional=forged_functional,
+            reason_code=None,
+        )
+
+
+def test_receiver_program_training_rejects_non_unit_family_support() -> None:
+    receiver_family = _receiver_family()
+    reference_expression = np.asarray([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0]])
+    training = fit_receiver_program_training_artifact(
+        receiver_family,
+        reference_expression,
+        contrast_name="stim_vs_ctrl",
+        sample_ids=("s1", "s2", "s3"),
+        sample_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+    )
+    assert training.downstream_functional is not None
+    forged_functional = fit_downstream_functional(
+        reference_expression,
+        receiver=training.receiver,
+        contrast_name=training.contrast_name,
+        fold_id=training.fold_id,
+        feature_ids=training.feature_ids,
+        family_ids=training.estimable_family_ids,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
+        training_subject_ids=training.training_subject_ids,
+        target_weight_matrix=training.downstream_functional.target_weight_matrix,
+        family_support=np.full(len(training.estimable_family_ids), 0.5),
+    )
+
+    with pytest.raises(ValueError, match="support must be exactly one"):
+        ReceiverProgramTrainingArtifact._from_training(
+            receiver_family_artifact=receiver_family,
+            contrast_name=training.contrast_name,
+            estimable_family_ids=training.estimable_family_ids,
+            family_estimable=training.family_estimable,
+            family_reason_codes=training.family_reason_codes,
+            downstream_functional=forged_functional,
+            reason_code=None,
+        )
 
 
 def test_heldout_apply_never_calls_fit_and_poison_cannot_change_artifact() -> None:
@@ -288,6 +611,30 @@ def test_scoring_artifact_and_application_reject_forced_child_mutation() -> None
     )
 
 
+def test_receiver_family_application_binds_its_training_functional() -> None:
+    first = _scoring_artifact()
+    second = _scoring_artifact(
+        np.asarray([[10.0, 3.0], [20.0, 3.0], [30.0, 3.0]])
+    )
+    application = apply_receiver_family_scoring_artifact(
+        first,
+        np.asarray([[2.0, 3.0], [4.0, 3.0]]),
+        feature_ids=("G1", "G2"),
+        sample_subject_ids=("h1", "h2"),
+    )
+    assert application.downstream_application is not None
+
+    with pytest.raises(TypeError, match="producer-owned"):
+        type(application)()
+    with pytest.raises(ValueError, match="does not match the training functional"):
+        type(application)._from_application(
+            training_artifact=second,
+            heldout_subject_ids=application.heldout_subject_ids,
+            downstream_application=application.downstream_application,
+            reason_code=None,
+        )
+
+
 def test_downstream_application_rejects_forced_value_mutation() -> None:
     application = apply_receiver_family_scoring_artifact(
         _scoring_artifact(),
@@ -355,6 +702,7 @@ def test_receiver_artifact_identity_covers_reference_rows_not_only_summary() -> 
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
     changed = fit_receiver_family_scoring_artifact(
         receiver_family,
@@ -362,6 +710,7 @@ def test_receiver_artifact_identity_covers_reference_rows_not_only_summary() -> 
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
 
     assert first.downstream_functional is not None
@@ -386,6 +735,7 @@ def test_receiver_artifact_identity_canonicalizes_sample_row_order() -> None:
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
     order = np.asarray([2, 0, 1])
     reordered = fit_receiver_family_scoring_artifact(
@@ -394,6 +744,7 @@ def test_receiver_artifact_identity_canonicalizes_sample_row_order() -> None:
         contrast_name="stim_vs_ctrl",
         sample_ids=("s3", "s1", "s2"),
         sample_subject_ids=("p3", "p1", "p2"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
 
     assert reordered.reference_sample_ids == first.reference_sample_ids
@@ -442,6 +793,7 @@ def test_no_eligible_family_is_explicitly_partial_and_not_estimable() -> None:
         contrast_name="stim_vs_ctrl",
         sample_ids=("s1", "s2", "s3"),
         sample_subject_ids=("p1", "p2", "p3"),
+        sample_context_ids=("reference", "reference", "reference"),
     )
     application = apply_receiver_family_scoring_artifact(
         artifact,

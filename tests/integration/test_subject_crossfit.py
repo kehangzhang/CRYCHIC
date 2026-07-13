@@ -39,6 +39,7 @@ from crychic.response import (
 from crychic.scoring import (
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
+    mark_receiver_program_application_not_estimable,
 )
 from crychic.sender import CommonSenderApplication, ContrastCommonSenderParameters
 from crychic.workflow import (
@@ -105,9 +106,7 @@ def _prior() -> TargetPrior:
     )
 
 
-def _trusted_target_resource(
-    root: Path, monkeypatch: pytest.MonkeyPatch
-):
+def _trusted_target_resource(root: Path, monkeypatch: pytest.MonkeyPatch):
     payload = b"feature_id\tgeneric_program\nT1\t1\nT2\t1\n"
     (root / "programs.tsv").write_bytes(payload)
     record = {
@@ -362,6 +361,8 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
         == len(fold.receiver_response_applications)
         == len(fold.receiver_incremental_applications)
         == len(fold.receiver_family_models)
+        == len(fold.receiver_program_models)
+        == len(fold.receiver_program_applications)
         for fold in result.folds
     )
     assert all(
@@ -379,6 +380,21 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
         for model, application in zip(
             fold.receiver_family_models,
             fold.receiver_family_applications,
+            strict=True,
+        )
+    )
+    assert all(
+        program.receiver_family_artifact.training_artifact_id
+        == family.receiver_family_artifact.training_artifact_id
+        and application.training_artifact.training_artifact_id
+        == program.training_artifact_id
+        and program.family_ids
+        == family.receiver_family_artifact.family_basis.family_ids
+        for fold in result.folds
+        for family, program, application in zip(
+            fold.receiver_family_models,
+            fold.receiver_program_models,
+            fold.receiver_program_applications,
             strict=True,
         )
     )
@@ -422,6 +438,182 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     assert "response_precision" not in manifest["remaining_stages"]
     assert "receiver_autonomous_nuisance" in manifest["remaining_stages"]
     assert "subject_blocked_inner_tuning" in manifest["remaining_stages"]
+    assert (
+        "source_agnostic_receiver_program_score" not in (manifest["remaining_stages"])
+    )
+    assert sum(manifest["receiver_program_training_status_counts"].values()) == sum(
+        len(fold.receiver_program_models) for fold in result.folds
+    )
+    assert sum(manifest["receiver_program_application_status_counts"].values()) == sum(
+        len(fold.receiver_program_applications) for fold in result.folds
+    )
+    assert all(
+        len(item["receiver_program_artifacts"])
+        == len(result.folds[0].receiver_program_models)
+        for item in manifest["fold_artifacts"]
+    )
+    observed_programs = [
+        artifact
+        for item in manifest["fold_artifacts"]
+        for artifact in item["receiver_program_artifacts"]
+        if artifact["training_status"] == "observed"
+    ]
+    assert observed_programs
+    assert all(
+        artifact["reference_transform_id"]
+        and artifact["reference_row_manifest_id"]
+        and artifact["reference_subject_summary_digest"]
+        and artifact["reference_summary_method"]
+        == "technical_row_mean_then_context_equal_subject_mean_v1"
+        and artifact["center_method"] == "reference_subject_equal_feature_median_v2"
+        and artifact["scale_method"] == "reference_subject_equal_scaled_mad_floor_v2"
+        for artifact in observed_programs
+    )
+
+
+def test_aggregate_context_lineage_requires_complete_training_coverage() -> None:
+    config = _config()
+    spec = _spec()
+    prepared = crossfit_module._prepare_raw_fold(
+        _adata(),
+        config,
+        min_cells=spec.training_spec.min_cells,
+    )
+    reference_contexts = {
+        context for context, weight in spec.contrasts[0].weights.items() if weight < 0
+    }
+    _, sample_ids, subject_ids, context_ids = crossfit_module._response_expression(
+        prepared,
+        receiver="Receiver",
+        contexts=reference_contexts,
+    )
+
+    assert crossfit_module._training_response_lineage_is_valid(
+        prepared,
+        contexts=reference_contexts,
+        sample_ids=sample_ids,
+        subject_ids=subject_ids,
+        context_ids=context_ids,
+    )
+    assert not crossfit_module._training_response_lineage_is_valid(
+        prepared,
+        contexts=reference_contexts,
+        sample_ids=sample_ids[1:],
+        subject_ids=subject_ids[1:],
+        context_ids=context_ids[1:],
+    )
+    assert crossfit_module._training_response_lineage_reason(
+        prepared,
+        contexts=reference_contexts,
+        sample_ids=sample_ids[1:],
+        subject_ids=subject_ids[1:],
+        context_ids=context_ids[1:],
+    ) == "training_reference_expression_incomplete_sample_coverage"
+    poisoned_contexts = ("forged-context", *context_ids[1:])
+    assert not crossfit_module._training_response_lineage_is_valid(
+        prepared,
+        contexts=reference_contexts,
+        sample_ids=sample_ids,
+        subject_ids=subject_ids,
+        context_ids=poisoned_contexts,
+    )
+    duplicated_samples = (*sample_ids, sample_ids[0])
+    assert not crossfit_module._training_response_lineage_is_valid(
+        prepared,
+        contexts=reference_contexts,
+        sample_ids=duplicated_samples,
+        subject_ids=(*subject_ids, subject_ids[0]),
+        context_ids=(*context_ids, context_ids[0]),
+    )
+
+
+def test_training_reference_context_mismatch_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = crossfit_module._response_expression
+
+    def poisoned_context(*args: object, **kwargs: object):
+        expression, sample_ids, subject_ids, context_ids = original(*args, **kwargs)
+        requested = kwargs.get("contexts")
+        if requested is not None and len(requested) == 1 and context_ids:
+            context_ids = ("forged-reference-context", *context_ids[1:])
+        return expression, sample_ids, subject_ids, context_ids
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "_response_expression",
+        poisoned_context,
+    )
+    result = _run(_adata())
+    receiver_family_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_family_models
+        if model.receiver_family_artifact.receiver == "Receiver"
+    ]
+    receiver_program_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_program_models
+        if model.receiver == "Receiver"
+    ]
+
+    assert receiver_family_models
+    assert receiver_program_models
+    assert {model.reason_code for model in receiver_family_models} == {
+        "training_reference_expression_lineage_mismatch"
+    }
+    assert {model.status for model in receiver_program_models} == {"not_estimable"}
+    assert {model.reason_code for model in receiver_program_models} == {
+        "training_reference_expression_lineage_mismatch"
+    }
+
+
+def test_training_reference_incomplete_coverage_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = crossfit_module._response_expression
+
+    def drop_reference_row(*args: object, **kwargs: object):
+        expression, sample_ids, subject_ids, context_ids = original(*args, **kwargs)
+        requested = kwargs.get("contexts")
+        if requested is not None and len(requested) == 1 and sample_ids:
+            return (
+                expression[1:],
+                sample_ids[1:],
+                subject_ids[1:],
+                context_ids[1:],
+            )
+        return expression, sample_ids, subject_ids, context_ids
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "_response_expression",
+        drop_reference_row,
+    )
+    result = _run(_adata())
+    receiver_family_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_family_models
+        if model.receiver_family_artifact.receiver == "Receiver"
+    ]
+    receiver_program_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_program_models
+        if model.receiver == "Receiver"
+    ]
+
+    assert receiver_family_models
+    assert receiver_program_models
+    assert {model.reason_code for model in receiver_family_models} == {
+        "training_reference_expression_incomplete_sample_coverage"
+    }
+    assert {model.status for model in receiver_program_models} == {"not_estimable"}
+    assert {model.reason_code for model in receiver_program_models} == {
+        "training_reference_expression_incomplete_sample_coverage"
+    }
 
 
 def test_subject_crossfit_supports_independent_subject_groups() -> None:
@@ -626,6 +818,7 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
     fold = result.folds[0]
     functional = fold.family_common_functionals[0]
     application = fold.family_common_applications[0]
+    program_application = fold.receiver_program_applications[0]
     design_application = next(
         item
         for encoder, item in zip(
@@ -647,8 +840,8 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         receiver=functional.receiver,
         interaction_ids=functional.interaction_ids,
     )
-    unrelated_availability = (
-        fold.application.availability.sample_interactions.copy(deep=True)
+    unrelated_availability = fold.application.availability.sample_interactions.copy(
+        deep=True
     )
     unrelated_mask = ~unrelated_availability["receiver"].astype(str).eq(
         functional.receiver
@@ -675,13 +868,29 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         ].reset_index(drop=True),
         sender_application.functional,
     )
+    subset_lineage = (
+        subset_edges.loc[:, ["sample_id", "subject_id", "context_id"]]
+        .drop_duplicates()
+        .sort_values("sample_id", kind="stable")
+    )
+    assert functional.receiver_program_artifact is not None
+    subset_program = mark_receiver_program_application_not_estimable(
+        functional.receiver_program_artifact,
+        sample_ids=tuple(subset_lineage["sample_id"].astype(str)),
+        sample_subject_ids=tuple(subset_lineage["subject_id"].astype(str)),
+        sample_context_ids=tuple(subset_lineage["context_id"].astype(str)),
+        reason_code="test_subset_receiver_program_scope",
+    )
     subset_application = mark_family_common_scoring_application_not_estimable(
         functional,
         subset_edges,
         subset_sender,
         heldout_reason_code=application.heldout_reason_code,
+        receiver_program_application=subset_program,
     )
-    with pytest.raises(ValueError, match="exactly cover heldout fold"):
+    with pytest.raises(
+        ValueError, match="receiver-program application is incompatible"
+    ):
         replace(
             fold,
             family_common_applications=(
@@ -697,6 +906,7 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         altered_edges,
         sender_application,
         heldout_reason_code=application.heldout_reason_code,
+        receiver_program_application=program_application,
     )
     with pytest.raises(ContractError) as error:
         replace(
@@ -719,13 +929,12 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         receiver=functional.receiver,
         interaction_ids=functional.interaction_ids,
     )
-    altered_sender_application = (
-        mark_family_common_scoring_application_not_estimable(
-            functional,
-            edge_evidence,
-            altered_sender,
-            heldout_reason_code=application.heldout_reason_code,
-        )
+    altered_sender_application = mark_family_common_scoring_application_not_estimable(
+        functional,
+        edge_evidence,
+        altered_sender,
+        heldout_reason_code=application.heldout_reason_code,
+        receiver_program_application=program_application,
     )
     with pytest.raises(ContractError) as error:
         replace(
@@ -749,12 +958,14 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         selected_penalty_id=functional.selected_penalty_id,
         autonomous_program_resource_id="forged-autonomous-resource",
         reason_code=functional.incremental_reason_code,
+        receiver_program_artifact=functional.receiver_program_artifact,
     )
     forged_application = mark_family_common_scoring_application_not_estimable(
         forged_functional,
         edge_evidence,
         sender_application,
         heldout_reason_code=application.heldout_reason_code,
+        receiver_program_application=program_application,
     )
     with pytest.raises(ValueError, match="authoritative training lineage"):
         replace(
@@ -828,8 +1039,7 @@ def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
     )
     assert all(model.is_oof_certified for model in receiver_models)
     assert all(
-        model.official_incremental_status == "observed"
-        and model.reason_code is None
+        model.official_incremental_status == "observed" and model.reason_code is None
         for model in receiver_models
     )
     assert all(application.is_oof_certified for application in receiver_applications)
@@ -845,9 +1055,7 @@ def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
     assert coverage["reason_code"].isna().all()
 
 
-def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -> (
-    None
-):
+def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -> None:
     base = _spec()
     resource = build_receiver_autonomous_program_resource(
         np.asarray([[1.0], [1.0]]),
@@ -1042,6 +1250,37 @@ def test_crossfit_manifest_rejects_forced_nested_child_mutation(
     assert error.value.details.code == "crossfit_artifact_integrity_violation"
 
 
+def test_crossfit_fold_rejects_forced_receiver_program_child_replacement() -> None:
+    result = _run(_adata())
+    fold = result.folds[0]
+    target = next(
+        application
+        for application in fold.receiver_program_applications
+        if application.downstream_application is not None
+    )
+    assert target.downstream_application is not None
+    forged_scores = target.downstream_application.receiver_program_score.copy()
+    forged_scores[0, 0] += 0.25
+    forged_scores.setflags(write=False)
+    object.__setattr__(
+        target.downstream_application,
+        "receiver_program_score",
+        forged_scores,
+    )
+
+    with pytest.raises(ContractError) as error:
+        replace(
+            fold,
+            receiver_program_applications=tuple(
+                target if item.application_id == target.application_id else item
+                for item in fold.receiver_program_applications
+            ),
+        )
+    assert error.value.details.code == (
+        "receiver_program_application_integrity_violation"
+    )
+
+
 def test_orchestrator_passes_only_disjoint_sanitized_scopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1144,6 +1383,21 @@ def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() 
     ) == tuple(
         model.downstream_functional.downstream_functional_id
         for model in unchanged.receiver_family_models
+        if model.downstream_functional is not None
+    )
+    assert tuple(
+        model.training_artifact_id
+        for model in changed_application.receiver_program_models
+    ) == tuple(
+        model.training_artifact_id for model in unchanged.receiver_program_models
+    )
+    assert tuple(
+        model.downstream_functional.reference_transform_id
+        for model in changed_application.receiver_program_models
+        if model.downstream_functional is not None
+    ) == tuple(
+        model.downstream_functional.reference_transform_id
+        for model in unchanged.receiver_program_models
         if model.downstream_functional is not None
     )
     assert tuple(
@@ -1387,9 +1641,19 @@ def test_missing_heldout_receiver_is_preserved_as_not_estimable() -> None:
     assert any(
         model.receiver_family_artifact.receiver == "Receiver"
         and application.application_status == "frozen_application_partial_not_estimable"
-        and application.reason_code
-        == "heldout_receiver_expression_incomplete_subject_coverage"
+        and application.reason_code == "heldout_receiver_expression_lineage_mismatch"
         for model, application in pairs
+    )
+    assert any(
+        model.receiver == "Receiver"
+        and application.status == "not_estimable"
+        and application.reason_code
+        == "heldout_receiver_expression_incomplete_sample_coverage"
+        for model, application in zip(
+            target.receiver_program_models,
+            target.receiver_program_applications,
+            strict=True,
+        )
     )
     assert {model.receiver_family_artifact.receiver for model, _ in pairs} == set(
         target.training.cell_type_ids

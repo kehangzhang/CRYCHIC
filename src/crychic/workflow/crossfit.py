@@ -65,16 +65,22 @@ from crychic.scoring import (
     FamilyCommonScoringFunctional,
     ReceiverFamilyScoringApplication,
     ReceiverFamilyScoringArtifact,
+    ReceiverProgramApplication,
+    ReceiverProgramTrainingArtifact,
     apply_family_common_scoring_functional,
     apply_receiver_family_scoring_artifact,
+    apply_receiver_program_training_artifact,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
     fit_family_common_scoring_functional,
     fit_receiver_family_scoring_artifact,
+    fit_receiver_program_training_artifact,
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
     mark_receiver_family_application_not_estimable,
     mark_receiver_family_scoring_not_estimable,
+    mark_receiver_program_application_not_estimable,
+    mark_receiver_program_training_not_estimable,
 )
 from crychic.sender import (
     COMMON_SENDER_APPLICATION_COLUMNS,
@@ -733,6 +739,8 @@ class CrossFitFoldArtifacts:
     design_applications: tuple[FrozenDesignApplication, ...]
     receiver_family_models: tuple[ReceiverFamilyScoringArtifact, ...]
     receiver_family_applications: tuple[ReceiverFamilyScoringApplication, ...]
+    receiver_program_models: tuple[ReceiverProgramTrainingArtifact, ...]
+    receiver_program_applications: tuple[ReceiverProgramApplication, ...]
     receiver_responses: tuple[FoldGeneResponseArtifact, ...]
     response_precisions: tuple[PrecisionTransformResult, ...]
     receiver_incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...]
@@ -838,6 +846,71 @@ class CrossFitFoldArtifacts:
                 )
         object.__setattr__(self, "receiver_family_models", receiver_models)
         object.__setattr__(self, "receiver_family_applications", receiver_applications)
+        program_models = tuple(self.receiver_program_models)
+        program_applications = tuple(self.receiver_program_applications)
+        if (
+            len(program_models) != len(receiver_models)
+            or len(program_applications) != len(receiver_models)
+        ):
+            raise ValueError("fold receiver-program parent chains must align")
+        design_by_name = {
+            encoder.contrast.name: (encoder, application)
+            for encoder, application in zip(encoders, applications, strict=True)
+        }
+        for family_model, program_model, program_application in zip(
+            receiver_models,
+            program_models,
+            program_applications,
+            strict=True,
+        ):
+            program_model._require_intact()
+            program_application._require_intact()
+            key = (
+                family_model.contrast_name,
+                family_model.receiver_family_artifact.receiver,
+            )
+            if (program_model.contrast_name, program_model.receiver) != key:
+                raise ValueError("receiver-program training keys do not align")
+            if (
+                program_model.receiver_family_artifact.training_artifact_id
+                != family_model.receiver_family_artifact.training_artifact_id
+                or program_application.training_artifact.training_artifact_id
+                != program_model.training_artifact_id
+                or program_application.heldout_subject_ids
+                != self.application.heldout_subject_ids
+            ):
+                raise ValueError("receiver-program parent lineage is invalid")
+            encoder, design_application = design_by_name[program_model.contrast_name]
+            context_ids = {
+                node_context_fields(node, encoder.context_keys)[0]
+                for node in encoder.contrast.weights
+            }
+            expected_rows = {
+                (sample_id, subject_id, context_id)
+                for sample_id, subject_id, context_id in zip(
+                    design_application.sample_ids,
+                    design_application.sample_subject_ids,
+                    design_application.sample_context_ids,
+                    strict=True,
+                )
+                if context_id in context_ids
+            }
+            observed_rows = set(
+                zip(
+                    program_application.sample_ids,
+                    program_application.sample_subject_ids,
+                    program_application.sample_context_ids,
+                    strict=True,
+                )
+            )
+            if observed_rows != expected_rows:
+                raise ValueError(
+                    "receiver-program application does not exactly cover heldout rows"
+                )
+        object.__setattr__(self, "receiver_program_models", program_models)
+        object.__setattr__(
+            self, "receiver_program_applications", program_applications
+        )
         responses = tuple(self.receiver_responses)
         precisions = tuple(self.response_precisions)
         incremental_models = tuple(self.receiver_incremental_models)
@@ -852,10 +925,6 @@ class CrossFitFoldArtifacts:
         )
         if any(len(group) != len(receiver_models) for group in parent_groups):
             raise ValueError("fold receiver incremental parent chains must align")
-        design_by_name = {
-            encoder.contrast.name: (encoder, application)
-            for encoder, application in zip(encoders, applications, strict=True)
-        }
         for (
             family_model,
             response,
@@ -964,6 +1033,8 @@ class CrossFitFoldArtifacts:
             ] = {}
             for (
                 family_model,
+                program_model,
+                program_application,
                 incremental_model,
                 incremental_application,
                 common_functional,
@@ -971,6 +1042,8 @@ class CrossFitFoldArtifacts:
                 common_binding,
             ) in zip(
                 receiver_models,
+                program_models,
+                program_applications,
                 incremental_models,
                 incremental_applications,
                 common_functionals,
@@ -996,6 +1069,9 @@ class CrossFitFoldArtifacts:
                 if (
                     common_functional.receiver_family.training_artifact_id
                     != family_model.receiver_family_artifact.training_artifact_id
+                    or common_functional.receiver_program_artifact is None
+                    or common_functional.receiver_program_artifact.training_artifact_id
+                    != program_model.training_artifact_id
                     or common_functional.receiver_incremental_training_artifact_id
                     != incremental_model.training_artifact_id
                     or common_application.functional.family_common_functional_id
@@ -1069,6 +1145,13 @@ class CrossFitFoldArtifacts:
                 ):
                     raise ValueError(
                         "family-common held-out application is incompatible"
+                    )
+                if (
+                    common_application.receiver_program_application_id
+                    != program_application.application_id
+                ):
+                    raise ValueError(
+                        "family-common receiver-program application is incompatible"
                     )
                 expected_heldout_reason = (
                     None
@@ -1514,6 +1597,14 @@ class CrossFitArtifacts:
                         application.application_id
                         for application in item.receiver_family_applications
                     ],
+                    "receiver_program_training_ids": [
+                        model.training_artifact_id
+                        for model in item.receiver_program_models
+                    ],
+                    "receiver_program_application_ids": [
+                        application.application_id
+                        for application in item.receiver_program_applications
+                    ],
                     "receiver_response_ids": [
                         response.artifact_id for response in item.receiver_responses
                     ],
@@ -1660,6 +1751,14 @@ class CrossFitArtifacts:
             for fold in self.folds
             for application in fold.family_common_applications
         )
+        receiver_program_models = tuple(
+            model for fold in self.folds for model in fold.receiver_program_models
+        )
+        receiver_program_applications = tuple(
+            application
+            for fold in self.folds
+            for application in fold.receiver_program_applications
+        )
         functional_statuses = [
             "observed"
             if functional.incremental_functional is not None
@@ -1686,7 +1785,6 @@ class CrossFitArtifacts:
                 for stage in remaining_stages
                 if stage not in completed_candidate_stages
             ]
-            remaining_stages.append("source_agnostic_receiver_program_score")
         if (
             self.spec.autonomous_program_resource is None
             or not self.spec.autonomous_program_resource.is_manifest_verified_trusted
@@ -1706,6 +1804,26 @@ class CrossFitArtifacts:
             "family_common_application_status_counts": {
                 status: application_statuses.count(status)
                 for status in sorted(set(application_statuses))
+            },
+            "receiver_program_training_status_counts": {
+                status: sum(
+                    model.status == status for model in receiver_program_models
+                )
+                for status in sorted(
+                    {model.status for model in receiver_program_models}
+                )
+            },
+            "receiver_program_application_status_counts": {
+                status: sum(
+                    application.status == status
+                    for application in receiver_program_applications
+                )
+                for status in sorted(
+                    {
+                        application.status
+                        for application in receiver_program_applications
+                    }
+                )
             },
             "n_family_common_crossfit_bindings": sum(
                 len(fold.family_common_bindings) for fold in self.folds
@@ -1794,6 +1912,63 @@ class CrossFitArtifacts:
                             strict=True,
                         )
                     ],
+                    "receiver_program_artifacts": [
+                        {
+                            "receiver": model.receiver,
+                            "contrast_name": model.contrast_name,
+                            "training_artifact_id": model.training_artifact_id,
+                            "training_status": model.status,
+                            "training_reason_code": model.reason_code,
+                            "application_id": application.application_id,
+                            "application_status": application.status,
+                            "application_reason_code": application.reason_code,
+                            "heldout_row_manifest_id": (
+                                application.heldout_row_manifest_id
+                            ),
+                            "heldout_input_digest": application.heldout_input_digest,
+                            "reference_transform_id": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional.reference_transform_id
+                            ),
+                            "reference_row_manifest_id": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional
+                                .reference_row_manifest_id
+                            ),
+                            "reference_subject_summary_digest": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional
+                                .reference_subject_summary_digest
+                            ),
+                            "reference_summary_method": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional
+                                .reference_summary_method
+                            ),
+                            "center_method": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional.center_method
+                            ),
+                            "scale_method": (
+                                None
+                                if model.downstream_functional is None
+                                else model.downstream_functional.scale_method
+                            ),
+                            "source_agnostic": True,
+                            "receptor_agnostic": True,
+                            "sender_agnostic": True,
+                        }
+                        for model, application in zip(
+                            item.receiver_program_models,
+                            item.receiver_program_applications,
+                            strict=True,
+                        )
+                    ],
                     "family_common_scoring_artifacts": [
                         {
                             "receiver": functional.receiver,
@@ -1818,6 +1993,23 @@ class CrossFitArtifacts:
                             "selected_penalty_id": functional.selected_penalty_id,
                             "autonomous_program_resource_id": (
                                 functional.autonomous_program_resource_id
+                            ),
+                            "receiver_program_training_artifact_id": (
+                                None
+                                if functional.receiver_program_artifact is None
+                                else functional.receiver_program_artifact
+                                .training_artifact_id
+                            ),
+                            "receiver_program_training_status": (
+                                "not_estimable"
+                                if functional.receiver_program_artifact is None
+                                else functional.receiver_program_artifact.status
+                            ),
+                            "receiver_program_training_reason_code": (
+                                functional.receiver_program_reason_code
+                            ),
+                            "receiver_program_application_id": (
+                                application.receiver_program_application_id
                             ),
                             "functional_status": (
                                 "observed"
@@ -1938,20 +2130,22 @@ def _response_expression(
     *,
     receiver: str,
     contexts: set[Hashable] | None = None,
-) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Extract fixed log1p(CPM) sample expression for one receiver."""
 
     aggregate = prepared.aggregate
     if not isinstance(aggregate, PseudobulkDataset):
         raise TypeError("public cross-fit receiver expression requires count aggregate")
     metadata = aggregate.unit_metadata.copy(deep=True).reset_index(drop=True)
+    context_keys = tuple(prepared.validated.schema.context_keys)
+    context_nodes = metadata["context"].map(
+        lambda value: _context_node(pd.Series(dict(value)), context_keys)
+    )
+    metadata["_actual_context_id"] = context_nodes.map(
+        lambda node: node_context_fields(node, context_keys)[0]
+    )
     selected = metadata["cell_type"].map(lambda value: str(value) == receiver)
     if contexts is not None:
-        context_nodes = metadata["context"].map(
-            lambda value: _context_node(
-                pd.Series(dict(value)), tuple(prepared.validated.schema.context_keys)
-            )
-        )
         selected &= context_nodes.isin(contexts)
     selected &= metadata["state_eligible"].astype(bool)
     selected &= metadata["matrix_row"].notna()
@@ -1975,7 +2169,93 @@ def _response_expression(
     values = np.log1p(values / library_sizes[:, None] * _CPM_SCALE)
     sample_ids = tuple(units["sample_id"].astype(str))
     subject_ids = tuple(units["subject_id"].astype(str))
-    return values, sample_ids, subject_ids
+    context_ids = tuple(units["_actual_context_id"].astype(str))
+    return values, sample_ids, subject_ids, context_ids
+
+
+def _expected_response_lineage(
+    prepared: _PreparedRawFold,
+    *,
+    contexts: set[Hashable],
+) -> tuple[tuple[str, str, str], ...]:
+    """Return the raw sample metadata lineage for requested graph contexts."""
+
+    schema = prepared.validated.schema
+    context_keys = tuple(schema.context_keys)
+    rows: list[tuple[str, str, str]] = []
+    for _, row in prepared.validated.report.sample_metadata.iterrows():
+        node = _context_node(row, context_keys)
+        if node not in contexts:
+            continue
+        rows.append(
+            (
+                str(row[schema.sample_key]),
+                str(row[schema.subject_key]),
+                node_context_fields(node, context_keys)[0],
+            )
+        )
+    return tuple(sorted(rows))
+
+
+def _observed_response_lineage(
+    sample_ids: tuple[str, ...],
+    subject_ids: tuple[str, ...],
+    context_ids: tuple[str, ...],
+) -> tuple[tuple[str, str, str], ...]:
+    return tuple(sorted(zip(sample_ids, subject_ids, context_ids, strict=True)))
+
+
+def _training_response_lineage_is_valid(
+    prepared: _PreparedRawFold,
+    *,
+    contexts: set[Hashable],
+    sample_ids: tuple[str, ...],
+    subject_ids: tuple[str, ...],
+    context_ids: tuple[str, ...],
+) -> bool:
+    """Require exact receiver-reference coverage with authoritative row lineage."""
+
+    return (
+        _training_response_lineage_reason(
+            prepared,
+            contexts=contexts,
+            sample_ids=sample_ids,
+            subject_ids=subject_ids,
+            context_ids=context_ids,
+        )
+        is None
+    )
+
+
+def _training_response_lineage_reason(
+    prepared: _PreparedRawFold,
+    *,
+    contexts: set[Hashable],
+    sample_ids: tuple[str, ...],
+    subject_ids: tuple[str, ...],
+    context_ids: tuple[str, ...],
+) -> str | None:
+    """Return the fail-closed reason for an incomplete or forged reference."""
+
+    observed = tuple(zip(sample_ids, subject_ids, context_ids, strict=True))
+    if not observed or len({sample_id for sample_id, _, _ in observed}) != len(
+        observed
+    ):
+        return "training_reference_expression_lineage_mismatch"
+    expected = {
+        sample_id: (subject_id, context_id)
+        for sample_id, subject_id, context_id in _expected_response_lineage(
+            prepared, contexts=contexts
+        )
+    }
+    if any(
+        expected.get(sample_id) != (subject_id, context_id)
+        for sample_id, subject_id, context_id in observed
+    ):
+        return "training_reference_expression_lineage_mismatch"
+    if set(sample_ids) != set(expected):
+        return "training_reference_expression_incomplete_sample_coverage"
+    return None
 
 
 def _training_receiver_families(
@@ -2028,6 +2308,7 @@ def _training_receiver_families(
                     reference_expression,
                     reference_sample_ids,
                     reference_subjects,
+                    reference_context_ids,
                 ) = _response_expression(
                     prepared, receiver=receiver, contexts=reference_contexts
                 )
@@ -2042,6 +2323,22 @@ def _training_receiver_families(
                     )
                 )
                 continue
+            lineage_reason = _training_response_lineage_reason(
+                prepared,
+                contexts=reference_contexts,
+                sample_ids=reference_sample_ids,
+                subject_ids=reference_subjects,
+                context_ids=reference_context_ids,
+            )
+            if lineage_reason is not None:
+                models.append(
+                    mark_receiver_family_scoring_not_estimable(
+                        receiver_family,
+                        contrast_name=contrast.name,
+                        reason_code=lineage_reason,
+                    )
+                )
+                continue
             try:
                 scoring_model = fit_receiver_family_scoring_artifact(
                     receiver_family,
@@ -2049,10 +2346,17 @@ def _training_receiver_families(
                     contrast_name=contrast.name,
                     sample_ids=reference_sample_ids,
                     sample_subject_ids=reference_subjects,
+                    sample_context_ids=reference_context_ids,
                     minimum_scale=spec.downstream_minimum_scale,
                 )
             except ValueError as error:
-                if "at least two complete finite samples" not in str(error):
+                if not any(
+                    message in str(error)
+                    for message in (
+                        "at least two complete finite samples",
+                        "at least two unique reference subjects",
+                    )
+                ):
                     raise
                 scoring_model = mark_receiver_family_scoring_not_estimable(
                     receiver_family,
@@ -2083,7 +2387,7 @@ def _apply_receiver_families(
     for model in models:
         receiver = model.receiver_family_artifact.receiver
         try:
-            expression, _, subject_ids = _response_expression(
+            expression, sample_ids, subject_ids, context_ids = _response_expression(
                 prepared,
                 receiver=receiver,
                 contexts=contrast_contexts[model.contrast_name],
@@ -2099,14 +2403,18 @@ def _apply_receiver_families(
                 )
             )
             continue
-        observed_subjects = set(subject_ids)
-        missing_subjects = set(heldout_subject_ids).difference(observed_subjects)
-        if missing_subjects:
+        observed_lineage = _observed_response_lineage(
+            sample_ids, subject_ids, context_ids
+        )
+        expected_lineage = _expected_response_lineage(
+            prepared, contexts=contrast_contexts[model.contrast_name]
+        )
+        if observed_lineage != expected_lineage:
             applications.append(
                 mark_receiver_family_application_not_estimable(
                     model,
                     heldout_subject_ids=heldout_subject_ids,
-                    reason_code="heldout_receiver_expression_incomplete_subject_coverage",
+                    reason_code="heldout_receiver_expression_lineage_mismatch",
                 )
             )
             continue
@@ -2116,6 +2424,182 @@ def _apply_receiver_families(
                 expression,
                 feature_ids=prepared.aggregate.feature_ids,
                 sample_subject_ids=subject_ids,
+            )
+        )
+    return tuple(applications)
+
+
+def _training_receiver_programs(
+    receiver_models: tuple[ReceiverFamilyScoringArtifact, ...],
+    *,
+    prepared: _PreparedRawFold,
+    contrasts: tuple[ContrastSpec, ...],
+    minimum_scale: float,
+) -> tuple[ReceiverProgramTrainingArtifact, ...]:
+    """Freeze receptor-agnostic target programs once per receiver/contrast."""
+
+    contrast_by_name = {contrast.name: contrast for contrast in contrasts}
+    programs: list[ReceiverProgramTrainingArtifact] = []
+    for receiver_model in receiver_models:
+        contrast = contrast_by_name[receiver_model.contrast_name]
+        reference_contexts = {
+            context for context, weight in contrast.weights.items() if weight < 0
+        }
+        receiver_family = receiver_model.receiver_family_artifact
+        try:
+            expression, sample_ids, subject_ids, context_ids = _response_expression(
+                prepared,
+                receiver=receiver_family.receiver,
+                contexts=reference_contexts,
+            )
+            lineage_reason = _training_response_lineage_reason(
+                prepared,
+                contexts=reference_contexts,
+                sample_ids=sample_ids,
+                subject_ids=subject_ids,
+                context_ids=context_ids,
+            )
+            if lineage_reason is not None:
+                raise ValueError(lineage_reason)
+            program = fit_receiver_program_training_artifact(
+                receiver_family,
+                expression,
+                contrast_name=contrast.name,
+                sample_ids=sample_ids,
+                sample_subject_ids=subject_ids,
+                reference_context_ids=context_ids,
+                minimum_scale=minimum_scale,
+            )
+        except ValueError as error:
+            if not any(
+                message in str(error)
+                for message in (
+                    "no eligible sample expression",
+                    "at least two complete finite samples",
+                    "at least two unique reference subjects",
+                    "training_reference_expression_lineage_mismatch",
+                    "training_reference_expression_incomplete_sample_coverage",
+                )
+            ):
+                raise
+            observed_reason = str(error)
+            reason_code = (
+                observed_reason
+                if observed_reason
+                in {
+                    "training_reference_expression_lineage_mismatch",
+                    "training_reference_expression_incomplete_sample_coverage",
+                }
+                else "training_reference_expression_not_estimable"
+            )
+            program = mark_receiver_program_training_not_estimable(
+                receiver_family,
+                contrast_name=contrast.name,
+                reason_code=reason_code,
+            )
+        programs.append(program)
+    return tuple(programs)
+
+
+def _apply_receiver_programs(
+    programs: tuple[ReceiverProgramTrainingArtifact, ...],
+    *,
+    prepared: _PreparedRawFold,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    design_applications: tuple[FrozenDesignApplication, ...],
+) -> tuple[ReceiverProgramApplication, ...]:
+    """Apply programs once per receiver without sender or receptor conditioning."""
+
+    design_by_name = {
+        encoder.contrast.name: (encoder, application)
+        for encoder, application in zip(
+            design_encoders, design_applications, strict=True
+        )
+    }
+    applications: list[ReceiverProgramApplication] = []
+    for program in programs:
+        encoder, design_application = design_by_name[program.contrast_name]
+        context_nodes = set(encoder.contrast.weights)
+        context_ids = {
+            node_context_fields(node, encoder.context_keys)[0]
+            for node in context_nodes
+        }
+        selected = tuple(
+            index
+            for index, context_id in enumerate(
+                design_application.sample_context_ids
+            )
+            if context_id in context_ids
+        )
+        expected_samples = tuple(
+            design_application.sample_ids[index] for index in selected
+        )
+        expected_subjects = tuple(
+            design_application.sample_subject_ids[index] for index in selected
+        )
+        expected_contexts = tuple(
+            design_application.sample_context_ids[index] for index in selected
+        )
+        try:
+            (
+                expression,
+                sample_ids,
+                subject_ids,
+                actual_context_ids,
+            ) = _response_expression(
+                prepared,
+                receiver=program.receiver,
+                contexts=context_nodes,
+            )
+        except ValueError as error:
+            if "no eligible sample expression" not in str(error):
+                raise
+            applications.append(
+                mark_receiver_program_application_not_estimable(
+                    program,
+                    sample_ids=expected_samples,
+                    sample_subject_ids=expected_subjects,
+                    sample_context_ids=expected_contexts,
+                    reason_code="heldout_receiver_expression_not_estimable",
+                )
+            )
+            continue
+        expected_by_sample = {
+            sample_id: (subject_id, context_id)
+            for sample_id, subject_id, context_id in zip(
+                expected_samples, expected_subjects, expected_contexts, strict=True
+            )
+        }
+        observed_lineage = _observed_response_lineage(
+            sample_ids, subject_ids, actual_context_ids
+        )
+        expected_lineage = tuple(
+            sorted(
+                (sample_id, subject_id, context_id)
+                for sample_id, (subject_id, context_id) in expected_by_sample.items()
+            )
+        )
+        if observed_lineage != expected_lineage:
+            applications.append(
+                mark_receiver_program_application_not_estimable(
+                    program,
+                    sample_ids=expected_samples,
+                    sample_subject_ids=expected_subjects,
+                    sample_context_ids=expected_contexts,
+                    reason_code=(
+                        "heldout_receiver_expression_incomplete_sample_coverage"
+                    ),
+                )
+            )
+            continue
+        applications.append(
+            apply_receiver_program_training_artifact(
+                program,
+                expression,
+                feature_ids=prepared.aggregate.feature_ids,
+                sample_ids=sample_ids,
+                sample_subject_ids=subject_ids,
+                sample_context_ids=actual_context_ids,
             )
         )
     return tuple(applications)
@@ -2420,6 +2904,7 @@ def _family_common_edge_evidence(
 
 def _fit_family_common_chains(
     receiver_models: tuple[ReceiverFamilyScoringArtifact, ...],
+    receiver_programs: tuple[ReceiverProgramTrainingArtifact, ...],
     incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
     *,
     sender_functionals: tuple[ContrastCommonSenderFunctional, ...],
@@ -2428,8 +2913,8 @@ def _fit_family_common_chains(
         functional.contrast_name: functional for functional in sender_functionals
     }
     functionals: list[FamilyCommonScoringFunctional] = []
-    for receiver_model, incremental_model in zip(
-        receiver_models, incremental_models, strict=True
+    for receiver_model, receiver_program, incremental_model in zip(
+        receiver_models, receiver_programs, incremental_models, strict=True
     ):
         tuning = incremental_model.penalty_tuning_artifact
         if tuning is None:
@@ -2458,6 +2943,7 @@ def _fit_family_common_chains(
                 autonomous_program_resource_id=(
                     incremental_model.autonomous_program_resource_id
                 ),
+                receiver_program_artifact=receiver_program,
             )
         else:
             functional = mark_family_common_scoring_not_estimable(
@@ -2480,6 +2966,7 @@ def _fit_family_common_chains(
                     or tuning.reason_code
                     or "incremental_training_not_estimable"
                 ),
+                receiver_program_artifact=receiver_program,
             )
         functionals.append(functional)
     return tuple(functionals)
@@ -2487,6 +2974,7 @@ def _fit_family_common_chains(
 
 def _apply_family_common_chains(
     functionals: tuple[FamilyCommonScoringFunctional, ...],
+    receiver_program_applications: tuple[ReceiverProgramApplication, ...],
     incremental_applications: tuple[ReceiverIncrementalApplication, ...],
     *,
     training_application: TrainingArtifactApplication,
@@ -2508,8 +2996,11 @@ def _apply_family_common_chains(
     sender_applications: dict[
         tuple[str, str, tuple[str, ...]], CommonSenderApplication
     ] = {}
-    for functional, incremental_application in zip(
-        functionals, incremental_applications, strict=True
+    for functional, receiver_program_application, incremental_application in zip(
+        functionals,
+        receiver_program_applications,
+        incremental_applications,
+        strict=True,
     ):
         design_application = design_by_contrast[functional.contrast_name]
         sender_key = (
@@ -2549,6 +3040,7 @@ def _apply_family_common_chains(
                     or functional.incremental_reason_code
                     or "heldout_incremental_not_estimable"
                 ),
+                receiver_program_application=receiver_program_application,
             )
         else:
             application = apply_family_common_scoring_functional(
@@ -2556,6 +3048,7 @@ def _apply_family_common_chains(
                 diagnostic,
                 edge_evidence,
                 sender_application,
+                receiver_program_application=receiver_program_application,
             )
         applications.append(application)
         bindings.append(
@@ -2898,6 +3391,18 @@ def run_subject_crossfit(
             prepared=prepared_heldout,
             contrasts=spec.contrasts,
         )
+        receiver_program_models = _training_receiver_programs(
+            receiver_family_models,
+            prepared=prepared_training,
+            contrasts=spec.contrasts,
+            minimum_scale=spec.downstream_minimum_scale,
+        )
+        receiver_program_applications = _apply_receiver_programs(
+            receiver_program_models,
+            prepared=prepared_heldout,
+            design_encoders=design_encoders,
+            design_applications=design_applications,
+        )
         (
             receiver_responses,
             response_precisions,
@@ -2938,6 +3443,7 @@ def run_subject_crossfit(
         else:
             family_common_functionals = _fit_family_common_chains(
                 receiver_family_models,
+                receiver_program_models,
                 receiver_incremental_models,
                 sender_functionals=training.sender_functionals,
             )
@@ -2946,6 +3452,7 @@ def run_subject_crossfit(
                 family_common_bindings,
             ) = _apply_family_common_chains(
                 family_common_functionals,
+                receiver_program_applications,
                 receiver_incremental_applications,
                 training_application=application,
                 design_encoders=design_encoders,
@@ -2961,6 +3468,8 @@ def run_subject_crossfit(
                 design_applications=design_applications,
                 receiver_family_models=receiver_family_models,
                 receiver_family_applications=receiver_family_applications,
+                receiver_program_models=receiver_program_models,
+                receiver_program_applications=receiver_program_applications,
                 receiver_responses=receiver_responses,
                 response_precisions=response_precisions,
                 receiver_incremental_models=receiver_incremental_models,

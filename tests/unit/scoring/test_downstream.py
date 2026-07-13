@@ -9,6 +9,7 @@ from crychic.core import ContractError
 from crychic.resources import GeneNamespace, Species
 from crychic.response import build_receiver_autonomous_program_resource
 from crychic.scoring import (
+    DownstreamApplication,
     DownstreamFunctional,
     DownstreamRowManifest,
     IncrementalDownstreamApplication,
@@ -18,7 +19,7 @@ from crychic.scoring import (
     fit_downstream_functional,
     fit_incremental_downstream_functional,
 )
-from crychic.scoring.downstream import _project_feature_values
+from crychic.scoring.downstream import _matrix_digest, _project_feature_values
 
 
 def _paired_manifest(regressor: np.ndarray, *, prefix: str) -> DownstreamRowManifest:
@@ -96,6 +97,7 @@ def _functional() -> DownstreamFunctional:
         family_ids=("F1", "F2"),
         reference_sample_ids=("s3", "s1", "s2"),
         reference_subject_ids=("p3", "p1", "p2"),
+        reference_context_ids=("reference", "reference", "reference"),
         training_subject_ids=("p3", "p1", "p2"),
         target_weight_matrix=sparse.eye(2, format="csc"),
         family_support=np.asarray([1.0, 0.5]),
@@ -185,6 +187,45 @@ def test_same_functional_applies_to_all_contexts_without_refitting() -> None:
     assert treated.receiver_program_score[0, 0] > control.receiver_program_score[0, 0]
 
 
+def test_downstream_application_is_producer_owned_and_checks_bound_algebra() -> None:
+    functional = _functional()
+    expression = np.asarray([[1.5, 7.9652]])
+
+    with pytest.raises(TypeError):
+        DownstreamApplication(
+            downstream_functional_id=functional.downstream_functional_id,
+            raw_program=np.asarray([[999.0, 999.0]]),
+            receiver_program_score=np.asarray([[0.999, 0.999]]),
+            supported_program_score=np.asarray([[0.123, 0.123]]),
+        )
+
+    application = apply_downstream_functional(
+        functional,
+        expression,
+        feature_ids=("G1", "G2"),
+        input_row_manifest_id="heldout-row-manifest",
+    )
+    application._require_intact()
+    assert application.input_row_manifest_id == "heldout-row-manifest"
+    assert application.input_expression_digest
+    np.testing.assert_allclose(
+        application.receiver_program_score,
+        application.raw_program / (1.0 + application.raw_program),
+    )
+    np.testing.assert_allclose(
+        application.supported_program_score,
+        application.receiver_program_score * functional.family_support,
+    )
+
+    poisoned = application.receiver_program_score.copy()
+    poisoned[:] = 0.123
+    poisoned.setflags(write=False)
+    object.__setattr__(application, "receiver_program_score", poisoned)
+    with pytest.raises(ContractError) as error:
+        application._require_intact()
+    assert error.value.details.code == "downstream_application_integrity_violation"
+
+
 def test_feature_order_and_training_support_are_strict() -> None:
     functional = _functional()
 
@@ -204,6 +245,7 @@ def test_feature_order_and_training_support_are_strict() -> None:
             family_ids=("F",),
             reference_sample_ids=("s1",),
             reference_subject_ids=("p1",),
+            reference_context_ids=("reference",),
             training_subject_ids=("p1",),
             target_weight_matrix=np.asarray([[1.0], [0.0]]),
             family_support=np.asarray([1.0]),
@@ -220,6 +262,7 @@ def test_target_weights_are_normalized_and_invalid_columns_are_rejected() -> Non
         family_ids=("F",),
         reference_sample_ids=("s1", "s2"),
         reference_subject_ids=("p1", "p2"),
+        reference_context_ids=("reference", "reference"),
         training_subject_ids=("p1", "p2"),
         target_weight_matrix=np.asarray([[1.0], [3.0]]),
         family_support=np.asarray([0.4]),
@@ -238,6 +281,7 @@ def test_target_weights_are_normalized_and_invalid_columns_are_rejected() -> Non
             family_ids=("F",),
             reference_sample_ids=("s1", "s2"),
             reference_subject_ids=("p1", "p2"),
+            reference_context_ids=("reference", "reference"),
             training_subject_ids=("p1", "p2"),
             target_weight_matrix=np.zeros((2, 1)),
             family_support=np.asarray([0.4]),
@@ -255,6 +299,7 @@ def test_functional_identity_changes_with_learned_artifacts() -> None:
         family_ids=("F1", "F2"),
         reference_sample_ids=("s1", "s2", "s3"),
         reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
         training_subject_ids=("p1", "p2", "p3"),
         target_weight_matrix=sparse.eye(2, format="csc"),
         family_support=np.asarray([1.0, 0.5]),
@@ -282,18 +327,28 @@ def test_reference_identity_covers_full_matrix_and_row_manifest() -> None:
         first_expression,
         reference_sample_ids=("s1", "s2", "s3"),
         reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
         **common,
     )
     changed_matrix = fit_downstream_functional(
         same_summary,
         reference_sample_ids=("s1", "s2", "s3"),
         reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
         **common,
     )
     changed_mapping = fit_downstream_functional(
         first_expression,
         reference_sample_ids=("s1", "s2", "s3"),
         reference_subject_ids=("p3", "p2", "p1"),
+        reference_context_ids=("reference", "reference", "reference"),
+        **common,
+    )
+    changed_context = fit_downstream_functional(
+        first_expression,
+        reference_sample_ids=("s1", "s2", "s3"),
+        reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "forged-context"),
         **common,
     )
 
@@ -303,6 +358,9 @@ def test_reference_identity_covers_full_matrix_and_row_manifest() -> None:
     assert first.downstream_functional_id != changed_matrix.downstream_functional_id
     assert first.reference_input_digest != changed_mapping.reference_input_digest
     assert first.downstream_functional_id != changed_mapping.downstream_functional_id
+    assert first.reference_row_manifest_id != changed_context.reference_row_manifest_id
+    assert first.reference_input_digest != changed_context.reference_input_digest
+    assert first.downstream_functional_id != changed_context.downstream_functional_id
 
 
 def test_reference_identity_is_invariant_to_input_row_order() -> None:
@@ -322,6 +380,7 @@ def test_reference_identity_is_invariant_to_input_row_order() -> None:
         expression,
         reference_sample_ids=("s1", "s2", "s3"),
         reference_subject_ids=("p1", "p2", "p3"),
+        reference_context_ids=("reference", "reference", "reference"),
         **common,
     )
     order = np.asarray([2, 0, 1])
@@ -329,13 +388,78 @@ def test_reference_identity_is_invariant_to_input_row_order() -> None:
         expression[order],
         reference_sample_ids=("s3", "s1", "s2"),
         reference_subject_ids=("p3", "p1", "p2"),
+        reference_context_ids=("reference", "reference", "reference"),
         **common,
     )
 
     assert first.reference_sample_ids == ("s1", "s2", "s3")
     assert reordered.reference_sample_ids == first.reference_sample_ids
     assert reordered.reference_input_digest == first.reference_input_digest
+    assert reordered.reference_row_manifest_id == first.reference_row_manifest_id
+    assert reordered.reference_subject_summary_digest == (
+        first.reference_subject_summary_digest
+    )
+    assert reordered.reference_transform_id == first.reference_transform_id
     assert reordered.downstream_functional_id == first.downstream_functional_id
+
+
+def test_reference_transform_is_subject_equal_under_technical_row_duplication() -> None:
+    common = {
+        "receiver": "Receiver",
+        "contrast_name": "stim_vs_ctrl",
+        "fold_id": "fold-1",
+        "feature_ids": ("G1",),
+        "family_ids": ("F1",),
+        "training_subject_ids": ("p1", "p2", "p3"),
+        "target_weight_matrix": np.ones((1, 1)),
+        "family_support": np.ones(1),
+        "minimum_scale": 0.25,
+    }
+    expression = np.asarray([[0.0], [2.0], [4.0], [2.0], [6.0], [4.0], [8.0]])
+    first = fit_downstream_functional(
+        expression,
+        reference_sample_ids=("p1-a1", "p1-a2", "p1-b", "p2-a", "p2-b", "p3-a", "p3-b"),
+        reference_subject_ids=("p1", "p1", "p1", "p2", "p2", "p3", "p3"),
+        reference_context_ids=("a", "a", "b", "a", "b", "a", "b"),
+        **common,
+    )
+    duplicated = fit_downstream_functional(
+        np.vstack([expression, [[0.0], [2.0]]]),
+        reference_sample_ids=(
+            "p1-a1",
+            "p1-a2",
+            "p1-b",
+            "p2-a",
+            "p2-b",
+            "p3-a",
+            "p3-b",
+            "p1-a3",
+            "p1-a4",
+        ),
+        reference_subject_ids=(
+            "p1",
+            "p1",
+            "p1",
+            "p2",
+            "p2",
+            "p3",
+            "p3",
+            "p1",
+            "p1",
+        ),
+        reference_context_ids=("a", "a", "b", "a", "b", "a", "b", "a", "a"),
+        **common,
+    )
+
+    np.testing.assert_allclose(first.feature_center, [4.0])
+    np.testing.assert_allclose(duplicated.feature_center, first.feature_center)
+    np.testing.assert_allclose(duplicated.feature_scale, first.feature_scale)
+    assert duplicated.reference_subject_summary_digest == (
+        first.reference_subject_summary_digest
+    )
+    assert duplicated.reference_input_digest != first.reference_input_digest
+    assert duplicated.reference_row_manifest_id != first.reference_row_manifest_id
+    assert duplicated.downstream_functional_id != first.downstream_functional_id
 
 
 def test_missing_target_feature_propagates_only_to_affected_family() -> None:
@@ -350,7 +474,12 @@ def test_missing_target_feature_propagates_only_to_affected_family() -> None:
     assert result.receiver_program_score[0, 1] == pytest.approx(0.5)
 
 
-def _incremental_functional():
+def _incremental_functional(
+    *,
+    family_basis: np.ndarray | None = None,
+    family_ids: tuple[str, ...] = ("LR_family",),
+    precision_weights: np.ndarray | None = None,
+):
     nuisance = np.ones((8, 1), dtype=float)
     regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
     response = np.column_stack(
@@ -373,13 +502,282 @@ def _incremental_functional():
         context_regressor_id="stim_vs_ctrl_regressor_v1",
         nuisance_design_id="intercept_only_v1",
         feature_ids=("TARGET", "AUTO"),
-        family_ids=("LR_family",),
+        family_ids=family_ids,
         nuisance_column_ids=("intercept",),
         training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
-        family_basis=np.asarray([[1.0], [0.0]]),
-        precision_weights=np.ones(2),
+        family_basis=(
+            np.asarray([[1.0], [0.0]]) if family_basis is None else family_basis
+        ),
+        precision_weights=(
+            np.ones(2) if precision_weights is None else precision_weights
+        ),
         minimum_scale=0.25,
         null_loss_floor=1e-8,
+    )
+
+
+def _factorized_nuisance_case(*, with_autonomous: bool):
+    n_subjects = 6
+    regressor = np.asarray([-1.0] * n_subjects + [1.0] * n_subjects)
+    subject_covariate = np.linspace(-1.2, 1.1, n_subjects)
+    shifted_covariate = np.concatenate(
+        [subject_covariate - 0.2, subject_covariate + 0.6]
+    )
+    nuisance = np.column_stack(
+        [
+            np.ones(2 * n_subjects),
+            shifted_covariate,
+            np.square(shifted_covariate),
+        ]
+    )
+    family_basis = np.asarray(
+        [
+            [1.0, 0.0, 0.0],
+            [0.4, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.5, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.2, 0.0, 0.7],
+        ]
+    )
+    nuisance_effects = np.asarray(
+        [
+            [1.2, 0.8, 1.5, 0.7, 1.1, 0.9],
+            [0.3, -0.2, 0.1, 0.4, -0.1, 0.2],
+            [0.1, 0.05, -0.08, 0.03, 0.07, -0.04],
+        ]
+    )
+    autonomous_basis = np.asarray([1.0, 0.5, 0.2, 0.0, 0.0, 0.0])
+    context_effect = family_basis @ np.asarray([0.8, 1.1, 0.7])
+    if with_autonomous:
+        context_effect = context_effect + 0.9 * autonomous_basis
+    row_noise = np.linspace(-0.04, 0.04, 2 * n_subjects)[:, np.newaxis]
+    feature_noise = np.asarray([1.0, -0.5, 0.25, -0.2, 0.4, -0.3])
+    response = (
+        nuisance @ nuisance_effects
+        + np.outer(regressor, context_effect)
+        + row_noise * feature_noise
+    )
+    context_ids = tuple("reference" if value < 0 else "target" for value in regressor)
+    manifest = DownstreamRowManifest(
+        sample_ids=tuple(
+            f"factorized-train-{index:02d}" for index in range(len(regressor))
+        ),
+        subject_ids=tuple(
+            f"factorized-subject-{index % n_subjects:02d}"
+            for index in range(len(regressor))
+        ),
+        context_ids=context_ids,
+    )
+    feature_ids = tuple(f"GENE_{index}" for index in range(family_basis.shape[0]))
+    autonomous_resource = (
+        _autonomous_resource(
+            autonomous_basis[:, np.newaxis],
+            feature_ids=feature_ids,
+        )
+        if with_autonomous
+        else None
+    )
+    functional = fit_incremental_downstream_functional(
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=nuisance,
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="target_vs_reference",
+        fold_id="factorized-fold",
+        context_regressor_id="factorized-regressor-v1",
+        nuisance_design_id="factorized-nuisance-v1",
+        feature_ids=feature_ids,
+        family_ids=("FAMILY_0", "FAMILY_1", "FAMILY_2"),
+        nuisance_column_ids=("intercept", "covariate", "covariate_squared"),
+        training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
+        family_basis=family_basis,
+        autonomous_program_resource=autonomous_resource,
+        precision_weights=np.linspace(0.6, 1.4, family_basis.shape[0]),
+        minimum_scale=0.05,
+        lambda2=1e-6,
+    )
+    return functional, response, nuisance, regressor, feature_ids
+
+
+@pytest.mark.parametrize("with_autonomous", [False, True])
+def test_factorized_nuisance_predictions_match_direct_wls_oracle(
+    with_autonomous: bool,
+) -> None:
+    functional, training_response, training_nuisance, training_regressor, features = (
+        _factorized_nuisance_case(with_autonomous=with_autonomous)
+    )
+    projected_training = _project_feature_values(
+        (training_response - functional.feature_center) / functional.feature_scale,
+        autonomous_basis=functional.autonomous_basis,
+        precision_weights=functional.precision_weights,
+    )
+    direct_null = np.linalg.lstsq(training_nuisance, projected_training, rcond=None)[0]
+    direct_context = np.linalg.lstsq(training_nuisance, training_regressor, rcond=None)[
+        0
+    ]
+    family_effects = (
+        functional.family_basis.toarray()
+        * functional.family_coefficients[np.newaxis, :]
+    )
+    total_effect = np.sum(family_effects, axis=1)
+    direct_full = np.linalg.lstsq(
+        training_nuisance,
+        projected_training - np.outer(training_regressor, total_effect),
+        rcond=None,
+    )[0]
+    direct_families = np.stack(
+        [
+            np.linalg.lstsq(
+                training_nuisance,
+                projected_training
+                - np.outer(training_regressor, family_effects[:, family_index]),
+                rcond=None,
+            )[0]
+            for family_index in range(len(functional.family_ids))
+        ]
+    )
+
+    heldout_subjects = 4
+    heldout_regressor = np.asarray([-1.0] * heldout_subjects + [1.0] * heldout_subjects)
+    heldout_covariate = np.concatenate(
+        [
+            np.linspace(-0.9, 0.8, heldout_subjects) - 0.1,
+            np.linspace(-0.9, 0.8, heldout_subjects) + 0.4,
+        ]
+    )
+    heldout_nuisance = np.column_stack(
+        [
+            np.ones(2 * heldout_subjects),
+            heldout_covariate,
+            np.square(heldout_covariate),
+        ]
+    )
+    heldout_response = heldout_nuisance @ np.asarray(
+        [
+            [1.0, 0.9, 1.3, 0.8, 1.0, 0.7],
+            [0.2, -0.1, 0.05, 0.3, -0.05, 0.15],
+            [0.08, 0.04, -0.05, 0.02, 0.06, -0.03],
+        ]
+    ) + np.outer(heldout_regressor, total_effect)
+    heldout_manifest = DownstreamRowManifest(
+        sample_ids=tuple(
+            f"factorized-heldout-{index:02d}" for index in range(len(heldout_regressor))
+        ),
+        subject_ids=tuple(
+            f"factorized-heldout-subject-{index % heldout_subjects:02d}"
+            for index in range(len(heldout_regressor))
+        ),
+        context_ids=tuple(
+            "reference" if value < 0 else "target" for value in heldout_regressor
+        ),
+    )
+
+    direct_null_prediction = heldout_nuisance @ direct_null
+    direct_full_prediction = heldout_nuisance @ direct_full + np.outer(
+        heldout_regressor, total_effect
+    )
+    direct_family_predictions = np.stack(
+        [
+            heldout_nuisance @ direct_families[family_index]
+            + np.outer(heldout_regressor, family_effects[:, family_index])
+            for family_index in range(len(functional.family_ids))
+        ]
+    )
+    residualized_context = (
+        heldout_regressor
+        - heldout_nuisance @ functional.context_regressor_nuisance_coefficients
+    )
+    factorized_null_prediction = (
+        heldout_nuisance @ functional.null_nuisance_coefficients
+    )
+    factorized_full_prediction = factorized_null_prediction + np.outer(
+        residualized_context, total_effect
+    )
+    factorized_family_predictions = np.stack(
+        [
+            factorized_null_prediction
+            + np.outer(residualized_context, family_effects[:, family_index])
+            for family_index in range(len(functional.family_ids))
+        ]
+    )
+
+    np.testing.assert_allclose(
+        functional.context_regressor_nuisance_coefficients,
+        direct_context,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        factorized_null_prediction,
+        direct_null_prediction,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        factorized_full_prediction,
+        direct_full_prediction,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        factorized_family_predictions,
+        direct_family_predictions,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+
+    application = apply_incremental_downstream_functional(
+        functional,
+        heldout_response,
+        row_manifest=heldout_manifest,
+        design_sample_ids=heldout_manifest.sample_ids,
+        nuisance_matrix=heldout_nuisance,
+        context_regressor=heldout_regressor,
+        context_regressor_id="factorized-regressor-v1",
+        nuisance_design_id="factorized-nuisance-v1",
+        feature_ids=features,
+        nuisance_column_ids=("intercept", "covariate", "covariate_squared"),
+    )
+    projected_heldout = _project_feature_values(
+        (heldout_response - functional.feature_center) / functional.feature_scale,
+        autonomous_basis=functional.autonomous_basis,
+        precision_weights=functional.precision_weights,
+    )
+    expected_null_losses = np.sum(
+        np.square(projected_heldout - direct_null_prediction)
+        * functional.precision_weights,
+        axis=1,
+    )
+    expected_full_losses = np.sum(
+        np.square(projected_heldout - direct_full_prediction)
+        * functional.precision_weights,
+        axis=1,
+    )
+    expected_family_losses = np.column_stack(
+        [
+            np.sum(
+                np.square(projected_heldout - direct_family_prediction)
+                * functional.precision_weights,
+                axis=1,
+            )
+            for direct_family_prediction in direct_family_predictions
+        ]
+    )
+    np.testing.assert_allclose(
+        application.sample_null_losses, expected_null_losses, atol=1e-12, rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        application.sample_full_losses, expected_full_losses, atol=1e-12, rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        application.sample_family_losses,
+        expected_family_losses,
+        atol=1e-12,
+        rtol=1e-12,
     )
 
 
@@ -434,6 +832,34 @@ def test_heldout_active_response_has_positive_incremental_family_gain() -> None:
     assert result.family_gains[0] > 0.95
     assert result.full_loss is not None and result.null_loss is not None
     assert result.full_loss < result.null_loss
+
+
+def test_no_autonomous_fit_marks_zero_precision_family_not_estimable() -> None:
+    functional = _incremental_functional(
+        family_basis=np.eye(2),
+        family_ids=("supported", "unsupported"),
+        precision_weights=np.asarray([1.0, 0.0]),
+    )
+
+    assert functional.family_estimable.tolist() == [True, False]
+    np.testing.assert_allclose(functional.family_retained_norm_fraction, [1.0, 0.0])
+    assert functional.family_reason_codes == (
+        None,
+        "family_basis_not_identifiable_after_autonomous_projection",
+    )
+    np.testing.assert_array_equal(functional.family_basis.getcol(1).toarray(), 0.0)
+
+
+def test_no_autonomous_fit_fails_closed_when_all_families_lack_precision() -> None:
+    with pytest.raises(ContractError) as error:
+        _incremental_functional(
+            family_basis=np.asarray([[0.0], [1.0]]),
+            precision_weights=np.asarray([1.0, 0.0]),
+        )
+
+    assert error.value.details.code == (
+        "all_family_bases_not_identifiable_after_autonomous_projection"
+    )
 
 
 def _projected_overlap_functional(
@@ -572,6 +998,215 @@ def test_exact_autonomous_family_overlap_fails_closed() -> None:
     assert error.value.details.code == (
         "all_family_bases_not_identifiable_after_autonomous_projection"
     )
+
+
+_COORDINATE_CONTRACT_FEATURES = ("AUTO_SLOW", "AUTO_FAST", "UNIQUE")
+
+
+def _coordinate_contract_fit(
+    *,
+    autonomous_effect: float,
+    unique_effect: float,
+    feature_units: np.ndarray | None = None,
+    family_basis_multiplier: float = 1.0,
+):
+    units = (
+        np.ones(3, dtype=np.float64)
+        if feature_units is None
+        else np.asarray(feature_units, dtype=np.float64)
+    )
+    reference = np.asarray(
+        [
+            [-3.0, -0.3, -1.5],
+            [-1.0, -0.1, -0.5],
+            [1.0, 0.1, 0.5],
+            [3.0, 0.3, 1.5],
+        ]
+    )
+    autonomous_basis = np.asarray([1.0, 1.0, 0.0])
+    family_basis = np.asarray([0.0, 1.0, 1.0])
+    context_effect = autonomous_effect * autonomous_basis + unique_effect * family_basis
+    response = np.vstack([reference, reference + 2.0 * context_effect]) * units
+    regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
+    manifest = _paired_manifest(regressor, prefix="coordinate-contract-training")
+    functional = fit_incremental_downstream_functional(
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=np.ones((8, 1)),
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="stim_vs_ctrl",
+        fold_id="fold-coordinate-contract",
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=_COORDINATE_CONTRACT_FEATURES,
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
+        family_basis=(family_basis * units * family_basis_multiplier)[:, np.newaxis],
+        autonomous_program_resource=_autonomous_resource(
+            (autonomous_basis * units)[:, np.newaxis],
+            feature_ids=_COORDINATE_CONTRACT_FEATURES,
+        ),
+        precision_weights=np.ones(3),
+        minimum_scale=0.01,
+    )
+    return functional
+
+
+def _apply_coordinate_contract(
+    functional,
+    *,
+    autonomous_effect: float,
+    unique_effect: float,
+    feature_units: np.ndarray | None = None,
+):
+    units = (
+        np.ones(3, dtype=np.float64)
+        if feature_units is None
+        else np.asarray(feature_units, dtype=np.float64)
+    )
+    reference = np.asarray([[-0.8, -0.08, -0.4], [0.8, 0.08, 0.4]])
+    autonomous_basis = np.asarray([1.0, 1.0, 0.0])
+    family_basis = np.asarray([0.0, 1.0, 1.0])
+    context_effect = autonomous_effect * autonomous_basis + unique_effect * family_basis
+    response = np.vstack([reference, reference + 2.0 * context_effect]) * units
+    regressor = np.asarray([-1.0, -1.0, 1.0, 1.0])
+    manifest = _paired_manifest(regressor, prefix="coordinate-contract-heldout")
+    return apply_incremental_downstream_functional(
+        functional,
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        nuisance_matrix=np.ones((4, 1)),
+        context_regressor=regressor,
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=_COORDINATE_CONTRACT_FEATURES,
+        nuisance_column_ids=("intercept",),
+    )
+
+
+@pytest.mark.parametrize("autonomous_effect", [0.0, 2.0])
+def test_frozen_coordinate_projection_rejects_global_and_autonomous_nulls(
+    autonomous_effect: float,
+) -> None:
+    functional = _coordinate_contract_fit(
+        autonomous_effect=autonomous_effect,
+        unique_effect=0.0,
+    )
+    result = _apply_coordinate_contract(
+        functional,
+        autonomous_effect=autonomous_effect,
+        unique_effect=0.0,
+    )
+
+    assert functional.feature_scale[0] > 5.0 * functional.feature_scale[1]
+    assert functional.basis_coordinate_transform == (
+        "raw_family_basis_l2_normalize_then_divide_by_frozen_reference_mad_scale_v1"
+    )
+    assert functional.family_coefficients[0] == pytest.approx(0.0, abs=1e-12)
+    assert result.model_gain == pytest.approx(0.0, abs=1e-12)
+    assert result.family_gains[0] == pytest.approx(0.0, abs=1e-12)
+    provenance = functional.to_dict()
+    assert provenance["basis_coordinate_transform_id"] == (
+        functional.basis_coordinate_transform_id
+    )
+
+
+def test_unique_lr_effect_survives_frozen_coordinate_projection() -> None:
+    functional = _coordinate_contract_fit(
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+    )
+    result = _apply_coordinate_contract(
+        functional,
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+    )
+
+    assert functional.family_coefficients[0] > 0.0
+    assert result.model_gain is not None and result.model_gain > 0.99
+    assert result.family_gains[0] > 0.99
+
+
+def test_basis_coordinate_transform_is_invariant_to_feature_units() -> None:
+    feature_units = np.asarray([4.0, 0.5, 2.0])
+    base = _coordinate_contract_fit(autonomous_effect=2.0, unique_effect=1.0)
+    rescaled = _coordinate_contract_fit(
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+        feature_units=feature_units,
+    )
+    base_result = _apply_coordinate_contract(
+        base,
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+    )
+    rescaled_result = _apply_coordinate_contract(
+        rescaled,
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+        feature_units=feature_units,
+    )
+
+    np.testing.assert_allclose(
+        base.family_basis.toarray(), rescaled.family_basis.toarray(), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        base.family_coefficients, rescaled.family_coefficients, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        base_result.family_gains, rescaled_result.family_gains, atol=1e-12
+    )
+    assert base_result.model_gain == pytest.approx(
+        rescaled_result.model_gain, abs=1e-12
+    )
+
+
+def test_raw_family_basis_lineage_precedes_internal_normalization() -> None:
+    functional = _coordinate_contract_fit(
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+        family_basis_multiplier=7.0,
+    )
+    expected_raw_id = _matrix_digest(
+        sparse.csc_matrix(np.asarray([[0.0], [7.0], [7.0]]))
+    )
+
+    assert functional.raw_input_family_basis_id == expected_raw_id
+    assert functional.original_family_basis_id == expected_raw_id
+    assert functional.coordinate_family_basis_id != expected_raw_id
+    provenance = functional.to_dict()
+    assert provenance["raw_input_family_basis_id"] == expected_raw_id
+    assert provenance["coordinate_family_basis_id"] == (
+        functional.coordinate_family_basis_id
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "replacement"),
+    [
+        ("basis_coordinate_transform", "unfrozen_raw_basis_v0"),
+        ("basis_coordinate_transform_id", "tampered-coordinate-transform"),
+    ],
+)
+def test_incremental_functional_binds_basis_coordinate_provenance(
+    field_name: str,
+    replacement: str,
+) -> None:
+    functional = _coordinate_contract_fit(
+        autonomous_effect=2.0,
+        unique_effect=1.0,
+    )
+    object.__setattr__(functional, field_name, replacement)
+
+    with pytest.raises(ContractError) as error:
+        functional.to_dict()
+
+    assert error.value.details.code == "incremental_functional_integrity_violation"
 
 
 def test_ligand_only_and_receiver_autonomous_have_no_family_gain() -> None:
@@ -985,6 +1620,50 @@ def test_incremental_functional_detects_mutated_coefficients() -> None:
         functional.to_dict()
 
     assert error.value.details.code == "incremental_functional_integrity_violation"
+
+
+def test_incremental_functional_detects_mutated_context_nuisance_factor() -> None:
+    functional = _incremental_functional()
+    object.__setattr__(
+        functional,
+        "context_regressor_nuisance_coefficients",
+        functional.context_regressor_nuisance_coefficients.copy(),
+    )
+    functional.context_regressor_nuisance_coefficients[0] += 1.0
+
+    with pytest.raises(ContractError) as error:
+        functional.to_dict()
+
+    assert error.value.details.code == "incremental_functional_integrity_violation"
+
+
+def test_incremental_functional_detects_mutated_nuisance_factorization() -> None:
+    functional = _incremental_functional()
+    object.__setattr__(
+        functional,
+        "nuisance_factorization",
+        "tampered_nuisance_factorization",
+    )
+
+    with pytest.raises(ContractError) as error:
+        functional.to_dict()
+
+    assert error.value.details.code == "incremental_functional_integrity_violation"
+
+
+def test_incremental_functional_does_not_store_dense_family_nuisance_models() -> None:
+    functional = _incremental_functional()
+    slots = set(IncrementalDownstreamFunctional.__slots__)
+    provenance = functional.to_dict()
+
+    assert "full_nuisance_coefficients" not in slots
+    assert "family_nuisance_coefficients" not in slots
+    assert "full_nuisance_digest" not in provenance
+    assert "family_nuisance_digest" not in provenance
+    assert functional.context_regressor_nuisance_coefficients.shape == (1,)
+    assert functional.nuisance_factorization == (
+        "null_plus_residualized_context_outer_family_effect_v1"
+    )
 
 
 def test_incremental_sparse_basis_has_immutable_backing_buffers() -> None:
