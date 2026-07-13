@@ -28,13 +28,15 @@ def _fit(raw: np.ndarray, **kwargs: object) -> PrecisionTransformResult:
 
 
 def _response_artifact(
-    *, training_input_digest: str = "precision-training-input"
+    *,
+    training_input_digest: str = "precision-training-input",
+    n_subjects: int = 4,
 ) -> FoldGeneResponseArtifact:
     metadata_rows: list[dict[str, str]] = []
     unit_rows: list[dict[str, object]] = []
     count_rows: list[tuple[int, int]] = []
     matrix_unit_ids: list[str] = []
-    for subject_index in range(4):
+    for subject_index in range(n_subjects):
         subject = f"p{subject_index}"
         for condition in ("ctrl", "stim"):
             sample = f"{subject}:{condition}"
@@ -273,10 +275,135 @@ def test_response_precision_binds_complete_training_parent_lineage() -> None:
     assert result.training_subject_ids == response.training_subject_ids
     assert result.encoder_id == response.encoder_id
     assert result.feature_ids == response.feature_ids
+    assert result.method == (
+        "standardized_inverse_variance_with_low_df_equal_support_guardrail_v1"
+    )
+    assert result.residual_df == response.residual_df == 3
+    assert result.residual_df_source == "fold_gene_response_residual_df_v1"
+    assert result.low_df_threshold == 4
+    assert result.weight_mode == "equal_supported_low_residual_df_v1"
+    np.testing.assert_array_equal(result.values, [1.0, 1.0])
     assert result.raw_precision_digest
     assert result.values.flags.writeable is False
     with pytest.raises(ValueError, match="WRITEABLE"):
         result.values.setflags(write=True)
+
+
+@pytest.mark.parametrize(("n_subjects", "expected_df"), [(4, 3), (5, 4)])
+def test_low_df_guardrail_removes_feature_leverage_even_with_scale(
+    n_subjects: int,
+    expected_df: int,
+) -> None:
+    response = _response_artifact(n_subjects=n_subjects)
+    scale = np.asarray([1e-3, 1e3])
+
+    result = fit_response_precision(response, feature_scale=scale)
+
+    assert response.residual_df == expected_df
+    assert result.weight_mode == "equal_supported_low_residual_df_v1"
+    np.testing.assert_array_equal(result.values, [1.0, 1.0])
+    np.testing.assert_array_equal(result.feature_scale, scale)
+    assert result.feature_scale_source == (
+        "caller_supplied_downstream_feature_scale_v1"
+    )
+    assert result.lower_bound == result.upper_bound == 1.0
+    assert result.normalization_median == 1.0
+
+
+def test_high_df_precision_uses_standardized_response_units() -> None:
+    response = _response_artifact(n_subjects=8)
+    scale = np.asarray([0.5, 2.0])
+
+    result = fit_response_precision(
+        response,
+        feature_scale=scale,
+        lower_quantile=0.0,
+        upper_quantile=1.0,
+    )
+
+    assert response.residual_df == result.residual_df == 7
+    assert result.weight_mode == "winsorized_standardized_inverse_variance_v1"
+    standardized_precision = response.raw_precision * scale**2
+    expected = standardized_precision / np.median(standardized_precision)
+    np.testing.assert_allclose(result.values, expected)
+    assert result.working_precision_digest != result.raw_precision_digest
+    result.require_standardized_space_compatible(
+        feature_scale=scale,
+        residual_df=response.residual_df,
+    )
+
+
+def test_high_df_standardized_precision_is_feature_unit_invariant() -> None:
+    response = _response_artifact(n_subjects=8)
+    scale = np.asarray([0.5, 2.0])
+    unit_multiplier = np.asarray([100.0, 0.01])
+    rescaled_raw_precision = response.raw_precision / unit_multiplier**2
+    rescaled_feature_scale = scale * unit_multiplier
+
+    original = response.raw_precision * scale**2
+    rescaled = rescaled_raw_precision * rescaled_feature_scale**2
+
+    np.testing.assert_allclose(rescaled, original, rtol=1e-14)
+    result = fit_response_precision(
+        response,
+        feature_scale=scale,
+        lower_quantile=0.0,
+        upper_quantile=1.0,
+    )
+    np.testing.assert_allclose(result.values, rescaled / np.median(rescaled))
+
+
+def test_high_df_without_feature_scale_fails_closed_to_equal_support() -> None:
+    response = _response_artifact(n_subjects=8)
+
+    result = fit_response_precision(response)
+
+    assert response.residual_df == 7
+    assert result.feature_scale_digest is None
+    assert result.weight_mode == "equal_supported_feature_scale_unavailable_v1"
+    np.testing.assert_array_equal(result.values, [1.0, 1.0])
+
+
+def test_response_precision_identity_binds_standardization_scale() -> None:
+    response = _response_artifact(n_subjects=8)
+    first = fit_response_precision(response, feature_scale=np.asarray([0.5, 2.0]))
+    second = fit_response_precision(response, feature_scale=np.asarray([0.5, 3.0]))
+
+    assert first.feature_scale_digest != second.feature_scale_digest
+    assert first.precision_transform_id != second.precision_transform_id
+    with pytest.raises(ContractError) as error:
+        first.require_standardized_space_compatible(
+            feature_scale=np.asarray([0.5, 3.0]),
+            residual_df=response.residual_df,
+        )
+    assert error.value.details.code == "precision_transform_standardization_mismatch"
+
+
+@pytest.mark.parametrize(
+    "feature_scale",
+    [np.asarray([1.0]), np.asarray([1.0, 0.0]), np.asarray([1.0, np.nan])],
+)
+def test_response_precision_rejects_invalid_feature_scale(
+    feature_scale: np.ndarray,
+) -> None:
+    with pytest.raises(ValueError, match="feature_scale"):
+        fit_response_precision(
+            _response_artifact(n_subjects=8),
+            feature_scale=feature_scale,
+        )
+
+
+def test_response_precision_detects_feature_scale_mutation() -> None:
+    result = fit_response_precision(
+        _response_artifact(n_subjects=8),
+        feature_scale=np.asarray([0.5, 2.0]),
+    )
+    object.__setattr__(result, "feature_scale", result.feature_scale.copy())
+    result.feature_scale[0] = 99.0
+
+    with pytest.raises(ContractError) as error:
+        result.to_dict()
+    assert error.value.details.code == "precision_transform_integrity_violation"
 
 
 def test_response_precision_same_scope_different_parent_has_distinct_identity() -> None:

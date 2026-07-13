@@ -10,7 +10,10 @@ import numpy as np
 from scipy import sparse
 
 from crychic.attribution import (
+    RelativePenaltyCandidate,
     SolverStatus,
+    resolve_penalty_scale,
+    resolve_residualized_penalty_scale,
     solve_nonnegative_elastic_net,
     solve_nonnegative_residual_elastic_net,
 )
@@ -24,8 +27,11 @@ from crychic.response.autonomous import _precision_weighted_span_residual
 from .contracts import float64_array_digest
 
 _MAD_GAUSSIAN_CONSISTENCY = 1.4826
-_INCREMENTAL_METHOD = "sample_keyed_autonomous_projected_incremental_v4"
-_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v4"
+INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT = (
+    "sample_keyed_autonomous_projected_incremental_v5"
+)
+_INCREMENTAL_METHOD = INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT
+_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v5"
 _FAMILY_GAIN_ESTIMAND = "autonomous_orthogonal_family_only_prediction_v3"
 _UNIDENTIFIABLE_FAMILY_REASON = (
     "family_basis_not_identifiable_after_autonomous_projection"
@@ -921,6 +927,9 @@ class IncrementalDownstreamFunctional:
     precision_weights: np.ndarray
     minimum_scale: float
     null_loss_floor: float
+    penalty_candidate_id: str | None
+    penalty_scale_resolution_id: str | None
+    resolved_penalty_id: str | None
     lambda1: float
     lambda2: float
     identity_scope: str
@@ -975,6 +984,9 @@ class IncrementalDownstreamFunctional:
         precision_weights: np.ndarray,
         minimum_scale: float,
         null_loss_floor: float,
+        penalty_candidate_id: str | None,
+        penalty_scale_resolution_id: str | None,
+        resolved_penalty_id: str | None,
         lambda1: float,
         lambda2: float,
     ) -> IncrementalDownstreamFunctional:
@@ -1075,6 +1087,30 @@ class IncrementalDownstreamFunctional:
             if not valid:
                 relation = "non-negative" if allow_zero else "positive"
                 raise ValueError(f"{field_name} must be finite and {relation}")
+        penalty_lineage = (
+            penalty_candidate_id,
+            penalty_scale_resolution_id,
+            resolved_penalty_id,
+        )
+        if any(value is None for value in penalty_lineage) and any(
+            value is not None for value in penalty_lineage
+        ):
+            raise ValueError("relative penalty lineage fields must co-occur")
+        for field_name, value in zip(
+            (
+                "penalty_candidate_id",
+                "penalty_scale_resolution_id",
+                "resolved_penalty_id",
+            ),
+            penalty_lineage,
+            strict=True,
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value
+                or value != value.strip()
+            ):
+                raise ValueError(f"{field_name} must be a canonical non-empty string")
         n_features = len(features)
         n_families = len(families)
         n_nuisance = len(nuisance_ids)
@@ -1189,6 +1225,9 @@ class IncrementalDownstreamFunctional:
             "precision_weights": precision,
             "minimum_scale": minimum_scale,
             "null_loss_floor": null_loss_floor,
+            "penalty_candidate_id": penalty_candidate_id,
+            "penalty_scale_resolution_id": penalty_scale_resolution_id,
+            "resolved_penalty_id": resolved_penalty_id,
             "lambda1": lambda1,
             "lambda2": lambda2,
             "identity_scope": "sample_keyed_v2",
@@ -1208,7 +1247,7 @@ class IncrementalDownstreamFunctional:
             stable_id(
                 "incremental_downstream_functional",
                 self._identity_payload(),
-                schema_version="2",
+                schema_version="3",
             ),
         )
         return self
@@ -1264,6 +1303,8 @@ class IncrementalDownstreamFunctional:
             ),
             "precision_digest": float64_array_digest(self.precision_weights),
             "original_family_basis_id": self.original_family_basis_id,
+            "penalty_candidate_id": self.penalty_candidate_id,
+            "penalty_scale_resolution_id": self.penalty_scale_resolution_id,
             "receiver": self.receiver,
             "reference_sample_ids": list(self.reference_sample_ids),
             "scale_digest": float64_array_digest(self.feature_scale),
@@ -1284,6 +1325,7 @@ class IncrementalDownstreamFunctional:
             ],
             "training_context_ids": list(self.training_context_ids),
             "training_subject_ids": list(self.training_subject_ids),
+            "resolved_penalty_id": self.resolved_penalty_id,
         }
 
     def _require_intact(self) -> None:
@@ -1293,7 +1335,7 @@ class IncrementalDownstreamFunctional:
             expected = stable_id(
                 "incremental_downstream_functional",
                 self._identity_payload(),
-                schema_version="2",
+                schema_version="3",
             )
         except (ValueError, TypeError) as error:
             raise ContractError(
@@ -1356,6 +1398,9 @@ class IncrementalDownstreamFunctional:
             "precision_digest": float64_array_digest(self.precision_weights),
             "minimum_scale": self.minimum_scale,
             "null_loss_floor": self.null_loss_floor,
+            "penalty_candidate_id": self.penalty_candidate_id,
+            "penalty_scale_resolution_id": self.penalty_scale_resolution_id,
+            "resolved_penalty_id": self.resolved_penalty_id,
             "lambda1": self.lambda1,
             "lambda2": self.lambda2,
             "loss_design": self.loss_design,
@@ -1836,12 +1881,21 @@ def fit_incremental_downstream_functional(
     null_loss_floor: float = 1e-8,
     lambda1: float = 0.0,
     lambda2: float = 0.0,
+    penalty_candidate: RelativePenaltyCandidate | None = None,
 ) -> IncrementalDownstreamFunctional:
     """Fit sample-keyed nuisance and non-negative LR-family response models."""
 
     features = _names(feature_ids, field_name="feature_ids")
     families = _names(family_ids, field_name="family_ids")
     nuisance_ids = _names(nuisance_column_ids, field_name="nuisance_column_ids")
+    if penalty_candidate is not None:
+        if not isinstance(penalty_candidate, RelativePenaltyCandidate):
+            raise TypeError("penalty_candidate must be a RelativePenaltyCandidate")
+        penalty_candidate._require_intact()
+        if lambda1 != 0.0 or lambda2 != 0.0:
+            raise ValueError(
+                "explicit lambda values cannot be combined with penalty_candidate"
+            )
     canonical = _canonical_incremental_rows(
         response_matrix,
         row_manifest=row_manifest,
@@ -2015,6 +2069,33 @@ def fit_incremental_downstream_functional(
         else np.maximum(projected_effect, 0.0)
     )
     estimable_indices = np.flatnonzero(family_estimable)
+    penalty_candidate_id: str | None = None
+    penalty_scale_resolution_id: str | None = None
+    resolved_penalty_id: str | None = None
+    if penalty_candidate is not None:
+        scale_resolution = (
+            resolve_residualized_penalty_scale(
+                basis[:, estimable_indices],
+                solver_response,
+                precision,
+                feature_ids=features,
+                family_ids=tuple(families[index] for index in estimable_indices),
+            )
+            if autonomous_program_ids
+            else resolve_penalty_scale(
+                basis[:, estimable_indices],
+                solver_response,
+                precision,
+                feature_ids=features,
+                family_ids=tuple(families[index] for index in estimable_indices),
+            )
+        )
+        resolved_penalty = scale_resolution.resolve(penalty_candidate)
+        lambda1 = resolved_penalty.lambda1
+        lambda2 = resolved_penalty.lambda2
+        penalty_candidate_id = penalty_candidate.candidate_id
+        penalty_scale_resolution_id = scale_resolution.scale_resolution_id
+        resolved_penalty_id = resolved_penalty.resolved_penalty_id
     if autonomous_program_ids:
         solution = solve_nonnegative_residual_elastic_net(
             basis[:, estimable_indices],
@@ -2080,13 +2161,16 @@ def fit_incremental_downstream_functional(
             "nuisance_digest": _dense_input_digest(nuisance),
             "loss_context_weights_digest": _dense_input_digest(loss_context_weights),
             "loss_design": loss_design,
+            "penalty_candidate_id": penalty_candidate_id,
+            "penalty_scale_resolution_id": penalty_scale_resolution_id,
             "precision_digest": _dense_input_digest(precision),
             "reference_sample_ids": list(reference_sample_ids),
             "regressor_digest": _dense_input_digest(regressor),
+            "resolved_penalty_id": resolved_penalty_id,
             "response_digest": _dense_input_digest(response),
             "row_manifest_id": row_manifest.manifest_id,
         },
-        schema_version="2",
+        schema_version="3",
     )
     autonomous_projection_id = residualization_id
     return IncrementalDownstreamFunctional._from_training(
@@ -2129,6 +2213,9 @@ def fit_incremental_downstream_functional(
         precision_weights=precision,
         minimum_scale=minimum_scale,
         null_loss_floor=null_loss_floor,
+        penalty_candidate_id=penalty_candidate_id,
+        penalty_scale_resolution_id=penalty_scale_resolution_id,
+        resolved_penalty_id=resolved_penalty_id,
         lambda1=lambda1,
         lambda2=lambda2,
     )

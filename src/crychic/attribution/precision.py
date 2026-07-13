@@ -13,10 +13,24 @@ import numpy as np
 from crychic.core import ContractError, stable_id
 from crychic.response import FoldGeneResponseArtifact
 
-_METHOD = "winsorized_median_normalized_v2"
-_PRODUCER_MARKER = "crychic.attribution.precision.v2"
+_EXPLORATORY_METHOD = "winsorized_median_normalized_v2"
+_STANDARDIZED_GUARDRAIL_METHOD = (
+    "standardized_inverse_variance_with_low_df_equal_support_guardrail_v1"
+)
+_PRODUCER_MARKER = "crychic.attribution.precision.v3"
+_TRANSFORM_SCHEMA_VERSION = "3"
 _EXPLORATORY_LINEAGE_MODE = "exploratory_unparented_v2"
 _RESPONSE_LINEAGE_MODE = "fold_gene_response_parented_v1"
+_LOW_DF_THRESHOLD = 4
+_RAW_WEIGHT_MODE = "winsorized_raw_inverse_variance_v2"
+_STANDARDIZED_WEIGHT_MODE = "winsorized_standardized_inverse_variance_v1"
+_LOW_DF_WEIGHT_MODE = "equal_supported_low_residual_df_v1"
+_UNKNOWN_DF_WEIGHT_MODE = "equal_supported_unknown_residual_df_v1"
+_MISSING_SCALE_WEIGHT_MODE = "equal_supported_feature_scale_unavailable_v1"
+_CALLER_SCALE_SOURCE = "caller_supplied_downstream_feature_scale_v1"
+_MISSING_SCALE_SOURCE = "not_provided_v1"
+_ARTIFACT_DF_SOURCE = "fold_gene_response_residual_df_v1"
+_MISSING_DF_SOURCE = "not_estimable_fold_gene_response_v1"
 
 
 def _names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
@@ -152,9 +166,65 @@ def _raw_vector_digest(values: np.ndarray) -> str:
     return vector_id.rsplit("_", maxsplit=1)[1]
 
 
+def _validated_feature_scale(
+    feature_scale: np.ndarray | Sequence[float] | None,
+    *,
+    n_features: int,
+) -> tuple[np.ndarray, str | None, str]:
+    if feature_scale is None:
+        return _immutable_vector(np.empty(0, dtype=np.float64)), None, (
+            _MISSING_SCALE_SOURCE
+        )
+    scale = np.asarray(feature_scale, dtype=np.float64)
+    if scale.shape != (n_features,):
+        raise ValueError("feature_scale must align with response feature_ids")
+    if np.any(~np.isfinite(scale)) or np.any(scale <= 0):
+        raise ValueError("feature_scale must be finite and strictly positive")
+    immutable = _immutable_vector(scale)
+    return immutable, _finite_vector_digest(immutable), _CALLER_SCALE_SOURCE
+
+
+def _validated_residual_df(
+    response_artifact: FoldGeneResponseArtifact,
+) -> tuple[int | None, str]:
+    residual_df = response_artifact.residual_df
+    if residual_df is not None:
+        if (
+            isinstance(residual_df, bool)
+            or not isinstance(residual_df, int)
+            or residual_df < 1
+        ):
+            raise ValueError("response residual_df must be a positive integer or None")
+        return residual_df, _ARTIFACT_DF_SOURCE
+    return None, _MISSING_DF_SOURCE
+
+
+def _response_working_precision(
+    raw_precision: np.ndarray,
+    *,
+    feature_scale: np.ndarray,
+    residual_df: int | None,
+) -> tuple[np.ndarray, str]:
+    raw = np.asarray(raw_precision, dtype=np.float64)
+    supported = np.isfinite(raw) & (raw > 0)
+    if residual_df is None:
+        return supported.astype(np.float64), _UNKNOWN_DF_WEIGHT_MODE
+    if residual_df <= _LOW_DF_THRESHOLD:
+        return supported.astype(np.float64), _LOW_DF_WEIGHT_MODE
+    if feature_scale.size == 0:
+        return supported.astype(np.float64), _MISSING_SCALE_WEIGHT_MODE
+    with np.errstate(over="ignore", invalid="ignore"):
+        standardized = raw * np.square(feature_scale)
+    if np.any(~np.isfinite(standardized[supported])):
+        raise ValueError(
+            "standardized response precision must be finite for supported features"
+        )
+    return standardized, _STANDARDIZED_WEIGHT_MODE
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class PrecisionTransformResult:
-    """Producer-owned winsorized weights and complete fitted provenance."""
+    """Producer-owned precision weights and complete fitted provenance."""
 
     values: np.ndarray
     feature_ids: tuple[str, ...]
@@ -170,7 +240,15 @@ class PrecisionTransformResult:
     n_positive_features: int
     min_positive_features: int
     raw_precision_digest: str
+    working_precision_digest: str
     transformed_precision_digest: str
+    feature_scale: np.ndarray
+    feature_scale_digest: str | None
+    feature_scale_source: str | None
+    residual_df: int | None
+    residual_df_source: str | None
+    low_df_threshold: int | None
+    weight_mode: str
     lineage_mode: str
     response_artifact_id: str | None
     training_row_manifest_id: str | None
@@ -196,6 +274,7 @@ class PrecisionTransformResult:
         receiver: str,
         contrast_name: str,
         fold_id: str,
+        method: str,
         lower_quantile: float,
         upper_quantile: float,
         lower_bound: float | None,
@@ -203,6 +282,14 @@ class PrecisionTransformResult:
         normalization_median: float | None,
         min_positive_features: int,
         raw_precision_digest: str,
+        working_precision_digest: str,
+        feature_scale: np.ndarray,
+        feature_scale_digest: str | None,
+        feature_scale_source: str | None,
+        residual_df: int | None,
+        residual_df_source: str | None,
+        low_df_threshold: int | None,
+        weight_mode: str,
         lineage_mode: str,
         response_artifact_id: str | None,
         training_row_manifest_id: str | None,
@@ -227,6 +314,7 @@ class PrecisionTransformResult:
             encoder_id=encoder_id,
         )
         transformed = _immutable_vector(values)
+        scale = _immutable_vector(feature_scale)
         if transformed.shape != (len(features),):
             raise ContractError(
                 "Precision transform values must align with feature_ids",
@@ -247,18 +335,25 @@ class PrecisionTransformResult:
         transformed_digest = _finite_vector_digest(transformed)
         payload: dict[str, Any] = {
             "contrast_name": contrast,
+            "feature_scale_digest": feature_scale_digest,
+            "feature_scale_source": feature_scale_source,
             "feature_ids": list(features),
             "fold_id": fold,
+            "low_df_threshold": low_df_threshold,
             "lower_bound": lower_bound,
             "lower_quantile": lower_quantile,
-            "method": _METHOD,
+            "method": method,
             "min_positive_features": min_positive_features,
             "normalization_median": normalization_median,
             "raw_precision_digest": raw_precision_digest,
             "receiver": receiver_name,
+            "residual_df": residual_df,
+            "residual_df_source": residual_df_source,
             "transformed_precision_digest": transformed_digest,
             "upper_bound": upper_bound,
             "upper_quantile": upper_quantile,
+            "weight_mode": weight_mode,
+            "working_precision_digest": working_precision_digest,
         }
         payload.update(
             _lineage_payload(
@@ -269,7 +364,9 @@ class PrecisionTransformResult:
                 encoder_id=encoder_parent,
             )
         )
-        transform_id = stable_id("precision_transform", payload, schema_version="2")
+        transform_id = stable_id(
+            "precision_transform", payload, schema_version=_TRANSFORM_SCHEMA_VERSION
+        )
         self = object.__new__(cls)
         attributes: dict[str, Any] = {
             "values": transformed,
@@ -277,7 +374,7 @@ class PrecisionTransformResult:
             "receiver": receiver_name,
             "contrast_name": contrast,
             "fold_id": fold,
-            "method": _METHOD,
+            "method": method,
             "lower_quantile": lower_quantile,
             "upper_quantile": upper_quantile,
             "lower_bound": lower_bound,
@@ -286,7 +383,15 @@ class PrecisionTransformResult:
             "n_positive_features": n_positive,
             "min_positive_features": min_positive_features,
             "raw_precision_digest": raw_precision_digest,
+            "working_precision_digest": working_precision_digest,
             "transformed_precision_digest": transformed_digest,
+            "feature_scale": scale,
+            "feature_scale_digest": feature_scale_digest,
+            "feature_scale_source": feature_scale_source,
+            "residual_df": residual_df,
+            "residual_df_source": residual_df_source,
+            "low_df_threshold": low_df_threshold,
+            "weight_mode": weight_mode,
             "lineage_mode": mode,
             "response_artifact_id": response_parent,
             "training_row_manifest_id": row_manifest_parent,
@@ -325,7 +430,23 @@ class PrecisionTransformResult:
                 )
             if not _is_immutable_byte_backed(self.values):
                 raise ValueError("precision transform values are not immutable")
+            if not _is_immutable_byte_backed(self.feature_scale):
+                raise ValueError("precision feature scale is not immutable")
             transformed_digest = _finite_vector_digest(transformed)
+            scale = np.asarray(self.feature_scale, dtype=np.float64)
+            if scale.ndim != 1 or (
+                scale.size and (np.any(~np.isfinite(scale)) or np.any(scale <= 0))
+            ):
+                raise ValueError("precision feature scale is invalid")
+            scale_digest = (
+                None if scale.size == 0 else _finite_vector_digest(scale)
+            )
+            if self.residual_df is not None and (
+                isinstance(self.residual_df, bool)
+                or not isinstance(self.residual_df, int)
+                or self.residual_df < 1
+            ):
+                raise ValueError("precision residual df is invalid")
         except (AttributeError, TypeError, ValueError) as error:
             raise ContractError(
                 "Precision transform failed integrity validation",
@@ -335,8 +456,11 @@ class PrecisionTransformResult:
             ) from error
         expected_payload: dict[str, Any] = {
             "contrast_name": self.contrast_name,
+            "feature_scale_digest": self.feature_scale_digest,
+            "feature_scale_source": self.feature_scale_source,
             "feature_ids": list(self.feature_ids),
             "fold_id": self.fold_id,
+            "low_df_threshold": self.low_df_threshold,
             "lower_bound": self.lower_bound,
             "lower_quantile": self.lower_quantile,
             "method": self.method,
@@ -344,9 +468,13 @@ class PrecisionTransformResult:
             "normalization_median": self.normalization_median,
             "raw_precision_digest": self.raw_precision_digest,
             "receiver": self.receiver,
+            "residual_df": self.residual_df,
+            "residual_df_source": self.residual_df_source,
             "transformed_precision_digest": transformed_digest,
             "upper_bound": self.upper_bound,
             "upper_quantile": self.upper_quantile,
+            "weight_mode": self.weight_mode,
+            "working_precision_digest": self.working_precision_digest,
         }
         expected_payload.update(
             _lineage_payload(
@@ -358,10 +486,80 @@ class PrecisionTransformResult:
             )
         )
         expected_id = stable_id(
-            "precision_transform", expected_payload, schema_version="2"
+            "precision_transform",
+            expected_payload,
+            schema_version=_TRANSFORM_SCHEMA_VERSION,
+        )
+        exploratory_metadata_valid = (
+            self.method == _EXPLORATORY_METHOD
+            and self.lineage_mode == _EXPLORATORY_LINEAGE_MODE
+            and scale.size == 0
+            and self.feature_scale_digest is None
+            and self.feature_scale_source is None
+            and self.residual_df is None
+            and self.residual_df_source is None
+            and self.low_df_threshold is None
+            and self.weight_mode == _RAW_WEIGHT_MODE
+            and self.working_precision_digest == self.raw_precision_digest
+        )
+        response_metadata_valid = (
+            self.method == _STANDARDIZED_GUARDRAIL_METHOD
+            and self.lineage_mode == _RESPONSE_LINEAGE_MODE
+            and self.low_df_threshold == _LOW_DF_THRESHOLD
+            and self.feature_scale_source
+            in {_CALLER_SCALE_SOURCE, _MISSING_SCALE_SOURCE}
+            and self.residual_df_source
+            in {_ARTIFACT_DF_SOURCE, _MISSING_DF_SOURCE}
+            and self.weight_mode
+            in {
+                _STANDARDIZED_WEIGHT_MODE,
+                _LOW_DF_WEIGHT_MODE,
+                _UNKNOWN_DF_WEIGHT_MODE,
+                _MISSING_SCALE_WEIGHT_MODE,
+            }
+            and (
+                (scale.size == len(self.feature_ids))
+                == (self.feature_scale_source == _CALLER_SCALE_SOURCE)
+            )
+            and (
+                (self.residual_df is None)
+                == (self.residual_df_source == _MISSING_DF_SOURCE)
+            )
+            and (
+                self.weight_mode == _STANDARDIZED_WEIGHT_MODE
+                or self.normalization_median in {None, 1.0}
+            )
+            and (
+                self.weight_mode != _STANDARDIZED_WEIGHT_MODE
+                or (
+                    self.residual_df is not None
+                    and self.residual_df > _LOW_DF_THRESHOLD
+                    and scale.size == len(self.feature_ids)
+                )
+            )
+            and (
+                self.weight_mode != _LOW_DF_WEIGHT_MODE
+                or (
+                    self.residual_df is not None
+                    and self.residual_df <= _LOW_DF_THRESHOLD
+                )
+            )
+            and (
+                self.weight_mode != _UNKNOWN_DF_WEIGHT_MODE
+                or self.residual_df is None
+            )
+            and (
+                self.weight_mode != _MISSING_SCALE_WEIGHT_MODE
+                or (
+                    self.residual_df is not None
+                    and self.residual_df > _LOW_DF_THRESHOLD
+                    and scale.size == 0
+                )
+            )
         )
         valid = (
-            self.method == _METHOD
+            (exploratory_metadata_valid or response_metadata_valid)
+            and scale_digest == self.feature_scale_digest
             and transformed_digest == self.transformed_precision_digest
             and int(np.count_nonzero(transformed)) == self.n_positive_features
             and self.estimable
@@ -451,6 +649,48 @@ class PrecisionTransformResult:
                 remediation="Fit precision from this exact response artifact",
             )
 
+    def require_standardized_space_compatible(
+        self,
+        *,
+        feature_scale: np.ndarray | Sequence[float] | None,
+        residual_df: int | None,
+    ) -> None:
+        """Validate the exact response standardization and df guardrail inputs."""
+
+        self._require_producer_owned()
+        if self.method != _STANDARDIZED_GUARDRAIL_METHOD:
+            raise ContractError(
+                "Precision transform is not defined for a standardized response",
+                code="precision_transform_standardization_mismatch",
+                field="method",
+                remediation="Fit response precision for this standardized space",
+            )
+        scale, scale_digest, _ = _validated_feature_scale(
+            feature_scale,
+            n_features=len(self.feature_ids),
+        )
+        if residual_df is not None and (
+            isinstance(residual_df, (bool, np.bool_))
+            or not isinstance(residual_df, (int, np.integer))
+            or int(residual_df) < 1
+        ):
+            raise ValueError("residual_df must be a positive integer or None")
+        expected_df = None if residual_df is None else int(residual_df)
+        if (
+            scale_digest != self.feature_scale_digest
+            or scale.shape != self.feature_scale.shape
+            or expected_df != self.residual_df
+        ):
+            raise ContractError(
+                "Precision transform does not match the downstream response space",
+                code="precision_transform_standardization_mismatch",
+                field="feature_scale",
+                remediation=(
+                    "Use the transform fitted with this exact feature scale and "
+                    "residual degrees of freedom"
+                ),
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return provenance without expanding the transformed vector."""
 
@@ -463,7 +703,14 @@ class PrecisionTransformResult:
             "fold_id": self.fold_id,
             "feature_ids": list(self.feature_ids),
             "raw_precision_digest": self.raw_precision_digest,
+            "working_precision_digest": self.working_precision_digest,
             "transformed_precision_digest": self.transformed_precision_digest,
+            "feature_scale_digest": self.feature_scale_digest,
+            "feature_scale_source": self.feature_scale_source,
+            "residual_df": self.residual_df,
+            "residual_df_source": self.residual_df_source,
+            "low_df_threshold": self.low_df_threshold,
+            "weight_mode": self.weight_mode,
             "lineage_mode": self.lineage_mode,
             "response_artifact_id": self.response_artifact_id,
             "training_row_manifest_id": self.training_row_manifest_id,
@@ -491,6 +738,15 @@ def _fit_precision_transform(
     lower_quantile: float = 0.05,
     upper_quantile: float = 0.95,
     min_positive_features: int = 2,
+    method: str,
+    source_raw_precision_digest: str | None,
+    feature_scale: np.ndarray,
+    feature_scale_digest: str | None,
+    feature_scale_source: str | None,
+    residual_df: int | None,
+    residual_df_source: str | None,
+    low_df_threshold: int | None,
+    weight_mode: str,
     lineage_mode: str,
     response_artifact_id: str | None,
     training_row_manifest_id: str | None,
@@ -552,13 +808,26 @@ def _fit_precision_transform(
         receiver=receiver,
         contrast_name=contrast_name,
         fold_id=fold_id,
+        method=method,
         lower_quantile=lower,
         upper_quantile=upper,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
         normalization_median=normalization_median,
         min_positive_features=minimum_support,
-        raw_precision_digest=_raw_vector_digest(raw),
+        raw_precision_digest=(
+            _raw_vector_digest(raw)
+            if source_raw_precision_digest is None
+            else source_raw_precision_digest
+        ),
+        working_precision_digest=_raw_vector_digest(raw),
+        feature_scale=feature_scale,
+        feature_scale_digest=feature_scale_digest,
+        feature_scale_source=feature_scale_source,
+        residual_df=residual_df,
+        residual_df_source=residual_df_source,
+        low_df_threshold=low_df_threshold,
+        weight_mode=weight_mode,
         lineage_mode=lineage_mode,
         response_artifact_id=response_artifact_id,
         training_row_manifest_id=training_row_manifest_id,
@@ -589,6 +858,15 @@ def winsorized_normalized_precision(
         lower_quantile=lower_quantile,
         upper_quantile=upper_quantile,
         min_positive_features=min_positive_features,
+        method=_EXPLORATORY_METHOD,
+        source_raw_precision_digest=None,
+        feature_scale=np.empty(0, dtype=np.float64),
+        feature_scale_digest=None,
+        feature_scale_source=None,
+        residual_df=None,
+        residual_df_source=None,
+        low_df_threshold=None,
+        weight_mode=_RAW_WEIGHT_MODE,
         lineage_mode=_EXPLORATORY_LINEAGE_MODE,
         response_artifact_id=None,
         training_row_manifest_id=None,
@@ -600,17 +878,37 @@ def winsorized_normalized_precision(
 def fit_response_precision(
     response_artifact: FoldGeneResponseArtifact,
     *,
+    feature_scale: np.ndarray | Sequence[float] | None = None,
     lower_quantile: float = 0.05,
     upper_quantile: float = 0.95,
     min_positive_features: int = 2,
 ) -> PrecisionTransformResult:
-    """Fit precision from one intact training-fold response artifact."""
+    """Fit unit-compatible response weights with a low-df guardrail.
+
+    ``feature_scale`` must be the positive per-feature scale used to standardize
+    downstream responses. For residual df at or below four, supported features
+    receive equal weight. At higher df, inverse-variance precision is converted
+    to standardized-response units as ``precision * feature_scale**2`` before
+    winsorization and positive-median normalization. If the downstream scale is
+    unavailable, the transform fails closed to equal supported-feature weights.
+    This is a deterministic guardrail, not empirical-Bayes variance moderation.
+    """
 
     if not isinstance(response_artifact, FoldGeneResponseArtifact):
         raise TypeError("response_artifact must be a FoldGeneResponseArtifact")
     response_artifact._require_intact()
-    result = _fit_precision_transform(
+    scale, scale_digest, scale_source = _validated_feature_scale(
+        feature_scale,
+        n_features=len(response_artifact.feature_ids),
+    )
+    residual_df, residual_df_source = _validated_residual_df(response_artifact)
+    working_precision, weight_mode = _response_working_precision(
         response_artifact.raw_precision,
+        feature_scale=scale,
+        residual_df=residual_df,
+    )
+    result = _fit_precision_transform(
+        working_precision,
         feature_ids=response_artifact.feature_ids,
         receiver=response_artifact.receiver,
         contrast_name=response_artifact.contrast_name,
@@ -618,6 +916,17 @@ def fit_response_precision(
         lower_quantile=lower_quantile,
         upper_quantile=upper_quantile,
         min_positive_features=min_positive_features,
+        method=_STANDARDIZED_GUARDRAIL_METHOD,
+        source_raw_precision_digest=_raw_vector_digest(
+            response_artifact.raw_precision
+        ),
+        feature_scale=scale,
+        feature_scale_digest=scale_digest,
+        feature_scale_source=scale_source,
+        residual_df=residual_df,
+        residual_df_source=residual_df_source,
+        low_df_threshold=_LOW_DF_THRESHOLD,
+        weight_mode=weight_mode,
         lineage_mode=_RESPONSE_LINEAGE_MODE,
         response_artifact_id=response_artifact.artifact_id,
         training_row_manifest_id=(response_artifact.training_sample_manifest_digest),
@@ -625,4 +934,8 @@ def fit_response_precision(
         encoder_id=response_artifact.encoder_id,
     )
     result.require_response_compatible(response_artifact)
+    result.require_standardized_space_compatible(
+        feature_scale=feature_scale,
+        residual_df=residual_df,
+    )
     return result

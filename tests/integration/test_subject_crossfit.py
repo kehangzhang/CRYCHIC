@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
+from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -8,10 +12,12 @@ import pytest
 from anndata import AnnData
 from scipy import sparse
 
+import crychic.response.autonomous as autonomous_module
 import crychic.scoring.receiver_family as receiver_scoring_module
 import crychic.sender.common as common_sender_module
 import crychic.workflow.crossfit as crossfit_module
 import crychic.workflow.training as training_module
+from crychic.attribution import PenaltyTuningSpec
 from crychic.core import ContractError, CrychicConfig
 from crychic.design import balanced_contrast
 from crychic.resources import (
@@ -19,11 +25,22 @@ from crychic.resources import (
     Interaction,
     MappingReport,
     ResourceBundle,
+    ResourceManifest,
     Species,
     TargetPrior,
 )
-from crychic.response import build_receiver_autonomous_program_resource
-from crychic.sender import ContrastCommonSenderParameters
+from crychic.resources.autonomous_registry import (
+    ReceiverAutonomousProgramRegistration,
+)
+from crychic.response import (
+    build_receiver_autonomous_program_resource,
+    load_receiver_autonomous_program_resource,
+)
+from crychic.scoring import (
+    mark_family_common_scoring_application_not_estimable,
+    mark_family_common_scoring_not_estimable,
+)
+from crychic.sender import CommonSenderApplication, ContrastCommonSenderParameters
 from crychic.workflow import (
     CrossFitArtifacts,
     CrossFitSpec,
@@ -88,12 +105,80 @@ def _prior() -> TargetPrior:
     )
 
 
-def _adata() -> AnnData:
+def _trusted_target_resource(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    payload = b"feature_id\tgeneric_program\nT1\t1\nT2\t1\n"
+    (root / "programs.tsv").write_bytes(payload)
+    record = {
+        "resource_id": "crossfit_trusted_autonomous_programs",
+        "version": "1",
+        "species": "human",
+        "gene_namespace": "HGNC symbol",
+        "source_url": "https://example.invalid/crossfit-autonomous-programs",
+        "license": "CC0-1.0",
+        "citation": "Synthetic static program used only by integration tests.",
+        "retrieved_at": "2026-07-14",
+        "adapter_version": "crychic-receiver-autonomous-feature-program-tsv-v1",
+        "payloads": [
+            {
+                "path": "programs.tsv",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "role": "receiver_autonomous_feature_by_program_matrix_v1",
+                "bytes": len(payload),
+            }
+        ],
+        "transformation_log": ["Defined independently of expression data."],
+    }
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(record), encoding="utf-8")
+    manifest_digest = ResourceManifest.from_json(manifest_path).digest
+    matrix_digest = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="digest-only",
+        version="1",
+        manifest_digest="0" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    ).matrix_digest
+    registration = ReceiverAutonomousProgramRegistration(
+        registration_id="test.crossfit.trusted.autonomous.v1",
+        manifest_digest=manifest_digest,
+        resource_id="crossfit_trusted_autonomous_programs",
+        version="1",
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+        expected_license="CC0-1.0",
+        adapter_version="crychic-receiver-autonomous-feature-program-tsv-v1",
+        review_scope="synthetic_benchmark_only",
+        payload_path="programs.tsv",
+        payload_role="receiver_autonomous_feature_by_program_matrix_v1",
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload_bytes=len(payload),
+        expected_matrix_digest=matrix_digest,
+    )
+    monkeypatch.setattr(
+        autonomous_module,
+        "require_receiver_autonomous_program_registration",
+        lambda registration_id: registration,
+    )
+    return load_receiver_autonomous_program_resource(
+        root,
+        manifest_path=manifest_path,
+        registration_id=registration.registration_id,
+    )
+
+
+def _adata(
+    subjects: tuple[str, ...] = ("p1", "p2", "p3", "p4"),
+) -> AnnData:
     genes = ("L1", "R1", "L2", "R2", "T1", "T2")
     rows: list[list[int]] = []
     metadata: list[dict[str, str]] = []
     obs_names: list[str] = []
-    for subject_index, subject in enumerate(("p1", "p2", "p3", "p4")):
+    for subject_index, subject in enumerate(subjects):
         high = 70 + 5 * subject_index
         low = 2 + subject_index
         for condition in ("control", "stim"):
@@ -396,6 +481,52 @@ def test_subject_crossfit_supports_independent_subject_groups() -> None:
     ).any()
 
 
+def test_independent_group_inner_one_se_tuning_fails_closed() -> None:
+    base = _spec()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="crossfit-autonomous-programs",
+        version="1",
+        manifest_digest="3" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    tuning_spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0,),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=base.allowed_n_splits,
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    result = run_subject_crossfit(
+        _independent_adata(), _config(), _bundle(), _prior(), spec=spec
+    )
+
+    receiver_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_incremental_models
+        if model.receiver == "Receiver"
+    ]
+    assert receiver_models
+    assert all(model.penalty_tuning_artifact is not None for model in receiver_models)
+    assert {
+        model.penalty_tuning_artifact.reason_code
+        for model in receiver_models
+        if model.penalty_tuning_artifact is not None
+    } == {"independent_inner_tuning_one_se_not_supported"}
+    assert all(model.diagnostic_functional is None for model in receiver_models)
+    assert all(model.diagnostic_status == "not_estimable" for model in receiver_models)
+
+
 def test_subject_crossfit_caller_declared_autonomous_resource_is_noncertifying() -> (
     None
 ):
@@ -434,6 +565,347 @@ def test_subject_crossfit_caller_declared_autonomous_resource_is_noncertifying()
         for model in models
     )
     assert "receiver_autonomous_nuisance" in result.to_manifest()["remaining_stages"]
+
+
+def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
+    base = _spec()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="crossfit-autonomous-programs",
+        version="1",
+        manifest_digest="b" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    tuning_spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0,),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=base.allowed_n_splits,
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    result = run_subject_crossfit(_adata(), _config(), _bundle(), _prior(), spec=spec)
+
+    models = [
+        model for fold in result.folds for model in fold.receiver_incremental_models
+    ]
+    assert models
+    assert all(model.penalty_tuning_spec_id == tuning_spec.spec_id for model in models)
+    assert all(model.penalty_tuning_artifact is not None for model in models)
+    assert all(model.diagnostic_functional is None for model in models)
+    assert all(model.selected_penalty_candidate_id is None for model in models)
+    assert {
+        model.penalty_tuning_artifact.reason_code
+        for model in models
+        if model.penalty_tuning_artifact is not None
+    } == {
+        "no_estimable_subject_fold_plan",
+        "no_training_eligible_receiver_family",
+    }
+    assert all(
+        len(fold.family_common_functionals) == len(fold.receiver_incremental_models)
+        and len(fold.family_common_applications)
+        == len(fold.receiver_incremental_applications)
+        for fold in result.folds
+    )
+    manifest = result.to_manifest()
+    child = manifest["fold_artifacts"][0]["receiver_incremental_artifacts"][0]
+    assert child["penalty_tuning_spec_id"] == tuning_spec.spec_id
+    assert child["penalty_tuning_artifact_id"] is not None
+    assert child["selected_penalty_candidate_id"] is None
+    assert child["selected_resolved_penalty_id"] is None
+
+    fold = result.folds[0]
+    functional = fold.family_common_functionals[0]
+    application = fold.family_common_applications[0]
+    design_application = next(
+        item
+        for encoder, item in zip(
+            fold.design_encoders,
+            fold.design_applications,
+            strict=True,
+        )
+        if encoder.contrast.name == functional.contrast_name
+    )
+    edge_evidence = crossfit_module._family_common_edge_evidence(
+        functional,
+        design_application,
+        fold.application.availability.sample_interactions,
+    )
+    sender_application = crossfit_module._completed_common_sender_application(
+        functional.sender_functional,
+        design_application,
+        fold.application.availability.sample_interactions,
+        receiver=functional.receiver,
+        interaction_ids=functional.interaction_ids,
+    )
+    unrelated_availability = (
+        fold.application.availability.sample_interactions.copy(deep=True)
+    )
+    unrelated_mask = ~unrelated_availability["receiver"].astype(str).eq(
+        functional.receiver
+    )
+    unrelated_availability.loc[unrelated_mask, "ligand_availability"] = 0.0
+    unrelated_sender = crossfit_module._completed_common_sender_application(
+        functional.sender_functional,
+        design_application,
+        unrelated_availability,
+        receiver=functional.receiver,
+        interaction_ids=functional.interaction_ids,
+    )
+    pd.testing.assert_frame_equal(sender_application.table, unrelated_sender.table)
+    assert application.heldout_reason_code is not None
+
+    omitted_subject = application.heldout_subject_ids[-1]
+    subset_edges = edge_evidence.loc[
+        ~edge_evidence["subject_id"].eq(omitted_subject)
+    ].reset_index(drop=True)
+    subset_samples = set(subset_edges["sample_id"].astype(str))
+    subset_sender = CommonSenderApplication(
+        sender_application.table.loc[
+            sender_application.table["sample_id"].astype(str).isin(subset_samples)
+        ].reset_index(drop=True),
+        sender_application.functional,
+    )
+    subset_application = mark_family_common_scoring_application_not_estimable(
+        functional,
+        subset_edges,
+        subset_sender,
+        heldout_reason_code=application.heldout_reason_code,
+    )
+    with pytest.raises(ValueError, match="exactly cover heldout fold"):
+        replace(
+            fold,
+            family_common_applications=(
+                subset_application,
+                *fold.family_common_applications[1:],
+            ),
+        )
+
+    altered_edges = edge_evidence.copy(deep=True)
+    altered_edges["prior_quality"] = 0.123
+    altered_application = mark_family_common_scoring_application_not_estimable(
+        functional,
+        altered_edges,
+        sender_application,
+        heldout_reason_code=application.heldout_reason_code,
+    )
+    with pytest.raises(ContractError) as error:
+        replace(
+            fold,
+            family_common_applications=(
+                altered_application,
+                *fold.family_common_applications[1:],
+            ),
+        )
+    assert error.value.details.code == "family_common_crossfit_input_mismatch"
+
+    altered_availability = fold.application.availability.sample_interactions.copy(
+        deep=True
+    )
+    altered_availability["ligand_availability"] = 0.0
+    altered_sender = crossfit_module._completed_common_sender_application(
+        functional.sender_functional,
+        design_application,
+        altered_availability,
+        receiver=functional.receiver,
+        interaction_ids=functional.interaction_ids,
+    )
+    altered_sender_application = (
+        mark_family_common_scoring_application_not_estimable(
+            functional,
+            edge_evidence,
+            altered_sender,
+            heldout_reason_code=application.heldout_reason_code,
+        )
+    )
+    with pytest.raises(ContractError) as error:
+        replace(
+            fold,
+            family_common_applications=(
+                altered_sender_application,
+                *fold.family_common_applications[1:],
+            ),
+        )
+    assert error.value.details.code == "family_common_crossfit_input_mismatch"
+
+    assert functional.incremental_reason_code is not None
+    forged_functional = mark_family_common_scoring_not_estimable(
+        functional.receiver_family,
+        functional.sender_functional,
+        fold_id=functional.fold_id,
+        receiver_incremental_training_artifact_id=(
+            functional.receiver_incremental_training_artifact_id
+        ),
+        tuning_manifest_id="forged-tuning-manifest",
+        selected_penalty_id=functional.selected_penalty_id,
+        autonomous_program_resource_id="forged-autonomous-resource",
+        reason_code=functional.incremental_reason_code,
+    )
+    forged_application = mark_family_common_scoring_application_not_estimable(
+        forged_functional,
+        edge_evidence,
+        sender_application,
+        heldout_reason_code=application.heldout_reason_code,
+    )
+    with pytest.raises(ValueError, match="authoritative training lineage"):
+        replace(
+            fold,
+            family_common_functionals=(
+                forged_functional,
+                *fold.family_common_functionals[1:],
+            ),
+            family_common_applications=(
+                forged_application,
+                *fold.family_common_applications[1:],
+            ),
+        )
+
+
+def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _spec()
+    resource = _trusted_target_resource(tmp_path, monkeypatch)
+    tuning_spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    result = run_subject_crossfit(
+        _adata(tuple(f"p{index}" for index in range(1, 9))),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+
+    receiver_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_incremental_models
+        if model.receiver == "Receiver"
+    ]
+    receiver_applications = [
+        application
+        for fold in result.folds
+        for model, application in zip(
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+    assert receiver_models and len(receiver_models) == len(result.folds)
+    assert all(len(model.training_subject_ids) == 4 for model in receiver_models)
+    assert all(
+        model.inner_fold_plan is not None
+        and model.inner_fold_plan.effective_n_splits == 2
+        for model in receiver_models
+    )
+    assert all(
+        model.penalty_tuning_artifact is not None
+        and model.penalty_tuning_artifact.status == "selected"
+        and model.penalty_tuning_artifact.is_oof_certified
+        for model in receiver_models
+    )
+    assert all(model.is_oof_certified for model in receiver_models)
+    assert all(
+        model.official_incremental_status == "observed"
+        and model.reason_code is None
+        for model in receiver_models
+    )
+    assert all(application.is_oof_certified for application in receiver_applications)
+    assert all(
+        application.official_incremental_status == "observed"
+        and application.reason_code is None
+        for application in receiver_applications
+    )
+    coverage = result.oof_receiver_coverage.loc[
+        result.oof_receiver_coverage["receiver"].eq("Receiver")
+    ]
+    assert set(coverage["official_incremental_status"]) == {"observed"}
+    assert coverage["reason_code"].isna().all()
+
+
+def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -> (
+    None
+):
+    base = _spec()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="caller-built-autonomous-programs",
+        version="1",
+        manifest_digest="e" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0, 0.1),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+        ),
+    )
+
+    result = run_subject_crossfit(
+        _adata(tuple(f"p{index}" for index in range(1, 9))),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+
+    receiver_chains = [
+        (model, application, functional, common_application)
+        for fold in result.folds
+        for model, application, functional, common_application in zip(
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            fold.family_common_functionals,
+            fold.family_common_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+    assert receiver_chains
+    for model, application, functional, common_application in receiver_chains:
+        assert model.diagnostic_functional is not None
+        assert model.official_incremental_status == "not_estimable"
+        assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        assert application.diagnostic_application is not None
+        assert application.official_incremental_status == "not_estimable"
+        assert functional.incremental_functional is None
+        assert functional.incremental_reason_code == (
+            "receiver_autonomous_nuisance_not_frozen"
+        )
+        assert common_application.incremental_application_id is None
+        assert common_application.heldout_reason_code == (
+            "receiver_autonomous_nuisance_not_frozen"
+        )
 
 
 def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() -> None:

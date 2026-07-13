@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 from collections.abc import Mapping
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -9,8 +12,10 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
+import crychic.response.autonomous as autonomous_module
 import crychic.workflow.receiver_incremental as incremental_module
 from crychic.attribution import (
+    PenaltyTuningSpec,
     PrecisionTransformResult,
     ReceiverFamilyTrainingArtifact,
     fit_receiver_family_training_artifact,
@@ -30,12 +35,22 @@ from crychic.design import (
     fit_frozen_design_encoder,
 )
 from crychic.pseudobulk import PseudobulkDataset
-from crychic.resources import GeneNamespace, MappingReport, Species, TargetPrior
+from crychic.resources import (
+    GeneNamespace,
+    MappingReport,
+    ResourceManifest,
+    Species,
+    TargetPrior,
+)
+from crychic.resources.autonomous_registry import (
+    ReceiverAutonomousProgramRegistration,
+)
 from crychic.response import (
     FoldGeneResponseArtifact,
     apply_fold_gene_response,
     build_receiver_autonomous_program_resource,
     fit_fold_gene_response,
+    load_receiver_autonomous_program_resource,
 )
 from crychic.scoring import (
     DownstreamRowManifest,
@@ -224,6 +239,83 @@ def _training_parents() -> tuple[
     return encoder, response, precision, family
 
 
+def _small_tuning_spec(**changes: object) -> PenaltyTuningSpec:
+    arguments: dict[str, object] = {
+        "lambda1_fractions": (1.0, 0.1),
+        "lambda2_fractions": (0.0,),
+        "inner_allowed_n_splits": (2,),
+    }
+    arguments.update(changes)
+    return PenaltyTuningSpec(**arguments)  # type: ignore[arg-type]
+
+
+def _trusted_autonomous_resource(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    payload = b"feature_id\tgeneric_program\nG1\t1\nG2\t1\n"
+    payload_path = root / "programs.tsv"
+    payload_path.write_bytes(payload)
+    manifest_record = {
+        "resource_id": "test_trusted_autonomous_programs",
+        "version": "1",
+        "species": "human",
+        "gene_namespace": "HGNC symbol",
+        "source_url": "https://example.invalid/test-autonomous-programs",
+        "license": "CC0-1.0",
+        "citation": "Synthetic static program used only by unit tests.",
+        "retrieved_at": "2026-07-14",
+        "adapter_version": "crychic-receiver-autonomous-feature-program-tsv-v1",
+        "payloads": [
+            {
+                "path": "programs.tsv",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "role": "receiver_autonomous_feature_by_program_matrix_v1",
+                "bytes": len(payload),
+            }
+        ],
+        "transformation_log": ["Defined independently of expression data."],
+    }
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest_record), encoding="utf-8")
+    digest = ResourceManifest.from_json(manifest_path).digest
+    matrix_digest = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="digest-only",
+        version="1",
+        manifest_digest="0" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    ).matrix_digest
+    registration = ReceiverAutonomousProgramRegistration(
+        registration_id="test.trusted.autonomous.v1",
+        manifest_digest=digest,
+        resource_id="test_trusted_autonomous_programs",
+        version="1",
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+        expected_license="CC0-1.0",
+        adapter_version="crychic-receiver-autonomous-feature-program-tsv-v1",
+        review_scope="synthetic_benchmark_only",
+        payload_path="programs.tsv",
+        payload_role="receiver_autonomous_feature_by_program_matrix_v1",
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload_bytes=len(payload),
+        expected_matrix_digest=matrix_digest,
+    )
+    monkeypatch.setattr(
+        autonomous_module,
+        "require_receiver_autonomous_program_registration",
+        lambda registration_id: registration,
+    )
+    return load_receiver_autonomous_program_resource(
+        root,
+        manifest_path=manifest_path,
+        registration_id=registration.registration_id,
+    )
+
+
 def test_public_fit_and_apply_signatures_accept_only_typed_parents() -> None:
     fit_parameters = inspect.signature(
         fit_receiver_incremental_training_artifact
@@ -242,6 +334,7 @@ def test_public_fit_and_apply_signatures_accept_only_typed_parents() -> None:
         "null_loss_floor",
         "lambda1",
         "lambda2",
+        "penalty_tuning_spec",
     )
     assert tuple(apply_parameters) == (
         "model",
@@ -312,6 +405,279 @@ def test_caller_declared_autonomous_resource_remains_noncertifying() -> None:
     assert model.is_oof_certified is False
     assert model.diagnostic_functional is not None
     assert model.diagnostic_functional.autonomous_program_ids == ("generic_program",)
+
+
+def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="c" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    tuning_spec = _small_tuning_spec()
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    assert model.inner_fold_plan is not None
+    assert model.penalty_tuning_artifact is not None
+    tuning = model.penalty_tuning_artifact
+    assert tuning.status == "selected"
+    assert tuning.is_oof_certified
+    assert "outer_frozen_representation" in tuning.certification_status
+    assert tuning.inner_fold_plan_id == model.inner_fold_plan.plan_id
+    assert len(tuning.evaluations) == (
+        len(tuning_spec.candidates) * model.inner_fold_plan.effective_n_splits
+    )
+    expected_subjects = set(response.training_subject_ids)
+    for evaluation in tuning.evaluations:
+        assert "outer_frozen_representation" in evaluation.verification_status
+        assert set(evaluation.inner_training_subject_ids).isdisjoint(
+            evaluation.validation_subject_ids
+        )
+        assert set(evaluation.inner_training_subject_ids).union(
+            evaluation.validation_subject_ids
+        ) == expected_subjects
+        assert evaluation.status == "observed"
+        assert evaluation.scale_resolution_id is not None
+        assert evaluation.resolved_penalty_id is not None
+        assert evaluation.resolved_lambda1 is not None
+        assert evaluation.resolved_lambda1 >= 0
+        assert evaluation.resolved_lambda2 is not None
+        assert evaluation.resolved_lambda2 >= 0
+        assert evaluation.training_functional_id is not None
+        assert evaluation.heldout_application_id is not None
+    assert model.diagnostic_functional is not None
+    assert model.selected_penalty_candidate_id == tuning.selected_candidate_id
+    assert (
+        model.selected_penalty_candidate_id
+        == model.diagnostic_functional.penalty_candidate_id
+    )
+    assert (
+        model.selected_penalty_scale_resolution_id
+        == model.diagnostic_functional.penalty_scale_resolution_id
+    )
+    assert (
+        model.selected_resolved_penalty_id
+        == model.diagnostic_functional.resolved_penalty_id
+    )
+    assert model.lambda1 == model.diagnostic_functional.lambda1
+    assert model.lambda2 == model.diagnostic_functional.lambda2
+    assert not model.is_oof_certified
+    assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+    model.to_dict()
+
+
+def test_inner_tuning_plan_failure_is_typed_and_never_falls_back() -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="d" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(
+            min_inner_train_subjects_per_context=3
+        ),
+    )
+
+    assert model.inner_fold_plan is None
+    assert model.penalty_tuning_artifact is not None
+    assert model.penalty_tuning_artifact.status == "not_estimable"
+    assert model.penalty_tuning_artifact.reason_code == (
+        "no_estimable_subject_fold_plan"
+    )
+    assert model.diagnostic_functional is None
+    assert model.diagnostic_status == "not_estimable"
+    assert model.diagnostic_reason_code == "no_estimable_subject_fold_plan"
+    assert model.selected_penalty_candidate_id is None
+    model.to_dict()
+
+
+@pytest.mark.parametrize("target", ["tuning", "plan", "selected_penalty"])
+def test_tuned_training_rejects_forced_nested_lineage_mutation(target: str) -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="f" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(),
+    )
+    assert model.penalty_tuning_artifact is not None
+    assert model.inner_fold_plan is not None
+
+    if target == "tuning":
+        object.__setattr__(model.penalty_tuning_artifact, "tuning_id", "poison")
+    elif target == "plan":
+        object.__setattr__(model.inner_fold_plan, "plan_id", "poison")
+    else:
+        object.__setattr__(model, "selected_resolved_penalty_id", "poison")
+
+    with pytest.raises(ContractError) as error:
+        model.to_dict()
+    assert error.value.details.code == (
+        "receiver_incremental_training_integrity_violation"
+    )
+
+
+def test_unknown_inner_value_error_is_not_downgraded_to_not_estimable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="1" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+    monkeypatch.setattr(
+        incremental_module,
+        "_fit_incremental_subset",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ValueError("simulated programming defect")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="simulated programming defect"):
+        fit_receiver_incremental_training_artifact(
+            encoder,
+            response,
+            precision,
+            family,
+            resource,
+            penalty_tuning_spec=_small_tuning_spec(),
+        )
+
+
+def test_known_inner_solver_failure_is_recorded_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="2" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+    monkeypatch.setattr(
+        incremental_module,
+        "_fit_incremental_subset",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ValueError(
+                "incremental downstream family solver did not converge: max iterations"
+            )
+        ),
+    )
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(),
+    )
+
+    assert model.penalty_tuning_artifact is not None
+    assert model.penalty_tuning_artifact.status == "failed"
+    assert {item.status for item in model.penalty_tuning_artifact.evaluations} == {
+        "failed"
+    }
+    assert model.diagnostic_status == "not_estimable"
+    assert model.diagnostic_reason_code == "no_candidate_complete_inner_coverage"
+
+
+def test_trusted_resource_and_verified_tuning_certify_outer_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = _trusted_autonomous_resource(tmp_path, monkeypatch)
+    fixed = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family, resource
+    )
+    assert not fixed.is_oof_certified
+    assert fixed.official_incremental_status == "not_estimable"
+    assert fixed.reason_code == "subject_blocked_inner_tuning_not_connected"
+    assert fixed.certification_status == (
+        "trusted_autonomous_incremental_not_oof_certified_v1"
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(),
+    )
+
+    assert model.is_oof_certified
+    assert model.official_incremental_status == "observed"
+    assert model.reason_code is None
+    assert "outer_frozen_representation" in model.certification_status
+
+    heldout_metadata = _metadata(("q1", "q2"))
+    heldout_design = apply_frozen_design_encoder(encoder, heldout_metadata)
+    heldout_response = apply_fold_gene_response(
+        _aggregate(heldout_metadata, offset=7), response, heldout_design
+    )
+    application = apply_receiver_incremental_training_artifact(
+        model, heldout_response, heldout_design
+    )
+
+    assert application.diagnostic_status == "observed"
+    assert application.official_incremental_status == "observed"
+    assert application.reason_code is None
+    assert application.is_oof_certified
+    assert "outer_frozen_representation" in application.certification_status
+    assert set(application.heldout_subject_ids).isdisjoint(
+        model.training_subject_ids
+    )
+    application.to_dict()
 
 
 def test_autonomous_resource_without_aligned_support_fails_closed() -> None:

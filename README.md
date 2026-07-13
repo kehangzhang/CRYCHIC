@@ -20,16 +20,25 @@ preserving the exploratory v0.1 behavior:
 
 - downstream output separates the source-agnostic `receiver_program_score`
   from `incremental_downstream`. Public cross-fit now fits a typed fold response,
-  response-parented precision and incremental diagnostic. A caller-declared
-  static receiver-autonomous program resource can be projected in the exact
-  precision-weighted gene space, but remains explicitly unverified. The
-  official component therefore stays `not_estimable`; a trusted resource loader
-  and connected subject-blocked inner tuning are still required;
-- attribution now consumes a producer-owned v2 winsorized, median-normalized
-  response-precision artifact. Its public cross-fit form binds the exact
-  fold-response parent, training rows, subjects, encoder, ordered features and
-  values. The legacy full-data API is explicitly unparented and exploratory;
-- low-level incremental downstream v4 uses explicit sample-subject-context row
+  response-parented precision and incremental diagnostic. When supplied, the
+  opt-in public path accepts only a typed autonomous resource and can consume a
+  manifest-backed registration that pins the manifest digest, payload path,
+  SHA-256, size, canonical matrix digest, release, species, namespace, license,
+  review scope and static TSV schema. With
+  `manifest_verified_static_trusted_v1` provenance
+  and an estimable paired subject-blocked tuning plan, incremental training and
+  held-out applications may receive official `observed` status. Caller-built
+  resources remain unverified and fail closed at the official gate;
+- attribution now consumes a producer-owned v3 response-precision artifact. It
+  binds the exact fold-response parent, residual degrees of freedom, downstream
+  feature scale, training rows, subjects, encoder, ordered features and values.
+  At residual df <= 4 it assigns equal weight to supported features; at higher
+  df it converts inverse variance to standardized-response units before
+  winsorization and median normalization. Missing scale also falls back to equal
+  supported-feature weights. This is a deterministic guardrail, not empirical-
+  Bayes variance moderation. The legacy full-data API remains unparented and
+  exploratory;
+- low-level incremental downstream uses explicit sample-subject-context row
   manifests, keyed response/design alignment, full training-input digests,
   sample diagnostics, paired-subject contrast losses and frozen independent-
   group pseudocontrast losses. A zero receiver contrast is recorded as an
@@ -37,8 +46,17 @@ preserving the exploratory v0.1 behavior:
   Exact/near autonomous overlap, precision-supported rank loss and technical-row
   replication fail closed or remain invariant as appropriate. Deterministic
   relative-penalty scaling and one-SE selection primitives exist for both the
-  ordinary and signed residual spaces, but inner-fold fit/apply production is
-  not yet connected;
+  ordinary and signed residual spaces. Paired inner-fold production is connected
+  inside the physical outer-training scope: response centering/scaling, nuisance
+  projection, solver fitting and penalty scaling are refit per inner training
+  split while the precision, family basis and encoder stay outer-frozen.
+  Candidate selection uses the versioned subject-paired delta one-SE heuristic:
+  common subject difficulty cancels in candidate-minus-best losses before the
+  eligible set is ordered by explicit L1-first sparsity priority, then L2. This
+  is a policy order, not a claim that cross-axis elastic-net candidates have a
+  single physical regularization magnitude. The heuristic is not a confidence
+  interval or noninferiority test. Independent and mixed-subject one-SE tuning
+  remain explicitly unsupported;
 - opt-in attribution candidates provide hard receptor eligibility, directional
   response channels, strict family-first bases, and evidence-weighted member
   allocation without changing the legacy default;
@@ -69,11 +87,17 @@ preserving the exploratory v0.1 behavior:
   also freeze nuisance encoders, receptor gates, strict family bases,
   receiver-program transforms, fold responses and response precision. A second
   audit covers every planned held-out `fold x contrast x receiver x sample`
-  row, including receiver missingness. Caller-declared autonomous projection
-  and formula-only gains are diagnostic;
-  official rows remain `not_estimable` with
-  `receiver_autonomous_nuisance_not_frozen`. Family attribution/tuning and
-  common scoring remain unconnected, so `is_oof_certified` remains false;
+  row, including receiver missingness. When a `PenaltyTuningSpec` is supplied,
+  the same path produces family-first attribution, held-out subject-family
+  differential effects, state/ecosystem family and member scores, and conserved
+  sender allocation. Producer-owned bindings cover the exact incremental,
+  tuning, autonomous-resource, edge-evidence and receiver-specific sender input
+  lineage. Trusted paired incremental children can be officially observed;
+  family-common tables remain explicitly noncertifying diagnostics, while
+  untrusted, independent or otherwise inestimable chains stay
+  `not_estimable`. The source-agnostic receiver-program parent and full
+  repeated-pipeline inference are still absent, so the aggregate
+  `is_oof_certified` remains false;
 - frozen design encoding now uses the complete declared Patsy formula and an
   exact EMM-contrast reparameterization. Numeric-coded categorical covariates
   can be declared with `categorical_covariates`; held-out levels are checked
@@ -87,10 +111,27 @@ preserving the exploratory v0.1 behavior:
   biological claims;
 - current small algorithm checks record zero generic-only gain, `0.937149`
   active unique gain under autonomous overlap, and exact invariance to large
-  subject-constant baselines. Public cross-fit v5 runs paired synthetic controls
-  and gives larger bounded and raw active diagnostic gain than ligand-only,
-  while all official rows remain unavailable; independent-group execution is
-  covered separately by unit and public-workflow integration tests;
+  subject-constant baselines. The fixed-penalty public cross-fit v5 smoke gives
+  active bounded/raw diagnostic gain `0.027979/0.027979`, versus
+  `0/-0.009832` for ligand-only; it deliberately supplies neither the trusted
+  autonomous resource nor inner tuning, so all 48 official rows per dataset
+  remain `not_estimable`.
+  Independent-group execution is covered separately by unit and public-workflow
+  integration tests but independent inner one-SE tuning is not yet supported;
+- the one-seed four-scenario trusted/tuned family-common smoke selects
+  `lambda1_fraction=0.1` in both active folds, with 1 and 2 nonzero receiver
+  families. The known synthetic `CXCL10-CXCR3` truth is uniquely rank 1 in
+  state/ecosystem member and sender summaries; mean member scores are
+  `0.050272/0.047148` and mean sender scores are `0.025883/0.024451`.
+  Ligand-only selects `1.0` in both folds and stays zero, and the tracked active
+  interaction stays zero in every control. However, receiver-autonomous and
+  global-null each select `0.1` in one fold; receiver-autonomous emits 16
+  nonzero rows for another family, while global-null retains zero family scores
+  despite one nonzero training coefficient. Each scenario has 2/6 tuned and
+  officially observed incremental children; family-common tables remain
+  noncertifying diagnostics. This is a single-seed synthetic algorithm result
+  with unresolved family-level false-positive sensitivity, not biological
+  validation;
 - the benchmark layer includes a frozen categorical repeated-measures backend
   for mixed paired/unpaired subjects and within-subject technical replicates.
   A metadata-only audit of the 29-sample Kuppe atlas found all 10 region
@@ -220,6 +261,10 @@ uv run python -m benchmarks.report.generate_multicondition_report \
 uv run python -m benchmarks.simulation.run_crossfit_smoke \
   --workspace-root .. --scenarios active ligand_only \
   --output ../benchmark_work/algorithm_smoke/crossfit_summary_v5.json
+uv run python -m benchmarks.simulation.run_family_common_crossfit_smoke \
+  --workspace-root .. \
+  --scenarios active ligand_only receiver_autonomous global_null \
+  --output benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json
@@ -240,5 +285,6 @@ uv run --extra dev python -m build
 - [Train-only cross-fit boundary decision](docs/adr/ADR-004-train-only-crossfit-boundary.md)
 - [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
 - [Multi-condition v02 benchmark summary](benchmarks/results/multicondition_v02_summary.json)
-- [Typed public cross-fit smoke summary](benchmarks/results/algorithm_crossfit_smoke_v4_summary.json)
+- [Fixed-penalty public cross-fit smoke summary](benchmarks/results/algorithm_crossfit_smoke_v5_summary.json)
+- [Trusted/tuned family-common smoke summary](benchmarks/results/family_common_crossfit_smoke_v1_summary.json)
 - [Repository development instructions](AGENTS.md)

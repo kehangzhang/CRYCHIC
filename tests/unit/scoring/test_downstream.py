@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
+from crychic.attribution import RelativePenaltyCandidate
 from crychic.core import ContractError
 from crychic.resources import GeneNamespace, Species
 from crychic.response import build_receiver_autonomous_program_resource
@@ -435,7 +436,11 @@ def test_heldout_active_response_has_positive_incremental_family_gain() -> None:
     assert result.full_loss < result.null_loss
 
 
-def _projected_overlap_functional(*, active_unique_effect: float = 0.0):
+def _projected_overlap_functional(
+    *,
+    active_unique_effect: float = 0.0,
+    penalty_candidate: RelativePenaltyCandidate | None = None,
+):
     regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
     generic = np.asarray([1.0, 1.0, 0.0]) / np.sqrt(2.0)
     response = np.zeros((8, 3), dtype=np.float64)
@@ -465,7 +470,27 @@ def _projected_overlap_functional(*, active_unique_effect: float = 0.0):
         autonomous_program_resource=_autonomous_resource(generic[:, None]),
         precision_weights=np.ones(3),
         minimum_scale=0.25,
+        penalty_candidate=penalty_candidate,
     )
+
+
+def test_relative_candidate_is_resolved_inside_signed_residual_training() -> None:
+    candidate = RelativePenaltyCandidate(
+        lambda1_fraction=0.1,
+        lambda2_fraction=0.2,
+    )
+
+    functional = _projected_overlap_functional(
+        active_unique_effect=1.5,
+        penalty_candidate=candidate,
+    )
+
+    assert functional.penalty_candidate_id == candidate.candidate_id
+    assert functional.penalty_scale_resolution_id is not None
+    assert functional.resolved_penalty_id is not None
+    assert functional.lambda1 >= 0
+    assert functional.lambda2 > 0
+    functional.to_dict()
 
 
 def _apply_projected(functional, *, active_unique_effect: float = 0.0):

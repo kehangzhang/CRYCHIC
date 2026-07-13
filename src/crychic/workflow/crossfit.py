@@ -1,9 +1,10 @@
 """Public subject-blocked orchestration for implemented train/apply stages.
 
-Separate exact-coverage audits verify contrast-common sender rows and the
-typed receiver response/precision/incremental diagnostic chain.  The receiver
-chain remains officially not estimable until its autonomous nuisance model is
-fold-frozen, so these artifacts do not certify the complete scoring pipeline.
+Separate exact-coverage audits verify contrast-common sender rows, the typed
+receiver response/precision/incremental chain, and family-common held-out
+tables. Trusted nuisance resources and paired subject-blocked tuning can make
+individual incremental children official, but these artifacts do not certify
+the complete scoring pipeline.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from anndata import AnnData
 from scipy import sparse
 
 from crychic.attribution import (
+    PenaltyTuningSpec,
     PrecisionTransformResult,
     fit_receiver_family_training_artifacts,
     fit_response_precision,
@@ -58,19 +60,34 @@ from crychic.response import (
     fit_fold_gene_response,
 )
 from crychic.scoring import (
+    FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS,
+    FamilyCommonScoringApplication,
+    FamilyCommonScoringFunctional,
     ReceiverFamilyScoringApplication,
     ReceiverFamilyScoringArtifact,
+    apply_family_common_scoring_functional,
     apply_receiver_family_scoring_artifact,
+    family_common_edge_evidence_digest,
+    family_common_sender_application_digest,
+    fit_family_common_scoring_functional,
     fit_receiver_family_scoring_artifact,
+    mark_family_common_scoring_application_not_estimable,
+    mark_family_common_scoring_not_estimable,
     mark_receiver_family_application_not_estimable,
     mark_receiver_family_scoring_not_estimable,
 )
-from crychic.sender import COMMON_SENDER_APPLICATION_COLUMNS
+from crychic.sender import (
+    COMMON_SENDER_APPLICATION_COLUMNS,
+    CommonSenderApplication,
+    ContrastCommonSenderFunctional,
+    apply_contrast_common_sender_functional,
+)
 
 from .application import TrainingArtifactApplication, apply_training_artifacts
 from .receiver_incremental import (
     ReceiverIncrementalApplication,
     ReceiverIncrementalTrainingArtifact,
+    _receiver_incremental_feature_scale,
     apply_receiver_incremental_training_artifact,
     fit_receiver_incremental_training_artifact,
 )
@@ -97,6 +114,10 @@ _REMAINING_PUBLIC_STAGES = (
     "subject_blocked_inner_tuning",
 )
 _CPM_SCALE = 1_000_000.0
+_FAMILY_EDGE_EVIDENCE_POLICY = (
+    "max_sender_local_availability_neutral_resource_evidence_v1"
+)
+_FAMILY_SCORE_MODES = ("state", "ecosystem")
 _COVERAGE_COLUMNS = (
     "subject_id",
     "sample_id",
@@ -199,6 +220,7 @@ class CrossFitSpec:
     family_cosine_threshold: float = 0.95
     downstream_minimum_scale: float = 0.25
     autonomous_program_resource: ReceiverAutonomousProgramResource | None = None
+    penalty_tuning_spec: PenaltyTuningSpec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -273,6 +295,11 @@ class CrossFitSpec:
                     "ReceiverAutonomousProgramResource"
                 )
             autonomous_resource._require_producer_owned()
+        tuning_spec = self.penalty_tuning_spec
+        if tuning_spec is not None:
+            if not isinstance(tuning_spec, PenaltyTuningSpec):
+                raise TypeError("penalty_tuning_spec must be a PenaltyTuningSpec")
+            tuning_spec._require_intact()
         if not np.isfinite(gate_threshold) or not 0 < gate_threshold <= 1:
             raise ValueError("receptor_gate_threshold must be finite in (0, 1]")
         if not np.isfinite(family_threshold) or not 0 <= family_threshold <= 1:
@@ -297,6 +324,8 @@ class CrossFitSpec:
             payload["autonomous_program_resource_id"] = (
                 autonomous_resource.artifact_id
             )
+        if tuning_spec is not None:
+            payload["penalty_tuning_spec_id"] = tuning_spec.spec_id
         spec_id = stable_id(
             "subject_crossfit_spec", payload, schema_version=self.schema_version
         )
@@ -308,6 +337,7 @@ class CrossFitSpec:
         object.__setattr__(self, "family_cosine_threshold", family_threshold)
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
+        object.__setattr__(self, "penalty_tuning_spec", tuning_spec)
         object.__setattr__(self, "spec_id", spec_id)
         object.__setattr__(
             self,
@@ -337,6 +367,11 @@ class CrossFitSpec:
                 if self.autonomous_program_resource is None
                 else self.autonomous_program_resource.to_dict()
             ),
+            "penalty_tuning_spec": (
+                None
+                if self.penalty_tuning_spec is None
+                else self.penalty_tuning_spec.to_dict()
+            ),
         }
 
     def _require_intact(self) -> None:
@@ -356,6 +391,7 @@ class CrossFitSpec:
                 family_cosine_threshold=self.family_cosine_threshold,
                 downstream_minimum_scale=self.downstream_minimum_scale,
                 autonomous_program_resource=self.autonomous_program_resource,
+                penalty_tuning_spec=self.penalty_tuning_spec,
                 schema_version=self.schema_version,
             )
             valid = (
@@ -385,6 +421,307 @@ class CrossFitSpec:
             )
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class _FamilyCommonCrossFitBinding:
+    """Bind one family-common child to its exact public held-out inputs."""
+
+    family_common_functional_id: str
+    family_common_application_id: str
+    training_application_id: str
+    availability_sample_interactions_digest: str
+    edge_evidence_policy_id: str
+    edge_evidence_digest: str
+    sender_input_digest: str
+    binding_id: str
+    _producer_marker: str
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "Family-common cross-fit bindings are producer-owned by "
+            "run_subject_crossfit()"
+        )
+
+    @classmethod
+    def _from_workflow(
+        cls,
+        functional: FamilyCommonScoringFunctional,
+        application: FamilyCommonScoringApplication,
+        training_application: TrainingArtifactApplication,
+        edge_evidence: pd.DataFrame,
+        sender_application: CommonSenderApplication,
+    ) -> _FamilyCommonCrossFitBinding:
+        functional._require_intact()
+        application._require_intact()
+        training_application._require_intact()
+        sender_application = CommonSenderApplication(
+            sender_application.table, sender_application.functional
+        )
+        edge_digest = family_common_edge_evidence_digest(edge_evidence)
+        sender_digest = family_common_sender_application_digest(sender_application)
+        if (
+            application.edge_evidence_digest != edge_digest
+            or application.sender_application_digest != sender_digest
+        ):
+            raise ContractError(
+                "Family-common application inputs do not match its cross-fit binding",
+                code="family_common_crossfit_input_mismatch",
+                field="application_id",
+                remediation=(
+                    "Reapply the common functional to canonical held-out inputs"
+                ),
+            )
+        values = {
+            "family_common_functional_id": (
+                functional.family_common_functional_id
+            ),
+            "family_common_application_id": application.application_id,
+            "training_application_id": training_application.application_id,
+            "availability_sample_interactions_digest": _table_digest(
+                "family_common_source_availability",
+                training_application.availability.sample_interactions,
+            ),
+            "edge_evidence_policy_id": _FAMILY_EDGE_EVIDENCE_POLICY,
+            "edge_evidence_digest": edge_digest,
+            "sender_input_digest": sender_digest,
+            "_producer_marker": "crychic.family_common_crossfit_binding.v1",
+        }
+        self = object.__new__(cls)
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(
+            self,
+            "binding_id",
+            stable_id(
+                "family_common_crossfit_binding",
+                self._identity_payload(),
+                schema_version="1",
+            ),
+        )
+        return self
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "availability_sample_interactions_digest": (
+                self.availability_sample_interactions_digest
+            ),
+            "edge_evidence_digest": self.edge_evidence_digest,
+            "edge_evidence_policy_id": self.edge_evidence_policy_id,
+            "family_common_application_id": self.family_common_application_id,
+            "family_common_functional_id": self.family_common_functional_id,
+            "sender_input_digest": self.sender_input_digest,
+            "training_application_id": self.training_application_id,
+        }
+
+    def _require_intact(self) -> None:
+        valid = (
+            self._producer_marker
+            == "crychic.family_common_crossfit_binding.v1"
+            and self.edge_evidence_policy_id == _FAMILY_EDGE_EVIDENCE_POLICY
+            and all(
+                isinstance(value, str) and bool(value) and value == value.strip()
+                for value in self._identity_payload().values()
+            )
+            and self.binding_id
+            == stable_id(
+                "family_common_crossfit_binding",
+                self._identity_payload(),
+                schema_version="1",
+            )
+        )
+        if not valid:
+            raise ContractError(
+                "Family-common cross-fit binding failed integrity validation",
+                code="family_common_crossfit_binding_integrity_violation",
+                field="binding_id",
+                remediation="Rerun the public subject cross-fit workflow",
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        self._require_intact()
+        return {"binding_id": self.binding_id, **self._identity_payload()}
+
+
+def _string_key_set(
+    table: pd.DataFrame,
+    columns: tuple[str, ...],
+    *,
+    table_name: str,
+) -> set[tuple[str, ...]]:
+    keys = [
+        tuple(str(value) for value in row)
+        for row in table.loc[:, list(columns)].itertuples(index=False, name=None)
+    ]
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"{table_name} contains duplicate exact-coverage keys")
+    return set(keys)
+
+
+def _require_sample_lineage(
+    table: pd.DataFrame,
+    expected_samples: dict[str, tuple[str, str]],
+    *,
+    table_name: str,
+) -> None:
+    observed: dict[str, tuple[str, str]] = {}
+    for sample_id, group in table.groupby("sample_id", observed=True, sort=False):
+        subjects = tuple(sorted(set(group["subject_id"].astype(str))))
+        contexts = tuple(sorted(set(group["context_id"].astype(str))))
+        if len(subjects) != 1 or len(contexts) != 1:
+            raise ValueError(f"{table_name} sample lineage is not unique")
+        observed[str(sample_id)] = (subjects[0], contexts[0])
+    if observed != expected_samples:
+        raise ValueError(f"{table_name} does not exactly cover held-out samples")
+
+
+def _require_family_common_exact_coverage(
+    functional: FamilyCommonScoringFunctional,
+    application: FamilyCommonScoringApplication,
+    design_application: FrozenDesignApplication,
+    tables: tuple[
+        pd.DataFrame,
+        pd.DataFrame,
+        pd.DataFrame,
+        pd.DataFrame,
+        pd.DataFrame,
+    ],
+) -> None:
+    expected_samples = {
+        str(sample_id): (str(subject_id), str(context_id))
+        for sample_id, subject_id, context_id in zip(
+            design_application.sample_ids,
+            design_application.sample_subject_ids,
+            design_application.sample_context_ids,
+            strict=True,
+        )
+        if str(context_id) in functional.context_ids
+    }
+    expected_subjects = tuple(
+        sorted({subject_id for subject_id, _ in expected_samples.values()})
+    )
+    if application.heldout_subject_ids != expected_subjects:
+        raise ValueError(
+            "family-common application subjects do not exactly cover heldout fold"
+        )
+
+    attribution, differential, family_scores, member_scores, sender_scores = tables
+    modes = tuple(sorted(_FAMILY_SCORE_MODES))
+    membership = {
+        item.interaction_id: (item.family_id, item.driver_id)
+        for item in functional.interactions
+    }
+    scored_family_ids = tuple(
+        sorted({family_id for family_id, _ in membership.values()})
+    )
+
+    if _string_key_set(
+        attribution,
+        ("family_id",),
+        table_name="family attribution",
+    ) != {(family_id,) for family_id in functional.family_ids}:
+        raise ValueError("family attribution does not cover the frozen family set")
+    if _string_key_set(
+        differential,
+        ("subject_id", "family_id"),
+        table_name="subject differential",
+    ) != {
+        (subject_id, family_id)
+        for subject_id in expected_subjects
+        for family_id in functional.family_ids
+    }:
+        raise ValueError("subject differential does not have exact held-out coverage")
+
+    expected_family_keys = {
+        (sample_id, functional.receiver, family_id, mode)
+        for sample_id in expected_samples
+        for family_id in scored_family_ids
+        for mode in modes
+    }
+    if _string_key_set(
+        family_scores,
+        ("sample_id", "receiver", "family_id", "mode"),
+        table_name="family scores",
+    ) != expected_family_keys:
+        raise ValueError("family scores do not have exact sample/family/mode coverage")
+
+    expected_member_keys = {
+        (
+            sample_id,
+            functional.receiver,
+            family_id,
+            driver_id,
+            interaction_id,
+            mode,
+        )
+        for sample_id in expected_samples
+        for interaction_id, (family_id, driver_id) in membership.items()
+        for mode in modes
+    }
+    if _string_key_set(
+        member_scores,
+        (
+            "sample_id",
+            "receiver",
+            "family_id",
+            "driver_id",
+            "interaction_id",
+            "mode",
+        ),
+        table_name="member scores",
+    ) != expected_member_keys:
+        raise ValueError("member scores do not have exact sample/interaction coverage")
+
+    sender_candidates = {
+        (prior.interaction_id, prior.sender)
+        for prior in functional.sender_functional.candidate_priors
+        if prior.receiver == functional.receiver
+        and prior.interaction_id in membership
+    }
+    expected_sender_keys = {
+        (
+            sample_id,
+            functional.receiver,
+            membership[interaction_id][0],
+            membership[interaction_id][1],
+            interaction_id,
+            mode,
+            sender,
+        )
+        for sample_id in expected_samples
+        for interaction_id, sender in sender_candidates
+        for mode in modes
+    }
+    if _string_key_set(
+        sender_scores,
+        (
+            "sample_id",
+            "receiver",
+            "family_id",
+            "driver_id",
+            "interaction_id",
+            "mode",
+            "sender",
+        ),
+        table_name="sender scores",
+    ) != expected_sender_keys:
+        raise ValueError("sender scores do not have exact candidate-sender coverage")
+
+    for table, table_name in (
+        (family_scores, "family scores"),
+        (member_scores, "member scores"),
+    ):
+        _require_sample_lineage(
+            table,
+            expected_samples,
+            table_name=table_name,
+        )
+    if expected_sender_keys:
+        _require_sample_lineage(
+            sender_scores,
+            expected_samples,
+            table_name="sender scores",
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CrossFitFoldArtifacts:
     """Training and held-out application artifacts for one planned fold."""
@@ -401,6 +738,9 @@ class CrossFitFoldArtifacts:
     receiver_incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...]
     receiver_response_applications: tuple[FoldGeneResponseApplication, ...]
     receiver_incremental_applications: tuple[ReceiverIncrementalApplication, ...]
+    family_common_functionals: tuple[FamilyCommonScoringFunctional, ...]
+    family_common_applications: tuple[FamilyCommonScoringApplication, ...]
+    family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.fold_id, str) or not self.fold_id:
@@ -599,6 +939,192 @@ class CrossFitFoldArtifacts:
         object.__setattr__(
             self, "receiver_incremental_applications", incremental_applications
         )
+        common_functionals = tuple(self.family_common_functionals)
+        common_applications = tuple(self.family_common_applications)
+        common_bindings = tuple(self.family_common_bindings)
+        if (
+            bool(common_functionals) != bool(common_applications)
+            or bool(common_functionals) != bool(common_bindings)
+            or (
+                common_functionals and len(common_functionals) != len(receiver_models)
+            )
+            or len(common_functionals) != len(common_applications)
+            or len(common_functionals) != len(common_bindings)
+        ):
+            raise ValueError(
+                "fold family-common functional/application/input chains must align"
+            )
+        if common_functionals:
+            sender_by_contrast = {
+                functional.contrast_name: functional
+                for functional in self.training.sender_functionals
+            }
+            sender_applications: dict[
+                tuple[str, str, tuple[str, ...]], CommonSenderApplication
+            ] = {}
+            for (
+                family_model,
+                incremental_model,
+                incremental_application,
+                common_functional,
+                common_application,
+                common_binding,
+            ) in zip(
+                receiver_models,
+                incremental_models,
+                incremental_applications,
+                common_functionals,
+                common_applications,
+                common_bindings,
+                strict=True,
+            ):
+                common_functional._require_intact()
+                common_tables = common_application._validated_tables()
+                common_binding._require_intact()
+                expected_key = (
+                    family_model.contrast_name,
+                    family_model.receiver_family_artifact.receiver,
+                    self.fold_id,
+                )
+                observed_key = (
+                    common_functional.contrast_name,
+                    common_functional.receiver,
+                    common_functional.fold_id,
+                )
+                if observed_key != expected_key:
+                    raise ValueError("family-common scoring keys do not match the fold")
+                if (
+                    common_functional.receiver_family.training_artifact_id
+                    != family_model.receiver_family_artifact.training_artifact_id
+                    or common_functional.receiver_incremental_training_artifact_id
+                    != incremental_model.training_artifact_id
+                    or common_application.functional.family_common_functional_id
+                    != common_functional.family_common_functional_id
+                ):
+                    raise ValueError(
+                        "family-common parent lineage does not match the fold"
+                    )
+                tuning = incremental_model.penalty_tuning_artifact
+                if tuning is None:
+                    raise ValueError(
+                        "family-common scoring is missing its tuning parent"
+                    )
+                sender_functional = sender_by_contrast.get(
+                    common_functional.contrast_name
+                )
+                training_official = (
+                    incremental_model.is_oof_certified
+                    and incremental_model.official_incremental_status == "observed"
+                    and incremental_model.diagnostic_functional is not None
+                    and incremental_model.selected_resolved_penalty_id is not None
+                )
+                expected_incremental_reason = (
+                    None
+                    if training_official
+                    else incremental_model.reason_code
+                    or incremental_model.diagnostic_reason_code
+                    or tuning.reason_code
+                    or "incremental_training_not_estimable"
+                )
+                if (
+                    sender_functional is None
+                    or common_functional.sender_functional.sender_functional_id
+                    != sender_functional.sender_functional_id
+                    or common_functional.tuning_manifest_id != tuning.tuning_id
+                    or common_functional.selected_penalty_id
+                    != incremental_model.selected_resolved_penalty_id
+                    or common_functional.autonomous_program_resource_id
+                    != incremental_model.autonomous_program_resource_id
+                    or common_functional.incremental_reason_code
+                    != expected_incremental_reason
+                ):
+                    raise ValueError(
+                        "family-common authoritative training lineage is incompatible"
+                    )
+                if common_functional.incremental_functional is not None and (
+                    incremental_model.diagnostic_functional is None
+                    or common_functional.incremental_functional
+                    .incremental_functional_id
+                    != incremental_model.diagnostic_functional.incremental_functional_id
+                ):
+                    raise ValueError(
+                        "family-common incremental functional is incompatible"
+                    )
+                diagnostic_application = incremental_application.diagnostic_application
+                application_official = (
+                    training_official
+                    and incremental_application.is_oof_certified
+                    and incremental_application.official_incremental_status
+                    == "observed"
+                    and diagnostic_application is not None
+                )
+                expected_incremental_application_id = (
+                    diagnostic_application.application_id
+                    if application_official and diagnostic_application is not None
+                    else None
+                )
+                if (
+                    common_application.incremental_application_id
+                    != expected_incremental_application_id
+                ):
+                    raise ValueError(
+                        "family-common held-out application is incompatible"
+                    )
+                expected_heldout_reason = (
+                    None
+                    if application_official
+                    else incremental_application.reason_code
+                    or incremental_application.diagnostic_reason_code
+                    or common_functional.incremental_reason_code
+                    or "heldout_incremental_not_estimable"
+                )
+                if common_application.heldout_reason_code != expected_heldout_reason:
+                    raise ValueError(
+                        "family-common held-out reason does not match its parent"
+                    )
+                _, design_application = design_by_name[
+                    common_functional.contrast_name
+                ]
+                _require_family_common_exact_coverage(
+                    common_functional,
+                    common_application,
+                    design_application,
+                    common_tables,
+                )
+                edge_evidence = _family_common_edge_evidence(
+                    common_functional,
+                    design_application,
+                    self.application.availability.sample_interactions,
+                )
+                sender_key = (
+                    common_functional.contrast_name,
+                    common_functional.receiver,
+                    common_functional.interaction_ids,
+                )
+                sender_application = sender_applications.get(sender_key)
+                if sender_application is None:
+                    sender_application = _completed_common_sender_application(
+                        common_functional.sender_functional,
+                        design_application,
+                        self.application.availability.sample_interactions,
+                        receiver=common_functional.receiver,
+                        interaction_ids=common_functional.interaction_ids,
+                    )
+                    sender_applications[sender_key] = sender_application
+                expected_binding = _FamilyCommonCrossFitBinding._from_workflow(
+                    common_functional,
+                    common_application,
+                    self.application,
+                    edge_evidence,
+                    sender_application,
+                )
+                if common_binding != expected_binding:
+                    raise ValueError(
+                        "family-common inputs are not bound to held-out availability"
+                    )
+        object.__setattr__(self, "family_common_functionals", common_functionals)
+        object.__setattr__(self, "family_common_applications", common_applications)
+        object.__setattr__(self, "family_common_bindings", common_bindings)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -712,6 +1238,32 @@ class CrossFitArtifacts:
                 raise ValueError(
                     "receiver incremental models do not match the cross-fit "
                     "autonomous program resource"
+                )
+            expected_tuning_spec_id = (
+                None
+                if self.spec.penalty_tuning_spec is None
+                else self.spec.penalty_tuning_spec.spec_id
+            )
+            if any(
+                model.penalty_tuning_spec_id != expected_tuning_spec_id
+                for model in item.receiver_incremental_models
+            ):
+                raise ValueError(
+                    "receiver incremental models do not match the cross-fit "
+                    "penalty tuning policy"
+                )
+            expected_common_count = (
+                0
+                if self.spec.penalty_tuning_spec is None
+                else len(item.receiver_incremental_models)
+            )
+            if (
+                len(item.family_common_functionals) != expected_common_count
+                or len(item.family_common_applications) != expected_common_count
+                or len(item.family_common_bindings) != expected_common_count
+            ):
+                raise ValueError(
+                    "family-common scoring chains do not match the cross-fit policy"
                 )
         coverage = self._oof_coverage.copy(deep=True)
         if tuple(coverage.columns) != _COVERAGE_COLUMNS:
@@ -856,7 +1408,7 @@ class CrossFitArtifacts:
                     else str(row.diagnostic_reason_code)
                 ),
                 str(row.official_incremental_status),
-                str(row.reason_code),
+                None if pd.isna(row.reason_code) else str(row.reason_code),
             )
             if observed != expected:
                 raise ValueError(
@@ -867,9 +1419,6 @@ class CrossFitArtifacts:
             if (
                 str(row.subject_id) not in manifest.test_subject_ids
                 or str(row.subject_id) in manifest.train_subject_ids
-                or str(row.official_incremental_status) != "not_estimable"
-                or str(row.reason_code)
-                != "receiver_autonomous_nuisance_not_frozen"
                 or str(row.stage) != _RECEIVER_STAGE_NAME
             ):
                 raise ValueError(
@@ -984,6 +1533,18 @@ class CrossFitArtifacts:
                         application.application_id
                         for application in item.receiver_incremental_applications
                     ],
+                    "family_common_functional_ids": [
+                        functional.family_common_functional_id
+                        for functional in item.family_common_functionals
+                    ],
+                    "family_common_application_ids": [
+                        application.application_id
+                        for application in item.family_common_applications
+                    ],
+                    "family_common_binding_ids": [
+                        binding.binding_id
+                        for binding in item.family_common_bindings
+                    ],
                 }
                 for item in sorted(folds, key=lambda value: value.fold_id)
             ],
@@ -1089,18 +1650,68 @@ class CrossFitArtifacts:
         """Return an auditable summary without embedding tabular payloads."""
 
         self._require_intact()
+        common_functionals = tuple(
+            functional
+            for fold in self.folds
+            for functional in fold.family_common_functionals
+        )
+        common_applications = tuple(
+            application
+            for fold in self.folds
+            for application in fold.family_common_applications
+        )
+        functional_statuses = [
+            "observed"
+            if functional.incremental_functional is not None
+            else "not_estimable"
+            for functional in common_functionals
+        ]
+        application_statuses = [
+            "observed"
+            if application.heldout_reason_code is None
+            else "not_estimable"
+            for application in common_applications
+        ]
         remaining_stages = list(_REMAINING_PUBLIC_STAGES)
+        if self.spec.penalty_tuning_spec is not None:
+            completed_candidate_stages = {
+                "attribution_tuning",
+                "common_scoring_functional",
+                "family_attribution",
+                "incremental_downstream",
+                "subject_blocked_inner_tuning",
+            }
+            remaining_stages = [
+                stage
+                for stage in remaining_stages
+                if stage not in completed_candidate_stages
+            ]
+            remaining_stages.append("source_agnostic_receiver_program_score")
         if (
             self.spec.autonomous_program_resource is None
-            or self.spec.autonomous_program_resource.verification_status
-            == "caller_declared_static_unverified"
+            or not self.spec.autonomous_program_resource.is_manifest_verified_trusted
         ):
             remaining_stages.insert(-1, "receiver_autonomous_nuisance")
         return {
             "crossfit_id": self.crossfit_id,
             "certification_status": self.certification_status,
             "completed_stage_oof_verified": self.completed_stage_oof_verified,
+            "family_common_candidate_stage_connected": (
+                self.spec.penalty_tuning_spec is not None
+            ),
+            "family_common_functional_status_counts": {
+                status: functional_statuses.count(status)
+                for status in sorted(set(functional_statuses))
+            },
+            "family_common_application_status_counts": {
+                status: application_statuses.count(status)
+                for status in sorted(set(application_statuses))
+            },
+            "n_family_common_crossfit_bindings": sum(
+                len(fold.family_common_bindings) for fold in self.folds
+            ),
             "complete_pipeline_oof_certified": self.is_oof_certified,
+            "family_edge_evidence_policy": _FAMILY_EDGE_EVIDENCE_POLICY,
             "oof_audit_scope": _STAGE_NAME,
             "spec": self.spec.to_dict(),
             "fold_plan": self.fold_plan.to_dict(),
@@ -1137,10 +1748,31 @@ class CrossFitArtifacts:
                             "response_artifact_id": response.artifact_id,
                             "precision_transform_id": precision.precision_transform_id,
                             "training_artifact_id": model.training_artifact_id,
+                            "penalty_tuning_spec_id": model.penalty_tuning_spec_id,
+                            "inner_fold_plan_id": (
+                                None
+                                if model.inner_fold_plan is None
+                                else model.inner_fold_plan.plan_id
+                            ),
+                            "penalty_tuning_artifact_id": (
+                                None
+                                if model.penalty_tuning_artifact is None
+                                else model.penalty_tuning_artifact.tuning_id
+                            ),
+                            "selected_penalty_candidate_id": (
+                                model.selected_penalty_candidate_id
+                            ),
+                            "selected_resolved_penalty_id": (
+                                model.selected_resolved_penalty_id
+                            ),
+                            "certification_status": model.certification_status,
                             "response_application_id": (
                                 response_application.application_id
                             ),
                             "application_id": application.application_id,
+                            "application_certification_status": (
+                                application.certification_status
+                            ),
                             "diagnostic_status": application.diagnostic_status,
                             "official_incremental_status": (
                                 application.official_incremental_status
@@ -1159,6 +1791,72 @@ class CrossFitArtifacts:
                             item.receiver_incremental_models,
                             item.receiver_response_applications,
                             item.receiver_incremental_applications,
+                            strict=True,
+                        )
+                    ],
+                    "family_common_scoring_artifacts": [
+                        {
+                            "receiver": functional.receiver,
+                            "contrast_name": functional.contrast_name,
+                            "functional_id": (
+                                functional.family_common_functional_id
+                            ),
+                            "application_id": application.application_id,
+                            "binding_id": binding.binding_id,
+                            "training_application_id": (
+                                binding.training_application_id
+                            ),
+                            "edge_evidence_policy_id": (
+                                binding.edge_evidence_policy_id
+                            ),
+                            "edge_evidence_digest": binding.edge_evidence_digest,
+                            "availability_sample_interactions_digest": (
+                                binding.availability_sample_interactions_digest
+                            ),
+                            "sender_input_digest": binding.sender_input_digest,
+                            "tuning_manifest_id": functional.tuning_manifest_id,
+                            "selected_penalty_id": functional.selected_penalty_id,
+                            "autonomous_program_resource_id": (
+                                functional.autonomous_program_resource_id
+                            ),
+                            "functional_status": (
+                                "observed"
+                                if functional.incremental_functional is not None
+                                else "not_estimable"
+                            ),
+                            "functional_reason_code": (
+                                functional.incremental_reason_code
+                            ),
+                            "application_status": (
+                                "observed"
+                                if application.heldout_reason_code is None
+                                else "not_estimable"
+                            ),
+                            "heldout_reason_code": application.heldout_reason_code,
+                            "score_version": functional.score_version,
+                            "family_attribution_digest": (
+                                application.family_attribution_digest
+                            ),
+                            "subject_differential_digest": (
+                                application.subject_differential_digest
+                            ),
+                            "family_scores_digest": application.family_scores_digest,
+                            "member_scores_digest": application.member_scores_digest,
+                            "sender_scores_digest": application.sender_scores_digest,
+                            "n_family_attribution_rows": (
+                                application.table_row_counts[0]
+                            ),
+                            "n_subject_differential_rows": (
+                                application.table_row_counts[1]
+                            ),
+                            "n_family_rows": application.table_row_counts[2],
+                            "n_member_rows": application.table_row_counts[3],
+                            "n_sender_rows": application.table_row_counts[4],
+                        }
+                        for functional, application, binding in zip(
+                            item.family_common_functionals,
+                            item.family_common_applications,
+                            item.family_common_bindings,
                             strict=True,
                         )
                     ],
@@ -1433,6 +2131,7 @@ def _fit_receiver_incremental_chains(
     minimum_scale: float,
     min_subjects_per_context: int,
     autonomous_program_resource: ReceiverAutonomousProgramResource | None,
+    penalty_tuning_spec: PenaltyTuningSpec | None,
 ) -> tuple[
     tuple[FoldGeneResponseArtifact, ...],
     tuple[PrecisionTransformResult, ...],
@@ -1452,7 +2151,16 @@ def _fit_receiver_incremental_chains(
             training_input_digest=training_input_digest,
             min_subjects_per_context=max(2, min_subjects_per_context),
         )
-        precision = fit_response_precision(response)
+        feature_scale = (
+            None
+            if response.status != "ok"
+            else _receiver_incremental_feature_scale(
+                encoder,
+                response,
+                minimum_scale=minimum_scale,
+            )
+        )
+        precision = fit_response_precision(response, feature_scale=feature_scale)
         incremental_model = fit_receiver_incremental_training_artifact(
             encoder,
             response,
@@ -1460,6 +2168,7 @@ def _fit_receiver_incremental_chains(
             model.receiver_family_artifact,
             autonomous_program_resource,
             minimum_scale=minimum_scale,
+            penalty_tuning_spec=penalty_tuning_spec,
         )
         responses.append(response)
         precisions.append(precision)
@@ -1497,6 +2206,368 @@ def _apply_receiver_incremental_chains(
         response_applications.append(response_application)
         incremental_applications.append(incremental_application)
     return tuple(response_applications), tuple(incremental_applications)
+
+
+def _maximum_observed(values: pd.Series) -> float | None:
+    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    if numeric.empty:
+        return None
+    maximum = float(numeric.max())
+    if not np.isfinite(maximum) or not 0.0 <= maximum <= 1.0:
+        raise ValueError("family edge evidence must remain on the unit interval")
+    return maximum
+
+
+def _completed_common_sender_application(
+    functional: ContrastCommonSenderFunctional,
+    design_application: FrozenDesignApplication,
+    availability: pd.DataFrame,
+    *,
+    receiver: str,
+    interaction_ids: tuple[str, ...],
+) -> CommonSenderApplication:
+    """Apply one sender functional to an explicit held-out candidate grid."""
+
+    selected_interactions = set(interaction_ids)
+    selected_priors = tuple(
+        prior
+        for prior in functional.candidate_priors
+        if prior.receiver == receiver
+        and prior.interaction_id in selected_interactions
+    )
+    heldout_samples = {
+        str(sample_id)
+        for sample_id, context_id in zip(
+            design_application.sample_ids,
+            design_application.sample_context_ids,
+            strict=True,
+        )
+        if context_id in functional.context_ids
+    }
+    candidate_senders = {prior.sender for prior in selected_priors}
+    local = availability.loc[
+        availability["sample_id"].astype(str).isin(heldout_samples)
+        & availability["receiver"].astype(str).eq(receiver)
+        & availability["interaction_id"].astype(str).isin(selected_interactions)
+        & availability["sender"].astype(str).isin(candidate_senders),
+        [
+            "sample_id",
+            "receiver",
+            "interaction_id",
+            "sender",
+            "ligand_availability",
+        ],
+    ]
+    lookup: dict[tuple[str, str, str, str], float | None] = {}
+    if not local.empty:
+        for key, group in local.groupby(
+            ["sample_id", "receiver", "interaction_id", "sender"],
+            observed=True,
+            sort=False,
+        ):
+            sample_id, grouped_receiver, interaction_id, sender = key
+            lookup[
+                (
+                    str(sample_id),
+                    str(grouped_receiver),
+                    str(interaction_id),
+                    str(sender),
+                )
+            ] = _maximum_observed(
+                group["ligand_availability"]
+            )
+    rows: list[dict[str, object]] = []
+    for sample_id, subject_id, context_id in zip(
+        design_application.sample_ids,
+        design_application.sample_subject_ids,
+        design_application.sample_context_ids,
+        strict=True,
+    ):
+        if context_id not in functional.context_ids:
+            continue
+        for prior in selected_priors:
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "subject_id": subject_id,
+                    "context_id": context_id,
+                    "sender": prior.sender,
+                    "receiver": prior.receiver,
+                    "interaction_id": prior.interaction_id,
+                    "ligand_availability": lookup.get(
+                        (
+                            sample_id,
+                            prior.receiver,
+                            prior.interaction_id,
+                            prior.sender,
+                        )
+                    ),
+                }
+            )
+    input_table = pd.DataFrame(
+        rows,
+        columns=(
+            "sample_id",
+            "subject_id",
+            "context_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+            "ligand_availability",
+        ),
+    )
+    return apply_contrast_common_sender_functional(functional, input_table)
+
+
+def _family_common_edge_evidence(
+    functional: FamilyCommonScoringFunctional,
+    design_application: FrozenDesignApplication,
+    availability: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build exact sample/interaction/mode evidence from frozen held-out rows."""
+
+    heldout_samples = {
+        str(sample_id)
+        for sample_id, context_id in zip(
+            design_application.sample_ids,
+            design_application.sample_context_ids,
+            strict=True,
+        )
+        if context_id in functional.context_ids
+    }
+    local = availability.loc[
+        availability["sample_id"].astype(str).isin(heldout_samples)
+        & availability["receiver"].astype(str).eq(functional.receiver)
+        & availability["interaction_id"].astype(str).isin(
+            functional.interaction_ids
+        ),
+        [
+            "sample_id",
+            "receiver",
+            "interaction_id",
+            "ligand_availability",
+            "availability_state",
+            "availability_ecosystem",
+        ],
+    ]
+    grouped: dict[
+        tuple[str, str, str],
+        tuple[float | None, float | None, float | None],
+    ] = {}
+    if not local.empty:
+        for key, group in local.groupby(
+            ["sample_id", "receiver", "interaction_id"],
+            observed=True,
+            sort=False,
+        ):
+            sample_id, receiver, interaction_id = key
+            grouped[(str(sample_id), str(receiver), str(interaction_id))] = (
+                _maximum_observed(group["ligand_availability"]),
+                _maximum_observed(group["availability_state"]),
+                _maximum_observed(group["availability_ecosystem"]),
+            )
+    prevalence: dict[str, float | None] = {}
+    for interaction_id in functional.interaction_ids:
+        priors = tuple(
+            prior.prevalence_prior
+            for prior in functional.sender_functional.candidate_priors
+            if prior.receiver == functional.receiver
+            and prior.interaction_id == interaction_id
+        )
+        prevalence[interaction_id] = (
+            None
+            if not priors or any(value is None for value in priors)
+            else max(float(value) for value in priors if value is not None)
+        )
+
+    rows: list[dict[str, object]] = []
+    for sample_id, subject_id, context_id in zip(
+        design_application.sample_ids,
+        design_application.sample_subject_ids,
+        design_application.sample_context_ids,
+        strict=True,
+    ):
+        if context_id not in functional.context_ids:
+            continue
+        for interaction_id in functional.interaction_ids:
+            evidence = grouped.get((sample_id, functional.receiver, interaction_id))
+            ligand_availability = None if evidence is None else evidence[0]
+            for mode, evidence_index in (
+                ("state", 1),
+                ("ecosystem", 2),
+            ):
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "subject_id": subject_id,
+                        "context_id": context_id,
+                        "receiver": functional.receiver,
+                        "interaction_id": interaction_id,
+                        "mode": mode,
+                        "availability": (
+                            None
+                            if evidence is None
+                            else evidence[evidence_index]
+                        ),
+                        "ligand_availability": ligand_availability,
+                        "prior_quality": 1.0,
+                        "subject_prevalence": prevalence[interaction_id],
+                        "resource_evidence": 1.0,
+                    }
+                )
+    return pd.DataFrame(rows, columns=FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS)
+
+
+def _fit_family_common_chains(
+    receiver_models: tuple[ReceiverFamilyScoringArtifact, ...],
+    incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
+    *,
+    sender_functionals: tuple[ContrastCommonSenderFunctional, ...],
+) -> tuple[FamilyCommonScoringFunctional, ...]:
+    sender_by_contrast = {
+        functional.contrast_name: functional for functional in sender_functionals
+    }
+    functionals: list[FamilyCommonScoringFunctional] = []
+    for receiver_model, incremental_model in zip(
+        receiver_models, incremental_models, strict=True
+    ):
+        tuning = incremental_model.penalty_tuning_artifact
+        if tuning is None:
+            raise RuntimeError(
+                "family-common scoring requires an explicit penalty tuning policy"
+            )
+        sender = sender_by_contrast[receiver_model.contrast_name]
+        receiver_family = receiver_model.receiver_family_artifact
+        if (
+            incremental_model.is_oof_certified
+            and incremental_model.official_incremental_status == "observed"
+            and incremental_model.diagnostic_functional is not None
+            and incremental_model.selected_resolved_penalty_id is not None
+        ):
+            functional = fit_family_common_scoring_functional(
+                receiver_family,
+                incremental_model.diagnostic_functional,
+                sender,
+                receiver_incremental_training_artifact_id=(
+                    incremental_model.training_artifact_id
+                ),
+                tuning_manifest_id=tuning.tuning_id,
+                selected_penalty_id=(
+                    incremental_model.selected_resolved_penalty_id
+                ),
+                autonomous_program_resource_id=(
+                    incremental_model.autonomous_program_resource_id
+                ),
+            )
+        else:
+            functional = mark_family_common_scoring_not_estimable(
+                receiver_family,
+                sender,
+                fold_id=incremental_model.fold_id,
+                receiver_incremental_training_artifact_id=(
+                    incremental_model.training_artifact_id
+                ),
+                tuning_manifest_id=tuning.tuning_id,
+                selected_penalty_id=(
+                    incremental_model.selected_resolved_penalty_id
+                ),
+                autonomous_program_resource_id=(
+                    incremental_model.autonomous_program_resource_id
+                ),
+                reason_code=(
+                    incremental_model.reason_code
+                    or incremental_model.diagnostic_reason_code
+                    or tuning.reason_code
+                    or "incremental_training_not_estimable"
+                ),
+            )
+        functionals.append(functional)
+    return tuple(functionals)
+
+
+def _apply_family_common_chains(
+    functionals: tuple[FamilyCommonScoringFunctional, ...],
+    incremental_applications: tuple[ReceiverIncrementalApplication, ...],
+    *,
+    training_application: TrainingArtifactApplication,
+    design_encoders: tuple[FrozenDesignEncoder, ...],
+    design_applications: tuple[FrozenDesignApplication, ...],
+    availability: pd.DataFrame,
+) -> tuple[
+    tuple[FamilyCommonScoringApplication, ...],
+    tuple[_FamilyCommonCrossFitBinding, ...],
+]:
+    design_by_contrast = {
+        encoder.contrast.name: application
+        for encoder, application in zip(
+            design_encoders, design_applications, strict=True
+        )
+    }
+    applications: list[FamilyCommonScoringApplication] = []
+    bindings: list[_FamilyCommonCrossFitBinding] = []
+    sender_applications: dict[
+        tuple[str, str, tuple[str, ...]], CommonSenderApplication
+    ] = {}
+    for functional, incremental_application in zip(
+        functionals, incremental_applications, strict=True
+    ):
+        design_application = design_by_contrast[functional.contrast_name]
+        sender_key = (
+            functional.contrast_name,
+            functional.receiver,
+            functional.interaction_ids,
+        )
+        sender_application = sender_applications.get(sender_key)
+        if sender_application is None:
+            sender_application = _completed_common_sender_application(
+                functional.sender_functional,
+                design_application,
+                availability,
+                receiver=functional.receiver,
+                interaction_ids=functional.interaction_ids,
+            )
+            sender_applications[sender_key] = sender_application
+        edge_evidence = _family_common_edge_evidence(
+            functional,
+            design_application,
+            availability,
+        )
+        diagnostic = incremental_application.diagnostic_application
+        if (
+            functional.incremental_functional is None
+            or not incremental_application.is_oof_certified
+            or incremental_application.official_incremental_status != "observed"
+            or diagnostic is None
+        ):
+            application = mark_family_common_scoring_application_not_estimable(
+                functional,
+                edge_evidence,
+                sender_application,
+                heldout_reason_code=(
+                    incremental_application.reason_code
+                    or incremental_application.diagnostic_reason_code
+                    or functional.incremental_reason_code
+                    or "heldout_incremental_not_estimable"
+                ),
+            )
+        else:
+            application = apply_family_common_scoring_functional(
+                functional,
+                diagnostic,
+                edge_evidence,
+                sender_application,
+            )
+        applications.append(application)
+        bindings.append(
+            _FamilyCommonCrossFitBinding._from_workflow(
+                functional,
+                application,
+                training_application,
+                edge_evidence,
+                sender_application,
+            )
+        )
+    return tuple(applications), tuple(bindings)
 
 
 def _fold_coverage_rows(
@@ -1840,6 +2911,7 @@ def run_subject_crossfit(
             minimum_scale=spec.downstream_minimum_scale,
             min_subjects_per_context=spec.min_train_subjects_per_context,
             autonomous_program_resource=spec.autonomous_program_resource,
+            penalty_tuning_spec=spec.penalty_tuning_spec,
         )
         (
             receiver_response_applications,
@@ -1859,6 +2931,27 @@ def run_subject_crossfit(
             raise ValueError(
                 "training sender functionals do not match the planned contrasts"
             )
+        if spec.penalty_tuning_spec is None:
+            family_common_functionals: tuple[FamilyCommonScoringFunctional, ...] = ()
+            family_common_applications: tuple[FamilyCommonScoringApplication, ...] = ()
+            family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...] = ()
+        else:
+            family_common_functionals = _fit_family_common_chains(
+                receiver_family_models,
+                receiver_incremental_models,
+                sender_functionals=training.sender_functionals,
+            )
+            (
+                family_common_applications,
+                family_common_bindings,
+            ) = _apply_family_common_chains(
+                family_common_functionals,
+                receiver_incremental_applications,
+                training_application=application,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
+                availability=application.availability.sample_interactions,
+            )
         fold_artifacts.append(
             CrossFitFoldArtifacts(
                 fold_id=fold.fold_id,
@@ -1873,6 +2966,9 @@ def run_subject_crossfit(
                 receiver_incremental_models=receiver_incremental_models,
                 receiver_response_applications=receiver_response_applications,
                 receiver_incremental_applications=(receiver_incremental_applications),
+                family_common_functionals=family_common_functionals,
+                family_common_applications=family_common_applications,
+                family_common_bindings=family_common_bindings,
             )
         )
         coverage_rows.extend(

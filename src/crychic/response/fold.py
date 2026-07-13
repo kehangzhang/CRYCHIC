@@ -19,7 +19,8 @@ from crychic.design import (
 from crychic.pseudobulk import PseudobulkDataset
 
 _CPM_SCALE = 1_000_000.0
-_TRAINING_PRODUCER_MARKER = "crychic.response.fold_gene_response.v1"
+_TRAINING_PRODUCER_MARKER = "crychic.response.fold_gene_response.v2"
+_TRAINING_SCHEMA_VERSION = "2"
 _APPLICATION_PRODUCER_MARKER = "crychic.response.fold_gene_application.v1"
 _INDEPENDENT_METHOD = "frozen_formula_independent_subjects_v1"
 _PAIRED_METHOD = "frozen_formula_paired_subject_effects_v1"
@@ -331,6 +332,7 @@ class _FitResult:
     method: str
     n_model_samples: int
     n_model_subjects: int
+    residual_df: int | None
 
 
 def _not_estimable_fit(
@@ -350,6 +352,7 @@ def _not_estimable_fit(
         method=_NOT_ESTIMABLE_METHOD,
         n_model_samples=n_model_samples,
         n_model_subjects=n_model_subjects,
+        residual_df=None,
     )
 
 
@@ -531,6 +534,7 @@ def _fit_formula_response(
         method=_PAIRED_METHOD if paired else _INDEPENDENT_METHOD,
         n_model_samples=n_model_samples,
         n_model_subjects=n_model_subjects,
+        residual_df=residual_df,
     )
 
 
@@ -574,6 +578,7 @@ class FoldGeneResponseArtifact:
     min_subjects_per_context: int
     n_model_samples: int
     n_model_subjects: int
+    residual_df: int | None
     status: str
     reason_code: str | None
     artifact_id: str
@@ -725,6 +730,7 @@ class FoldGeneResponseArtifact:
             "min_subjects_per_context": min_subjects_per_context,
             "n_model_samples": fit.n_model_samples,
             "n_model_subjects": fit.n_model_subjects,
+            "residual_df": fit.residual_df,
             "status": fit.status,
             "reason_code": fit.reason_code,
             "_producer_marker": _TRAINING_PRODUCER_MARKER,
@@ -737,7 +743,7 @@ class FoldGeneResponseArtifact:
             stable_id(
                 "fold_gene_response",
                 self._identity_payload(),
-                schema_version="1",
+                schema_version=_TRAINING_SCHEMA_VERSION,
             ),
         )
         return self
@@ -756,6 +762,7 @@ class FoldGeneResponseArtifact:
             "missing_sample_ids": list(self.missing_sample_ids),
             "n_model_samples": self.n_model_samples,
             "n_model_subjects": self.n_model_subjects,
+            "residual_df": self.residual_df,
             "nuisance_design_id": self.nuisance_design_id,
             "raw_precision_digest": self.raw_precision_digest,
             "reason_code": self.reason_code,
@@ -899,8 +906,17 @@ class FoldGeneResponseArtifact:
                     self.raw_precision, expected_precision, equal_nan=True
                 ):
                     raise ValueError("raw response precision is inconsistent")
-            elif self.method != _NOT_ESTIMABLE_METHOD or not all(
-                np.isnan(array).all() for array in arrays[1:]
+                if (
+                    isinstance(self.residual_df, bool)
+                    or not isinstance(self.residual_df, int)
+                    or self.residual_df < 1
+                    or self.residual_df >= self.n_model_samples
+                ):
+                    raise ValueError("observed response residual df is invalid")
+            elif (
+                self.method != _NOT_ESTIMABLE_METHOD
+                or self.residual_df is not None
+                or not all(np.isnan(array).all() for array in arrays[1:])
             ):
                 raise ValueError("not-estimable response estimates must be all NaN")
             sample_values_digest = _numeric_digest(self.sample_values)
@@ -929,7 +945,9 @@ class FoldGeneResponseArtifact:
                 digest_length=64,
             )
             expected_id = stable_id(
-                "fold_gene_response", self._identity_payload(), schema_version="1"
+                "fold_gene_response",
+                self._identity_payload(),
+                schema_version=_TRAINING_SCHEMA_VERSION,
             )
             valid_identity = (
                 sample_values_digest == self.sample_values_digest
@@ -1037,6 +1055,7 @@ class FoldGeneResponseArtifact:
             "min_subjects_per_context": self.min_subjects_per_context,
             "n_model_samples": self.n_model_samples,
             "n_model_subjects": self.n_model_subjects,
+            "residual_df": self.residual_df,
             "status": self.status,
             "reason_code": self.reason_code,
         }

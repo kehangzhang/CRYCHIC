@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pytest
 from benchmarks.simulation.run_autonomous_overlap_smoke import (
+    AUTONOMOUS_SMOKE_SOURCE_PATHS,
     autonomous_smoke_source_sha256,
     canonical_payload_sha256,
     run_smoke,
 )
+
+from crychic.scoring import INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT
 
 _SUMMARY_PATH = (
     Path(__file__).resolve().parents[2]
@@ -19,6 +22,25 @@ _FULL_ARTIFACT_PATH = (
     Path(__file__).resolve().parents[3]
     / "benchmark_work/algorithm_smoke/autonomous_overlap_v1.json"
 )
+_REQUIRED_SOURCE_CLOSURE = {
+    "src/crychic/attribution/tuning.py",
+    "src/crychic/resources/autonomous_registry.py",
+    "src/crychic/resources/manifest.py",
+    "src/crychic/response/autonomous.py",
+    "src/crychic/scoring/downstream.py",
+}
+
+
+def test_autonomous_smoke_provenance_tracks_algorithm_contract_and_closure() -> None:
+    payload = run_smoke()
+
+    assert payload["provenance"]["algorithm_contract"] == (
+        INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT
+    )
+    assert _REQUIRED_SOURCE_CLOSURE.issubset(AUTONOMOUS_SMOKE_SOURCE_PATHS)
+    assert set(autonomous_smoke_source_sha256()) == set(
+        AUTONOMOUS_SMOKE_SOURCE_PATHS
+    )
 
 
 def test_autonomous_overlap_smoke_suppresses_false_gain_and_retains_unique_gain() -> (

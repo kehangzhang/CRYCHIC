@@ -1,4 +1,9 @@
-"""Deterministic relative-penalty scaling and subject-equal selection."""
+"""Deterministic relative-penalty scaling and subject-equal selection.
+
+Verified workflow records may condition on a representation frozen across the
+complete outer-training fold.  Their status names make that boundary explicit;
+they do not claim fully nested refitting of precision or family construction.
+"""
 
 from __future__ import annotations
 
@@ -13,10 +18,21 @@ from scipy import sparse
 
 from crychic.core import ContractError, stable_id
 
-_SELECTION_RULE = "subject_equal_one_se_strongest_regularization_v1"
-_EVALUATION_MARKER = "crychic.attribution.penalty_fold_evaluation.v1"
+_SELECTION_RULE = (
+    "subject_equal_paired_delta_one_se_l1_then_l2_sparsity_priority_v2"
+)
+_CANDIDATE_PRIORITY = "l1_fraction_desc_then_l2_fraction_desc_v1"
+_THRESHOLD_SEMANTICS = (
+    "candidate_minus_empirical_best_subject_loss_standard_error_v1"
+)
+_SELECTION_INTERPRETATION = (
+    "descriptive_paired_delta_heuristic_not_ci_or_noninferiority_test_v1"
+)
+_PAIRED_SE_METHOD = "sample_sd_ddof1_over_sqrt_n_subjects_v1"
+_EVALUATION_MARKER = "crychic.attribution.penalty_fold_evaluation.v2"
 _SCALE_MARKER = "crychic.attribution.penalty_scale_resolution.v1"
-_TUNING_MARKER = "crychic.attribution.penalty_tuning.v1"
+_TUNING_MARKER = "crychic.attribution.penalty_tuning.v2"
+_COMPARISON_MARKER = "crychic.attribution.penalty_candidate_comparison.v1"
 _OBSERVED = "observed"
 _NOT_ESTIMABLE = "not_estimable"
 _FAILED = "failed"
@@ -25,7 +41,20 @@ _DIRECTIONAL_SCALE_SPACE = "direction_compatible_nonnegative_v1"
 _RESIDUAL_SCALE_SPACE = "signed_residual_nonnegative_coefficients_v1"
 _SCALE_SPACES = frozenset({_DIRECTIONAL_SCALE_SPACE, _RESIDUAL_SCALE_SPACE})
 _CALLER_RECORDED_EVALUATION = "caller_recorded_fold_losses_unverified"
-_NONCERTIFYING_TUNING = "caller_recorded_inner_losses_selection_only"
+_NONCERTIFYING_TUNING = (
+    "caller_recorded_paired_delta_inner_losses_selection_only_v2"
+)
+_VERIFIED_EVALUATION = (
+    "verified_outer_frozen_representation_subject_blocked_inner_fit_apply_v1"
+)
+_VERIFIED_TUNING = (
+    "verified_outer_frozen_representation_subject_blocked_inner_selection_v2"
+)
+_NOT_ESTIMABLE_TUNING = "subject_blocked_inner_tuning_not_estimable_v2"
+_EVALUATION_VERIFICATION_STATUSES = frozenset(
+    {_CALLER_RECORDED_EVALUATION, _VERIFIED_EVALUATION}
+)
+_WORKFLOW_SUBJECT_BLOCKED_PRODUCER_TOKEN = object()
 
 
 def _name(value: str, *, field_name: str) -> str:
@@ -170,6 +199,10 @@ class PenaltyTuningSpec:
 
     lambda1_fractions: tuple[float, ...] = (1.0, 0.3, 0.1, 0.03, 0.01)
     lambda2_fractions: tuple[float, ...] = (0.0, 0.01, 0.1, 1.0)
+    inner_allowed_n_splits: tuple[int, ...] = (5, 4, 3, 2)
+    min_inner_train_subjects_per_context: int = 2
+    min_inner_validation_subjects_per_context: int = 1
+    root_seed: int = 0
     selection_rule: str = _SELECTION_RULE
     candidates: tuple[RelativePenaltyCandidate, ...] = field(init=False)
     spec_id: str = field(init=False)
@@ -203,6 +236,32 @@ class PenaltyTuningSpec:
         )
         if not lambda1 or not lambda2:
             raise ValueError("penalty fraction grids must not be empty")
+        allowed = tuple(self.inner_allowed_n_splits)
+        if (
+            not allowed
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 2
+                for value in allowed
+            )
+            or tuple(sorted(set(allowed), reverse=True)) != allowed
+        ):
+            raise ValueError(
+                "inner_allowed_n_splits must be unique integers >= 2 in "
+                "descending order"
+            )
+        for field_name in (
+            "min_inner_train_subjects_per_context",
+            "min_inner_validation_subjects_per_context",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{field_name} must be an integer >= 1")
+        if (
+            isinstance(self.root_seed, bool)
+            or not isinstance(self.root_seed, int)
+            or not 0 <= self.root_seed <= 2**63 - 1
+        ):
+            raise ValueError("root_seed must be a non-negative 63-bit integer")
         if self.selection_rule != _SELECTION_RULE:
             raise ValueError(f"selection_rule must be {_SELECTION_RULE!r}")
         candidates = tuple(
@@ -214,18 +273,28 @@ class PenaltyTuningSpec:
             for lambda2_fraction in lambda2
         )
         payload = {
+            "candidate_priority": _CANDIDATE_PRIORITY,
             "candidate_ids": [candidate.candidate_id for candidate in candidates],
+            "inner_allowed_n_splits": list(allowed),
             "lambda1_fractions": list(lambda1),
             "lambda2_fractions": list(lambda2),
+            "min_inner_train_subjects_per_context": (
+                self.min_inner_train_subjects_per_context
+            ),
+            "min_inner_validation_subjects_per_context": (
+                self.min_inner_validation_subjects_per_context
+            ),
+            "root_seed": self.root_seed,
             "selection_rule": self.selection_rule,
         }
         object.__setattr__(self, "lambda1_fractions", lambda1)
         object.__setattr__(self, "lambda2_fractions", lambda2)
+        object.__setattr__(self, "inner_allowed_n_splits", allowed)
         object.__setattr__(self, "candidates", candidates)
         object.__setattr__(
             self,
             "spec_id",
-            stable_id("penalty_tuning_spec", payload, schema_version="1"),
+            stable_id("penalty_tuning_spec", payload, schema_version="2"),
         )
 
     def _require_intact(self) -> None:
@@ -233,6 +302,14 @@ class PenaltyTuningSpec:
             expected = PenaltyTuningSpec(
                 lambda1_fractions=self.lambda1_fractions,
                 lambda2_fractions=self.lambda2_fractions,
+                inner_allowed_n_splits=self.inner_allowed_n_splits,
+                min_inner_train_subjects_per_context=(
+                    self.min_inner_train_subjects_per_context
+                ),
+                min_inner_validation_subjects_per_context=(
+                    self.min_inner_validation_subjects_per_context
+                ),
+                root_seed=self.root_seed,
                 selection_rule=self.selection_rule,
             )
             valid = self.candidates == expected.candidates and (
@@ -259,8 +336,17 @@ class PenaltyTuningSpec:
         self._require_intact()
         return {
             "spec_id": self.spec_id,
+            "candidate_priority": _CANDIDATE_PRIORITY,
             "lambda1_fractions": list(self.lambda1_fractions),
             "lambda2_fractions": list(self.lambda2_fractions),
+            "inner_allowed_n_splits": list(self.inner_allowed_n_splits),
+            "min_inner_train_subjects_per_context": (
+                self.min_inner_train_subjects_per_context
+            ),
+            "min_inner_validation_subjects_per_context": (
+                self.min_inner_validation_subjects_per_context
+            ),
+            "root_seed": self.root_seed,
             "selection_rule": self.selection_rule,
             "candidates": [candidate.to_dict() for candidate in self.candidates],
         }
@@ -582,8 +668,8 @@ def _resolve_penalty_scale(
         "reason_code": reason,
         "_producer_marker": _SCALE_MARKER,
     }
-    for name, value in values.items():
-        object.__setattr__(self, name, value)
+    for attribute_name, attribute_value in values.items():
+        object.__setattr__(self, attribute_name, attribute_value)
     object.__setattr__(
         self,
         "scale_resolution_id",
@@ -640,9 +726,17 @@ class PenaltyFoldEvaluation:
 
     candidate_id: str
     inner_fold_id: str
+    inner_fold_manifest_id: str | None
+    inner_training_subject_ids: tuple[str, ...]
     validation_subject_ids: tuple[str, ...]
     subject_losses: np.ndarray
     subject_losses_digest: str
+    scale_resolution_id: str | None
+    resolved_penalty_id: str | None
+    resolved_lambda1: float | None
+    resolved_lambda2: float | None
+    training_functional_id: str | None
+    heldout_application_id: str | None
     status: str
     reason_code: str | None
     verification_status: str
@@ -658,10 +752,18 @@ class PenaltyFoldEvaluation:
     def _identity_payload(self) -> dict[str, object]:
         return {
             "candidate_id": self.candidate_id,
+            "heldout_application_id": self.heldout_application_id,
             "inner_fold_id": self.inner_fold_id,
+            "inner_fold_manifest_id": self.inner_fold_manifest_id,
+            "inner_training_subject_ids": list(self.inner_training_subject_ids),
             "reason_code": self.reason_code,
+            "resolved_lambda1": self.resolved_lambda1,
+            "resolved_lambda2": self.resolved_lambda2,
+            "resolved_penalty_id": self.resolved_penalty_id,
+            "scale_resolution_id": self.scale_resolution_id,
             "status": self.status,
             "subject_losses_digest": self.subject_losses_digest,
+            "training_functional_id": self.training_functional_id,
             "validation_subject_ids": list(self.validation_subject_ids),
             "verification_status": self.verification_status,
         }
@@ -670,11 +772,97 @@ class PenaltyFoldEvaluation:
         try:
             losses = np.asarray(self.subject_losses, dtype="<f8")
             observed = self.status == _OBSERVED
+            validation_subjects = _names(
+                self.validation_subject_ids,
+                field_name="validation_subject_ids",
+            )
+            verified = self.verification_status == _VERIFIED_EVALUATION
+            if verified:
+                training_subjects = _names(
+                    self.inner_training_subject_ids,
+                    field_name="inner_training_subject_ids",
+                )
+                if set(training_subjects).intersection(validation_subjects):
+                    raise ValueError("inner training and validation subjects overlap")
+                if self.inner_fold_manifest_id != self.inner_fold_id:
+                    raise ValueError("inner fold identity does not match its manifest")
+                for field_name in (
+                    "inner_fold_manifest_id",
+                    "scale_resolution_id",
+                    "resolved_penalty_id",
+                    "training_functional_id",
+                    "heldout_application_id",
+                ):
+                    value = getattr(self, field_name)
+                    if observed:
+                        _name(cast(str, value), field_name=field_name)
+                    elif value is not None:
+                        _name(value, field_name=field_name)
+                if (self.resolved_penalty_id is None) != (
+                    self.scale_resolution_id is None
+                ):
+                    raise ValueError(
+                        "resolved penalty and scale resolution must co-occur"
+                    )
+                resolved_values = (
+                    self.resolved_lambda1,
+                    self.resolved_lambda2,
+                )
+                all_resolved_values_missing = all(
+                    value is None for value in resolved_values
+                )
+                all_resolved_values_present = all(
+                    value is not None for value in resolved_values
+                )
+                if not (
+                    (
+                        self.resolved_penalty_id is None
+                        and all_resolved_values_missing
+                    )
+                    or (
+                        self.resolved_penalty_id is not None
+                        and all_resolved_values_present
+                    )
+                ):
+                    raise ValueError(
+                        "resolved penalty and numerical lambdas must co-occur"
+                    )
+                if self.resolved_penalty_id is not None and any(
+                    not math.isfinite(cast(float, value))
+                    or cast(float, value) < 0
+                    for value in resolved_values
+                ):
+                    raise ValueError(
+                        "resolved lambdas must be finite and non-negative"
+                    )
+                if self.heldout_application_id is not None and (
+                    self.training_functional_id is None
+                ):
+                    raise ValueError(
+                        "heldout application requires a training functional parent"
+                    )
+            else:
+                training_subjects = ()
+                if (
+                    self.inner_training_subject_ids
+                    or self.inner_fold_manifest_id is not None
+                    or self.scale_resolution_id is not None
+                    or self.resolved_penalty_id is not None
+                    or self.resolved_lambda1 is not None
+                    or self.resolved_lambda2 is not None
+                    or self.training_functional_id is not None
+                    or self.heldout_application_id is not None
+                ):
+                    raise ValueError(
+                        "caller-recorded evaluations cannot claim verified parents"
+                    )
             valid = (
                 self._producer_marker == _EVALUATION_MARKER
-                and self.verification_status == _CALLER_RECORDED_EVALUATION
+                and self.verification_status in _EVALUATION_VERIFICATION_STATUSES
                 and self.status in _STATUSES
                 and observed == (self.reason_code is None)
+                and tuple(validation_subjects) == self.validation_subject_ids
+                and tuple(training_subjects) == self.inner_training_subject_ids
                 and losses.ndim == 1
                 and _is_immutable_byte_backed(self.subject_losses)
                 and np.all(np.isfinite(losses))
@@ -688,7 +876,7 @@ class PenaltyFoldEvaluation:
                 and stable_id(
                     "penalty_fold_evaluation",
                     self._identity_payload(),
-                    schema_version="1",
+                    schema_version="2",
                 )
                 == self.evaluation_id
             )
@@ -756,12 +944,20 @@ def record_penalty_fold_evaluation(
         reason_code = reason_code.strip()
         frozen_losses = _immutable_vector(np.empty(0, dtype="<f8"))
     self = object.__new__(PenaltyFoldEvaluation)
-    values = {
+    values: dict[str, object] = {
         "candidate_id": candidate.candidate_id,
         "inner_fold_id": fold_id,
+        "inner_fold_manifest_id": None,
+        "inner_training_subject_ids": (),
         "validation_subject_ids": subjects,
         "subject_losses": frozen_losses,
         "subject_losses_digest": _array_digest(frozen_losses),
+        "scale_resolution_id": None,
+        "resolved_penalty_id": None,
+        "resolved_lambda1": None,
+        "resolved_lambda2": None,
+        "training_functional_id": None,
+        "heldout_application_id": None,
         "status": status,
         "reason_code": reason_code,
         "verification_status": _CALLER_RECORDED_EVALUATION,
@@ -773,7 +969,156 @@ def record_penalty_fold_evaluation(
         self,
         "evaluation_id",
         stable_id(
-            "penalty_fold_evaluation", self._identity_payload(), schema_version="1"
+            "penalty_fold_evaluation", self._identity_payload(), schema_version="2"
+        ),
+    )
+    return self
+
+
+def _record_subject_blocked_penalty_fold_evaluation(
+    candidate: RelativePenaltyCandidate,
+    *,
+    _producer_token: object,
+    inner_fold_id: str,
+    inner_fold_manifest_id: str,
+    training_subject_ids: Sequence[str],
+    validation_subject_ids: Sequence[str],
+    subject_losses: np.ndarray | None = None,
+    scale_resolution_id: str | None = None,
+    resolved_penalty_id: str | None = None,
+    resolved_lambda1: float | None = None,
+    resolved_lambda2: float | None = None,
+    training_functional_id: str | None = None,
+    heldout_application_id: str | None = None,
+    status: str = _OBSERVED,
+    reason_code: str | None = None,
+) -> PenaltyFoldEvaluation:
+    """Record one workflow-verified subject-blocked inner fit/apply result."""
+
+    if _producer_token is not _WORKFLOW_SUBJECT_BLOCKED_PRODUCER_TOKEN:
+        raise TypeError(
+            "verified subject-blocked evaluations are workflow-producer-owned"
+        )
+    if not isinstance(candidate, RelativePenaltyCandidate):
+        raise TypeError("candidate must be a RelativePenaltyCandidate")
+    candidate._require_intact()
+    fold_id = _name(inner_fold_id, field_name="inner_fold_id")
+    manifest_id = _name(
+        inner_fold_manifest_id, field_name="inner_fold_manifest_id"
+    )
+    if manifest_id != fold_id:
+        raise ValueError("inner_fold_manifest_id must equal inner_fold_id")
+    training_subjects = tuple(
+        sorted(
+            _names(training_subject_ids, field_name="training_subject_ids")
+        )
+    )
+    supplied_validation = _names(
+        validation_subject_ids, field_name="validation_subject_ids"
+    )
+    validation_subjects = tuple(sorted(supplied_validation))
+    if set(training_subjects).intersection(validation_subjects):
+        raise ValueError("inner training and validation subjects must be disjoint")
+    if status not in _STATUSES:
+        raise ValueError(f"status must be one of {sorted(_STATUSES)}")
+    parent_values = {
+        "scale_resolution_id": scale_resolution_id,
+        "resolved_penalty_id": resolved_penalty_id,
+        "training_functional_id": training_functional_id,
+        "heldout_application_id": heldout_application_id,
+    }
+    if status == _OBSERVED:
+        if reason_code is not None:
+            raise ValueError("observed evaluation cannot have a reason_code")
+        if subject_losses is None:
+            raise ValueError("observed evaluation requires subject_losses")
+        for field_name, value in parent_values.items():
+            _name(cast(str, value), field_name=field_name)
+        for lambda_field_name, resolved_value in (
+            ("resolved_lambda1", resolved_lambda1),
+            ("resolved_lambda2", resolved_lambda2),
+        ):
+            if (
+                resolved_value is None
+                or not math.isfinite(resolved_value)
+                or resolved_value < 0
+            ):
+                raise ValueError(
+                    f"{lambda_field_name} must be finite and non-negative"
+                )
+        supplied_losses = np.asarray(subject_losses, dtype="<f8")
+        if supplied_losses.shape != (len(validation_subjects),):
+            raise ValueError("subject_losses must align with validation_subject_ids")
+        if np.any(~np.isfinite(supplied_losses)) or np.any(supplied_losses < 0):
+            raise ValueError("subject_losses must be finite and non-negative")
+        loss_by_subject = dict(
+            zip(supplied_validation, supplied_losses, strict=True)
+        )
+        losses = _immutable_vector(
+            np.asarray(
+                [loss_by_subject[subject] for subject in validation_subjects],
+                dtype="<f8",
+            )
+        )
+    else:
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise ValueError("unavailable evaluation requires a non-empty reason_code")
+        if subject_losses is not None and np.asarray(subject_losses).size:
+            raise ValueError("unavailable evaluation cannot retain numerical losses")
+        for field_name, value in parent_values.items():
+            if value is not None:
+                _name(value, field_name=field_name)
+        if (resolved_penalty_id is None) != (scale_resolution_id is None):
+            raise ValueError("resolved penalty and scale resolution must co-occur")
+        resolved_values = (resolved_lambda1, resolved_lambda2)
+        if not (
+            (
+                resolved_penalty_id is None
+                and all(value is None for value in resolved_values)
+            )
+            or (
+                resolved_penalty_id is not None
+                and all(value is not None for value in resolved_values)
+            )
+        ):
+            raise ValueError(
+                "resolved penalty and numerical lambdas must co-occur"
+            )
+        if any(
+            value is not None and (not math.isfinite(value) or value < 0)
+            for value in resolved_values
+        ):
+            raise ValueError("resolved lambdas must be finite and non-negative")
+        if heldout_application_id is not None and training_functional_id is None:
+            raise ValueError(
+                "heldout application requires a training functional parent"
+            )
+        reason_code = reason_code.strip()
+        losses = _immutable_vector(np.empty(0, dtype="<f8"))
+    self = object.__new__(PenaltyFoldEvaluation)
+    values: dict[str, object] = {
+        "candidate_id": candidate.candidate_id,
+        "inner_fold_id": fold_id,
+        "inner_fold_manifest_id": manifest_id,
+        "inner_training_subject_ids": training_subjects,
+        "validation_subject_ids": validation_subjects,
+        "subject_losses": losses,
+        "subject_losses_digest": _array_digest(losses),
+        **parent_values,
+        "resolved_lambda1": resolved_lambda1,
+        "resolved_lambda2": resolved_lambda2,
+        "status": status,
+        "reason_code": reason_code,
+        "verification_status": _VERIFIED_EVALUATION,
+        "_producer_marker": _EVALUATION_MARKER,
+    }
+    for attribute_name, attribute_value in values.items():
+        object.__setattr__(self, attribute_name, attribute_value)
+    object.__setattr__(
+        self,
+        "evaluation_id",
+        stable_id(
+            "penalty_fold_evaluation", self._identity_payload(), schema_version="2"
         ),
     )
     return self
@@ -941,15 +1286,156 @@ def _summarize_candidate(
 
 
 @dataclass(frozen=True, slots=True, init=False)
+class PenaltyCandidateComparison:
+    """Descriptive paired loss comparison, not a CI or noninferiority test."""
+
+    candidate_id: str
+    best_candidate_id: str
+    subject_ids: tuple[str, ...]
+    loss_differences: np.ndarray
+    mean_loss_difference: float
+    standard_error: float
+    one_se_threshold: float
+    within_one_se: bool
+    comparison_id: str
+    _producer_marker: str
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "PenaltyCandidateComparison is producer-owned; "
+            "use select_penalty_candidate()"
+        )
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "best_candidate_id": self.best_candidate_id,
+            "candidate_id": self.candidate_id,
+            "loss_differences_digest": _array_digest(self.loss_differences),
+            "mean_loss_difference": self.mean_loss_difference,
+            "n_subjects": len(self.subject_ids),
+            "one_se_threshold": self.one_se_threshold,
+            "standard_error_method": _PAIRED_SE_METHOD,
+            "standard_error": self.standard_error,
+            "subject_ids": list(self.subject_ids),
+            "threshold_semantics": _THRESHOLD_SEMANTICS,
+            "selection_interpretation": _SELECTION_INTERPRETATION,
+            "within_one_se": self.within_one_se,
+        }
+
+    def _require_intact(self) -> None:
+        try:
+            subjects = _names(
+                self.subject_ids,
+                field_name="subject_ids",
+                minimum=2,
+            )
+            differences = np.asarray(self.loss_differences, dtype="<f8")
+            expected_mean = float(np.mean(differences))
+            expected_se = float(
+                np.std(differences, ddof=1) / math.sqrt(len(differences))
+            )
+            expected_within = expected_mean <= expected_se
+            valid = (
+                self._producer_marker == _COMPARISON_MARKER
+                and self.subject_ids == tuple(sorted(subjects))
+                and differences.shape == (len(subjects),)
+                and np.all(np.isfinite(differences))
+                and _is_immutable_byte_backed(self.loss_differences)
+                and self.mean_loss_difference == expected_mean
+                and self.standard_error == expected_se
+                and self.one_se_threshold == expected_se
+                and self.within_one_se == expected_within
+                and stable_id(
+                    "penalty_candidate_comparison",
+                    self._identity_payload(),
+                    schema_version="1",
+                )
+                == self.comparison_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Penalty candidate comparison failed integrity validation",
+                code="penalty_candidate_comparison_integrity_violation",
+                field="comparison_id",
+                remediation="Recompute paired comparisons from intact summaries",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Penalty candidate comparison failed integrity validation",
+                code="penalty_candidate_comparison_integrity_violation",
+                field="comparison_id",
+                remediation="Recompute paired comparisons from intact summaries",
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return paired-delta decision provenance without expanding differences."""
+
+        self._require_intact()
+        return {"comparison_id": self.comparison_id, **self._identity_payload()}
+
+
+def _compare_candidate_to_best(
+    summary: PenaltyCandidateSummary,
+    best: PenaltyCandidateSummary,
+) -> PenaltyCandidateComparison:
+    summary._require_intact()
+    best._require_intact()
+    if summary.status != _OBSERVED or best.status != _OBSERVED:
+        raise ValueError("paired one-SE comparison requires observed summaries")
+    if summary.subject_ids != best.subject_ids or len(summary.subject_ids) < 2:
+        raise ValueError(
+            "paired one-SE comparison requires identical subject units"
+        )
+    differences = _immutable_vector(
+        np.asarray(summary.subject_losses, dtype="<f8")
+        - np.asarray(best.subject_losses, dtype="<f8")
+    )
+    if np.any(~np.isfinite(differences)):
+        raise ValueError("paired one-SE loss differences must be finite")
+    mean_difference = float(np.mean(differences))
+    standard_error = float(
+        np.std(differences, ddof=1) / math.sqrt(len(differences))
+    )
+    if not math.isfinite(mean_difference) or not math.isfinite(standard_error):
+        raise ValueError("paired one-SE statistics must be finite")
+    self = object.__new__(PenaltyCandidateComparison)
+    values: dict[str, object] = {
+        "candidate_id": summary.candidate_id,
+        "best_candidate_id": best.candidate_id,
+        "subject_ids": summary.subject_ids,
+        "loss_differences": differences,
+        "mean_loss_difference": mean_difference,
+        "standard_error": standard_error,
+        "one_se_threshold": standard_error,
+        "within_one_se": mean_difference <= standard_error,
+        "_producer_marker": _COMPARISON_MARKER,
+    }
+    for name, value in values.items():
+        object.__setattr__(self, name, value)
+    object.__setattr__(
+        self,
+        "comparison_id",
+        stable_id(
+            "penalty_candidate_comparison",
+            self._identity_payload(),
+            schema_version="1",
+        ),
+    )
+    return self
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class PenaltyTuningArtifact:
-    """Producer-owned one-SE selection with complete candidate/fold coverage."""
+    """Producer-owned descriptive paired-delta one-SE heuristic."""
 
     spec: PenaltyTuningSpec
     tuning_scope_id: str
+    inner_fold_plan_id: str | None
     training_subject_ids: tuple[str, ...]
     inner_fold_ids: tuple[str, ...]
     evaluations: tuple[PenaltyFoldEvaluation, ...]
     summaries: tuple[PenaltyCandidateSummary, ...]
+    candidate_comparisons: tuple[PenaltyCandidateComparison, ...]
     best_candidate_id: str | None
     selected_candidate_id: str | None
     best_mean_loss: float | None
@@ -980,21 +1466,30 @@ class PenaltyTuningArtifact:
 
     @property
     def is_oof_certified(self) -> bool:
-        """Return false until typed inner-fold fit/apply parents produce losses."""
+        """Return whether typed inner folds verify conditional candidate selection."""
 
-        return False
+        return (
+            self.certification_status == _VERIFIED_TUNING
+            and self.status == "selected"
+        )
 
     def _identity_payload(self) -> dict[str, object]:
         return {
             "best_candidate_id": self.best_candidate_id,
             "best_mean_loss": self.best_mean_loss,
             "certification_status": self.certification_status,
+            "candidate_comparison_ids": [
+                item.comparison_id for item in self.candidate_comparisons
+            ],
             "evaluation_ids": [item.evaluation_id for item in self.evaluations],
             "inner_fold_ids": list(self.inner_fold_ids),
+            "inner_fold_plan_id": self.inner_fold_plan_id,
             "one_se_threshold": self.one_se_threshold,
             "reason_code": self.reason_code,
             "selected_candidate_id": self.selected_candidate_id,
             "selection_rule": self.spec.selection_rule,
+            "selection_interpretation": _SELECTION_INTERPRETATION,
+            "threshold_semantics": _THRESHOLD_SEMANTICS,
             "spec_id": self.spec.spec_id,
             "status": self.status,
             "summary_ids": [item.summary_id for item in self.summaries],
@@ -1006,17 +1501,33 @@ class PenaltyTuningArtifact:
         try:
             for summary in self.summaries:
                 summary._require_intact()
-            repeated = select_penalty_candidate(
-                self.spec,
-                self.evaluations,
-                tuning_scope_id=self.tuning_scope_id,
-                training_subject_ids=self.training_subject_ids,
-                inner_fold_ids=self.inner_fold_ids,
-            )
+            for comparison in self.candidate_comparisons:
+                comparison._require_intact()
+            if self.certification_status == _NOT_ESTIMABLE_TUNING:
+                repeated = not_estimable_penalty_tuning(
+                    self.spec,
+                    tuning_scope_id=self.tuning_scope_id,
+                    training_subject_ids=self.training_subject_ids,
+                    reason_code=cast(str, self.reason_code),
+                    inner_fold_plan_id=self.inner_fold_plan_id,
+                )
+            else:
+                repeated = select_penalty_candidate(
+                    self.spec,
+                    self.evaluations,
+                    tuning_scope_id=self.tuning_scope_id,
+                    training_subject_ids=self.training_subject_ids,
+                    inner_fold_ids=self.inner_fold_ids,
+                    inner_fold_plan_id=self.inner_fold_plan_id,
+                )
             valid = (
                 self._producer_marker == _TUNING_MARKER
-                and self.certification_status == _NONCERTIFYING_TUNING
-                and not self.is_oof_certified
+                and self.certification_status
+                in {
+                    _NONCERTIFYING_TUNING,
+                    _VERIFIED_TUNING,
+                    _NOT_ESTIMABLE_TUNING,
+                }
                 and repeated.tuning_id == self.tuning_id
                 and repeated._identity_payload() == self._identity_payload()
             )
@@ -1045,6 +1556,10 @@ class PenaltyTuningArtifact:
             "spec": self.spec.to_dict(),
             "evaluations": [item.to_dict() for item in self.evaluations],
             "summaries": [summary.to_dict() for summary in self.summaries],
+            "candidate_comparisons": [
+                comparison.to_dict()
+                for comparison in self.candidate_comparisons
+            ],
         }
 
 
@@ -1055,8 +1570,9 @@ def select_penalty_candidate(
     tuning_scope_id: str,
     training_subject_ids: Sequence[str],
     inner_fold_ids: Sequence[str],
+    inner_fold_plan_id: str | None = None,
 ) -> PenaltyTuningArtifact:
-    """Select the strongest candidate within one SE of minimum subject loss."""
+    """Select eligible candidates with explicit L1-first sparsity priority."""
 
     if not isinstance(spec, PenaltyTuningSpec):
         raise TypeError("spec must be a PenaltyTuningSpec")
@@ -1079,6 +1595,20 @@ def select_penalty_candidate(
         raise TypeError("evaluations must contain PenaltyFoldEvaluation values")
     for result in results:
         result._require_intact()
+    verification_statuses = {result.verification_status for result in results}
+    if len(verification_statuses) != 1:
+        raise ValueError(
+            "all candidate/fold evaluations must use one verification contract"
+        )
+    verification_status = next(iter(verification_statuses))
+    if verification_status == _VERIFIED_EVALUATION:
+        plan_id = _name(cast(str, inner_fold_plan_id), field_name="inner_fold_plan_id")
+    else:
+        if inner_fold_plan_id is not None:
+            raise ValueError(
+                "caller-recorded evaluations cannot claim an inner fold plan"
+            )
+        plan_id = None
     results = tuple(
         sorted(results, key=lambda item: (item.candidate_id, item.inner_fold_id))
     )
@@ -1113,6 +1643,18 @@ def select_penalty_candidate(
         raise ValueError(
             "inner folds must validate every training subject exactly once"
         )
+    if verification_status == _VERIFIED_EVALUATION:
+        subject_set = set(subjects)
+        for result in results:
+            if result.inner_fold_manifest_id != result.inner_fold_id:
+                raise ValueError("verified evaluation has incompatible fold lineage")
+            expected_training = tuple(
+                sorted(subject_set.difference(result.validation_subject_ids))
+            )
+            if result.inner_training_subject_ids != expected_training:
+                raise ValueError(
+                    "verified inner fold must partition the complete tuning scope"
+                )
 
     summaries = tuple(
         _summarize_candidate(
@@ -1131,6 +1673,7 @@ def select_penalty_candidate(
     selected_candidate_id: str | None = None
     best_mean_loss: float | None = None
     threshold: float | None = None
+    candidate_comparisons: tuple[PenaltyCandidateComparison, ...] = ()
     reason_code: str | None = None
     candidate_by_id = {
         candidate.candidate_id: candidate for candidate in spec.candidates
@@ -1147,11 +1690,17 @@ def select_penalty_candidate(
         )
         best_candidate_id = best.candidate_id
         best_mean_loss = cast(float, best.mean_loss)
-        threshold = best_mean_loss + cast(float, best.standard_error)
+        candidate_comparisons = tuple(
+            _compare_candidate_to_best(summary, best) for summary in observed
+        )
+        comparison_by_candidate = {
+            comparison.candidate_id: comparison
+            for comparison in candidate_comparisons
+        }
         eligible = tuple(
             summary
             for summary in observed
-            if cast(float, summary.mean_loss) <= threshold
+            if comparison_by_candidate[summary.candidate_id].within_one_se
         )
         selected = min(
             eligible,
@@ -1174,17 +1723,23 @@ def select_penalty_candidate(
     values: dict[str, Any] = {
         "spec": spec,
         "tuning_scope_id": scope,
+        "inner_fold_plan_id": plan_id,
         "training_subject_ids": subjects,
         "inner_fold_ids": folds,
         "evaluations": results,
         "summaries": summaries,
+        "candidate_comparisons": candidate_comparisons,
         "best_candidate_id": best_candidate_id,
         "selected_candidate_id": selected_candidate_id,
         "best_mean_loss": best_mean_loss,
         "one_se_threshold": threshold,
         "status": status,
         "reason_code": reason_code,
-        "certification_status": _NONCERTIFYING_TUNING,
+        "certification_status": (
+            _VERIFIED_TUNING
+            if verification_status == _VERIFIED_EVALUATION
+            else _NONCERTIFYING_TUNING
+        ),
         "_producer_marker": _TUNING_MARKER,
     }
     for name, value in values.items():
@@ -1192,12 +1747,79 @@ def select_penalty_candidate(
     object.__setattr__(
         self,
         "tuning_id",
-        stable_id("penalty_tuning_artifact", self._identity_payload()),
+        stable_id(
+            "penalty_tuning_artifact",
+            self._identity_payload(),
+            schema_version="2",
+        ),
+    )
+    return self
+
+
+def not_estimable_penalty_tuning(
+    spec: PenaltyTuningSpec,
+    *,
+    tuning_scope_id: str,
+    training_subject_ids: Sequence[str],
+    reason_code: str,
+    inner_fold_plan_id: str | None = None,
+) -> PenaltyTuningArtifact:
+    """Create a typed tuning artifact when inner-fold production cannot start."""
+
+    if not isinstance(spec, PenaltyTuningSpec):
+        raise TypeError("spec must be a PenaltyTuningSpec")
+    spec._require_intact()
+    scope = _name(tuning_scope_id, field_name="tuning_scope_id")
+    subjects = tuple(
+        sorted(
+            _names(
+                training_subject_ids,
+                field_name="training_subject_ids",
+                minimum=2,
+            )
+        )
+    )
+    reason = _name(reason_code, field_name="reason_code")
+    plan_id = (
+        None
+        if inner_fold_plan_id is None
+        else _name(inner_fold_plan_id, field_name="inner_fold_plan_id")
+    )
+    self = object.__new__(PenaltyTuningArtifact)
+    values: dict[str, Any] = {
+        "spec": spec,
+        "tuning_scope_id": scope,
+        "inner_fold_plan_id": plan_id,
+        "training_subject_ids": subjects,
+        "inner_fold_ids": (),
+        "evaluations": (),
+        "summaries": (),
+        "candidate_comparisons": (),
+        "best_candidate_id": None,
+        "selected_candidate_id": None,
+        "best_mean_loss": None,
+        "one_se_threshold": None,
+        "status": _NOT_ESTIMABLE,
+        "reason_code": reason,
+        "certification_status": _NOT_ESTIMABLE_TUNING,
+        "_producer_marker": _TUNING_MARKER,
+    }
+    for name, value in values.items():
+        object.__setattr__(self, name, value)
+    object.__setattr__(
+        self,
+        "tuning_id",
+        stable_id(
+            "penalty_tuning_artifact",
+            self._identity_payload(),
+            schema_version="2",
+        ),
     )
     return self
 
 
 __all__ = [
+    "PenaltyCandidateComparison",
     "PenaltyCandidateSummary",
     "PenaltyFoldEvaluation",
     "PenaltyScaleResolution",
@@ -1205,6 +1827,7 @@ __all__ = [
     "PenaltyTuningSpec",
     "RelativePenaltyCandidate",
     "ResolvedPenalty",
+    "not_estimable_penalty_tuning",
     "record_penalty_fold_evaluation",
     "resolve_penalty_scale",
     "resolve_residualized_penalty_scale",

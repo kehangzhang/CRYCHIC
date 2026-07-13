@@ -57,6 +57,7 @@ from .solver import (
     solve_nonnegative_residual_elastic_net,
 )
 from .tuning import (
+    PenaltyCandidateComparison,
     PenaltyCandidateSummary,
     PenaltyFoldEvaluation,
     PenaltyScaleResolution,
@@ -64,6 +65,7 @@ from .tuning import (
     PenaltyTuningSpec,
     RelativePenaltyCandidate,
     ResolvedPenalty,
+    not_estimable_penalty_tuning,
     record_penalty_fold_evaluation,
     resolve_penalty_scale,
     resolve_residualized_penalty_scale,
@@ -91,6 +93,7 @@ __all__ = [
     "GatedTargetBasis",
     "LRIdentifiabilityStatus",
     "ObjectiveTerms",
+    "PenaltyCandidateComparison",
     "PenaltyCandidateSummary",
     "PenaltyFoldEvaluation",
     "PenaltyScaleResolution",
@@ -117,6 +120,7 @@ __all__ = [
     "fit_receiver_family_training_artifact",
     "fit_receiver_family_training_artifacts",
     "fit_response_precision",
+    "not_estimable_penalty_tuning",
     "record_penalty_fold_evaluation",
     "resolve_penalty_scale",
     "resolve_residualized_penalty_scale",

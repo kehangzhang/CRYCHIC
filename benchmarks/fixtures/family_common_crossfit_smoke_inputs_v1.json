@@ -1,0 +1,109 @@
+{
+  "records": [
+    {
+      "active_interaction": "CXCL10_CXCR3",
+      "dataset_id": "synthetic_active",
+      "expected_ecosystem_change": true,
+      "expected_integrated_edge": true,
+      "expected_receiver_response": true,
+      "expected_state_change": true,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_active.h5ad",
+      "scenario": "active",
+      "scenario_seed": 779404205,
+      "sha256": "87a395e3d35a6fff475c10453dac51d474cef46440f6617e9b7d1d9c7e427dee"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_global_null",
+      "expected_ecosystem_change": false,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": false,
+      "expected_state_change": false,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_global_null.h5ad",
+      "scenario": "global_null",
+      "scenario_seed": 1817746471,
+      "sha256": "37f846e1d753816ff71b86cb90bd298b7647bfcea7c473dd1d778b50f6baa187"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_abundance_only",
+      "expected_ecosystem_change": true,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": false,
+      "expected_state_change": false,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_abundance_only.h5ad",
+      "scenario": "abundance_only",
+      "scenario_seed": 172186306,
+      "sha256": "47864b350ee364a14ca86a499ebaaff3d8ab05946d3882eefdc6b18c451e33e6"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_receiver_autonomous",
+      "expected_ecosystem_change": false,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": true,
+      "expected_state_change": false,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_receiver_autonomous.h5ad",
+      "scenario": "receiver_autonomous",
+      "scenario_seed": 4285072227,
+      "sha256": "bba02e0eb3b588a0edbf963173806df13abc4c415eb4d1adc86002eeb6e23985"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_ligand_only",
+      "expected_ecosystem_change": true,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": false,
+      "expected_state_change": true,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_ligand_only.h5ad",
+      "scenario": "ligand_only",
+      "scenario_seed": 3259882498,
+      "sha256": "4f0997c833e54ed341873f3c91f7560473fcd0571d713129a14c7a27ce14cae9"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_target_only",
+      "expected_ecosystem_change": false,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": true,
+      "expected_state_change": false,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_target_only.h5ad",
+      "scenario": "target_only",
+      "scenario_seed": 3462572278,
+      "sha256": "6cd886b0a487b4963e03a25489b9d142b33eac2b4cc837f67f47a6957c641ee8"
+    },
+    {
+      "active_interaction": null,
+      "dataset_id": "synthetic_receptor_knockout",
+      "expected_ecosystem_change": false,
+      "expected_integrated_edge": false,
+      "expected_receiver_response": true,
+      "expected_state_change": false,
+      "n_samples": 16,
+      "n_subjects": 8,
+      "path": "synthetic_receptor_knockout.h5ad",
+      "scenario": "receptor_knockout",
+      "scenario_seed": 949971671,
+      "sha256": "252eb5ffdc9a3d24f898dce14652c0ec0d09f5c2a768a278376d220e0bbe1313"
+    }
+  ],
+  "schema_version": "crychic-family-common-smoke-input-registry-v1",
+  "source_manifest": {
+    "relative_workspace_path": "benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+    "schema_version": "crychic-multimethod-synthetic-v1",
+    "sha256": "1097bb0cd8d09a2a0e8c6de6bd1d967886b9edb53f541592897e7261c6940a52",
+    "size_bytes": 4328
+  }
+}

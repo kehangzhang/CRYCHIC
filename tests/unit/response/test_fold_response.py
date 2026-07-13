@@ -152,6 +152,8 @@ def test_paired_fold_response_matches_hand_subject_differences() -> None:
     np.testing.assert_allclose(artifact.raw_precision, 1.0 / artifact.standard_error**2)
     assert artifact.status == "ok"
     assert artifact.method == "frozen_formula_paired_subject_effects_v1"
+    assert artifact.residual_df == 3
+    assert artifact.to_dict()["residual_df"] == 3
     assert artifact.min_subjects_per_context == 2
     assert artifact.encoder_id == encoder.encoder_id
     assert artifact.training_subject_ids == encoder.training_subject_ids
@@ -186,6 +188,7 @@ def test_formula_response_uses_exact_sample_keyed_frozen_design() -> None:
     np.testing.assert_allclose(artifact.effect, expected[-1])
     assert artifact.status == "ok"
     assert artifact.method == "frozen_formula_independent_subjects_v1"
+    assert artifact.residual_df == len(design) - np.linalg.matrix_rank(design)
 
 
 def test_technical_receiver_units_are_averaged_before_model_fit() -> None:
@@ -353,6 +356,21 @@ def test_training_artifact_is_producer_owned_immutable_and_self_validating() -> 
         with pytest.raises(ValueError):
             values.setflags(write=True)
     object.__setattr__(artifact, "effect_digest", "poison")
+    with pytest.raises(ContractError, match="integrity"):
+        artifact.to_dict()
+
+
+def test_training_artifact_binds_residual_df_to_identity() -> None:
+    metadata = _sample_metadata(("p1", "p2", "p3", "p4"))
+    artifact = fit_fold_gene_response(
+        _aggregate(metadata, _counts(metadata)),
+        _encoder(metadata),
+        receiver="R",
+        fold_id="fold-df-contract",
+        training_input_digest="input-df-contract",
+    )
+
+    object.__setattr__(artifact, "residual_df", 2)
     with pytest.raises(ContractError, match="integrity"):
         artifact.to_dict()
 

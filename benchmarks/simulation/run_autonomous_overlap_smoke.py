@@ -12,14 +12,13 @@ import numpy as np
 
 from crychic.resources import GeneNamespace, Species
 from crychic.response import build_receiver_autonomous_program_resource
-from crychic.scoring import (
-    DownstreamRowManifest,
-    apply_incremental_downstream_functional,
-    fit_incremental_downstream_functional,
-)
+from crychic.scoring import DownstreamRowManifest
 from crychic.scoring.downstream import (
+    INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT,
     IncrementalDownstreamApplication,
     IncrementalDownstreamFunctional,
+    apply_incremental_downstream_functional,
+    fit_incremental_downstream_functional,
 )
 
 SCHEMA_VERSION = "crychic-autonomous-overlap-smoke-v1"
@@ -31,11 +30,14 @@ AUTONOMOUS_SMOKE_SOURCE_PATHS = (
     "src/crychic/attribution/__init__.py",
     "src/crychic/attribution/contracts.py",
     "src/crychic/attribution/solver.py",
+    "src/crychic/attribution/tuning.py",
     "src/crychic/core/__init__.py",
     "src/crychic/core/errors.py",
     "src/crychic/core/ids.py",
     "src/crychic/resources/__init__.py",
     "src/crychic/resources/contracts.py",
+    "src/crychic/resources/autonomous_registry.py",
+    "src/crychic/resources/manifest.py",
     "src/crychic/response/__init__.py",
     "src/crychic/response/autonomous.py",
     "src/crychic/scoring/__init__.py",
@@ -223,7 +225,7 @@ def run_smoke() -> dict[str, object]:
         "schema_version": SCHEMA_VERSION,
         "scope": "small_algorithm_counterexample_smoke_not_method_benchmark",
         "provenance": {
-            "algorithm_contract": ("sample_keyed_autonomous_projected_incremental_v4"),
+            "algorithm_contract": INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT,
             "source_sha256": autonomous_smoke_source_sha256(),
         },
         "records": records,

@@ -4,9 +4,12 @@
 - Date: 2026-07-13
 - Implementation status: Partial; the public orchestrator verifies the frozen
   interaction/common-sender stages and exact planned receiver-row coverage for
-  a typed design/response/precision/incremental diagnostic chain. The official
-  incremental component remains unavailable until autonomous nuisance, inner
-  tuning, family attribution and common scoring are implemented.
+  a typed design/response/precision/incremental/family-common chain. A trusted
+  registered autonomous resource plus estimable paired subject-blocked tuning
+  can now produce officially observed incremental children. Held-out
+  family-common applications are connected behind that gate but remain
+  noncertifying diagnostics. The source-agnostic receiver-program parent,
+  independent/mixed inner tuning and full-pipeline inference remain absent.
 
 ## Context
 
@@ -60,20 +63,25 @@ declared normalized matrix, but cannot claim train-only provenance.
 
 ## Fold stages
 
-Training performs, in order:
+The base training path performs, in order:
 
 1. pseudobulk construction and training-only expression support filtering;
 2. interaction selection, optional cap, and receptor/path eligibility;
 3. continuous response and precision-transform fitting;
 4. strict family construction and frozen target basis fitting;
-5. nuisance encoder and inner-training parameter selection;
-6. incremental downstream model fitting;
-7. a contrast-common sender functional;
-8. an aggregate fold/contrast scoring manifest.
+5. nuisance encoder and fixed-penalty incremental diagnostic fitting;
+6. a contrast-common sender functional;
+7. an aggregate fold/contrast scoring manifest.
+
+Supplying `PenaltyTuningSpec` additionally enables conditional subject-blocked
+inner tuning, selected-penalty incremental fitting and family-common
+construction. The current producer-owned one-SE path supports fully paired
+subjects. Independent and mixed allocations emit typed `not_estimable` tuning
+artifacts instead of falling back to caller-authored losses.
 
 Application performs only sample-local fixed count transforms, frozen-universe
 availability, frozen gate and design encoding, downstream and sender
-application, and common-functional scoring.
+application, and, when enabled, family-common diagnostic scoring.
 
 A fold/contrast may contain multiple receiver models. Its scoring collection
 hashes the sorted receiver child manifest identifiers and explicitly declares
@@ -151,18 +159,27 @@ separately reports `verified_train_only_oof_partial_pipeline` and
 `is_oof_certified=false`. This distinction verifies the implemented stages
 without certifying the complete method.
 
-The incremental gain is executed only as a development diagnostic. Public
-cross-fit may project a typed caller-declared static receiver-autonomous program
-resource, but that constructor cannot prove the supplied matrix came from a
-trusted preregistered manifest. Every official row therefore remains
-`not_estimable` with `receiver_autonomous_nuisance_not_frozen`. A trusted
-resource loader, subject-blocked inner tuning, family attribution and a common
-scoring manifest remain. No default-method switch is eligible.
+The incremental gain remains a candidate development estimand. Public cross-fit
+may project either a typed caller-declared static receiver-autonomous resource
+or a code-reviewed registration. The caller-declared constructor cannot prove
+the supplied matrix came from a trusted preregistered manifest and therefore
+remains `not_estimable` with `receiver_autonomous_nuisance_not_frozen` at the
+official gate. The registered loader binds manifest and payload identity,
+canonical matrix digest, license, review scope, release, species, namespace and
+the static TSV schema, and emits `manifest_verified_static_trusted_v1`.
+Cross-fit now connects that artifact to paired subject-blocked inner tuning;
+when every parent is estimable, incremental training and held-out application
+receive official `observed` status. Independent and mixed-subject one-SE tuning
+still fail closed. No default-method switch is eligible.
 
 The low-level precision and incremental primitives were hardened before their
-public integration. Precision v2 binds the raw and transformed ordered feature
-vector plus receiver/contrast/fold scope. Incremental v4 requires explicit
-sample-to-subject-to-context manifests and independently keyed design rows,
+public integration. Precision v3 binds the raw and transformed ordered feature
+vector, residual degrees of freedom, downstream feature scale, and the exact
+receiver/contrast/fold parent scope. Low residual df and missing-scale cases use
+equal supported-feature weights; higher-df weights are converted to standardized
+response units before winsorization and median normalization. Incremental
+application requires explicit sample-to-subject-to-context manifests and
+independently keyed design rows,
 hashes every raw training input, rejects held-out sample or subject reuse,
 reports signed and bounded gains, averages technical rows within
 subject/context, supports paired contrasts and frozen independent-group
@@ -172,11 +189,36 @@ still rely on caller-declared design IDs and remain exploratory. The public
 adapter closes that lineage gap by accepting only producer-owned encoder,
 fold-response, response-precision and receiver-family parents and by deriving
 all matrices and IDs internally. Deterministic relative-penalty and one-SE
-selection artifacts now exist for ordinary and signed residual spaces, but
-caller-authored fold losses are not certification evidence. This establishes
-train/apply provenance for the diagnostic, but not an official incremental
-estimand: trusted autonomous provenance, connected inner tuning, family
-attribution and common scoring are still absent.
+selection artifacts now exist for ordinary and signed residual spaces;
+caller-authored fold losses remain noncertifying. The public paired branch now
+records producer-owned inner evaluations and refits response centering/scaling,
+nuisance projection, the solver and penalty scale within each inner training
+split. Precision, the encoder and the family basis remain outer-frozen, so the
+claim is explicitly conditional on the outer-frozen representation rather than
+fully nested feature discovery.
+
+Candidate selection uses subject-paired candidate-minus-empirical-best losses.
+A candidate is eligible when its mean paired excess loss is no greater than the
+sample-SE of those subject differences. Eligible candidates use an explicit
+L1-fraction-first sparsity priority and L2-fraction second; this is a declared
+policy order, not a total physical ordering of cross-axis elastic-net strength.
+This v2 rule removes common subject-difficulty variance that can otherwise admit
+the L1 zero-solution boundary. It is a descriptive selection heuristic, not a
+confidence interval, noninferiority test or coverage claim.
+The empirical best is selected on the same grid and subjects within an inner
+fold share a fitted training model, so later simulations must assess grid-size
+and selection-frequency sensitivity.
+
+The opt-in path also composes the selected incremental parent with frozen
+families and the contrast-common sender functional. It emits fold-family
+attribution, held-out subject-family differential effects, state/ecosystem
+family and member scores, and sender-resolved allocation. Exact application
+coverage and producer-owned bindings include the training application, tuning,
+selected penalty, autonomous resource, canonical edge evidence and
+receiver-specific sender inputs. Sender weights only allocate an established
+member score. These family-common outputs remain diagnostic rather than OOF-
+certified. The source-agnostic receiver-program parent remains explicitly
+`not_estimable`, and the complete pipeline therefore remains uncertified.
 
 The nuisance encoder reparameterizes the full training Patsy matrix as
 `[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast

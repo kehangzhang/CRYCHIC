@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 
 import pytest
-from benchmarks.simulation.run_crossfit_smoke import crossfit_smoke_source_sha256
+from benchmarks.simulation.run_crossfit_smoke import (
+    CROSSFIT_SMOKE_SOURCE_PATHS,
+    crossfit_smoke_source_sha256,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SUMMARY_PATH = REPO_ROOT / "benchmarks/results/algorithm_crossfit_smoke_v3_summary.json"
@@ -24,6 +27,16 @@ V5_SUMMARY_PATH = (
 V5_FULL_ARTIFACT_PATH = (
     REPO_ROOT.parent / "benchmark_work/algorithm_smoke/crossfit_summary_v5.json"
 )
+REQUIRED_V5_SOURCE_CLOSURE = {
+    "src/crychic/attribution/tuning.py",
+    "src/crychic/resources/autonomous_registry.py",
+    "src/crychic/resources/manifest.py",
+    "src/crychic/response/autonomous.py",
+    "src/crychic/scoring/downstream.py",
+    "src/crychic/scoring/family_common.py",
+    "src/crychic/workflow/crossfit.py",
+    "src/crychic/workflow/receiver_incremental.py",
+}
 
 
 def test_algorithm_crossfit_smoke_summary_is_fail_closed() -> None:
@@ -159,6 +172,7 @@ def test_typed_crossfit_smoke_v5_records_current_diagnostic_boundary() -> None:
 def test_typed_crossfit_smoke_v5_binds_the_current_source_closure() -> None:
     summary = json.loads(V5_SUMMARY_PATH.read_text())
 
+    assert REQUIRED_V5_SOURCE_CLOSURE.issubset(CROSSFIT_SMOKE_SOURCE_PATHS)
     assert summary["source_sha256"] == crossfit_smoke_source_sha256()
 
 

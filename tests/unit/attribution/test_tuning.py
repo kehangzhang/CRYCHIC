@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
+import crychic.attribution as attribution_module
 from crychic.attribution import (
+    PenaltyCandidateComparison,
     PenaltyCandidateSummary,
     PenaltyFoldEvaluation,
     PenaltyScaleResolution,
@@ -12,6 +14,7 @@ from crychic.attribution import (
     PenaltyTuningSpec,
     RelativePenaltyCandidate,
     ResolvedPenalty,
+    not_estimable_penalty_tuning,
     record_penalty_fold_evaluation,
     resolve_penalty_scale,
     resolve_residualized_penalty_scale,
@@ -77,6 +80,33 @@ def _select(
     )
 
 
+def test_verified_inner_evaluation_producer_is_not_public() -> None:
+    assert not hasattr(
+        attribution_module, "record_subject_blocked_penalty_fold_evaluation"
+    )
+
+
+def test_not_estimable_tuning_artifact_is_typed_and_intact() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0,),
+        lambda2_fractions=(0.0,),
+    )
+
+    tuning = not_estimable_penalty_tuning(
+        spec,
+        tuning_scope_id="outer-fold:receiver:contrast",
+        training_subject_ids=("s1", "s2"),
+        reason_code="no_estimable_subject_fold_plan",
+    )
+
+    assert tuning.status == "not_estimable"
+    assert tuning.reason_code == "no_estimable_subject_fold_plan"
+    assert not tuning.is_oof_certified
+    assert tuning.inner_fold_ids == ()
+    assert tuning.evaluations == ()
+    tuning.to_dict()
+
+
 def test_relative_grid_is_canonical_cartesian_and_rejects_boolean() -> None:
     first = PenaltyTuningSpec(
         lambda1_fractions=(0.1, 1.0, 0.1),
@@ -88,6 +118,9 @@ def test_relative_grid_is_canonical_cartesian_and_rejects_boolean() -> None:
     )
 
     assert first.spec_id == second.spec_id
+    assert first.to_dict()["candidate_priority"] == (
+        "l1_fraction_desc_then_l2_fraction_desc_v1"
+    )
     assert tuple(
         (candidate.lambda1_fraction, candidate.lambda2_fraction)
         for candidate in first.candidates
@@ -291,12 +324,10 @@ def test_one_se_selects_strongest_regularization_subject_equally() -> None:
     assert tuning.status == "selected"
     assert tuning.reason_code is None
     assert tuning.best_mean_loss == pytest.approx(1.0, abs=1e-12, rel=0.0)
-    assert tuning.one_se_threshold == pytest.approx(
-        1.1154700538379252, abs=1e-12, rel=0.0
-    )
+    assert tuning.one_se_threshold is None
     assert tuning.selected_candidate is not None
     assert tuning.certification_status == (
-        "caller_recorded_inner_losses_selection_only"
+        "caller_recorded_paired_delta_inner_losses_selection_only_v2"
     )
     assert tuning.is_oof_certified is False
     assert all(
@@ -308,8 +339,196 @@ def test_one_se_selects_strongest_regularization_subject_equally() -> None:
         tuning.selected_candidate.lambda1_fraction,
         tuning.selected_candidate.lambda2_fraction,
     ) == (1.0, 1.0)
+    comparisons = {
+        comparison.candidate_id: comparison
+        for comparison in tuning.candidate_comparisons
+    }
+    selected_comparison = comparisons[tuning.selected_candidate_id]
+    assert selected_comparison.mean_loss_difference == pytest.approx(0.05)
+    assert selected_comparison.one_se_threshold == pytest.approx(
+        0.06454972243679027
+    )
+    assert selected_comparison.within_one_se
     manifest = tuning.to_dict()
     assert len(manifest["evaluations"]) == len(spec.candidates) * 2
+    assert manifest["threshold_semantics"] == (
+        "candidate_minus_empirical_best_subject_loss_standard_error_v1"
+    )
+    assert manifest["selection_interpretation"] == (
+        "descriptive_paired_delta_heuristic_not_ci_or_noninferiority_test_v1"
+    )
+    assert len(manifest["candidate_comparisons"]) == len(spec.candidates)
+
+
+def test_paired_delta_one_se_rejects_common_mode_subject_heterogeneity() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+    )
+    losses = {
+        (1.0, 0.0): (102.0, 1_002.0, 10_002.0, 100_002.0),
+        (0.1, 0.0): (100.0, 1_000.0, 10_000.0, 100_000.0),
+    }
+
+    tuning = _select(spec, _evaluations(spec, losses))
+    unshifted = _select(
+        spec,
+        _evaluations(
+            spec,
+            {
+                (1.0, 0.0): (2.0, 2.0, 2.0, 2.0),
+                (0.1, 0.0): (0.0, 0.0, 0.0, 0.0),
+            },
+        ),
+    )
+
+    assert tuning.selected_candidate is not None
+    assert tuning.selected_candidate.lambda1_fraction == 0.1
+    comparison_by_id = {
+        comparison.candidate_id: comparison
+        for comparison in tuning.candidate_comparisons
+    }
+    strongest = next(
+        candidate
+        for candidate in spec.candidates
+        if candidate.lambda1_fraction == 1.0
+    )
+    comparison = comparison_by_id[strongest.candidate_id]
+    assert comparison.mean_loss_difference == pytest.approx(2.0)
+    assert comparison.one_se_threshold == pytest.approx(0.0)
+    assert not comparison.within_one_se
+    assert comparison.comparison_id == next(
+        item.comparison_id
+        for item in unshifted.candidate_comparisons
+        if item.candidate_id == strongest.candidate_id
+    )
+
+
+def test_paired_delta_one_se_keeps_strongest_for_control_or_tie() -> None:
+    for strongest_losses, weaker_losses in (
+        ((10.0, 20.0, 30.0, 40.0), (11.0, 21.0, 31.0, 41.0)),
+        ((10.0, 20.0, 30.0, 40.0), (10.0, 20.0, 30.0, 40.0)),
+    ):
+        spec = PenaltyTuningSpec(
+            lambda1_fractions=(1.0, 0.1),
+            lambda2_fractions=(0.0,),
+        )
+        tuning = _select(
+            spec,
+            _evaluations(
+                spec,
+                {
+                    (1.0, 0.0): strongest_losses,
+                    (0.1, 0.0): weaker_losses,
+                },
+            ),
+        )
+
+        assert tuning.selected_candidate is not None
+        assert tuning.selected_candidate.lambda1_fraction == 1.0
+
+
+def test_paired_delta_uses_declared_l1_first_priority_across_axes() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(1.0, 0.0),
+    )
+    contender_losses = (1.4, 0.8, 1.4, 0.8)
+    tuning = _select(
+        spec,
+        _evaluations(
+            spec,
+            {
+                (1.0, 1.0): contender_losses,
+                (1.0, 0.0): contender_losses,
+                (0.1, 1.0): contender_losses,
+                (0.1, 0.0): (1.0, 1.0, 1.0, 1.0),
+            },
+            unavailable=(1.0, 1.0),
+        ),
+    )
+
+    assert tuning.selected_candidate is not None
+    assert (
+        tuning.selected_candidate.lambda1_fraction,
+        tuning.selected_candidate.lambda2_fraction,
+    ) == (1.0, 0.0)
+    assert tuning.spec.to_dict()["candidate_priority"] == (
+        "l1_fraction_desc_then_l2_fraction_desc_v1"
+    )
+
+
+def test_paired_delta_one_se_is_inclusive_at_threshold_with_two_subjects() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    evaluations: list[PenaltyFoldEvaluation] = []
+    losses = {
+        1.0: (12.0, 10.0),
+        0.1: (10.0, 10.0),
+    }
+    for candidate in spec.candidates:
+        values = losses[candidate.lambda1_fraction]
+        evaluations.extend(
+            [
+                record_penalty_fold_evaluation(
+                    candidate,
+                    inner_fold_id="inner-0",
+                    validation_subject_ids=("s1",),
+                    subject_losses=np.asarray(values[:1]),
+                ),
+                record_penalty_fold_evaluation(
+                    candidate,
+                    inner_fold_id="inner-1",
+                    validation_subject_ids=("s2",),
+                    subject_losses=np.asarray(values[1:]),
+                ),
+            ]
+        )
+
+    tuning = select_penalty_candidate(
+        spec,
+        evaluations,
+        tuning_scope_id="two-subject-scope",
+        training_subject_ids=("s1", "s2"),
+        inner_fold_ids=("inner-0", "inner-1"),
+    )
+    strongest = next(
+        comparison
+        for comparison in tuning.candidate_comparisons
+        if next(
+            candidate
+            for candidate in spec.candidates
+            if candidate.candidate_id == comparison.candidate_id
+        ).lambda1_fraction
+        == 1.0
+    )
+
+    assert strongest.mean_loss_difference == pytest.approx(1.0)
+    assert strongest.one_se_threshold == pytest.approx(1.0)
+    assert strongest.within_one_se
+    assert tuning.selected_candidate is not None
+    assert tuning.selected_candidate.lambda1_fraction == 1.0
+
+
+def test_single_candidate_has_zero_paired_delta_and_is_selected() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0,),
+        lambda2_fractions=(0.0,),
+    )
+    tuning = _select(
+        spec,
+        _evaluations(spec, {(1.0, 0.0): (1.0, 2.0, 3.0, 4.0)}),
+    )
+
+    assert tuning.selected_candidate_id == tuning.best_candidate_id
+    assert len(tuning.candidate_comparisons) == 1
+    comparison = tuning.candidate_comparisons[0]
+    assert comparison.mean_loss_difference == 0.0
+    assert comparison.one_se_threshold == 0.0
+    assert comparison.within_one_se
 
 
 def test_failed_candidate_is_excluded_but_retained_in_complete_grid() -> None:
@@ -383,6 +602,11 @@ def test_evaluation_and_selection_are_order_stable() -> None:
         inner_fold_ids=("inner-1", "inner-0"),
     )
     assert first.tuning_id == second.tuning_id
+    assert tuple(
+        comparison.comparison_id for comparison in first.candidate_comparisons
+    ) == tuple(
+        comparison.comparison_id for comparison in second.candidate_comparisons
+    )
 
 
 def test_selection_rejects_missing_candidate_fold_and_partition_drift() -> None:
@@ -429,12 +653,37 @@ def test_producer_owned_arrays_and_tamper_detection() -> None:
     with pytest.raises(TypeError, match="producer-owned"):
         PenaltyTuningArtifact()
     with pytest.raises(TypeError, match="producer-owned"):
+        PenaltyCandidateComparison()
+    with pytest.raises(TypeError, match="producer-owned"):
         PenaltyCandidateSummary()
     with pytest.raises(TypeError, match="producer-owned"):
         ResolvedPenalty()
 
     object.__setattr__(evaluation, "subject_losses", evaluation.subject_losses.copy())
     evaluation.subject_losses[0] = 99.0
+    with pytest.raises(ContractError) as error:
+        tuning.to_dict()
+    assert error.value.details.code == "penalty_tuning_integrity_violation"
+
+
+def test_candidate_comparison_detects_tampering() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+    )
+    tuning = _select(
+        spec,
+        _evaluations(
+            spec,
+            {
+                (1.0, 0.0): (2.0, 3.0, 4.0, 5.0),
+                (0.1, 0.0): (1.0, 2.0, 3.0, 4.0),
+            },
+        ),
+    )
+    comparison = tuning.candidate_comparisons[0]
+    object.__setattr__(comparison, "mean_loss_difference", 999.0)
+
     with pytest.raises(ContractError) as error:
         tuning.to_dict()
     assert error.value.details.code == "penalty_tuning_integrity_violation"

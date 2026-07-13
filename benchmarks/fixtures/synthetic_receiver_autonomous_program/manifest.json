@@ -1,0 +1,23 @@
+{
+  "resource_id": "crychic_synthetic_receiver_autonomous_program",
+  "version": "1.0.0",
+  "species": "human",
+  "gene_namespace": "HGNC symbol",
+  "source_url": "repository://benchmarks/simulation/generate.py",
+  "license": "CC0-1.0",
+  "citation": "CRYCHIC deterministic synthetic benchmark fixture; not a biological reference resource",
+  "retrieved_at": "2026-07-14",
+  "adapter_version": "crychic-receiver-autonomous-feature-program-tsv-v1",
+  "payloads": [
+    {
+      "path": "programs.tsv",
+      "sha256": "2b65b3d6199f3229fe40343ede3973a494be9e557f9488e3b62e5a040eed310e",
+      "role": "receiver_autonomous_feature_by_program_matrix_v1",
+      "bytes": 55
+    }
+  ],
+  "transformation_log": [
+    "Frozen benchmark-only FOS/JUN/DUSP1 immediate-early program from the deterministic simulation contract",
+    "No expression data or held-out benchmark outcomes were used to define weights"
+  ]
+}

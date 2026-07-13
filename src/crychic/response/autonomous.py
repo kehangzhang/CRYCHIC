@@ -1,23 +1,40 @@
-"""Caller-declared receiver-autonomous programs and identifiability checks."""
+"""Static receiver-autonomous programs and identifiability checks."""
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from pathlib import Path, PurePosixPath
+from typing import Any, Final, Literal, cast
 
 import numpy as np
 
 from crychic.core import ContractError, stable_id
 from crychic.resources import GeneNamespace, Species
+from crychic.resources.autonomous_registry import (
+    AutonomousProgramReviewScope,
+    require_receiver_autonomous_program_registration,
+)
+from crychic.resources.manifest import ResourceIntegrityError, ResourceManifest
 
 _PROGRAM_PRODUCER_MARKER = "crychic.response.autonomous_program_resource.v1"
 _RESIDUAL_PRODUCER_MARKER = "crychic.response.autonomous_residualization.v1"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_DECLARED_UNVERIFIED = "caller_declared_static_unverified"
+_DECLARED_UNVERIFIED: Final = "caller_declared_static_unverified"
+_MANIFEST_VERIFIED_TRUSTED: Final = "manifest_verified_static_trusted_v1"
+_AUTONOMOUS_MATRIX_ROLE: Final = "receiver_autonomous_feature_by_program_matrix_v1"
+_FEATURE_HEADER: Final = "feature_id"
+_TRUSTED_LOADER_TOKEN: Final = object()
+
+AutonomousProgramVerificationStatus = Literal[
+    "caller_declared_static_unverified",
+    "manifest_verified_static_trusted_v1",
+]
 
 
 class AutonomousProgramSupportError(ValueError):
@@ -185,9 +202,16 @@ def _resource_payload(
     feature_ids: tuple[str, ...],
     program_ids: tuple[str, ...],
     matrix_digest: str,
-    verification_status: str,
+    verification_status: AutonomousProgramVerificationStatus,
+    registration_id: str | None,
+    review_scope: AutonomousProgramReviewScope | None,
+    expected_license: str | None,
+    registered_payload_path: str | None,
+    registered_payload_role: str | None,
+    registered_payload_sha256: str | None,
+    registered_payload_bytes: int | None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "feature_ids": list(feature_ids),
         "manifest_digest": manifest_digest,
         "species": species.value,
@@ -198,11 +222,24 @@ def _resource_payload(
         "resource_id": resource_id,
         "version": version,
     }
+    if registration_id is not None:
+        payload.update(
+            {
+                "expected_license": expected_license,
+                "registration_id": registration_id,
+                "registered_payload_bytes": registered_payload_bytes,
+                "registered_payload_path": registered_payload_path,
+                "registered_payload_role": registered_payload_role,
+                "registered_payload_sha256": registered_payload_sha256,
+                "review_scope": review_scope,
+            }
+        )
+    return payload
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class ReceiverAutonomousProgramResource:
-    """Immutable caller-declared static feature-by-program nuisance basis.
+    """Immutable static feature-by-program nuisance basis.
 
     Signed weights are permitted. Both axes are stored in canonical lexical order,
     so the artifact identity is independent of the input row and column order.
@@ -218,7 +255,14 @@ class ReceiverAutonomousProgramResource:
     program_ids: tuple[str, ...]
     matrix: np.ndarray
     matrix_digest: str
-    verification_status: str
+    verification_status: AutonomousProgramVerificationStatus
+    registration_id: str | None
+    review_scope: AutonomousProgramReviewScope | None
+    expected_license: str | None
+    registered_payload_path: str | None
+    registered_payload_role: str | None
+    registered_payload_sha256: str | None
+    registered_payload_bytes: int | None
     artifact_id: str
     _producer_marker: str
 
@@ -240,8 +284,47 @@ class ReceiverAutonomousProgramResource:
         feature_ids: tuple[str, ...],
         program_ids: tuple[str, ...],
         matrix: np.ndarray,
-        verification_status: str,
+        verification_status: AutonomousProgramVerificationStatus,
+        registration_id: str | None = None,
+        review_scope: AutonomousProgramReviewScope | None = None,
+        expected_license: str | None = None,
+        registered_payload_path: str | None = None,
+        registered_payload_role: str | None = None,
+        registered_payload_sha256: str | None = None,
+        registered_payload_bytes: int | None = None,
+        trusted_loader_token: object | None = None,
     ) -> ReceiverAutonomousProgramResource:
+        if (
+            verification_status == _MANIFEST_VERIFIED_TRUSTED
+            and trusted_loader_token is not _TRUSTED_LOADER_TOKEN
+        ):
+            raise ValueError(
+                "manifest-verified autonomous resources require the trusted loader"
+            )
+        if (
+            verification_status != _MANIFEST_VERIFIED_TRUSTED
+            and trusted_loader_token is not None
+        ):
+            raise ValueError(
+                "trusted loader token is inconsistent with resource status"
+            )
+        registration_fields = (
+            registration_id,
+            review_scope,
+            expected_license,
+            registered_payload_path,
+            registered_payload_role,
+            registered_payload_sha256,
+            registered_payload_bytes,
+        )
+        if verification_status == _MANIFEST_VERIFIED_TRUSTED and any(
+            value is None for value in registration_fields
+        ):
+            raise ValueError("trusted resources require complete registration evidence")
+        if verification_status != _MANIFEST_VERIFIED_TRUSTED and any(
+            value is not None for value in registration_fields
+        ):
+            raise ValueError("unverified resources cannot claim registration evidence")
         frozen = _immutable_float64(matrix)
         matrix_digest = _array_digest(frozen, dtype="<f8")
         payload = _resource_payload(
@@ -254,6 +337,13 @@ class ReceiverAutonomousProgramResource:
             program_ids=program_ids,
             matrix_digest=matrix_digest,
             verification_status=verification_status,
+            registration_id=registration_id,
+            review_scope=review_scope,
+            expected_license=expected_license,
+            registered_payload_path=registered_payload_path,
+            registered_payload_role=registered_payload_role,
+            registered_payload_sha256=registered_payload_sha256,
+            registered_payload_bytes=registered_payload_bytes,
         )
         self = object.__new__(cls)
         attributes: dict[str, Any] = {
@@ -267,6 +357,13 @@ class ReceiverAutonomousProgramResource:
             "matrix": frozen,
             "matrix_digest": matrix_digest,
             "verification_status": verification_status,
+            "registration_id": registration_id,
+            "review_scope": review_scope,
+            "expected_license": expected_license,
+            "registered_payload_path": registered_payload_path,
+            "registered_payload_role": registered_payload_role,
+            "registered_payload_sha256": registered_payload_sha256,
+            "registered_payload_bytes": registered_payload_bytes,
             "artifact_id": stable_id(
                 "receiver_autonomous_program_resource", payload, schema_version="1"
             ),
@@ -299,8 +396,72 @@ class ReceiverAutonomousProgramResource:
             if np.any(~np.any(self.matrix != 0.0, axis=0)):
                 raise ValueError("program resource contains an all-zero program")
             matrix_digest = _array_digest(self.matrix, dtype="<f8")
-            if self.verification_status != _DECLARED_UNVERIFIED:
+            if self.verification_status not in {
+                _DECLARED_UNVERIFIED,
+                _MANIFEST_VERIFIED_TRUSTED,
+            }:
                 raise ValueError("unsupported autonomous resource verification status")
+            registration_fields = (
+                self.registration_id,
+                self.review_scope,
+                self.expected_license,
+                self.registered_payload_path,
+                self.registered_payload_role,
+                self.registered_payload_sha256,
+                self.registered_payload_bytes,
+            )
+            if self.verification_status == _MANIFEST_VERIFIED_TRUSTED:
+                if any(value is None for value in registration_fields):
+                    raise ValueError("trusted registration evidence is incomplete")
+                registration_id = _identifier(
+                    cast(str, self.registration_id), field_name="registration_id"
+                )
+                expected_license = _identifier(
+                    cast(str, self.expected_license), field_name="expected_license"
+                )
+                registered_payload_path = _identifier(
+                    cast(str, self.registered_payload_path),
+                    field_name="registered_payload_path",
+                )
+                registered_payload_role = _identifier(
+                    cast(str, self.registered_payload_role),
+                    field_name="registered_payload_role",
+                )
+                registered_payload_sha256 = cast(
+                    str, self.registered_payload_sha256
+                )
+                if (
+                    _SHA256_PATTERN.fullmatch(registered_payload_sha256) is None
+                    or not isinstance(self.registered_payload_bytes, int)
+                    or self.registered_payload_bytes < 0
+                ):
+                    raise ValueError("registered payload evidence is invalid")
+                review_scope = cast(AutonomousProgramReviewScope, self.review_scope)
+                if review_scope not in {
+                    "synthetic_benchmark_only",
+                    "biological_reference",
+                }:
+                    raise ValueError("unsupported autonomous program review scope")
+                registration = require_receiver_autonomous_program_registration(
+                    registration_id
+                )
+                if (
+                    registration.manifest_digest != self.manifest_digest
+                    or registration.resource_id != resource_id
+                    or registration.version != version
+                    or registration.species != species
+                    or registration.gene_namespace != namespace
+                    or registration.expected_license != expected_license
+                    or registration.review_scope != review_scope
+                    or registration.expected_matrix_digest != matrix_digest
+                    or registration.payload_path != registered_payload_path
+                    or registration.payload_role != registered_payload_role
+                    or registration.payload_sha256 != registered_payload_sha256
+                    or registration.payload_bytes != self.registered_payload_bytes
+                ):
+                    raise ValueError("resource no longer matches its code registration")
+            elif any(value is not None for value in registration_fields):
+                raise ValueError("unverified resources claim registration evidence")
             expected_id = stable_id(
                 "receiver_autonomous_program_resource",
                 _resource_payload(
@@ -313,10 +474,17 @@ class ReceiverAutonomousProgramResource:
                     program_ids=programs,
                     matrix_digest=matrix_digest,
                     verification_status=self.verification_status,
+                    registration_id=self.registration_id,
+                    review_scope=self.review_scope,
+                    expected_license=self.expected_license,
+                    registered_payload_path=self.registered_payload_path,
+                    registered_payload_role=self.registered_payload_role,
+                    registered_payload_sha256=self.registered_payload_sha256,
+                    registered_payload_bytes=self.registered_payload_bytes,
                 ),
                 schema_version="1",
             )
-        except (AttributeError, TypeError, ValueError) as error:
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
             raise ContractError(
                 "Receiver-autonomous program resource failed integrity validation",
                 code="receiver_autonomous_program_integrity_violation",
@@ -334,6 +502,23 @@ class ReceiverAutonomousProgramResource:
                 field="artifact_id",
                 remediation="Rebuild the program resource from its declared manifest",
             )
+
+    @property
+    def is_manifest_verified_trusted(self) -> bool:
+        """Report whether the artifact came from the checksum-pinned loader."""
+
+        self._require_producer_owned()
+        return self.verification_status == _MANIFEST_VERIFIED_TRUSTED
+
+    @property
+    def is_biological_reference_trusted(self) -> bool:
+        """Report whether registry review permits biological-reference use."""
+
+        self._require_producer_owned()
+        return (
+            self.verification_status == _MANIFEST_VERIFIED_TRUSTED
+            and self.review_scope == "biological_reference"
+        )
 
     def matrix_for_features(self, feature_ids: Sequence[str]) -> np.ndarray:
         """Return the frozen basis aligned to a requested feature universe.
@@ -370,6 +555,13 @@ class ReceiverAutonomousProgramResource:
             "program_ids": list(self.program_ids),
             "matrix_digest": self.matrix_digest,
             "verification_status": self.verification_status,
+            "registration_id": self.registration_id,
+            "review_scope": self.review_scope,
+            "expected_license": self.expected_license,
+            "registered_payload_path": self.registered_payload_path,
+            "registered_payload_role": self.registered_payload_role,
+            "registered_payload_sha256": self.registered_payload_sha256,
+            "registered_payload_bytes": self.registered_payload_bytes,
         }
 
 
@@ -384,7 +576,42 @@ def build_receiver_autonomous_program_resource(
     species: Species,
     gene_namespace: GeneNamespace,
 ) -> ReceiverAutonomousProgramResource:
-    """Build a canonical static receiver-autonomous gene-program resource."""
+    """Build an explicitly unverified caller-declared static program resource."""
+
+    return _build_receiver_autonomous_program_resource(
+        matrix,
+        feature_ids=feature_ids,
+        program_ids=program_ids,
+        resource_id=resource_id,
+        version=version,
+        manifest_digest=manifest_digest,
+        species=species,
+        gene_namespace=gene_namespace,
+        verification_status=_DECLARED_UNVERIFIED,
+    )
+
+
+def _build_receiver_autonomous_program_resource(
+    matrix: np.ndarray,
+    *,
+    feature_ids: Sequence[str],
+    program_ids: Sequence[str],
+    resource_id: str,
+    version: str,
+    manifest_digest: str,
+    species: Species,
+    gene_namespace: GeneNamespace,
+    verification_status: AutonomousProgramVerificationStatus,
+    registration_id: str | None = None,
+    review_scope: AutonomousProgramReviewScope | None = None,
+    expected_license: str | None = None,
+    registered_payload_path: str | None = None,
+    registered_payload_role: str | None = None,
+    registered_payload_sha256: str | None = None,
+    registered_payload_bytes: int | None = None,
+    trusted_loader_token: object | None = None,
+) -> ReceiverAutonomousProgramResource:
+    """Canonicalize a resource after its provenance status has been established."""
 
     source_features = _aligned_names(feature_ids, field_name="feature_ids")
     source_programs = _aligned_names(program_ids, field_name="program_ids")
@@ -432,8 +659,289 @@ def build_receiver_autonomous_program_resource(
         feature_ids=canonical_features,
         program_ids=canonical_programs,
         matrix=canonical,
-        verification_status=_DECLARED_UNVERIFIED,
+        verification_status=verification_status,
+        registration_id=registration_id,
+        review_scope=review_scope,
+        expected_license=expected_license,
+        registered_payload_path=registered_payload_path,
+        registered_payload_role=registered_payload_role,
+        registered_payload_sha256=registered_payload_sha256,
+        registered_payload_bytes=registered_payload_bytes,
+        trusted_loader_token=trusted_loader_token,
     )
+
+
+def _raise_resource_metadata_mismatch(
+    *, field_name: str, observed: str, expected: str
+) -> None:
+    raise ResourceIntegrityError(
+        f"Resource manifest {field_name} mismatch: {observed!r} != {expected!r}",
+        code="resource_metadata_mismatch",
+        field=field_name,
+        remediation="Select the exact reviewed receiver-autonomous resource release",
+    )
+
+
+def _parse_receiver_autonomous_tsv(
+    payload: bytes,
+) -> tuple[np.ndarray, tuple[str, ...], tuple[str, ...]]:
+    try:
+        text = payload.decode("utf-8")
+        rows = list(
+            csv.reader(
+                io.StringIO(text, newline=""), delimiter="\t", strict=True
+            )
+        )
+    except (UnicodeDecodeError, csv.Error) as error:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous program payload must be valid UTF-8 TSV",
+            code="invalid_receiver_autonomous_program_payload",
+            field="payload",
+            remediation="Regenerate the payload with the documented TSV schema",
+        ) from error
+    if not rows or len(rows[0]) < 2 or rows[0][0] != _FEATURE_HEADER:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous TSV header must start with feature_id and programs",
+            code="invalid_receiver_autonomous_program_payload",
+            field="header",
+            remediation=(
+                "Use feature_id as the first column and one program ID per "
+                "remaining column"
+            ),
+        )
+    try:
+        program_ids = _aligned_names(rows[0][1:], field_name="program_ids")
+        feature_ids: list[str] = []
+        weights: list[list[float]] = []
+        expected_columns = len(rows[0])
+        for line_number, row in enumerate(rows[1:], start=2):
+            if len(row) != expected_columns:
+                raise ValueError(
+                    f"line {line_number} has {len(row)} columns; "
+                    f"expected {expected_columns}"
+                )
+            feature_ids.append(_identifier(row[0], field_name="feature_id"))
+            weights.append([float(value) for value in row[1:]])
+        aligned_features = _aligned_names(feature_ids, field_name="feature_ids")
+        matrix = np.asarray(weights, dtype=np.float64)
+        if matrix.shape != (len(aligned_features), len(program_ids)):
+            raise ValueError("payload must contain at least one feature row")
+        if np.any(~np.isfinite(matrix)):
+            raise ValueError("program weights must be finite")
+    except (TypeError, ValueError) as error:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous TSV contains invalid axes or numeric weights",
+            code="invalid_receiver_autonomous_program_payload",
+            field="payload",
+            remediation=(
+                "Use unique unpadded IDs and a complete finite signed weight matrix"
+            ),
+        ) from error
+    return matrix, aligned_features, program_ids
+
+
+def _resolve_registered_payload(
+    database_root: str | Path,
+    *,
+    relative_path: str,
+) -> tuple[Path, Path]:
+    """Resolve one registered payload without following links below its root."""
+
+    try:
+        root = Path(database_root).resolve(strict=True)
+    except OSError as error:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous database root does not exist",
+            code="missing_resource_payload",
+            field="database_root",
+            remediation="Provide the directory containing the registered payload",
+        ) from error
+    if not root.is_dir():
+        raise ResourceIntegrityError(
+            "Receiver-autonomous database root must be a directory",
+            code="invalid_resource_path",
+            field="database_root",
+            remediation="Provide the directory containing the registered payload",
+        )
+
+    candidate = root
+    for part in PurePosixPath(relative_path).parts:
+        candidate = candidate / part
+        if candidate.is_symlink():
+            raise ResourceIntegrityError(
+                f"Receiver-autonomous payload path contains a symlink: {relative_path}",
+                code="resource_payload_symlink",
+                field="path",
+                remediation="Store the registered payload directly below database_root",
+            )
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise ResourceIntegrityError(
+            f"Resource payload is missing: {relative_path}",
+            code="missing_resource_payload",
+            field="path",
+            remediation="Restore the checksum-pinned registered payload",
+        ) from error
+    if not resolved.is_relative_to(root):
+        raise ResourceIntegrityError(
+            "Receiver-autonomous payload resolves outside database_root",
+            code="resource_path_escape",
+            field="path",
+            remediation="Store the registered payload directly below database_root",
+        )
+    if not resolved.is_file():
+        raise ResourceIntegrityError(
+            f"Receiver-autonomous payload is not a file: {relative_path}",
+            code="missing_resource_payload",
+            field="path",
+            remediation="Restore the checksum-pinned registered payload file",
+        )
+    return root, resolved
+
+
+def load_receiver_autonomous_program_resource(
+    database_root: str | Path,
+    *,
+    manifest_path: str | Path,
+    registration_id: str,
+) -> ReceiverAutonomousProgramResource:
+    """Load a reviewed static feature-by-program matrix without expression data.
+
+    The code registry, rather than caller-provided metadata, pins the manifest
+    digest, release, species, namespace, license, adapter and review scope. The
+    exact bytes parsed are hashed again after ``ResourceManifest.verify``.
+    """
+
+    registration = require_receiver_autonomous_program_registration(registration_id)
+    manifest = ResourceManifest.from_json(manifest_path)
+    if manifest.digest != registration.manifest_digest:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous manifest does not match its code registration",
+            code="resource_manifest_digest_mismatch",
+            field="manifest_digest",
+            remediation="Restore the reviewed manifest registered in this release",
+        )
+    manifest.require(
+        species=registration.species.value,
+        gene_namespace=registration.gene_namespace.value,
+        license=registration.expected_license,
+    )
+    if manifest.resource_id != registration.resource_id:
+        _raise_resource_metadata_mismatch(
+            field_name="resource_id",
+            observed=manifest.resource_id,
+            expected=registration.resource_id,
+        )
+    if manifest.version != registration.version:
+        _raise_resource_metadata_mismatch(
+            field_name="version",
+            observed=manifest.version,
+            expected=registration.version,
+        )
+    if manifest.adapter_version != registration.adapter_version:
+        _raise_resource_metadata_mismatch(
+            field_name="adapter_version",
+            observed=manifest.adapter_version,
+            expected=registration.adapter_version,
+        )
+
+    candidates = tuple(
+        payload
+        for payload in manifest.payloads
+        if payload.role == _AUTONOMOUS_MATRIX_ROLE
+    )
+    if len(candidates) != 1:
+        raise ResourceIntegrityError(
+            "Manifest must pin exactly one receiver-autonomous matrix payload",
+            code="ambiguous_receiver_autonomous_program_payload",
+            field="payloads",
+            remediation=(
+                f"Assign exactly one payload the role {_AUTONOMOUS_MATRIX_ROLE!r}"
+            ),
+        )
+    matrix_payload = candidates[0]
+    if (
+        matrix_payload.path != registration.payload_path
+        or matrix_payload.role != registration.payload_role
+        or matrix_payload.sha256 != registration.payload_sha256
+        or matrix_payload.bytes != registration.payload_bytes
+    ):
+        raise ResourceIntegrityError(
+            "Receiver-autonomous payload does not match its code registration",
+            code="resource_registration_payload_mismatch",
+            field="payloads",
+            remediation="Restore the exact payload record registered in this release",
+        )
+    if matrix_payload.bytes is None:
+        raise ResourceIntegrityError(
+            "Trusted receiver-autonomous matrix payload must pin its byte size",
+            code="incomplete_resource_manifest",
+            field="bytes",
+            remediation="Record the exact payload byte size in the reviewed manifest",
+        )
+    if PurePosixPath(matrix_payload.path).suffix != ".tsv":
+        raise ResourceIntegrityError(
+            "Receiver-autonomous matrix payload must use the .tsv schema",
+            code="invalid_receiver_autonomous_program_payload",
+            field="path",
+            remediation="Export the static feature-by-program matrix as UTF-8 TSV",
+        )
+
+    root, payload_path = _resolve_registered_payload(
+        database_root,
+        relative_path=matrix_payload.path,
+    )
+    manifest.verify(root, paths=(matrix_payload.path,))
+    try:
+        payload_bytes = payload_path.read_bytes()
+    except OSError as error:  # pragma: no cover - verify normally catches this first
+        raise ResourceIntegrityError(
+            f"Cannot read receiver-autonomous payload {matrix_payload.path}",
+            code="missing_resource_payload",
+            field="path",
+            remediation="Restore the checksum-pinned static payload",
+        ) from error
+    if (
+        hashlib.sha256(payload_bytes).hexdigest() != matrix_payload.sha256
+        or len(payload_bytes) != matrix_payload.bytes
+    ):
+        raise ResourceIntegrityError(
+            "Receiver-autonomous payload changed between verification and parsing",
+            code="resource_checksum_mismatch",
+            field="sha256",
+            remediation="Restore the unmodified checksum-pinned static payload",
+        )
+    matrix, feature_ids, program_ids = _parse_receiver_autonomous_tsv(payload_bytes)
+    try:
+        resource = _build_receiver_autonomous_program_resource(
+            matrix,
+            feature_ids=feature_ids,
+            program_ids=program_ids,
+            resource_id=manifest.resource_id,
+            version=manifest.version,
+            manifest_digest=manifest.digest,
+            species=registration.species,
+            gene_namespace=registration.gene_namespace,
+            verification_status=_MANIFEST_VERIFIED_TRUSTED,
+            registration_id=registration.registration_id,
+            review_scope=registration.review_scope,
+            expected_license=registration.expected_license,
+            registered_payload_path=registration.payload_path,
+            registered_payload_role=registration.payload_role,
+            registered_payload_sha256=registration.payload_sha256,
+            registered_payload_bytes=registration.payload_bytes,
+            trusted_loader_token=_TRUSTED_LOADER_TOKEN,
+        )
+        resource._require_producer_owned()
+        return resource
+    except (ContractError, TypeError, ValueError) as error:
+        raise ResourceIntegrityError(
+            "Receiver-autonomous program matrix violates the artifact contract",
+            code="invalid_receiver_autonomous_program_payload",
+            field="payload",
+            remediation="Regenerate and review the static feature-by-program matrix",
+        ) from error
 
 
 def _residual_payload(
