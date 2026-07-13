@@ -13,19 +13,19 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | --- | --- | --- |
 | Four semantic outputs | Partial | Workflow contracts separate components, but public integrated scoring remains the legacy baseline and incremental downstream is `not_estimable`. |
 | Explained-share v3 | Partial | Implemented and tested as a candidate support method; the baseline default remains relative-coefficient v1. |
-| Held-out incremental downstream gain | Partial | Fit/apply primitives and mechanism tests exist; no certified public cross-fit orchestrator calls them. |
+| Held-out incremental downstream gain | Partial | Fit/apply primitives and mechanism tests exist, but the public stage-level cross-fit orchestrator does not yet fit or apply downstream models. |
 | Soft-min integration | Partial | Candidate integration and ablation tests exist; the public baseline still uses legacy four-component scoring. |
 | Hard receptor eligibility | Partial | Scale-invariant candidate policy is tested; it is not the baseline default. |
 | Winsorized normalized precision | Implemented | Attribution workflow and integration tests retain precision-transform provenance. |
 | Strict complete-link families | Implemented | Chaining counterexamples are covered by family tests. |
-| True family-first fitting | Partial | Candidate solver, allocation, conservation, and entropy contracts exist; the baseline still fits members before aggregation. |
+| True family-first fitting | Partial | A high-level candidate path now enforces hard receptor eligibility, strict complete-link families, one medoid solver column per family, signed-residual preservation, and separate evidence-only member allocation. The legacy baseline still fits members before aggregation, and the stage is not yet in public cross-fit. |
 | Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. |
 | Receiver-child scoring collection provenance | Partial | Core `ScoringCollectionManifest` contracts and a versioned result extension bind each contrast/repeat/fold to emitted receiver children, scoring functional IDs, source row counts and source-key digests. Persistence validates exact emitted `sample_scores` coverage and receiver/contrast edge partitions, while fixing `composition_status=partial_emitted_only` and `common_functional_across_receivers=false`. No planned receiver universe or authoritative persisted child model/version/universe registry exists yet. |
 | State/ecosystem eligibility separation | Implemented | State rows no longer depend on abundance eligibility. |
 | All-missing sender evidence | Implemented | Returns missing values rather than fabricated uniform weights. |
-| Common sender functional | Partial | A producer-owned candidate train/apply path now freezes the sender universe, cross-context training prevalence prior, minimum support and temperature, then applies only sample-local ligand evidence with exact sender conservation and all-missing NA semantics. It remains `partial_not_oof` and is deliberately not connected to the legacy context-specific default score. |
+| Common sender functional | Partial | The public subject-cross-fit path now freezes the sender universe, cross-context training prevalence prior, minimum support and temperature inside each training fold, applies only sample-local held-out ligand evidence, and verifies exact stage-level OOF coverage. Low-level rows retain `partial_not_oof`, the aggregate result is `verified_train_only_oof_partial_pipeline`, and the functional is deliberately not connected to the legacy context-specific default score. |
 | Subject fold planning and OOF audit | Implemented | Subject blocks, K fallback, design re-audit, and exact coverage are tested. |
-| Train/apply/cross-fit public workflow | Partial | Producer-owned sanitized train/apply APIs now fit and apply the frozen interaction universe and pass scope/poison tests, while explicitly remaining `partial_not_oof`. All later learned stages and the cross-fit orchestrator remain. |
+| Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives estimability-aware folds from raw metadata, creates physical sanitized subject scopes, invokes the producer-owned train/apply primitives, emits actual sender applications, and passes exact OOF, scope, and held-out-poison tests. It verifies only availability/common-sender stages; receptor, response, family, downstream, encoder, and common-scoring stages remain fail-closed. |
 | Exact-zero complex soft-min | Implemented | Zero and missingness behavior are covered by tests. |
 | Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, and cap conflicts are tested. |
 | H-common data-driven cap ban | Implemented | v0.2 specs reject caps and the cSCC/MS H-common real-data runs completed without a cap. The harmonized resource has 638 interactions, below the former cap of 800, so this run validates the uncapped path but does not demonstrate coverage expansion from removing the cap. |
@@ -36,10 +36,10 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | cSCC influence diagnostics | Partial | Paired LOSO, bootstrap, rank intervals, availability frequency, and stable-tier tables now exist. Strict frozen-member propagation makes the new rank endpoints `NE`; explicit per-edge missingness trajectories and family identifiers remain absent. |
 | Persisted edge evidence | Partial | Optional versioned Parquet persistence, manifest linkage, semantic cross-table validation, lazy reads, and backward compatibility are implemented. Real cSCC opposite-edge root-cause analysis remains. |
 | Signed/reverse response | Partial | Directional semantics are implemented but not connected to the workflow. |
-| Track-B signed macro-AUPRC | Missing | Native NicheNet and signed target-program evaluation remain `not_estimable`. |
-| D-common batch/effect model | Missing | Current MS comparison is equal-subject, unadjusted, and descriptive. |
+| Track-B signed macro-AUPRC | Partial | A strict frozen-universe evaluator now expands every program into forward/reverse activation-compatible channels, penalizes wrong-direction scores, uses tie-aware AP and equal registered scenario-cell weighting, and propagates incomplete seeds/channels as `not_estimable`. No frozen multi-seed campaign or native NicheNet signed result has run, and the existing proxy cannot be relabeled as native. |
+| D-common batch/effect model | Partial | A shared, frozen subject-level OLS primitive now applies one formula, categorical level registry and model ID across methods; it adjusts unpaired and paired-difference effects for declared batch covariates, detects target/batch confounding, and fails closed for mixed paired/unpaired designs. It has not yet run on the MS benchmark. |
 | Multi-node repeated-measures backend | Missing | Kuppe mixed paired/unpaired design is still unsupported. |
-| Sparse/block/streaming core | Missing | Availability and scoring still materialize or iterate over large long-form data. |
+| Sparse/block/streaming core | Partial | Pseudobulk counts and detection now use one group-indicator sparse multiplication with dense/sparse parity tests. Availability, scoring and finalization still materialize large long-form tables. |
 | G2 graph fusion | Missing | No graph-fused attribution solver is present. |
 | G3-F/G3-P inference | Missing | Correctly disabled; p/q and communication probabilities remain unavailable. |
 | Default switch | Not eligible | Requires certified public cross-fit, real no-cap candidate noninferiority, and legacy reproducibility gates. |
@@ -76,6 +76,7 @@ silver-standard diagnostics, not a global primary or edge-truth claim.
    then rerun cSCC development and one locked MS holdout for a valid CRYCHIC
    primary comparison.
 4. Persist edge evidence and finish opposite/rank diagnostics.
-5. Add native signed Track-B evaluation, then D-common and repeated-measures
-   backends.
+5. Run a frozen forward/reverse signed Track-B campaign, then add D-common and
+   repeated-measures backends. Native NicheNet is a separate adapter claim and
+   cannot be inferred from the existing prior-activity proxy.
 6. Start G2/G3 only after the preceding scientific and computational gates.

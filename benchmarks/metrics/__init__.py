@@ -1,5 +1,6 @@
 """Benchmark metrics with explicit real-data and simulation semantics."""
 
+from .d_common import DCommonSpec, d_common_edge_effects
 from .exploratory import (
     paired_descriptive_effects,
     paired_proportion_stability,
@@ -40,20 +41,29 @@ from .ranking_stability import (
     top_k_stability_curve,
     weighted_kendall_tau,
 )
+from .signed_track_b import (
+    SignedTrackBTables,
+    evaluate_signed_track_b,
+    signed_track_b_truth_sha256,
+)
 
 __all__ = [
+    "DCommonSpec",
     "RankAgreement",
     "RankInterval",
     "RankStabilityParameters",
     "RankStabilityTables",
     "Ranking",
+    "SignedTrackBTables",
     "StableTier",
     "TopKStabilityPoint",
     "aggregate_loso_primary_endpoint",
     "assign_stable_tiers",
     "bootstrap_rank_intervals",
     "cross_method_concordance",
+    "d_common_edge_effects",
     "evaluate_multicondition_rank_stability",
+    "evaluate_signed_track_b",
     "external_long_to_score_table",
     "not_estimable_rank_stability",
     "paired_descriptive_effects",
@@ -63,6 +73,7 @@ __all__ = [
     "rank_biased_overlap",
     "rank_concordance",
     "score_coverage_summary",
+    "signed_track_b_truth_sha256",
     "summarize_loso_primary_endpoint",
     "summarize_run_performance",
     "synthetic_edge_truth_metrics",

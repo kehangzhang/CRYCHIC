@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ from crychic.pseudobulk import (
     PseudobulkDataset,
     aggregate_pseudobulk,
 )
+from crychic.pseudobulk import aggregation as aggregation_module
 
 COUNTS = np.array(
     [
@@ -146,6 +149,67 @@ def test_dense_csr_and_csc_paths_match(matrix: object) -> None:
         observed.detection_fraction.toarray(), reference.detection_fraction.toarray()
     )
     pd.testing.assert_frame_equal(observed.unit_metadata, reference.unit_metadata)
+
+
+@pytest.mark.parametrize("matrix_kind", ["dense", "csr", "csc"])
+def test_group_indicator_summaries_match_scalar_reference(matrix_kind: str) -> None:
+    rng = np.random.default_rng(20260713)
+    dense = rng.integers(0, 6, size=(41, 23), dtype=np.int64)
+    dense[rng.random(dense.shape) < 0.72] = 0
+    codes = np.repeat(np.arange(7, dtype=np.int64), [3, 5, 4, 8, 7, 6, 8])
+    order = rng.permutation(len(codes))
+    dense = dense[order]
+    codes = codes[order]
+    if matrix_kind == "dense":
+        matrix: object = dense
+    else:
+        encoded = sparse.csr_matrix(dense)
+        # Explicit sparse zeroes must not count as detected expression.
+        encoded.data[::11] = 0
+        encoded.eliminate_zeros()
+        encoded.data = encoded.data.astype(np.int64, copy=False)
+        dense = encoded.toarray()
+        matrix = encoded if matrix_kind == "csr" else encoded.tocsc()
+
+    totals, detected, medians, sizes = aggregation_module._group_summaries(
+        matrix, codes, n_groups=7
+    )
+    expected_totals = np.vstack(
+        [dense[codes == code].sum(axis=0) for code in range(7)]
+    )
+    expected_detected = np.vstack(
+        [np.greater(dense[codes == code], 0).sum(axis=0) for code in range(7)]
+    )
+    expected_medians = np.array(
+        [np.median(dense[codes == code].sum(axis=1)) for code in range(7)]
+    )
+
+    np.testing.assert_array_equal(totals.toarray(), expected_totals)
+    np.testing.assert_array_equal(detected.toarray(), expected_detected)
+    np.testing.assert_array_equal(medians, expected_medians)
+    np.testing.assert_array_equal(sizes, np.bincount(codes, minlength=7))
+
+
+def test_sparse_aggregation_does_not_slice_input_rows_per_group() -> None:
+    class NoRowSliceCsr(sparse.csr_matrix):
+        def __getitem__(self, key: object) -> object:
+            raise AssertionError(f"unexpected sparse row slice: {key!r}")
+
+    validated = _validated_counts(sparse.csr_matrix(COUNTS))
+    guarded = replace(validated, matrix=NoRowSliceCsr(validated.matrix))
+
+    result = aggregate_pseudobulk(guarded, min_cells=2)
+
+    assert isinstance(result, PseudobulkDataset)
+    np.testing.assert_array_equal(
+        _matrix_row(result.counts, _unit(result, "s1", "A")), [4, 2]
+    )
+    np.testing.assert_array_equal(
+        _matrix_row(result.counts, _unit(result, "s1", "B")), [0, 4]
+    )
+    np.testing.assert_array_equal(
+        _matrix_row(result.counts, _unit(result, "s2", "A")), [2, 2]
+    )
 
 
 def test_aggregation_is_invariant_to_cell_row_order() -> None:

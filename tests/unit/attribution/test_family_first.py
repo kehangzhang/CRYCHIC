@@ -12,6 +12,7 @@ from crychic.attribution import (
     LRIdentifiabilityStatus,
     ReceptorGatePolicy,
     allocate_family_members,
+    attribute_target_prior_family_first,
     build_family_first_basis,
     build_gated_target_basis,
     cluster_driver_families,
@@ -142,6 +143,73 @@ def test_adding_collinear_members_does_not_change_family_core(prior_factory) -> 
     assert _family_value(single, single_fit.contributions, "A") == pytest.approx(
         _family_value(expanded, expanded_fit.contributions, "A")
     )
+
+
+def test_high_level_family_first_path_uses_hard_gate_and_preserves_signed_residual(
+    prior_factory,
+) -> None:
+    prior = prior_factory(
+        {
+            "A": {"G1": 1.0},
+            "B": {"G1": 4.0},
+            "C": {"G2": 1.0},
+        }
+    )
+
+    low_source, low_basis, low_fit = attribute_target_prior_family_first(
+        prior,
+        ("G1", "G2"),
+        {"A": 0.2, "B": 0.3, "C": 0.4},
+        np.asarray([2.0, -1.0]),
+        receptor_gate_threshold=0.1,
+        cosine_threshold=0.999,
+        tolerance=1e-12,
+        kkt_tolerance=1e-12,
+    )
+    high_source, high_basis, high_fit = attribute_target_prior_family_first(
+        prior,
+        ("G1", "G2"),
+        {"A": 0.8, "B": 0.9, "C": 1.0},
+        np.asarray([2.0, -1.0]),
+        receptor_gate_threshold=0.1,
+        cosine_threshold=0.999,
+        tolerance=1e-12,
+        kkt_tolerance=1e-12,
+    )
+
+    assert low_source.gate_policy is ReceptorGatePolicy.HARD_ELIGIBILITY_V2
+    assert low_source.receptor_gate_threshold == pytest.approx(0.1)
+    np.testing.assert_array_equal(
+        low_source.matrix.toarray(), high_source.matrix.toarray()
+    )
+    assert low_basis.family_ids == high_basis.family_ids
+    np.testing.assert_array_equal(low_fit.coefficients, high_fit.coefficients)
+    np.testing.assert_array_equal(
+        low_fit.predicted + low_fit.residual,
+        low_fit.signed_response,
+    )
+    assert low_fit.residual[1] == pytest.approx(-1.0)
+
+
+def test_high_level_family_first_path_excludes_subthreshold_family(
+    prior_factory,
+) -> None:
+    prior = prior_factory({"A": {"G1": 1.0}, "B": {"G2": 1.0}})
+
+    source, basis, fit = attribute_target_prior_family_first(
+        prior,
+        ("G1", "G2"),
+        {"A": 0.09, "B": 0.8},
+        np.asarray([3.0, 2.0]),
+        receptor_gate_threshold=0.1,
+        cosine_threshold=0.999,
+        tolerance=1e-12,
+        kkt_tolerance=1e-12,
+    )
+
+    assert source.receptor_eligible.tolist() == [False, True]
+    assert _family_value(basis, fit.coefficients, "A") == pytest.approx(0.0)
+    assert _family_value(basis, fit.coefficients, "B") == pytest.approx(2.0)
 
 
 def test_member_evidence_allocation_conserves_family_contribution_and_entropy(

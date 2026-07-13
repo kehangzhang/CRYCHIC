@@ -2,9 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-07-13
-- Implementation status: Partial; the sanitized training/application boundary
-  and frozen interaction-universe stage exist, but the public end-to-end
-  cross-fit workflow does not
+- Implementation status: Partial; the public orchestrator now verifies
+  subject-blocked OOF coverage for the frozen interaction-universe and
+  contrast-common sender stages, but downstream/common scoring stages remain
 
 ## Context
 
@@ -51,9 +51,10 @@ receives only immutable training artifacts plus a held-out scope and may call
 fixed transforms and apply functions, but no fit, pooling, clustering,
 winsorization, or tuning function.
 
-Certified out-of-fold status requires raw counts. A normalized-only input may
-run as exploratory, but cannot claim certified train-only provenance because
-CRYCHIC cannot audit how its upstream normalization was learned.
+Certified out-of-fold status requires raw counts. The current public cross-fit
+entry point rejects normalized-only input because CRYCHIC cannot audit how its
+upstream normalization was learned. Low-level exploratory paths may consume a
+declared normalized matrix, but cannot claim train-only provenance.
 
 ## Fold stages
 
@@ -129,19 +130,19 @@ The public API is intentionally narrower than the low-level research APIs.
 Advanced users may still call primitives directly, but their results remain
 exploratory and cannot be relabeled as certified OOF.
 
-The partial implementation adds dedicated training and application modules. It
-fits the interaction universe and a contrast-common sender functional from a
-sanitized training scope, rejects subject overlap, and applies both to held-out
-observations without calling a training fit function. The sender functional
-freezes candidate senders, pooled prevalence priors, minimum support and
-temperature; application consumes only sample-local ligand evidence. Its
-producer-owned artifacts enumerate every remaining stage and always report
-`partial_not_oof`.
+The partial implementation now includes a public `run_subject_crossfit` entry
+point. It derives an estimability-aware fold plan from declared sample metadata,
+creates physical sanitized train/test copies, calls the producer-owned
+`fit_training_artifacts` and `apply_training_artifacts` primitives per fold,
+and audits exact subject/fold/contrast/context coverage. Held-out sender rows
+retain their low-level `partial_not_oof` assignment mode; the aggregate result
+separately reports `verified_train_only_oof_partial_pipeline` and
+`is_oof_certified=false`. This distinction verifies the implemented stages
+without certifying the complete method.
 
-A cross-fit orchestrator, fixed sample transform, frozen design encoder,
-receptor gate, response and precision stages, family-first attribution,
-incremental downstream model, and common scoring manifest still remain. Until
-that complete path exists and passes every poison test above, incremental
-downstream evidence remains `not_estimable` in the public baseline workflow and
-no default-method switch is eligible. The legacy sender assignment remains
-unchanged and context-specific.
+A fixed sample transform, frozen design encoder, receptor gate, response and
+precision stages, family-first attribution, incremental downstream model, and
+common scoring manifest still remain. Until that complete path exists and
+passes every poison test above, incremental downstream evidence remains
+`not_estimable` in the public baseline workflow and no default-method switch is
+eligible. The legacy sender assignment remains unchanged and context-specific.

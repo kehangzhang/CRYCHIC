@@ -48,14 +48,14 @@ preserving the exploratory v0.1 behavior:
   provenance at sample x context x sender x receiver x interaction grain. It
   can be persisted as an optional, versioned Parquet result extension with
   `persist_edge_evidence=True`;
-- a producer-owned partial train/apply API now learns the interaction universe
-  from sanitized training-fold observations and applies it unchanged to
-  held-out observations. The same candidate path now also freezes a
-  contrast-common sender universe, pooled training prevalence priors, support
-  threshold, and temperature, then applies them using only held-out
-  sample-local ligand evidence. It is explicitly labelled `partial_not_oof`;
+- the public `run_subject_crossfit` API now derives estimability-aware subject
+  folds, creates physical sanitized train/test scopes, calls the producer-owned
+  train/apply primitives, and audits exact OOF coverage for the frozen
+  interaction universe and contrast-common sender functional. The aggregate
+  status is `verified_train_only_oof_partial_pipeline`, while
+  `is_oof_certified` remains false and low-level rows retain `partial_not_oof`;
   receptor, response, family, downstream, and common-scoring stages remain to
-  be connected before certified cross-fitting;
+  be connected before complete-pipeline certification;
 - benchmark utilities now provide frozen-universe RBO, weighted Kendall,
   top-k curves, rank intervals, and stable-tier assignments. The v02 real-data
   finalizer/report integration requires all frozen items and fixed receiver

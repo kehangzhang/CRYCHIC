@@ -32,6 +32,7 @@ from .directional import (
 from .families import cluster_driver_families
 from .family_first import (
     allocate_family_members,
+    attribute_target_prior_family_first,
     build_family_first_basis,
     fit_family_first_attribution,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "SolverStatus",
     "allocate_family_members",
     "attribute_target_prior",
+    "attribute_target_prior_family_first",
     "build_family_first_basis",
     "build_gated_target_basis",
     "cluster_driver_families",

@@ -76,6 +76,7 @@ class FoldTrainingSpec:
     sender_parameters: ContrastCommonSenderParameters = field(
         default_factory=ContrastCommonSenderParameters
     )
+    sender_contrasts: tuple[ContrastSpec, ...] | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
 
@@ -102,6 +103,32 @@ class FoldTrainingSpec:
             raise TypeError(
                 "sender_parameters must be ContrastCommonSenderParameters"
             )
+        contrasts = self.sender_contrasts
+        if contrasts is not None:
+            contrasts = tuple(contrasts)
+            if not contrasts:
+                raise ValueError("sender_contrasts must be non-empty when declared")
+            if any(not isinstance(contrast, ContrastSpec) for contrast in contrasts):
+                raise TypeError("sender_contrasts must contain ContrastSpec values")
+            if any(
+                not contrast.estimable or len(contrast.weights) < 2
+                for contrast in contrasts
+            ):
+                raise ValueError(
+                    "sender_contrasts must be estimable multi-context contrasts"
+                )
+            contrast_ids = [
+                stable_id("contrast", contrast.to_dict()) for contrast in contrasts
+            ]
+            if len(contrast_ids) != len(set(contrast_ids)):
+                raise ValueError("sender_contrasts must be unique")
+            contrasts = tuple(
+                contrast
+                for _, contrast in sorted(
+                    zip(contrast_ids, contrasts, strict=True),
+                    key=lambda item: item[0],
+                )
+            )
         if self.schema_version != "1.0.0":
             raise ValueError("FoldTrainingSpec schema_version must be 1.0.0")
         payload: dict[str, object] = {
@@ -116,6 +143,11 @@ class FoldTrainingSpec:
                 self.sender_parameters.parameter_manifest_id
             ),
         }
+        if contrasts is not None:
+            payload["sender_contrasts"] = [
+                contrast.to_dict() for contrast in contrasts
+            ]
+        object.__setattr__(self, "sender_contrasts", contrasts)
         object.__setattr__(self, "min_pooled_availability", threshold)
         object.__setattr__(
             self,
@@ -511,6 +543,10 @@ def fit_training_artifacts(
 
     prepared = _prepare_raw_fold(adata, config, min_cells=spec.min_cells)
     availability = _fit_interaction_universe(prepared, resource_bundle, spec)
+    sender_contrasts = spec.sender_contrasts or _planned_sender_contrasts(
+        availability.sample_interactions,
+        tuple(config.context_keys),
+    )
     sender_functionals = tuple(
         fit_contrast_common_sender_functional(
             availability.sample_interactions,
@@ -519,10 +555,7 @@ def fit_training_artifacts(
             filter_universe_id=availability.filter_universe_id,
             parameters=spec.sender_parameters,
         )
-        for contrast in _planned_sender_contrasts(
-            availability.sample_interactions,
-            tuple(config.context_keys),
-        )
+        for contrast in sender_contrasts
     )
     return TrainingArtifacts._from_training(
         config=config,

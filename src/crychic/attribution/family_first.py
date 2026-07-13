@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from scipy import sparse
 
 from crychic.core import ContractError, stable_id
+from crychic.resources import TargetPrior
 
+from .basis import build_gated_target_basis
 from .contracts import (
     DriverFamilyDefinition,
     FamilyAllocationSummary,
@@ -22,7 +24,9 @@ from .contracts import (
     FamilyMemberEvidence,
     GatedTargetBasis,
     LRIdentifiabilityStatus,
+    ReceptorGatePolicy,
 )
+from .families import cluster_driver_families
 from .solver import solve_nonnegative_elastic_net
 
 _COSINE_TOLERANCE = 1e-12
@@ -256,6 +260,60 @@ def fit_family_first_attribution(
         lambda1=lambda1,
         lambda2=lambda2,
     )
+
+
+def attribute_target_prior_family_first(
+    prior: TargetPrior,
+    feature_ids: Sequence[str],
+    receptor_gates: Mapping[str, float],
+    signed_response: np.ndarray,
+    *,
+    precision_weights: np.ndarray | None = None,
+    receptor_gate_threshold: float = 0.1,
+    cosine_threshold: float = 0.95,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    tolerance: float = 1e-8,
+    kkt_tolerance: float | None = None,
+    max_iterations: int = 10_000,
+) -> tuple[GatedTargetBasis, FamilyFirstBasis, FamilyFirstAttributionResult]:
+    """Build and fit the default family-grain attribution path.
+
+    This is the family-first counterpart of :func:`attribute_target_prior`.
+    Receptor evidence is used only as a hard eligibility decision, so changing
+    an already eligible gate cannot rescale a family coefficient. Families are
+    strict complete-link equivalence classes and only one medoid column per
+    family enters the solver. Individual LR allocation remains a separate,
+    evidence-only step via :func:`allocate_family_members`.
+    """
+
+    source_basis = build_gated_target_basis(
+        prior,
+        feature_ids,
+        receptor_gates,
+        gate_policy=ReceptorGatePolicy.HARD_ELIGIBILITY_V2,
+        receptor_gate_threshold=receptor_gate_threshold,
+    )
+    families = cluster_driver_families(
+        source_basis,
+        cosine_threshold=cosine_threshold,
+    )
+    family_basis = build_family_first_basis(
+        source_basis,
+        families,
+        strict_cosine_threshold=cosine_threshold,
+    )
+    attribution = fit_family_first_attribution(
+        family_basis,
+        signed_response,
+        precision_weights=precision_weights,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        tolerance=tolerance,
+        kkt_tolerance=kkt_tolerance,
+        max_iterations=max_iterations,
+    )
+    return source_basis, family_basis, attribution
 
 
 def _normalized_entropy(weights: np.ndarray) -> float:

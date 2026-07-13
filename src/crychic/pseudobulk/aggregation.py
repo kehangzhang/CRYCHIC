@@ -7,6 +7,7 @@ from collections.abc import Hashable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from scipy import sparse
 
@@ -36,21 +37,48 @@ def _unit_id(sample: Any, context: tuple[tuple[str, Any], ...], cell_type: Any) 
     return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
 
 
-def _row_summary(
-    matrix: Any, indices: list[int]
-) -> tuple[np.ndarray, np.ndarray, float]:
-    block = matrix[indices, :]
-    if sparse.issparse(block):
-        block = block.tocsr()
-        total = np.asarray(block.sum(axis=0)).ravel()
-        detected = np.asarray((block > 0).sum(axis=0)).ravel() / len(indices)
-        per_cell = np.asarray(block.sum(axis=1)).ravel()
+def _group_summaries(
+    matrix: Any,
+    group_codes: np.ndarray,
+    *,
+    n_groups: int,
+) -> tuple[sparse.csr_matrix, sparse.csr_matrix, np.ndarray, np.ndarray]:
+    """Aggregate every observed group with two sparse matrix products."""
+
+    n_cells = len(group_codes)
+    group_sizes = np.bincount(group_codes, minlength=n_groups).astype(
+        np.int64, copy=False
+    )
+    indicator = sparse.csr_matrix(
+        (
+            np.ones(n_cells, dtype=np.int64),
+            (group_codes, np.arange(n_cells, dtype=np.int64)),
+        ),
+        shape=(n_groups, n_cells),
+    )
+
+    if sparse.issparse(matrix):
+        values = sparse.csr_matrix(matrix)
+        totals = sparse.csr_matrix(indicator @ values)
+        binary = values.copy()
+        binary.data = np.greater(binary.data, 0).astype(np.int8, copy=False)
+        binary.eliminate_zeros()
+        detected_counts = sparse.csr_matrix(indicator @ binary)
+        cell_library = np.asarray(values.sum(axis=1)).ravel()
     else:
-        array = np.asarray(block)
-        total = np.asarray(array.sum(axis=0)).ravel()
-        detected = np.asarray((array > 0).mean(axis=0)).ravel()
-        per_cell = np.asarray(array.sum(axis=1)).ravel()
-    return total, detected, float(np.median(per_cell))
+        values = np.asarray(matrix)
+        totals = sparse.csr_matrix(indicator @ values)
+        detected_counts = sparse.csr_matrix(indicator @ np.greater(values, 0))
+        cell_library = np.asarray(values.sum(axis=1)).ravel()
+
+    median_umi = (
+        pd.DataFrame({"group_code": group_codes, "library_size": cell_library})
+        .groupby("group_code", sort=True, observed=True)["library_size"]
+        .median()
+        .reindex(range(n_groups))
+        .to_numpy(dtype=float)
+    )
+    return totals, detected_counts, median_umi, group_sizes
 
 
 def _normalize_cell_types(
@@ -124,11 +152,20 @@ def aggregate_pseudobulk(
     )
     explicit_missingness = _normalize_missingness(missingness)
 
-    groups: dict[UnitKey, list[int]] = {}
+    group_index: dict[UnitKey, int] = {}
+    group_codes: npt.NDArray[np.int64] = np.empty(len(obs), dtype=np.int64)
     for position, (sample, cell_type) in enumerate(
         zip(obs[schema.sample_key], obs[schema.cell_type_key], strict=True)
     ):
-        groups.setdefault((sample, cell_type), []).append(position)
+        key = (sample, cell_type)
+        code = group_index.setdefault(key, len(group_index))
+        group_codes[position] = code
+
+    totals, detected_counts, median_umi, group_sizes = _group_summaries(
+        validated.matrix,
+        group_codes,
+        n_groups=len(group_index),
+    )
 
     valid_grid_keys = {
         (row[schema.sample_key], cell_type)
@@ -142,22 +179,26 @@ def aggregate_pseudobulk(
             + ", ".join(sorted(map(repr, unknown_missingness)))
         )
 
-    summaries: dict[str, tuple[np.ndarray, np.ndarray, float, int]] = {}
+    group_row_by_unit_id: dict[str, int] = {}
     metadata_rows: list[dict[str, Any]] = []
     for _, sample_row in validated.report.sample_metadata.iterrows():
         sample = sample_row[schema.sample_key]
         subject = sample_row[schema.subject_key]
         context = tuple((key, sample_row[key]) for key in schema.context_keys)
         sample_cell_count = int(
-            sum(len(groups.get((sample, ct), ())) for ct in selected_cell_types)
+            sum(
+                group_sizes[group_index[(sample, ct)]]
+                for ct in selected_cell_types
+                if (sample, ct) in group_index
+            )
         )
         if sample_cell_count == 0:
             raise ValueError(f"sample {sample!r} has no cells in selected cell_types")
 
         for cell_type in selected_cell_types:
             key = (sample, cell_type)
-            indices = groups.get(key, [])
-            n_cells = len(indices)
+            group_row = group_index.get(key)
+            n_cells = 0 if group_row is None else int(group_sizes[group_row])
             identifier = _unit_id(sample, context, cell_type)
             if n_cells:
                 if key in explicit_missingness:
@@ -165,8 +206,9 @@ def aggregate_pseudobulk(
                         f"missingness was declared for observed unit {key!r} with "
                         f"{n_cells} captured cell(s)"
                     )
-                total, detected, median_total = _row_summary(validated.matrix, indices)
-                summaries[identifier] = (total, detected, median_total, n_cells)
+                if group_row is None:  # pragma: no cover - protected by n_cells
+                    raise RuntimeError("observed group is missing its sparse row")
+                group_row_by_unit_id[identifier] = group_row
                 reason = (
                     MissingnessReason.OBSERVED
                     if n_cells >= min_cells
@@ -202,24 +244,28 @@ def aggregate_pseudobulk(
                     row[context_key] = context_value
             metadata_rows.append(row)
 
-    matrix_unit_ids = tuple(sorted(summaries))
+    matrix_unit_ids = tuple(sorted(group_row_by_unit_id))
     matrix_row_by_id = {
         identifier: row for row, identifier in enumerate(matrix_unit_ids)
     }
-    aggregate_rows: list[sparse.csr_matrix] = []
-    detection_rows: list[sparse.csr_matrix] = []
-    for identifier in matrix_unit_ids:
-        total, detected, _, n_cells = summaries[identifier]
-        values: np.ndarray
-        if validated.mode is InputMode.COUNTS:
-            values = total.astype(np.int64, copy=False)
-        else:
-            values = total / n_cells
-        aggregate_rows.append(sparse.csr_matrix(values.reshape(1, -1)))
-        detection_rows.append(sparse.csr_matrix(detected.reshape(1, -1)))
-
-    matrix = sparse.vstack(aggregate_rows, format="csr")
-    detection = sparse.vstack(detection_rows, format="csr")
+    ordered_group_rows = np.fromiter(
+        (group_row_by_unit_id[identifier] for identifier in matrix_unit_ids),
+        dtype=np.int64,
+        count=len(matrix_unit_ids),
+    )
+    ordered_sizes = group_sizes[ordered_group_rows]
+    matrix = sparse.csr_matrix(totals[ordered_group_rows])
+    if validated.mode is InputMode.COUNTS:
+        matrix = matrix.astype(np.int64, copy=False)
+    else:
+        matrix = sparse.csr_matrix(
+            sparse.diags(1.0 / ordered_sizes, format="csr") @ matrix
+        )
+    detection = sparse.csr_matrix(
+        sparse.diags(1.0 / ordered_sizes, format="csr")
+        @ detected_counts[ordered_group_rows]
+    )
+    group_library_sizes = np.asarray(totals.sum(axis=1)).ravel()
 
     unit_metadata = pd.DataFrame(metadata_rows).sort_values(
         "unit_id", kind="stable", ignore_index=True
@@ -229,12 +275,14 @@ def aggregate_pseudobulk(
     )
     for row_index, metadata_row in unit_metadata.iterrows():
         identifier = metadata_row["unit_id"]
-        if identifier not in summaries:
+        group_row = group_row_by_unit_id.get(identifier)
+        if group_row is None:
             continue
-        total, _, median_total, _ = summaries[identifier]
         if validated.mode is InputMode.COUNTS:
-            unit_metadata.at[row_index, "library_size"] = int(total.sum())
-            unit_metadata.at[row_index, "median_umi"] = median_total
+            unit_metadata.at[row_index, "library_size"] = int(
+                group_library_sizes[group_row]
+            )
+            unit_metadata.at[row_index, "median_umi"] = float(median_umi[group_row])
 
     unit_metadata["n_cells"] = unit_metadata["n_cells"].astype(np.int64)
     unit_metadata["state_eligible"] = unit_metadata["state_eligible"].astype(bool)

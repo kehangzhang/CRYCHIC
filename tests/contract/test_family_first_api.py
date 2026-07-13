@@ -14,6 +14,7 @@ def test_family_first_api_is_explicitly_versioned_and_opt_in() -> None:
         "FamilyMemberEvidence",
         "LRIdentifiabilityStatus",
         "allocate_family_members",
+        "attribute_target_prior_family_first",
         "build_family_first_basis",
         "fit_family_first_attribution",
     }

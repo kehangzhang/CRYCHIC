@@ -33,10 +33,13 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "CommunicationMode",
         "ContextGraph",
         "ContrastSpec",
+        "CrossFitArtifacts",
+        "CrossFitSpec",
         "Crychic",
         "CrychicConfig",
         "CrychicResult",
         "ExpressionTransform",
+        "FoldTrainingSpec",
         "InputSchema",
         "ResourceBundle",
         "TargetPrior",
@@ -45,6 +48,7 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "load_cellchat_resource",
         "load_cellphonedb_resource",
         "load_nichenet_target_prior",
+        "run_subject_crossfit",
         "validate_anndata",
     }
     assert (
