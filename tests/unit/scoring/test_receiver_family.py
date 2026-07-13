@@ -264,6 +264,54 @@ def test_heldout_apply_never_calls_fit_and_poison_cannot_change_artifact() -> No
     np.testing.assert_array_equal(artifact.downstream_functional.feature_scale, scale)
 
 
+def test_scoring_artifact_and_application_reject_forced_child_mutation() -> None:
+    artifact = _scoring_artifact()
+    application = apply_receiver_family_scoring_artifact(
+        artifact,
+        np.asarray([[2.0, 3.0], [4.0, 3.0]]),
+        feature_ids=("G1", "G2"),
+        sample_subject_ids=("h1", "h2"),
+    )
+    object.__setattr__(application, "active_family_ids", ("poisoned-family",))
+
+    with pytest.raises(ContractError) as application_error:
+        application._require_intact()
+    assert application_error.value.details.code == (
+        "receiver_family_application_integrity_violation"
+    )
+
+    object.__setattr__(artifact, "active_family_ids", ("poisoned-family",))
+    with pytest.raises(ContractError) as artifact_error:
+        artifact._require_producer_owned()
+    assert artifact_error.value.details.code == (
+        "receiver_family_scoring_integrity_violation"
+    )
+
+
+def test_downstream_application_rejects_forced_value_mutation() -> None:
+    application = apply_receiver_family_scoring_artifact(
+        _scoring_artifact(),
+        np.asarray([[2.0, 3.0], [4.0, 3.0]]),
+        feature_ids=("G1", "G2"),
+        sample_subject_ids=("h1", "h2"),
+    )
+    assert application.downstream_application is not None
+    poisoned = application.downstream_application.receiver_program_score.copy()
+    poisoned[0, 0] += 1.0
+    poisoned.setflags(write=False)
+    object.__setattr__(
+        application.downstream_application,
+        "receiver_program_score",
+        poisoned,
+    )
+
+    with pytest.raises(ContractError) as error:
+        application._require_intact()
+    assert error.value.details.code == (
+        "receiver_family_application_integrity_violation"
+    )
+
+
 def test_training_poison_changes_only_training_owned_identities() -> None:
     clean_receiver = _receiver_family()
     poisoned_receiver = _receiver_family(

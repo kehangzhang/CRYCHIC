@@ -1,0 +1,147 @@
+{
+  "schema_version": "crychic-algorithm-crossfit-smoke-summary-v3",
+  "generated_on": "2026-07-13",
+  "base_revision": "3523cc820c74b235f83404a798d25c98fba6485f",
+  "scope": "typed_public_crossfit_algorithm_smoke_not_full_benchmark",
+  "full_artifact": {
+    "canonical_sha256": "0811a7ebaaa0fe374a071f3fbbd8b30db1a32ec6679731a9bf3bc6714a5da760",
+    "file_sha256": "06513843d59165ff183ad8ebb7d49ab6c5f1c739f92fbf32ac95c304fdbf7f99",
+    "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
+    "size_bytes": 14745
+  },
+  "source_sha256": {
+    "benchmarks/adapters/common.py": "1bf8b13af30e458a4ab2e36db3cb34b8b127e2c1cb13fd6c7259f4e45b1327a9",
+    "benchmarks/adapters/crychic/resource.py": "3bfdb7da506270d7e1e6736c4194966b2399264ae07ba42ed38fa49214446959",
+    "benchmarks/simulation/run_crossfit_smoke.py": "9d3b59410e8362e5241bd3686b0513f44c6ecfaeb78cec564d328db6a08ed1aa",
+    "src/crychic/__init__.py": "f5b2fc90ab93fe76d1d760b623d8842eeaafa54db2635ee95be36008b6cda2a4",
+    "src/crychic/attribution/__init__.py": "2e5e335b49728e11256616a8aef01ef3b98eae601d3ac9805c16e422cb91c0d5",
+    "src/crychic/attribution/basis.py": "79a33dae2fca754a368ed7a6d724a62879902ffb3dba7b8ccd7f301ba2cd93da",
+    "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
+    "src/crychic/attribution/families.py": "7c1f060799fa7ab45c3912a20d1cc3f4385e41e5c7e6c49c8a9579cda7452c38",
+    "src/crychic/attribution/family_first.py": "2bd129165d7f711258cecc391f33076b19ba8a7b6141f9ecbd767e40d13493bc",
+    "src/crychic/attribution/frozen_family.py": "da8b6ae382e5d968fe1d88abbc82cf20fe80317b8ce31010cb0d0cb7bad1a15b",
+    "src/crychic/attribution/precision.py": "4b6883a6325880f6d09b1334018065b8bba4599a752990616716824b0f8991d0",
+    "src/crychic/attribution/solver.py": "159e2099d9fbd8320706ea45db9647fee5d71b214b829ea54c74664c71992935",
+    "src/crychic/attribution/tuning.py": "d4fbbf5b81ba8db8d8ad3ed7ecad6f02c7e00253e033ea1cf55ba65fbf0d8e75",
+    "src/crychic/availability/__init__.py": "c87ed1ae2d387e00f80bb597c9702aee1fdcc986e226bd29e47bb336887ed151",
+    "src/crychic/availability/contracts.py": "a1f6168389e938424325a9ea44cb4760c1072ff4922bc2934dcb02c26cf8f4bb",
+    "src/crychic/availability/estimation.py": "daa9a5af1100fcee8bcde9cb8d9b9de255c865d4739be4b7c48f69da4a34ba9f",
+    "src/crychic/availability/table.py": "fdb0049d6b5141f5dc3abe37cbbae32ef4d8ede50b225565708af6fa7dabee8b",
+    "src/crychic/availability/transforms.py": "44a060e008b4dbbc4c89c387cdd45071da9d8a80fdf970dc35c7491f7fbd2e6f",
+    "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
+    "src/crychic/core/config.py": "6b11c21cc97504367af874ab36c90d0415c295664d3b319998e69e3379e41407",
+    "src/crychic/core/errors.py": "1683c3ca6f08f7160387a086f2fda7983c0ee15035d008934827035ebd7903cc",
+    "src/crychic/core/ids.py": "43cdc62bc23baa8666fabda9103ecc651cd0be67e50fee8a92bd3cf0d86060bf",
+    "src/crychic/core/seed.py": "f5e5a261e96c94c10e7c25d4006874483de4d3a768fa7a408fbf143347357a8b",
+    "src/crychic/core/serialization.py": "dff2b00173fc52e257d1cd18d2806fc5de77be11099f6fd4f6811df08fcaa808",
+    "src/crychic/data/__init__.py": "2cf8b232bf1f8a2c76261e530ef0142ecd9e2ed227398b5aedc678bfc6c01248",
+    "src/crychic/data/contracts.py": "83694b2f796c570aac9b7d4b6a79ffab00ed29e5d3c0265de6ad7646e2fb6681",
+    "src/crychic/data/validation.py": "e7c3978e28dd0ff6cc67ebbd532193274e4f4f216ce7fc4ae4f67aafc943513b",
+    "src/crychic/design/__init__.py": "de552b37538c45b1c8e21f392fd90e086b13a3a155ac3ebc576209012d2e3405",
+    "src/crychic/design/audit.py": "3be22eb8b9fbdfeb18b8e22476ab78fd1049071c57ad58c40c2ad719169ee5ac",
+    "src/crychic/design/context_encoding.py": "0d63359e91b77c5ca0980d3281cacba35b8f3eaa77bd47368ff0ff0ffc86ce3f",
+    "src/crychic/design/context_graph.py": "33c7379d8ac3b4f9450daa8caf7c1fe9812f30b85381c7d6b0295cfd1c06f0d4",
+    "src/crychic/design/contrasts.py": "295db3666b01bf8e456e70d3781ae190db5adc72d95283577ddbbc8c722d31d7",
+    "src/crychic/design/frozen_encoder.py": "b8165127647f0d914419d04f7aa39e7e8150a5a88da8eaa72ec60155ae435795",
+    "src/crychic/pseudobulk/__init__.py": "6ae1228c646af0a2ee85a30a2ad64fd847e7c0e3f257f9215f3af7a24d52dcf4",
+    "src/crychic/pseudobulk/aggregation.py": "4b7999916f9971eb5639fffe96ff60029319e6606e65e7e40f852da17b7db04f",
+    "src/crychic/pseudobulk/contracts.py": "e26e41328e0b93efedde974d11b3eafc013c9ab2ec0514be150547d4908c3d95",
+    "src/crychic/resampling/__init__.py": "e0c9e13a09b6339c92ee8fc59b9aa0bf955db82644be7531a53f72bbfaa8576d",
+    "src/crychic/resampling/contracts.py": "34ad793e84cf59dfd0e2f03e67f7203ba13c1573df0cd7a4c0e3c6a433f70bf3",
+    "src/crychic/resampling/folds.py": "e84f6469f34dbc5cd2a5c9a441452fd506bcac45a7f59f05c9575501c7dba891",
+    "src/crychic/resampling/validation.py": "8d374dbe92e51535fcf01fdf962976ea5e4c4cb15137779a0b75a343dd0d6a6f",
+    "src/crychic/resources/__init__.py": "8b20692a085926f8d3eb7315501385678cd0ea5736cc0ee781f8a0f0052925e9",
+    "src/crychic/resources/cellchat.py": "01d5265ebb2337df976f2516a63a9b939a96ce37d91938b1bdb825e73fc7e7a9",
+    "src/crychic/resources/cellphonedb.py": "1c88e1f101c7d14e88a6de34f14a6d79adaedcb59838c259786354afa5197c4a",
+    "src/crychic/resources/contracts.py": "98d628dda1e821911a23d2188f60d7d1fb8ae9070974ac58a52c5c10f7aeb0e8",
+    "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
+    "src/crychic/resources/nichenet.py": "938b39380128b1838d242025191c8d5e60848b151e6783c2e5e96f60471ddf37",
+    "src/crychic/response/__init__.py": "5e3f2a8f6e010d2ca657d7362d8e690089f668b266d99e4294253cd13370f074",
+    "src/crychic/response/autonomous.py": "b4fa5e59f40d201fd2dfa465e2efe67c20754d624f7f74a5265c008fc14a06dc",
+    "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
+    "src/crychic/response/fold.py": "946af51bfa693317abb1957fcf2d0cec9908b404685bbe007f9461e5798140e0",
+    "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
+    "src/crychic/scoring/__init__.py": "d888826f51a203e41e9542255d9546dc3ad69326ee7d19a31c454a04bf37ea38",
+    "src/crychic/scoring/contracts.py": "5da2f37c2c7dbae5f96549ab8c9761d9f7a66b9a48771b1b7a95c4d81c8ea47c",
+    "src/crychic/scoring/downstream.py": "d0c016e315fd1087bc0ea1bebc8cdb2720623243a6d113b070962ea47a07adbf",
+    "src/crychic/scoring/integration.py": "b831ba63ad577243b79d4f7657aeda372e6c7d66c60da1bb3c65a95bec5da3db",
+    "src/crychic/scoring/receiver_family.py": "11b8c2a7f18cecabf2a4ab009ee63afb77d8ef2d8bd6863e5c6eabb684e5b347",
+    "src/crychic/sender/__init__.py": "30b542f3d81fe7c3724652fc4445a3b82707cbddb0ae29ab2a8f5c900bd68c5b",
+    "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
+    "src/crychic/sender/common.py": "9d859814f7b2a887015c3450d2ae01f14019d4a5f9b0fcc806fc1cbd348ba72d",
+    "src/crychic/sender/contracts.py": "086c85b9dcdf4b910e6020c1ca35d9783384724772ee522f33170559a9021a11",
+    "src/crychic/workflow/__init__.py": "f52bb074bf033861ff7bf31298f57a54392a76cbbf1885fb60e59ca06780589e",
+    "src/crychic/workflow/application.py": "39dd7433102b5e52240fe1e6b433fd1b10c99c96654edd7ebff2052595c579f0",
+    "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
+    "src/crychic/workflow/crossfit.py": "1e35bf475c57bf7f68533bd3e233b03857e2ee642f9a7a73d7b5aa82737e5a99",
+    "src/crychic/workflow/receiver_incremental.py": "36c7259eb85b227cfba4eacd296e66004c238883820915d2b891703a8f5aa4dc",
+    "src/crychic/workflow/training.py": "56941c867b1668bc1c6b184b4b37e60e965c6a2e2b88e0296bf0f547f9a434e3"
+  },
+  "process_performance": {
+    "peak_rss_kib": 1335108,
+    "wall_clock_seconds": 37.99688517767936
+  },
+  "records": [
+    {
+      "dataset": "synthetic_active",
+      "n_cells": 3733,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 19.18088817037642,
+      "crossfit_id": "subject_crossfit_4ea694d357563d3248a4d2f2aed71e94",
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_0faa9885bfee84935ca97f281a217e0c",
+      "observed_incremental_diagnostic_count": 2,
+      "mean_bounded_incremental_diagnostic_gain": 0.005596017160237423,
+      "mean_raw_incremental_diagnostic_gain": -0.0023041723887468188,
+      "gain_denominator_status_counts": {
+        "positive_receiver_null_loss_ratio_v1": 2
+      },
+      "incremental_loss_design_counts": {
+        "fully_paired_subject_contrasts_v1": 2
+      },
+      "official_incremental_status_counts": {
+        "not_estimable": 48
+      }
+    },
+    {
+      "dataset": "synthetic_ligand_only",
+      "n_cells": 3886,
+      "n_genes": 23,
+      "n_subjects": 8,
+      "n_folds": 2,
+      "elapsed_seconds": 18.81599700730294,
+      "crossfit_id": "subject_crossfit_24a809f26acf4bb7aaeff519104f0abd",
+      "receiver_coverage_audit_id": "receiver_oof_coverage_audit_1847c000602751570b43cadb2ddf1f62",
+      "observed_incremental_diagnostic_count": 2,
+      "mean_bounded_incremental_diagnostic_gain": 0.0009431128809004988,
+      "mean_raw_incremental_diagnostic_gain": -0.012789006401190151,
+      "gain_denominator_status_counts": {
+        "positive_receiver_null_loss_ratio_v1": 2
+      },
+      "incremental_loss_design_counts": {
+        "fully_paired_subject_contrasts_v1": 2
+      },
+      "official_incremental_status_counts": {
+        "not_estimable": 48
+      }
+    }
+  ],
+  "remaining_stages": [
+    "attribution_tuning",
+    "common_scoring_functional",
+    "family_attribution",
+    "incremental_downstream",
+    "receiver_autonomous_nuisance",
+    "subject_blocked_inner_tuning"
+  ],
+  "interpretation": "The v5 typed public path preserves exact receiver coverage under the current paired loss contract. Active has larger bounded and raw diagnostic gain than ligand-only, while both mean raw gains remain below zero and all 48 official rows per dataset remain not_estimable. Caller-declared autonomous resources and standalone tuning primitives remain noncertifying and are not used in this smoke, so no official incremental, integrated-edge, biological, or superiority claim is allowed.",
+  "guardrails": {
+    "active_vs_ligand_only_mechanism_claim_allowed": false,
+    "biological_claim_allowed": false,
+    "complete_pipeline_oof_claim_allowed": false,
+    "official_incremental_gain_claim_allowed": false,
+    "method_superiority_claim_allowed": false,
+    "p_or_q_reported": false
+  }
+}

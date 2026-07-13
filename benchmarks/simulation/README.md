@@ -113,11 +113,13 @@ uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specifici
   --output-dir benchmark_work/g1_5_v2/independent_holdout
 ```
 
-The runner writes atomic evidence, generation provenance, and evaluator metrics.
-The live runner refuses to republish the already inspected historical holdout.
-It may run development checks under
-`benchmark_work/g1_5_sample_keyed_development_v2/`; a future independent
-holdout requires a new preregistered configuration and seed namespace.
+The runner writes atomic evidence, generation provenance, evaluator metrics,
+and structural-zero versus positive-denominator counts globally and by
+scenario. The live runner uses `mechanism_specificity_v3.json`, a distinct v3
+seed namespace, and the default development output
+`benchmark_work/g1_5_sample_keyed_development_v3/`. It refuses to republish the
+already inspected historical holdout; the v3 holdout namespace is
+nonpublication test-only and cannot be promoted to an independent holdout.
 Published historical lightweight results and exact artifact hashes are
 in [`benchmarks/results/g1_5_v2_summary.json`](../results/g1_5_v2_summary.json).
 The synthetic gate never switches the public default by itself.

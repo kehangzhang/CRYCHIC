@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from crychic.core import canonical_json, stable_id
+from crychic.core import ContractError, canonical_json, stable_id
 
 from .contracts import SubjectFoldPlan
 
@@ -52,7 +52,45 @@ class OOFCoverageAudit:
         }
         object.__setattr__(self, "audit_id", stable_id("oof_coverage_audit", payload))
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of persisted OOF coverage provenance."""
+
+        try:
+            repeated = OOFCoverageAudit(
+                fold_plan_id=self.fold_plan_id,
+                subject_ids=self.subject_ids,
+                fold_ids=self.fold_ids,
+                contrast_ids=self.contrast_ids,
+                n_rows=self.n_rows,
+            )
+            valid = (
+                isinstance(self.subject_ids, tuple)
+                and isinstance(self.fold_ids, tuple)
+                and isinstance(self.contrast_ids, tuple)
+                and self.fold_plan_id == repeated.fold_plan_id
+                and self.subject_ids == repeated.subject_ids
+                and self.fold_ids == repeated.fold_ids
+                and self.contrast_ids == repeated.contrast_ids
+                and self.n_rows == repeated.n_rows
+                and self.audit_id == repeated.audit_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "OOF coverage audit failed integrity validation",
+                code="oof_coverage_audit_integrity_violation",
+                field="audit_id",
+                remediation="Recompute coverage from the intact fold plan and rows",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "OOF coverage audit failed integrity validation",
+                code="oof_coverage_audit_integrity_violation",
+                field="audit_id",
+                remediation="Recompute coverage from the intact fold plan and rows",
+            )
+
     def to_dict(self) -> dict[str, object]:
+        self._require_intact()
         return {
             "audit_id": self.audit_id,
             "fold_plan_id": self.fold_plan_id,

@@ -51,7 +51,24 @@ from .precision import (
     fit_response_precision,
     winsorized_normalized_precision,
 )
-from .solver import ElasticNetSolution, solve_nonnegative_elastic_net
+from .solver import (
+    ElasticNetSolution,
+    solve_nonnegative_elastic_net,
+    solve_nonnegative_residual_elastic_net,
+)
+from .tuning import (
+    PenaltyCandidateSummary,
+    PenaltyFoldEvaluation,
+    PenaltyScaleResolution,
+    PenaltyTuningArtifact,
+    PenaltyTuningSpec,
+    RelativePenaltyCandidate,
+    ResolvedPenalty,
+    record_penalty_fold_evaluation,
+    resolve_penalty_scale,
+    resolve_residualized_penalty_scale,
+    select_penalty_candidate,
+)
 
 __all__ = [
     "AttributionResult",
@@ -74,9 +91,16 @@ __all__ = [
     "GatedTargetBasis",
     "LRIdentifiabilityStatus",
     "ObjectiveTerms",
+    "PenaltyCandidateSummary",
+    "PenaltyFoldEvaluation",
+    "PenaltyScaleResolution",
+    "PenaltyTuningArtifact",
+    "PenaltyTuningSpec",
     "PrecisionTransformResult",
     "ReceiverFamilyTrainingArtifact",
     "ReceptorGatePolicy",
+    "RelativePenaltyCandidate",
+    "ResolvedPenalty",
     "ResponseDirection",
     "SolverDiagnostics",
     "SolverStatus",
@@ -93,6 +117,11 @@ __all__ = [
     "fit_receiver_family_training_artifact",
     "fit_receiver_family_training_artifacts",
     "fit_response_precision",
+    "record_penalty_fold_evaluation",
+    "resolve_penalty_scale",
+    "resolve_residualized_penalty_scale",
+    "select_penalty_candidate",
     "solve_nonnegative_elastic_net",
+    "solve_nonnegative_residual_elastic_net",
     "winsorized_normalized_precision",
 ]

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from crychic.attribution.frozen_family import ReceiverFamilyTrainingArtifact
-from crychic.core import stable_id
+from crychic.core import ContractError, stable_id
 
 from .downstream import (
     DownstreamApplication,
@@ -159,6 +159,96 @@ class ReceiverFamilyScoringArtifact:
     def _require_producer_owned(self) -> None:
         if self._producer_marker != _PRODUCER_MARKER:
             raise TypeError("receiver-family scoring artifact is not producer-owned")
+        self._require_intact()
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "active_family_ids": list(self.active_family_ids),
+            "certification_status": self.certification_status,
+            "contrast_name": self.contrast_name,
+            "downstream_functional_id": (
+                None
+                if self.downstream_functional is None
+                else self.downstream_functional.downstream_functional_id
+            ),
+            "reason_code": self.reason_code,
+            "receiver_family_training_artifact_id": (
+                self.receiver_family_artifact.training_artifact_id
+            ),
+            "reference_subject_ids": list(self.reference_subject_ids),
+            "reference_sample_ids": list(self.reference_sample_ids),
+            "reference_input_digest": (
+                None
+                if self.downstream_functional is None
+                else self.downstream_functional.reference_input_digest
+            ),
+        }
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of receiver-family scoring lineage."""
+
+        try:
+            self.receiver_family_artifact._require_producer_owned()
+            if not isinstance(self.contrast_name, str) or not self.contrast_name:
+                raise ValueError("invalid contrast name")
+            active = tuple(self.active_family_ids)
+            samples = tuple(self.reference_sample_ids)
+            subjects = tuple(self.reference_subject_ids)
+            if (
+                not isinstance(self.active_family_ids, tuple)
+                or not isinstance(self.reference_sample_ids, tuple)
+                or not isinstance(self.reference_subject_ids, tuple)
+                or len(active) != len(set(active))
+                or any(not value for value in (*active, *samples, *subjects))
+            ):
+                raise ValueError("invalid receiver-family identifiers")
+            has_functional = self.downstream_functional is not None
+            if has_functional == (self.reason_code is not None):
+                raise ValueError("invalid receiver-family scoring status")
+            if has_functional:
+                assert self.downstream_functional is not None
+                self.downstream_functional._require_intact()
+                if (
+                    self.downstream_functional.family_ids != active
+                    or self.downstream_functional.receiver
+                    != self.receiver_family_artifact.receiver
+                    or self.downstream_functional.fold_id
+                    != self.receiver_family_artifact.fold_id
+                ):
+                    raise ValueError("downstream functional lineage mismatch")
+                expected_completed = (
+                    *self.receiver_family_artifact.completed_stages,
+                    "receiver_program_reference_transform",
+                )
+                expected_status = _TRAINING_STATUS
+            else:
+                expected_completed = self.receiver_family_artifact.completed_stages
+                expected_status = _NOT_ESTIMABLE_STATUS
+            valid = (
+                self.completed_stages == expected_completed
+                and self.remaining_stages == _REMAINING_STAGES
+                and self.certification_status == expected_status
+                and stable_id(
+                    "receiver_family_scoring_artifact",
+                    self._identity_payload(),
+                )
+                == self.training_artifact_id
+                and not self.is_oof_certified
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Receiver-family scoring artifact failed integrity validation",
+                code="receiver_family_scoring_integrity_violation",
+                field="training_artifact_id",
+                remediation="Refit receiver-family scoring from intact parents",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Receiver-family scoring artifact failed integrity validation",
+                code="receiver_family_scoring_integrity_violation",
+                field="training_artifact_id",
+                remediation="Refit receiver-family scoring from intact parents",
+            )
 
 
 def mark_receiver_family_scoring_not_estimable(
@@ -199,6 +289,7 @@ class ReceiverFamilyScoringApplication:
     downstream_application: DownstreamApplication | None
     reason_code: str | None
     application_status: str
+    application_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.training_artifact_id:
@@ -216,6 +307,92 @@ class ReceiverFamilyScoringApplication:
         if self.application_status != expected_status:
             raise ValueError(
                 "application status does not match downstream availability"
+            )
+        subjects = tuple(sorted(set(self.heldout_subject_ids)))
+        active = tuple(self.active_family_ids)
+        if (
+            not subjects
+            or len(active) != len(set(active))
+            or any(not isinstance(value, str) or not value.strip() for value in active)
+        ):
+            raise ValueError("receiver-family application identifiers are invalid")
+        if observed:
+            assert self.downstream_application is not None
+            self.downstream_application._require_intact()
+            if self.downstream_application.raw_program.shape[1] != len(active):
+                raise ValueError(
+                    "downstream application columns do not match active families"
+                )
+        object.__setattr__(self, "heldout_subject_ids", subjects)
+        object.__setattr__(self, "active_family_ids", active)
+        object.__setattr__(
+            self,
+            "application_id",
+            stable_id("receiver_family_scoring_application", self._identity_payload()),
+        )
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "active_family_ids": list(self.active_family_ids),
+            "application_status": self.application_status,
+            "downstream_application_id": (
+                None
+                if self.downstream_application is None
+                else self.downstream_application.application_id
+            ),
+            "heldout_subject_ids": list(self.heldout_subject_ids),
+            "reason_code": self.reason_code,
+            "training_artifact_id": self.training_artifact_id,
+        }
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of held-out receiver-family values."""
+
+        try:
+            observed = self.downstream_application is not None
+            if observed:
+                assert self.downstream_application is not None
+                self.downstream_application._require_intact()
+            expected_status = (
+                _APPLICATION_STATUS if observed else _APPLICATION_NOT_ESTIMABLE
+            )
+            valid = (
+                bool(self.training_artifact_id)
+                and isinstance(self.heldout_subject_ids, tuple)
+                and isinstance(self.active_family_ids, tuple)
+                and self.heldout_subject_ids
+                == tuple(sorted(set(self.heldout_subject_ids)))
+                and len(self.active_family_ids) == len(set(self.active_family_ids))
+                and observed == (self.reason_code is None)
+                and self.application_status == expected_status
+                and (
+                    not observed
+                    or (
+                        self.downstream_application is not None
+                        and self.downstream_application.raw_program.shape[1]
+                        == len(self.active_family_ids)
+                    )
+                )
+                and stable_id(
+                    "receiver_family_scoring_application",
+                    self._identity_payload(),
+                )
+                == self.application_id
+                and not self.is_oof_certified
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Receiver-family application failed integrity validation",
+                code="receiver_family_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact receiver-family scoring artifact",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Receiver-family application failed integrity validation",
+                code="receiver_family_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact receiver-family scoring artifact",
             )
 
     @property

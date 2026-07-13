@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from crychic.attribution import SolverStatus, solve_nonnegative_elastic_net
+from crychic.attribution import (
+    SolverStatus,
+    solve_nonnegative_elastic_net,
+    solve_nonnegative_residual_elastic_net,
+)
+from crychic.core import ContractError
 
 
 def test_weighted_one_coordinate_matches_analytic_solution_and_kkt() -> None:
@@ -80,3 +85,27 @@ def test_iteration_limit_is_explicit_failure_not_success() -> None:
     assert solution.diagnostics.failure_reason == (
         "coordinate_or_kkt_tolerance_not_met"
     )
+
+
+def test_signed_residual_space_requires_explicit_opt_in() -> None:
+    matrix = sparse.csc_matrix([[1.0], [-1.0]])
+    response = np.asarray([2.0, -2.0])
+
+    with pytest.raises(ContractError) as basis_error:
+        solve_nonnegative_elastic_net(matrix, np.abs(response))
+    assert basis_error.value.details.code == "invalid_solver_basis"
+
+    with pytest.raises(ContractError) as response_error:
+        solve_nonnegative_elastic_net(sparse.eye(2), response)
+    assert response_error.value.details.code == "invalid_directional_response"
+
+    solution = solve_nonnegative_residual_elastic_net(
+        matrix,
+        response,
+        tolerance=1e-12,
+        kkt_tolerance=1e-12,
+    )
+
+    assert solution.coefficients[0] == pytest.approx(2.0)
+    np.testing.assert_allclose(solution.predicted, response, atol=1e-12)
+    assert solution.diagnostics.status is SolverStatus.CONVERGED

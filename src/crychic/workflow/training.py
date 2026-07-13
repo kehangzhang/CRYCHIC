@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Hashable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, TypeAlias, cast
 
 import numpy as np
@@ -25,7 +25,7 @@ from crychic.availability import (
     FrozenInteractionUniverse,
     estimate_bundle_availability,
 )
-from crychic.core import CrychicConfig, canonical_json, stable_id
+from crychic.core import ContractError, CrychicConfig, canonical_json, stable_id
 from crychic.data import (
     ExpressionTransform,
     InputSchema,
@@ -61,6 +61,18 @@ def _availability_parameter_payload(
         "hill_coefficient": parameters.hill.coefficient,
         "hill_half_saturation": parameters.hill.half_saturation,
     }
+
+
+def _resource_bundle_content_id(resource_bundle: ResourceBundle) -> str:
+    """Bind the in-memory interaction content used during held-out application."""
+
+    return stable_id("resource_bundle_content", asdict(resource_bundle))
+
+
+def _target_prior_content_id(target_prior: TargetPrior) -> str:
+    """Bind the complete in-memory target prior used by training children."""
+
+    return stable_id("target_prior_content", asdict(target_prior))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -103,6 +115,7 @@ class FoldTrainingSpec:
             raise TypeError(
                 "sender_parameters must be ContrastCommonSenderParameters"
             )
+        self.sender_parameters._require_intact()
         contrasts = self.sender_contrasts
         if contrasts is not None:
             contrasts = tuple(contrasts)
@@ -159,6 +172,48 @@ class FoldTrainingSpec:
             ),
         )
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the fold-training policy."""
+
+        try:
+            self.sender_parameters._require_intact()
+            repeated = FoldTrainingSpec(
+                min_cells=self.min_cells,
+                min_pooled_availability=self.min_pooled_availability,
+                max_interactions=self.max_interactions,
+                availability_parameters=self.availability_parameters,
+                sender_parameters=self.sender_parameters,
+                sender_contrasts=self.sender_contrasts,
+                schema_version=self.schema_version,
+            )
+            valid = (
+                self.min_cells == repeated.min_cells
+                and self.min_pooled_availability
+                == repeated.min_pooled_availability
+                and self.max_interactions == repeated.max_interactions
+                and self.availability_parameters
+                == repeated.availability_parameters
+                and self.sender_parameters.parameter_manifest_id
+                == repeated.sender_parameters.parameter_manifest_id
+                and self.sender_contrasts == repeated.sender_contrasts
+                and self.schema_version == repeated.schema_version
+                and self.spec_id == repeated.spec_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Fold-training specification failed integrity validation",
+                code="fold_training_spec_integrity_violation",
+                field="spec_id",
+                remediation="Rebuild FoldTrainingSpec from the declared policy",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Fold-training specification failed integrity validation",
+                code="fold_training_spec_integrity_violation",
+                field="spec_id",
+                remediation="Rebuild FoldTrainingSpec from the declared policy",
+            )
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class TrainingArtifacts:
@@ -200,6 +255,40 @@ class TrainingArtifacts:
         frozen_interaction_universe: FrozenInteractionUniverse,
         sender_functionals: tuple[ContrastCommonSenderFunctional, ...],
     ) -> TrainingArtifacts:
+        if not isinstance(config, CrychicConfig):
+            raise TypeError("config must be a CrychicConfig")
+        if not isinstance(resource_bundle, ResourceBundle):
+            raise TypeError("resource_bundle must be a ResourceBundle")
+        if not isinstance(target_prior, TargetPrior):
+            raise TypeError("target_prior must be a TargetPrior")
+        if not isinstance(spec, FoldTrainingSpec):
+            raise TypeError("spec must be a FoldTrainingSpec")
+        spec._require_intact()
+        if not isinstance(frozen_interaction_universe, FrozenInteractionUniverse):
+            raise TypeError(
+                "frozen_interaction_universe must be a FrozenInteractionUniverse"
+            )
+        frozen_interaction_universe._require_intact()
+        if resource_bundle.species is not target_prior.species:
+            raise ValueError("resource bundle and target prior species must match")
+        if resource_bundle.gene_namespace is not target_prior.gene_namespace:
+            raise ValueError("resource bundle and target prior namespace must match")
+        if (
+            frozen_interaction_universe.resource_id != resource_bundle.resource_id
+            or frozen_interaction_universe.resource_version
+            != resource_bundle.version
+            or frozen_interaction_universe.resource_manifest_digest
+            != resource_bundle.manifest_digest
+            or frozen_interaction_universe.min_pooled_availability
+            != spec.min_pooled_availability
+            or frozen_interaction_universe.max_interactions
+            != spec.max_interactions
+        ):
+            raise ValueError(
+                "frozen interaction universe does not match its resource and spec"
+            )
+        if not isinstance(training_input_digest, str) or not training_input_digest:
+            raise ValueError("training_input_digest must be a non-empty identifier")
         subjects = tuple(sorted(training_subject_ids))
         samples = tuple(sorted(training_sample_ids))
         cell_types = tuple(sorted(cell_type_ids))
@@ -214,11 +303,22 @@ class TrainingArtifacts:
                 "frozen interaction universe subjects do not match the raw input"
             )
         functionals = tuple(sender_functionals)
+        if any(
+            not isinstance(functional, ContrastCommonSenderFunctional)
+            for functional in functionals
+        ):
+            raise TypeError(
+                "sender_functionals must contain ContrastCommonSenderFunctional"
+            )
+        for functional in functionals:
+            functional._require_intact()
         if functionals:
             if any(
                 functional.training_subject_ids != subjects
                 or functional.filter_universe_id
                 != frozen_interaction_universe.filter_universe_id
+                or functional.parameters.parameter_manifest_id
+                != spec.sender_parameters.parameter_manifest_id
                 for functional in functionals
             ):
                 raise ValueError(
@@ -248,15 +348,21 @@ class TrainingArtifacts:
             "completed_stages": list(completed),
             "config_digest": config.digest,
             "filter_universe_id": (frozen_interaction_universe.filter_universe_id),
+            "remaining_stages": list(remaining),
+            "resource_bundle_content_id": _resource_bundle_content_id(
+                resource_bundle
+            ),
             "resource_manifest_digest": resource_bundle.manifest_digest,
             "sender_functional_ids": [
                 functional.sender_functional_id for functional in functionals
             ],
             "spec_id": spec.spec_id,
             "target_prior_manifest_digest": target_prior.manifest_digest,
+            "target_prior_content_id": _target_prior_content_id(target_prior),
             "training_input_digest": training_input_digest,
             "training_sample_ids": list(samples),
             "training_subject_ids": list(subjects),
+            "certification_status": _PARTIAL_STATUS,
         }
         artifact_id = stable_id("partial_fold_training_artifact", payload)
         self = object.__new__(cls)
@@ -290,6 +396,62 @@ class TrainingArtifacts:
     def _require_producer_owned(self) -> None:
         if self._producer_marker != _PRODUCER_MARKER:
             raise TypeError("TrainingArtifacts were not produced by this workflow")
+        self._require_intact()
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of training scope, resources, or child artifacts."""
+
+        try:
+            repeated = TrainingArtifacts._from_training(
+                config=self.config,
+                resource_bundle=self.resource_bundle,
+                target_prior=self.target_prior,
+                spec=self.spec,
+                training_subject_ids=self.training_subject_ids,
+                training_sample_ids=self.training_sample_ids,
+                cell_type_ids=self.cell_type_ids,
+                training_input_digest=self.training_input_digest,
+                frozen_interaction_universe=self.frozen_interaction_universe,
+                sender_functionals=self.sender_functionals,
+            )
+            valid = (
+                self._producer_marker == _PRODUCER_MARKER
+                and isinstance(self.training_subject_ids, tuple)
+                and isinstance(self.training_sample_ids, tuple)
+                and isinstance(self.cell_type_ids, tuple)
+                and isinstance(self.sender_functionals, tuple)
+                and isinstance(self.completed_stages, tuple)
+                and isinstance(self.remaining_stages, tuple)
+                and self.training_subject_ids == repeated.training_subject_ids
+                and self.training_sample_ids == repeated.training_sample_ids
+                and self.cell_type_ids == repeated.cell_type_ids
+                and self.training_input_digest == repeated.training_input_digest
+                and self.sender_functionals == repeated.sender_functionals
+                and self.completed_stages == repeated.completed_stages
+                and self.remaining_stages == repeated.remaining_stages
+                and self.certification_status == repeated.certification_status
+                and self.training_artifact_id == repeated.training_artifact_id
+                and not self.is_oof_certified
+            )
+        except (
+            AttributeError,
+            ContractError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise ContractError(
+                "Training artifact failed scope or child integrity validation",
+                code="training_artifact_integrity_violation",
+                field="training_artifact_id",
+                remediation="Refit the training artifact from intact raw inputs",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Training artifact failed scope or child integrity validation",
+                code="training_artifact_integrity_violation",
+                field="training_artifact_id",
+                remediation="Refit the training artifact from intact raw inputs",
+            )
 
 
 Aggregate: TypeAlias = PseudobulkDataset | ExploratoryAggregate
@@ -536,6 +698,7 @@ def fit_training_artifacts(
         raise TypeError("target_prior must be a TargetPrior")
     if not isinstance(spec, FoldTrainingSpec):
         raise TypeError("spec must be a FoldTrainingSpec")
+    spec._require_intact()
     if resource_bundle.species is not target_prior.species:
         raise ValueError("resource bundle and target prior species must match")
     if resource_bundle.gene_namespace is not target_prior.gene_namespace:

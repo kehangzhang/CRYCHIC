@@ -2,7 +2,7 @@
 
 - Audit date: 2026-07-13
 - Starting audit baseline: `5e8b4b8`; the current implementation batch builds
-  on `d14b61e` and the multi-condition v02 report
+  on `3523cc8` and the multi-condition v02 report
 - Scope: implementation evidence, not a biological or superiority claim
 
 This matrix records which recommendations are present in the public workflow,
@@ -13,10 +13,10 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | --- | --- | --- |
 | Four semantic outputs | Partial | Workflow contracts separate components, but public integrated scoring remains the legacy baseline and incremental downstream is `not_estimable`. |
 | Explained-share v3 | Partial | Implemented and tested as a candidate support method; the baseline default remains relative-coefficient v1. |
-| Held-out incremental downstream gain | Partial | Public cross-fit now builds a producer-owned fold response, response-parented precision transform and typed incremental training/application chain from the exact frozen design and eligible receiver-family basis. It audits every planned held-out fold/contrast/receiver/sample row and preserves signed, bounded, sample and subject loss diagnostics without refitting. This is deliberately a formula-nuisance development diagnostic: every official row remains `not_estimable` with `receiver_autonomous_nuisance_not_frozen`. A frozen autonomous nuisance basis, subject-blocked inner tuning and family attribution are still required; the overlapping generic-program/LR-target counterexample therefore remains an unresolved certification gate. |
+| Held-out incremental downstream gain | Partial | Public cross-fit builds a producer-owned fold response, response-parented precision transform and typed incremental train/apply chain from the exact frozen design and eligible receiver-family basis. The low-level v4 estimand supports fully paired and fully independent multi-context subjects, technical-row aggregation, explicit structural-zero gains, and precision-weighted projection of a caller-declared static autonomous program resource. Exact/near overlap and unsupported/rank-deficient resource support fail closed. The overlap counterexample now passes a tracked small smoke, but the public resource is deliberately `caller_declared_static_unverified`; every official row remains `not_estimable` with `receiver_autonomous_nuisance_not_frozen`. A trusted loader, connected subject-blocked inner tuning, family attribution and common scoring are still required. |
 | Soft-min integration | Partial | Candidate integration and ablation tests exist; the public baseline still uses legacy four-component scoring. |
 | Hard receptor eligibility | Partial | Public partial cross-fit freezes a condition-blind, scale-invariant hard gate in each training fold and performs no held-out gate fitting. Every planned receiver/sample application is now retained in a separate exact-coverage audit. The gate remains absent from a certified common integrated score. |
-| Winsorized normalized precision | Partial | The public producer-owned transform binds its exact fold-response parent, training row manifest, sample/subject provenance, encoder, ordered feature IDs and raw/transformed immutable values. Integrity and solver-boundary checks prevent silent lineage or weight drift. It is connected to the formula-nuisance diagnostic, but cannot make that diagnostic official until autonomous nuisance and inner tuning are frozen. |
+| Winsorized normalized precision | Partial | The public producer-owned transform binds its exact fold-response parent, training row manifest, sample/subject provenance, encoder, ordered feature IDs and raw/transformed immutable values. It now drives both autonomous projection and the typed signed-residual solver boundary. It cannot make the diagnostic official until autonomous resource verification and inner tuning are frozen. |
 | Strict complete-link families | Implemented | Chaining counterexamples are covered by family tests. The deterministic incremental complete-link implementation matches a brute-force reference across random sparse profiles, zero-similarity and tolerance cases, and reuses one static partition per fold feature universe while retaining receiver-specific gates and artifact IDs. |
 | True family-first fitting | Partial | Public partial cross-fit freezes hard eligibility, strict complete-link families and one medoid basis column per family for every planned training cell type. The typed formula-nuisance diagnostic consumes only eligible frozen family columns. Separate attribution primitives preserve signed residuals and evidence-only member allocation, but family attribution/tuning and integrated common scoring are not connected and the legacy baseline still fits members before aggregation. |
 | Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. |
@@ -25,7 +25,7 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | All-missing sender evidence | Implemented | Returns missing values rather than fabricated uniform weights. |
 | Common sender functional | Partial | The public subject-cross-fit path now freezes the sender universe, cross-context training prevalence prior, minimum support and temperature inside each training fold, applies only sample-local held-out ligand evidence, and verifies exact stage-level OOF coverage. Low-level rows retain `partial_not_oof`, the aggregate result is `verified_train_only_oof_partial_pipeline`, and the functional is deliberately not connected to the legacy context-specific default score. |
 | Subject fold planning and OOF audit | Implemented | Subject blocks, K fallback, design re-audit, and exact coverage are tested. |
-| Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives folds from raw metadata, creates physical sanitized scopes, and freezes interaction/sender, complete-formula EMM design, receptor, family, reference-program, response, response-precision and formula-nuisance diagnostic artifacts. Held-out application cannot call fit; poison cannot change training IDs; overlap, feature drift, unseen levels and missing receiver samples fail closed. Exact audits cover availability/common-sender and every planned receiver row. Official incremental scoring, autonomous nuisance, inner tuning, family attribution and a contrast-common integrated functional remain. |
+| Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives folds from raw metadata, creates physical sanitized scopes, and freezes interaction/sender, complete-formula EMM design, receptor, family, reference-program, response, response-precision and incremental diagnostic artifacts. It accepts only a species/namespace-compatible typed autonomous resource, binds that resource into every child, supports paired and independent subject allocation, and rejects forced spec or parent-lineage mutation. Caller-declared resource provenance remains unverified, and standalone tuning evaluations are not connected; official incremental scoring, trusted autonomous nuisance, inner tuning, family attribution and a contrast-common integrated functional remain. |
 | Exact-zero complex soft-min | Implemented | Zero and missingness behavior are covered by tests. |
 | Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, and cap conflicts are tested. |
 | H-common data-driven cap ban | Implemented | v0.2 specs reject caps and the cSCC/MS H-common real-data runs completed without a cap. The harmonized resource has 638 interactions, below the former cap of 800, so this run validates the uncapped path but does not demonstrate coverage expansion from removing the cap. |
@@ -45,6 +45,14 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | Default switch | Not eligible | Requires certified public cross-fit, real no-cap candidate noninferiority, and legacy reproducibility gates. |
 
 ## Frozen evidence
+
+The structural-zero v3 development rerun contains 1,050 observations across 50
+fixed seeds and three known edges. It passed every supplied development gate,
+while `default_switch_allowed` remains false. Its manifest records 600 positive
+receiver-null denominators and 450 explicit structural-zero denominators:
+global-null, abundance-only and ligand-only contribute 150 structural zeros
+each. No v3 publication holdout has run; the v3 holdout namespace remains
+reserved and unavailable for claims.
 
 The G1.5 development run contains 1,050 observations and the independent
 holdout contains 4,200 observations. Both have zero failed gates. The holdout
@@ -101,12 +109,29 @@ were negative. This verifies execution and fail-closed semantics, not mechanism
 specificity or biological recovery. Compact evidence is in
 `benchmarks/results/algorithm_crossfit_smoke_v4_summary.json`.
 
+The v5 rerun uses the paired branch of the current loss contract and explicit
+zero-denominator semantics; every synthetic subject has both control and target
+samples. The independent-group branch is covered separately by low-level and
+public-workflow integration tests, not by this smoke. The two observed receiver
+diagnostics had mean raw gain `-0.002304` for active and `-0.012789` for
+ligand-only; mean bounded gain was `0.005596` and `0.000943`, respectively.
+Thus active is higher on both diagnostic summaries, but neither raw mean is
+positive. All 48 official rows per dataset remain `not_estimable`.
+Separately, the autonomous-overlap counterexample smoke projects a generic
+program overlapping the LR target: generic-only gain is zero, active unique
+gain is `0.937149`, and changing subject-constant baselines from 0 to 25 changes
+gain by at most `1.11e-16`. These are algorithm diagnostics, not certification
+or biology. Compact evidence is in
+`benchmarks/results/algorithm_crossfit_smoke_v5_summary.json` and
+`benchmarks/results/autonomous_overlap_smoke_v1_summary.json`.
+
 ## Execution order
 
-1. Freeze a receiver-autonomous nuisance basis and subject-blocked inner-fold
-   tuning inside the physical training scope, connect family attribution and a
-   contrast-common scoring functional, then rerun G1.5 through the public
-   workflow. The existing formula-nuisance chain is diagnostic evidence only.
+1. Add a trusted manifest-backed receiver-autonomous resource loader and typed
+   inner-fold fit/apply production inside the physical training scope. Then
+   connect family attribution and a contrast-common scoring functional and
+   rerun G1.5 through the public workflow. Caller-declared projection and the
+   standalone tuning selector remain diagnostic evidence only.
 2. Reuse prepared fold aggregates across stages and complete exact-equivalence
    sparse/block performance work.
 3. Replace receiver row-union views with a true contrast-common OOF functional,

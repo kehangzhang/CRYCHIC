@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from benchmarks.simulation.run_crossfit_smoke import crossfit_smoke_source_sha256
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SUMMARY_PATH = REPO_ROOT / "benchmarks/results/algorithm_crossfit_smoke_v3_summary.json"
@@ -16,6 +17,12 @@ V4_SUMMARY_PATH = (
 )
 V4_FULL_ARTIFACT_PATH = (
     REPO_ROOT.parent / "benchmark_work/algorithm_smoke/crossfit_summary_v4.json"
+)
+V5_SUMMARY_PATH = (
+    REPO_ROOT / "benchmarks/results/algorithm_crossfit_smoke_v5_summary.json"
+)
+V5_FULL_ARTIFACT_PATH = (
+    REPO_ROOT.parent / "benchmark_work/algorithm_smoke/crossfit_summary_v5.json"
 )
 
 
@@ -120,3 +127,63 @@ def test_typed_crossfit_smoke_v4_full_artifact_matches_tracked_digest() -> None:
     assert (
         full["process_peak_rss_kib"] == summary["process_performance"]["peak_rss_kib"]
     )
+
+
+def test_typed_crossfit_smoke_v5_records_current_diagnostic_boundary() -> None:
+    summary = json.loads(V5_SUMMARY_PATH.read_text())
+    by_dataset = {record["dataset"]: record for record in summary["records"]}
+
+    assert all(value is False for value in summary["guardrails"].values())
+    assert (
+        by_dataset["synthetic_active"]["mean_raw_incremental_diagnostic_gain"]
+        > by_dataset["synthetic_ligand_only"][
+            "mean_raw_incremental_diagnostic_gain"
+        ]
+    )
+    assert (
+        by_dataset["synthetic_active"]["mean_bounded_incremental_diagnostic_gain"]
+        > by_dataset["synthetic_ligand_only"][
+            "mean_bounded_incremental_diagnostic_gain"
+        ]
+    )
+    assert all(
+        record["gain_denominator_status_counts"]
+        == {"positive_receiver_null_loss_ratio_v1": 2}
+        and record["incremental_loss_design_counts"]
+        == {"fully_paired_subject_contrasts_v1": 2}
+        and record["official_incremental_status_counts"] == {"not_estimable": 48}
+        for record in summary["records"]
+    )
+
+
+def test_typed_crossfit_smoke_v5_binds_the_current_source_closure() -> None:
+    summary = json.loads(V5_SUMMARY_PATH.read_text())
+
+    assert summary["source_sha256"] == crossfit_smoke_source_sha256()
+
+
+def test_typed_crossfit_smoke_v5_full_artifact_matches_tracked_digest() -> None:
+    if not V5_FULL_ARTIFACT_PATH.exists():
+        pytest.skip("workspace smoke artifact is intentionally not tracked")
+    summary = json.loads(V5_SUMMARY_PATH.read_text())
+    raw = V5_FULL_ARTIFACT_PATH.read_bytes()
+    full = json.loads(raw)
+    canonical = json.dumps(
+        full,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+
+    assert full["schema_version"] == "crychic-crossfit-smoke-v5"
+    assert (
+        hashlib.sha256(canonical).hexdigest()
+        == (summary["full_artifact"]["canonical_sha256"])
+    )
+    assert hashlib.sha256(raw).hexdigest() == summary["full_artifact"]["file_sha256"]
+    assert len(raw) == summary["full_artifact"]["size_bytes"]
+    assert full["source_sha256"] == summary["source_sha256"]
+    full_by_dataset = {record["dataset"]: record for record in full["records"]}
+    for compact in summary["records"]:
+        source = full_by_dataset[compact["dataset"]]
+        assert compact == {key: source[key] for key in compact}

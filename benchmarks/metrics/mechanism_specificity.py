@@ -12,6 +12,7 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 SCHEMA_VERSION = "crychic-mechanism-specificity-v2"
+CONFIG_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION, "crychic-mechanism-specificity-v3"})
 TRUTH_SCHEMA_VERSION = "crychic-component-truth-matrix-v1"
 ACTIVE_SCENARIO = "active"
 LIGAND_ONLY_SCENARIO = "ligand_only"
@@ -232,8 +233,10 @@ def specification_from_config(
 ) -> MechanismSpecificitySpecification:
     """Resolve one phase without reading files or mutating the configuration."""
 
-    if config.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(f"schema_version must equal {SCHEMA_VERSION!r}")
+    if config.get("schema_version") not in CONFIG_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"schema_version must be one of {sorted(CONFIG_SCHEMA_VERSIONS)!r}"
+        )
     phases = _mapping(config.get("evaluation_phases"), field="evaluation_phases")
     if evaluation_phase not in phases:
         raise ValueError(f"unknown evaluation_phase: {evaluation_phase!r}")

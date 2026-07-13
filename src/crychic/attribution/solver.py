@@ -65,10 +65,11 @@ def _kkt_violation(
     return 0.0 if violation.size == 0 else float(violation.max())
 
 
-def solve_nonnegative_elastic_net(
+def _solve_nonnegative_elastic_net(
     matrix: sparse.spmatrix,
     response: np.ndarray,
     *,
+    signed_residual_space: bool,
     precision_weights: np.ndarray | None = None,
     lambda1: float = 0.0,
     lambda2: float = 0.0,
@@ -102,19 +103,29 @@ def solve_nonnegative_elastic_net(
             field="matrix",
             remediation="Retain at least one eligible TargetPrior driver",
         )
-    if np.any(~np.isfinite(y)) or np.any(y < 0):
+    if np.any(~np.isfinite(y)) or (
+        not signed_residual_space and np.any(y < 0)
+    ):
         raise ContractError(
-            "Elastic-net response must be finite and non-negative",
+            "Elastic-net response must be finite and direction-compatible",
             code="invalid_directional_response",
             field="response",
-            remediation="Fit only the positive direction-compatible channel",
+            remediation=(
+                "Fit the positive direction-compatible channel, or explicitly "
+                "enable a reviewed signed residual-space fit"
+            ),
         )
-    if np.any(~np.isfinite(design.data)) or np.any(design.data < 0):
+    if np.any(~np.isfinite(design.data)) or (
+        not signed_residual_space and np.any(design.data < 0)
+    ):
         raise ContractError(
-            "V0.1 elastic-net basis must be finite and non-negative",
+            "Elastic-net basis must be finite and direction-compatible",
             code="invalid_solver_basis",
             field="matrix",
-            remediation="Use the normalized positive TargetPrior basis",
+            remediation=(
+                "Use the normalized positive TargetPrior basis, or explicitly "
+                "enable a reviewed signed residual-space basis"
+            ),
         )
     if precision_weights is None:
         precision: np.ndarray = np.ones(len(y), dtype=float)
@@ -259,4 +270,56 @@ def solve_nonnegative_elastic_net(
         coefficients=coefficients,
         predicted=predicted,
         diagnostics=diagnostics,
+    )
+
+
+def solve_nonnegative_elastic_net(
+    matrix: sparse.spmatrix,
+    response: np.ndarray,
+    *,
+    precision_weights: np.ndarray | None = None,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    tolerance: float = 1e-8,
+    kkt_tolerance: float | None = None,
+    max_iterations: int = 10_000,
+) -> ElasticNetSolution:
+    """Fit the direction-compatible non-negative basis/response contract."""
+
+    return _solve_nonnegative_elastic_net(
+        matrix,
+        response,
+        signed_residual_space=False,
+        precision_weights=precision_weights,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        tolerance=tolerance,
+        kkt_tolerance=kkt_tolerance,
+        max_iterations=max_iterations,
+    )
+
+
+def solve_nonnegative_residual_elastic_net(
+    matrix: sparse.spmatrix,
+    response: np.ndarray,
+    *,
+    precision_weights: np.ndarray | None = None,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    tolerance: float = 1e-8,
+    kkt_tolerance: float | None = None,
+    max_iterations: int = 10_000,
+) -> ElasticNetSolution:
+    """Fit a signed residual basis/response with non-negative coefficients."""
+
+    return _solve_nonnegative_elastic_net(
+        matrix,
+        response,
+        signed_residual_space=True,
+        precision_weights=precision_weights,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        tolerance=tolerance,
+        kkt_tolerance=kkt_tolerance,
+        max_iterations=max_iterations,
     )

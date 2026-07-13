@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import resource
 import time
@@ -24,7 +25,87 @@ from crychic.workflow import (
     run_subject_crossfit,
 )
 
-_SCHEMA_VERSION = "crychic-crossfit-smoke-v4"
+_SCHEMA_VERSION = "crychic-crossfit-smoke-v5"
+CROSSFIT_SMOKE_SOURCE_PATHS = (
+    "benchmarks/adapters/common.py",
+    "benchmarks/adapters/crychic/resource.py",
+    "benchmarks/simulation/run_crossfit_smoke.py",
+    "src/crychic/__init__.py",
+    "src/crychic/attribution/__init__.py",
+    "src/crychic/attribution/basis.py",
+    "src/crychic/attribution/contracts.py",
+    "src/crychic/attribution/families.py",
+    "src/crychic/attribution/family_first.py",
+    "src/crychic/attribution/frozen_family.py",
+    "src/crychic/attribution/precision.py",
+    "src/crychic/attribution/solver.py",
+    "src/crychic/attribution/tuning.py",
+    "src/crychic/availability/__init__.py",
+    "src/crychic/availability/contracts.py",
+    "src/crychic/availability/estimation.py",
+    "src/crychic/availability/table.py",
+    "src/crychic/availability/transforms.py",
+    "src/crychic/core/__init__.py",
+    "src/crychic/core/config.py",
+    "src/crychic/core/errors.py",
+    "src/crychic/core/ids.py",
+    "src/crychic/core/seed.py",
+    "src/crychic/core/serialization.py",
+    "src/crychic/data/__init__.py",
+    "src/crychic/data/contracts.py",
+    "src/crychic/data/validation.py",
+    "src/crychic/design/__init__.py",
+    "src/crychic/design/audit.py",
+    "src/crychic/design/context_encoding.py",
+    "src/crychic/design/context_graph.py",
+    "src/crychic/design/contrasts.py",
+    "src/crychic/design/frozen_encoder.py",
+    "src/crychic/pseudobulk/__init__.py",
+    "src/crychic/pseudobulk/aggregation.py",
+    "src/crychic/pseudobulk/contracts.py",
+    "src/crychic/resampling/__init__.py",
+    "src/crychic/resampling/contracts.py",
+    "src/crychic/resampling/folds.py",
+    "src/crychic/resampling/validation.py",
+    "src/crychic/resources/__init__.py",
+    "src/crychic/resources/cellchat.py",
+    "src/crychic/resources/cellphonedb.py",
+    "src/crychic/resources/contracts.py",
+    "src/crychic/resources/manifest.py",
+    "src/crychic/resources/nichenet.py",
+    "src/crychic/response/__init__.py",
+    "src/crychic/response/autonomous.py",
+    "src/crychic/response/contracts.py",
+    "src/crychic/response/fold.py",
+    "src/crychic/response/gene.py",
+    "src/crychic/scoring/__init__.py",
+    "src/crychic/scoring/contracts.py",
+    "src/crychic/scoring/downstream.py",
+    "src/crychic/scoring/integration.py",
+    "src/crychic/scoring/receiver_family.py",
+    "src/crychic/sender/__init__.py",
+    "src/crychic/sender/assignment.py",
+    "src/crychic/sender/common.py",
+    "src/crychic/sender/contracts.py",
+    "src/crychic/workflow/__init__.py",
+    "src/crychic/workflow/application.py",
+    "src/crychic/workflow/contracts.py",
+    "src/crychic/workflow/crossfit.py",
+    "src/crychic/workflow/receiver_incremental.py",
+    "src/crychic/workflow/training.py",
+)
+
+
+def crossfit_smoke_source_sha256() -> dict[str, str]:
+    """Hash the complete repository-owned source closure used by this smoke."""
+
+    repository_root = Path(__file__).resolve().parents[2]
+    return {
+        relative_path: hashlib.sha256(
+            (repository_root / relative_path).read_bytes()
+        ).hexdigest()
+        for relative_path in CROSSFIT_SMOKE_SOURCE_PATHS
+    }
 
 
 def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
@@ -94,6 +175,15 @@ def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
         for application in observed_diagnostics
         if application.raw_model_gain is not None
     ]
+    gain_denominator_statuses = Counter(
+        application.gain_denominator_status for application in observed_diagnostics
+    )
+    loss_designs = Counter(
+        model.diagnostic_functional.loss_design
+        for fold in artifacts.folds
+        for model in fold.receiver_incremental_models
+        if model.diagnostic_functional is not None
+    )
     return {
         "n_design_encoders": sum(len(fold.design_encoders) for fold in artifacts.folds),
         "design_application_status_counts": dict(sorted(design_statuses.items())),
@@ -155,6 +245,10 @@ def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
         "mean_raw_incremental_diagnostic_gain": (
             float(np.mean(raw_gains)) if raw_gains else None
         ),
+        "gain_denominator_status_counts": dict(
+            sorted(gain_denominator_statuses.items())
+        ),
+        "incremental_loss_design_counts": dict(sorted(loss_designs.items())),
         "remaining_stages": artifacts.to_manifest()["remaining_stages"],
     }
 
@@ -322,6 +416,7 @@ def run_smoke(
     return {
         "schema_version": _SCHEMA_VERSION,
         "scope": "typed_public_crossfit_algorithm_smoke_not_full_benchmark",
+        "source_sha256": crossfit_smoke_source_sha256(),
         "implemented_stages": [
             "availability_filter",
             "contrast_common_sender_functional",

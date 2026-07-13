@@ -241,6 +241,30 @@ def test_training_prior_and_parameter_poison_change_functional_identity() -> Non
     assert first.sender_functional_id != changed_temperature.sender_functional_id
 
 
+def test_common_sender_parameters_reject_forced_mutation_before_use() -> None:
+    parameters = ContrastCommonSenderParameters(min_subjects=2)
+    object.__setattr__(parameters, "min_subjects", 999)
+
+    with pytest.raises(ContractError) as serialized_error:
+        parameters.to_dict()
+    assert (
+        serialized_error.value.details.code
+        == "common_sender_parameter_integrity_violation"
+    )
+
+    with pytest.raises(ContractError) as fit_error:
+        fit_contrast_common_sender_functional(
+            _training_availability(),
+            contrast=_contrast(),
+            context_keys=("context_id",),
+            filter_universe_id="filter-universe-1",
+            parameters=parameters,
+        )
+    assert fit_error.value.details.code == (
+        "common_sender_parameter_integrity_violation"
+    )
+
+
 def test_low_support_prior_cannot_be_fabricated_at_application() -> None:
     source = _training_availability()
     source.loc[source["sender"].eq("B"), "ligand_availability"] = np.nan

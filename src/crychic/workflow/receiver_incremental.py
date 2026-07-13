@@ -21,20 +21,26 @@ from crychic.design import (
     FrozenDesignEncoder,
     node_context_fields,
 )
-from crychic.response import FoldGeneResponseApplication, FoldGeneResponseArtifact
+from crychic.response import (
+    AutonomousProgramSupportError,
+    FoldGeneResponseApplication,
+    FoldGeneResponseArtifact,
+    ReceiverAutonomousProgramResource,
+)
 from crychic.scoring import (
     DownstreamRowManifest,
     IncrementalDownstreamApplication,
     IncrementalDownstreamFunctional,
     apply_incremental_downstream_functional,
     fit_incremental_downstream_functional,
+    incremental_heldout_input_digest,
 )
 
 _PRODUCER_MARKER = "crychic.workflow.receiver_incremental_training.v1"
 _APPLICATION_PRODUCER_MARKER = "crychic.workflow.receiver_incremental_application.v1"
-_CERTIFICATION_STATUS = "formula_nuisance_incremental_diagnostic_only"
 _OFFICIAL_STATUS = "not_estimable"
-_OFFICIAL_REASON = "receiver_autonomous_nuisance_not_frozen"
+_FORMULA_CERTIFICATION_STATUS = "formula_nuisance_incremental_diagnostic_only"
+_FORMULA_REASON = "receiver_autonomous_nuisance_not_frozen"
 
 
 def _parent_mismatch(message: str, *, field: str) -> ContractError:
@@ -90,16 +96,23 @@ class ReceiverIncrementalTrainingArtifact:
     """One typed-parent incremental diagnostic fitted on training subjects."""
 
     encoder_id: str
+    context_regressor_id: str
+    nuisance_design_id: str
+    nuisance_column_ids: tuple[str, ...]
     training_design_application_id: str
     response_artifact_id: str
     precision_transform_id: str
     receiver_family_training_artifact_id: str
+    autonomous_program_resource_id: str | None
+    autonomous_program_verification_status: str | None
+    autonomous_projection_id: str | None
     receiver: str
     contrast_name: str
     fold_id: str
     feature_ids: tuple[str, ...]
     family_ids: tuple[str, ...]
     training_sample_ids: tuple[str, ...]
+    training_sample_context_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
     minimum_scale: float
     null_loss_floor: float
@@ -129,6 +142,7 @@ class ReceiverIncrementalTrainingArtifact:
         response: FoldGeneResponseArtifact,
         precision: PrecisionTransformResult,
         receiver_family: ReceiverFamilyTrainingArtifact,
+        autonomous_program_resource: ReceiverAutonomousProgramResource | None,
         family_ids: tuple[str, ...],
         minimum_scale: float,
         null_loss_floor: float,
@@ -144,21 +158,43 @@ class ReceiverIncrementalTrainingArtifact:
             raise ValueError(
                 "diagnostic_reason_code is required exactly when fitting is unavailable"
             )
+        autonomous_id = (
+            None
+            if autonomous_program_resource is None
+            else autonomous_program_resource.artifact_id
+        )
+        autonomous_verification_status = (
+            None
+            if autonomous_program_resource is None
+            else autonomous_program_resource.verification_status
+        )
+        projection_id = (
+            None
+            if autonomous_program_resource is None or diagnostic_functional is None
+            else diagnostic_functional.autonomous_projection_id
+        )
         self = object.__new__(cls)
         values: dict[str, Any] = {
             "encoder_id": encoder.encoder_id,
+            "context_regressor_id": training_design.context_regressor_id,
+            "nuisance_design_id": training_design.nuisance_design_id,
+            "nuisance_column_ids": encoder.nuisance_column_ids,
             "training_design_application_id": training_design.application_id,
             "response_artifact_id": response.artifact_id,
             "precision_transform_id": precision.precision_transform_id,
             "receiver_family_training_artifact_id": (
                 receiver_family.training_artifact_id
             ),
+            "autonomous_program_resource_id": autonomous_id,
+            "autonomous_program_verification_status": (autonomous_verification_status),
+            "autonomous_projection_id": projection_id,
             "receiver": response.receiver,
             "contrast_name": response.contrast_name,
             "fold_id": response.fold_id,
             "feature_ids": response.feature_ids,
             "family_ids": family_ids,
             "training_sample_ids": response.sample_ids,
+            "training_sample_context_ids": response.sample_context_ids,
             "training_subject_ids": response.training_subject_ids,
             "minimum_scale": float(minimum_scale),
             "null_loss_floor": float(null_loss_floor),
@@ -167,9 +203,9 @@ class ReceiverIncrementalTrainingArtifact:
             "diagnostic_status": diagnostic_status,
             "diagnostic_reason_code": diagnostic_reason_code,
             "diagnostic_functional": diagnostic_functional,
-            "certification_status": _CERTIFICATION_STATUS,
+            "certification_status": _FORMULA_CERTIFICATION_STATUS,
             "official_incremental_status": _OFFICIAL_STATUS,
-            "reason_code": _OFFICIAL_REASON,
+            "reason_code": _FORMULA_REASON,
             "_producer_marker": _PRODUCER_MARKER,
         }
         for name, value in values.items():
@@ -199,7 +235,13 @@ class ReceiverIncrementalTrainingArtifact:
         )
         return {
             "certification_status": self.certification_status,
+            "autonomous_program_resource_id": self.autonomous_program_resource_id,
+            "autonomous_program_verification_status": (
+                self.autonomous_program_verification_status
+            ),
+            "autonomous_projection_id": self.autonomous_projection_id,
             "contrast_name": self.contrast_name,
+            "context_regressor_id": self.context_regressor_id,
             "diagnostic_functional_id": functional_id,
             "diagnostic_reason_code": self.diagnostic_reason_code,
             "diagnostic_status": self.diagnostic_status,
@@ -210,6 +252,8 @@ class ReceiverIncrementalTrainingArtifact:
             "lambda1": self.lambda1,
             "lambda2": self.lambda2,
             "minimum_scale": self.minimum_scale,
+            "nuisance_column_ids": list(self.nuisance_column_ids),
+            "nuisance_design_id": self.nuisance_design_id,
             "null_loss_floor": self.null_loss_floor,
             "official_incremental_status": self.official_incremental_status,
             "precision_transform_id": self.precision_transform_id,
@@ -221,6 +265,7 @@ class ReceiverIncrementalTrainingArtifact:
             "response_artifact_id": self.response_artifact_id,
             "training_design_application_id": self.training_design_application_id,
             "training_sample_ids": list(self.training_sample_ids),
+            "training_sample_context_ids": list(self.training_sample_context_ids),
             "training_subject_ids": list(self.training_subject_ids),
         }
 
@@ -234,6 +279,8 @@ class ReceiverIncrementalTrainingArtifact:
             )
             for field_name in (
                 "encoder_id",
+                "context_regressor_id",
+                "nuisance_design_id",
                 "training_design_application_id",
                 "response_artifact_id",
                 "precision_transform_id",
@@ -244,20 +291,99 @@ class ReceiverIncrementalTrainingArtifact:
                 "training_artifact_id",
             ):
                 _required_id(getattr(self, field_name), field_name=field_name)
+            if len(self.nuisance_column_ids) < 1 or any(
+                _required_id(value, field_name="nuisance_column_ids") != value
+                for value in self.nuisance_column_ids
+            ):
+                raise ValueError("nuisance_column_ids are invalid")
+            if len(set(self.nuisance_column_ids)) != len(self.nuisance_column_ids):
+                raise ValueError("nuisance_column_ids must be unique")
+            if len(self.training_sample_context_ids) != len(
+                self.training_sample_ids
+            ) or any(
+                _required_id(value, field_name="training_sample_context_ids") != value
+                for value in self.training_sample_context_ids
+            ):
+                raise ValueError("training sample contexts are invalid")
+            if (self.autonomous_program_resource_id is None) != (
+                self.autonomous_program_verification_status is None
+            ):
+                raise ValueError(
+                    "autonomous resource ID and verification status must co-occur"
+                )
+            if self.autonomous_program_verification_status not in {
+                None,
+                "caller_declared_static_unverified",
+            }:
+                raise ValueError("unsupported autonomous resource verification status")
             if self.diagnostic_functional is not None:
                 self.diagnostic_functional._require_intact()
+                functional = self.diagnostic_functional
                 if (
                     self.diagnostic_status != "observed"
                     or self.diagnostic_reason_code is not None
-                    or self.diagnostic_functional.incremental_functional_id
+                    or functional.incremental_functional_id
                     != self._identity_payload()["diagnostic_functional_id"]
                 ):
                     raise ValueError("diagnostic functional status is inconsistent")
+                expected_functional_lineage = (
+                    self.receiver,
+                    self.contrast_name,
+                    self.fold_id,
+                    self.feature_ids,
+                    self.family_ids,
+                    self.training_sample_ids,
+                    self.training_sample_context_ids,
+                    self.training_subject_ids,
+                    self.context_regressor_id,
+                    self.nuisance_design_id,
+                    self.nuisance_column_ids,
+                    self.minimum_scale,
+                    self.null_loss_floor,
+                    self.lambda1,
+                    self.lambda2,
+                    self.autonomous_program_resource_id,
+                )
+                observed_functional_lineage = (
+                    functional.receiver,
+                    functional.contrast_name,
+                    functional.fold_id,
+                    functional.feature_ids,
+                    functional.family_ids,
+                    functional.training_sample_ids,
+                    functional.training_sample_context_ids,
+                    functional.training_subject_ids,
+                    functional.context_regressor_id,
+                    functional.nuisance_design_id,
+                    functional.nuisance_column_ids,
+                    functional.minimum_scale,
+                    functional.null_loss_floor,
+                    functional.lambda1,
+                    functional.lambda2,
+                    functional.autonomous_basis_id,
+                )
+                if observed_functional_lineage != expected_functional_lineage:
+                    raise ValueError(
+                        "diagnostic functional does not match its wrapper lineage"
+                    )
+                expected_projection_id = (
+                    None
+                    if self.autonomous_program_resource_id is None
+                    else functional.autonomous_projection_id
+                )
+                if self.autonomous_projection_id != expected_projection_id:
+                    raise ValueError(
+                        "autonomous projection does not match the diagnostic functional"
+                    )
             elif (
                 self.diagnostic_status != "not_estimable"
                 or not self.diagnostic_reason_code
             ):
                 raise ValueError("not-estimable diagnostic status is inconsistent")
+            elif self.autonomous_projection_id is not None:
+                raise ValueError(
+                    "unavailable diagnostics cannot claim an autonomous projection"
+                )
             expected = stable_id(
                 "receiver_incremental_training_artifact",
                 self._identity_payload(),
@@ -265,9 +391,9 @@ class ReceiverIncrementalTrainingArtifact:
             )
             valid = (
                 self._producer_marker == _PRODUCER_MARKER
-                and self.certification_status == _CERTIFICATION_STATUS
+                and self.certification_status == _FORMULA_CERTIFICATION_STATUS
                 and self.official_incremental_status == _OFFICIAL_STATUS
-                and self.reason_code == _OFFICIAL_REASON
+                and self.reason_code == _FORMULA_REASON
                 and not self.is_oof_certified
                 and expected == self.training_artifact_id
             )
@@ -296,14 +422,76 @@ class ReceiverIncrementalTrainingArtifact:
         }
 
 
+def _validate_heldout_parents(
+    model: ReceiverIncrementalTrainingArtifact,
+    response_application: FoldGeneResponseApplication,
+    design_application: FrozenDesignApplication,
+) -> None:
+    model._require_intact()
+    response_application.to_dict()
+    design_application.to_dict()
+    expected = (
+        model.response_artifact_id,
+        design_application.application_id,
+        model.encoder_id,
+        model.receiver,
+        model.contrast_name,
+        model.fold_id,
+        model.feature_ids,
+        design_application.sample_ids,
+        design_application.sample_subject_ids,
+        design_application.sample_context_ids,
+    )
+    observed = (
+        response_application.training_response_id,
+        response_application.design_application_id,
+        response_application.encoder_id,
+        response_application.receiver,
+        response_application.contrast_name,
+        response_application.fold_id,
+        response_application.feature_ids,
+        response_application.sample_ids,
+        response_application.sample_subject_ids,
+        response_application.sample_context_ids,
+    )
+    if observed != expected or design_application.encoder_id != model.encoder_id:
+        raise _parent_mismatch(
+            "Held-out response and design do not match the training artifact",
+            field="response_application_id",
+        )
+    if design_application.application_scope != "heldout":
+        raise _parent_mismatch(
+            "Receiver incremental application requires a held-out design",
+            field="design_application_id",
+        )
+    sample_overlap = set(response_application.sample_ids).intersection(
+        model.training_sample_ids
+    )
+    if sample_overlap:
+        raise ValueError(
+            "heldout sample IDs overlap training samples: "
+            + ", ".join(sorted(sample_overlap))
+        )
+    subject_overlap = set(response_application.subject_ids).intersection(
+        model.training_subject_ids
+    )
+    if subject_overlap:
+        raise ValueError(
+            "heldout subjects overlap training subjects: "
+            + ", ".join(sorted(subject_overlap))
+        )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class ReceiverIncrementalApplication:
     """Held-out incremental diagnostic applied without any refitting."""
 
     training_artifact_id: str
+    diagnostic_functional_id: str | None
     response_application_id: str
     design_application_id: str
     heldout_sample_ids: tuple[str, ...]
+    heldout_context_ids: tuple[str, ...]
     heldout_subject_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
     diagnostic_status: str
@@ -331,6 +519,7 @@ class ReceiverIncrementalApplication:
         diagnostic_application: IncrementalDownstreamApplication | None,
         diagnostic_reason_code: str | None,
     ) -> ReceiverIncrementalApplication:
+        _validate_heldout_parents(model, response_application, design_application)
         diagnostic_status = (
             "observed"
             if diagnostic_application is not None
@@ -342,20 +531,77 @@ class ReceiverIncrementalApplication:
                 raise ValueError("observed diagnostic application cannot have a reason")
         elif not diagnostic_reason_code:
             raise ValueError("not-estimable diagnostic application requires a reason")
+        if diagnostic_application is not None:
+            if model.diagnostic_functional is None:
+                raise ValueError(
+                    "diagnostic application requires a fitted diagnostic functional"
+                )
+            expected_diagnostic_lineage = (
+                model.diagnostic_functional.incremental_functional_id,
+                model.family_ids,
+                response_application.sample_ids,
+                response_application.sample_subject_ids,
+                response_application.sample_context_ids,
+                response_application.subject_ids,
+            )
+            observed_diagnostic_lineage = (
+                diagnostic_application.incremental_functional_id,
+                diagnostic_application.family_ids,
+                diagnostic_application.sample_ids,
+                diagnostic_application.sample_subject_ids,
+                diagnostic_application.sample_context_ids,
+                diagnostic_application.heldout_subject_ids,
+            )
+            if observed_diagnostic_lineage != expected_diagnostic_lineage:
+                raise ValueError(
+                    "diagnostic application does not match its held-out parents"
+                )
+            row_manifest = DownstreamRowManifest(
+                sample_ids=response_application.sample_ids,
+                subject_ids=response_application.sample_subject_ids,
+                context_ids=response_application.sample_context_ids,
+            )
+            expected_input_digest = incremental_heldout_input_digest(
+                response_application.sample_values,
+                row_manifest=row_manifest,
+                design_sample_ids=design_application.sample_ids,
+                nuisance_matrix=design_application.nuisance_matrix,
+                context_regressor=design_application.context_regressor,
+                context_regressor_id=design_application.context_regressor_id,
+                nuisance_design_id=design_application.nuisance_design_id,
+                feature_ids=response_application.feature_ids,
+                nuisance_column_ids=model.diagnostic_functional.nuisance_column_ids,
+            )
+            if (
+                diagnostic_application.heldout_row_manifest_id
+                != row_manifest.manifest_id
+                or diagnostic_application.heldout_input_digest != expected_input_digest
+            ):
+                raise _parent_mismatch(
+                    "Diagnostic application does not derive from the exact held-out "
+                    "response and design values",
+                    field="diagnostic_application",
+                )
         self = object.__new__(cls)
         values: dict[str, Any] = {
             "training_artifact_id": model.training_artifact_id,
+            "diagnostic_functional_id": (
+                None
+                if model.diagnostic_functional is None
+                else model.diagnostic_functional.incremental_functional_id
+            ),
             "response_application_id": response_application.application_id,
             "design_application_id": design_application.application_id,
             "heldout_sample_ids": response_application.sample_ids,
+            "heldout_context_ids": response_application.sample_context_ids,
             "heldout_subject_ids": response_application.subject_ids,
             "training_subject_ids": model.training_subject_ids,
             "diagnostic_status": diagnostic_status,
             "diagnostic_reason_code": diagnostic_reason_code,
             "diagnostic_application": diagnostic_application,
-            "certification_status": _CERTIFICATION_STATUS,
+            "certification_status": model.certification_status,
             "official_incremental_status": _OFFICIAL_STATUS,
-            "reason_code": _OFFICIAL_REASON,
+            "reason_code": model.reason_code,
             "_producer_marker": _APPLICATION_PRODUCER_MARKER,
         }
         for name, value in values.items():
@@ -387,9 +633,11 @@ class ReceiverIncrementalApplication:
             "certification_status": self.certification_status,
             "design_application_id": self.design_application_id,
             "diagnostic_application_id": diagnostic_id,
+            "diagnostic_functional_id": self.diagnostic_functional_id,
             "diagnostic_reason_code": self.diagnostic_reason_code,
             "diagnostic_status": self.diagnostic_status,
             "heldout_sample_ids": list(self.heldout_sample_ids),
+            "heldout_context_ids": list(self.heldout_context_ids),
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "official_incremental_status": self.official_incremental_status,
             "reason_code": self.reason_code,
@@ -404,10 +652,24 @@ class ReceiverIncrementalApplication:
                 raise ValueError("held-out subjects overlap training subjects")
             if self.diagnostic_application is not None:
                 self.diagnostic_application._require_intact()
-                if self.diagnostic_application.status != self.diagnostic_status:
+                if (
+                    self.diagnostic_application.status != self.diagnostic_status
+                    or self.diagnostic_application.incremental_functional_id
+                    != self.diagnostic_functional_id
+                    or self.diagnostic_application.sample_ids != self.heldout_sample_ids
+                    or self.diagnostic_application.sample_context_ids
+                    != self.heldout_context_ids
+                    or self.diagnostic_application.heldout_subject_ids
+                    != self.heldout_subject_ids
+                ):
                     raise ValueError("diagnostic application status changed")
             elif self.diagnostic_status != "not_estimable":
                 raise ValueError("missing diagnostic application must be unavailable")
+            if self.diagnostic_functional_id is not None:
+                _required_id(
+                    self.diagnostic_functional_id,
+                    field_name="diagnostic_functional_id",
+                )
             expected = stable_id(
                 "receiver_incremental_application",
                 self._identity_payload(),
@@ -415,9 +677,9 @@ class ReceiverIncrementalApplication:
             )
             valid = (
                 self._producer_marker == _APPLICATION_PRODUCER_MARKER
-                and self.certification_status == _CERTIFICATION_STATUS
+                and self.certification_status == _FORMULA_CERTIFICATION_STATUS
                 and self.official_incremental_status == _OFFICIAL_STATUS
-                and self.reason_code == _OFFICIAL_REASON
+                and self.reason_code == _FORMULA_REASON
                 and not self.is_oof_certified
                 and expected == self.application_id
             )
@@ -492,13 +754,14 @@ def fit_receiver_incremental_training_artifact(
     response: FoldGeneResponseArtifact,
     precision: PrecisionTransformResult,
     receiver_family: ReceiverFamilyTrainingArtifact,
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None = None,
     *,
     minimum_scale: float = 0.25,
     null_loss_floor: float = 1e-8,
     lambda1: float = 0.0,
     lambda2: float = 0.0,
 ) -> ReceiverIncrementalTrainingArtifact:
-    """Fit a formula-nuisance diagnostic from exact typed training parents."""
+    """Fit a receiver-null diagnostic from exact typed training parents."""
 
     minimum_scale, null_loss_floor, lambda1, lambda2 = _validated_hyperparameters(
         minimum_scale=minimum_scale,
@@ -509,6 +772,15 @@ def fit_receiver_incremental_training_artifact(
     training_design = _validate_training_parents(
         encoder, response, precision, receiver_family
     )
+    if autonomous_program_resource is not None:
+        if not isinstance(
+            autonomous_program_resource, ReceiverAutonomousProgramResource
+        ):
+            raise TypeError(
+                "autonomous_program_resource must be a "
+                "ReceiverAutonomousProgramResource"
+            )
+        autonomous_program_resource._require_producer_owned()
     basis = receiver_family.family_basis
     eligible_indices = np.flatnonzero(basis.family_eligible)
     family_ids = tuple(basis.family_ids[index] for index in eligible_indices)
@@ -561,35 +833,46 @@ def fit_receiver_incremental_training_artifact(
             subject_ids=response.sample_subject_ids,
             context_ids=response.sample_context_ids,
         )
-        functional = fit_incremental_downstream_functional(
-            response.sample_values,
-            row_manifest=row_manifest,
-            design_sample_ids=selected_design_ids,
-            reference_mask=reference_mask,
-            nuisance_matrix=training_design.nuisance_matrix[design_order],
-            context_regressor=training_design.context_regressor[design_order],
-            receiver=response.receiver,
-            contrast_name=response.contrast_name,
-            fold_id=response.fold_id,
-            context_regressor_id=training_design.context_regressor_id,
-            nuisance_design_id=training_design.nuisance_design_id,
-            feature_ids=response.feature_ids,
-            family_ids=family_ids,
-            nuisance_column_ids=encoder.nuisance_column_ids,
-            training_subject_ids=response.training_subject_ids,
-            family_basis=basis.matrix[:, eligible_indices],
-            precision_weights=precision.values,
-            minimum_scale=minimum_scale,
-            null_loss_floor=null_loss_floor,
-            lambda1=lambda1,
-            lambda2=lambda2,
-        )
+        try:
+            functional = fit_incremental_downstream_functional(
+                response.sample_values,
+                row_manifest=row_manifest,
+                design_sample_ids=selected_design_ids,
+                reference_mask=reference_mask,
+                nuisance_matrix=training_design.nuisance_matrix[design_order],
+                context_regressor=training_design.context_regressor[design_order],
+                receiver=response.receiver,
+                contrast_name=response.contrast_name,
+                fold_id=response.fold_id,
+                context_regressor_id=training_design.context_regressor_id,
+                nuisance_design_id=training_design.nuisance_design_id,
+                feature_ids=response.feature_ids,
+                family_ids=family_ids,
+                nuisance_column_ids=encoder.nuisance_column_ids,
+                training_subject_ids=response.training_subject_ids,
+                family_basis=basis.matrix[:, eligible_indices],
+                autonomous_program_resource=autonomous_program_resource,
+                precision_weights=precision.values,
+                minimum_scale=minimum_scale,
+                null_loss_floor=null_loss_floor,
+                lambda1=lambda1,
+                lambda2=lambda2,
+            )
+        except AutonomousProgramSupportError as error:
+            reason_code = error.reason_code
+        except ContractError as error:
+            if error.details.code != (
+                "all_family_bases_not_identifiable_after_autonomous_projection"
+            ):
+                raise
+            reason_code = error.details.code
     return ReceiverIncrementalTrainingArtifact._from_fit(
         encoder=encoder,
         training_design=training_design,
         response=response,
         precision=precision,
         receiver_family=receiver_family,
+        autonomous_program_resource=autonomous_program_resource,
         family_ids=family_ids,
         minimum_scale=minimum_scale,
         null_loss_floor=null_loss_floor,
@@ -613,59 +896,7 @@ def apply_receiver_incremental_training_artifact(
         raise TypeError("response_application must be a FoldGeneResponseApplication")
     if not isinstance(design_application, FrozenDesignApplication):
         raise TypeError("design_application must be a FrozenDesignApplication")
-    model._require_intact()
-    response_application.to_dict()
-    design_application.to_dict()
-    expected = (
-        model.response_artifact_id,
-        design_application.application_id,
-        model.encoder_id,
-        model.receiver,
-        model.contrast_name,
-        model.fold_id,
-        model.feature_ids,
-        design_application.sample_ids,
-        design_application.sample_subject_ids,
-        design_application.sample_context_ids,
-    )
-    observed = (
-        response_application.training_response_id,
-        response_application.design_application_id,
-        response_application.encoder_id,
-        response_application.receiver,
-        response_application.contrast_name,
-        response_application.fold_id,
-        response_application.feature_ids,
-        response_application.sample_ids,
-        response_application.sample_subject_ids,
-        response_application.sample_context_ids,
-    )
-    if observed != expected or design_application.encoder_id != model.encoder_id:
-        raise _parent_mismatch(
-            "Held-out response and design do not match the training artifact",
-            field="response_application_id",
-        )
-    if design_application.application_scope != "heldout":
-        raise _parent_mismatch(
-            "Receiver incremental application requires a held-out design",
-            field="design_application_id",
-        )
-    sample_overlap = set(response_application.sample_ids).intersection(
-        model.training_sample_ids
-    )
-    if sample_overlap:
-        raise ValueError(
-            "heldout sample IDs overlap training samples: "
-            + ", ".join(sorted(sample_overlap))
-        )
-    subject_overlap = set(response_application.subject_ids).intersection(
-        model.training_subject_ids
-    )
-    if subject_overlap:
-        raise ValueError(
-            "heldout subjects overlap training subjects: "
-            + ", ".join(sorted(subject_overlap))
-        )
+    _validate_heldout_parents(model, response_application, design_application)
 
     diagnostic: IncrementalDownstreamApplication | None = None
     diagnostic_reason: str | None = None

@@ -1,0 +1,113 @@
+{
+  "schema_version": "crychic-mechanism-specificity-v3",
+  "development_scope": "current_sample_keyed_structural_zero_development_gate_not_primary_benchmark",
+  "generator_contract": {
+    "schema_version": "crychic-g1.5-sample-keyed-structural-zero-development-generator-v3",
+    "phase_seed_namespaces": {
+      "development": "crychic:g1.5:v3:development:frozen-20260713",
+      "independent_holdout": "crychic:g1.5:v3:nonpublication-holdout-policy-test-20260713"
+    }
+  },
+  "component_truth": {
+    "path": "benchmarks/truth/component_truth_matrix.yaml",
+    "truth_set_id": "mechanism_specificity_components_v1",
+    "sha256": "fa586029c96e84404a38d699ac974eaa6c9379134e01b8573a716416191879b5"
+  },
+  "evaluation_phases": {
+    "development": {
+      "required_paired_seeds": 50,
+      "may_tune_candidate": true,
+      "publication_status": "development_only"
+    },
+    "independent_holdout": {
+      "required_paired_seeds": 200,
+      "may_tune_candidate": false,
+      "publication_status": "unavailable_nonpublication_test_only"
+    }
+  },
+  "scenarios": [
+    "active",
+    "global_null",
+    "abundance_only",
+    "ligand_only",
+    "target_only",
+    "receiver_autonomous",
+    "receptor_knockout"
+  ],
+  "known_edge_contract": {
+    "source": "component_truth_matrix.known_edges",
+    "minimum_known_edges": 2,
+    "require_exact_truth_catalog": true,
+    "edge_gate_policy": "all_known_edges_must_pass",
+    "macro_aggregation": "equal_edge_within_seed_then_across_seeds"
+  },
+  "evidence_record_contract": {
+    "grain": "seed_x_scenario_x_known_edge",
+    "pairing_keys": [
+      "known_edge_id",
+      "seed"
+    ],
+    "required_columns": [
+      "seed",
+      "scenario",
+      "known_edge_id",
+      "availability_effect",
+      "receptor_gate",
+      "receiver_program_effect",
+      "incremental_downstream_effect",
+      "sender_effect",
+      "integrated_lr_effect",
+      "comparison_coverage",
+      "reference_comparison_coverage",
+      "known_edge_rank",
+      "known_edge_positive_direction",
+      "status",
+      "reason_code"
+    ],
+    "observed_status": "observed",
+    "insufficient_seed_policy": "not_estimable_no_unpaired_fallback"
+  },
+  "primary_endpoint": {
+    "metric": "paired_known_edge_active_minus_ligand_only",
+    "minimum_margin": 0.02,
+    "confidence_level": 0.95,
+    "interval_type": "paired_seed_t_interval",
+    "require_ci_lower_above": 0.0
+  },
+  "secondary_gates": {
+    "active_max_rank": 5,
+    "active_min_positive_direction_fraction": 0.75,
+    "max_ligand_only_to_active_ratio": 0.5,
+    "max_comparison_coverage_loss": 0.05,
+    "integrated_positive_threshold": 0.0,
+    "max_negative_false_activation_rate": 0.0,
+    "negative_scenarios": [
+      "global_null",
+      "abundance_only",
+      "ligand_only",
+      "target_only",
+      "receiver_autonomous",
+      "receptor_knockout"
+    ],
+    "receptor_knockout_must_be_zero_or_negative": true
+  },
+  "component_truth_gates": {
+    "positive_threshold": 0.0,
+    "zero_maximum": 0.0,
+    "minimum_conformance_rate": 1.0,
+    "allowed_positive_policy": "diagnostic_only_not_integrated_edge_evidence",
+    "ecosystem_only_policy": "state_availability_nonpositive_ecosystem_change_allowed"
+  },
+  "decision_policy": {
+    "all_primary_and_secondary_gates_required": true,
+    "gate_alone_switches_default": false,
+    "current_default_remains": "gated_prior_attribution_v1",
+    "candidate_default_change_allowed": false,
+    "additional_requirements_before_default_change": [
+      "new_preregistered_independent_holdout_gate_passes",
+      "cscc_stability_noninferior_with_preregistered_margin",
+      "ms_stability_noninferior_with_preregistered_margin",
+      "legacy_path_remains_reproducible"
+    ]
+  }
+}

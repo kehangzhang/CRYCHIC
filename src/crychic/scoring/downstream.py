@@ -9,15 +9,33 @@ from typing import Any, cast
 import numpy as np
 from scipy import sparse
 
-from crychic.attribution import SolverStatus, solve_nonnegative_elastic_net
+from crychic.attribution import (
+    SolverStatus,
+    solve_nonnegative_elastic_net,
+    solve_nonnegative_residual_elastic_net,
+)
 from crychic.core import ContractError, stable_id
+from crychic.response import (
+    ReceiverAutonomousProgramResource,
+    residualize_against_autonomous_programs,
+)
+from crychic.response.autonomous import _precision_weighted_span_residual
 
 from .contracts import float64_array_digest
 
 _MAD_GAUSSIAN_CONSISTENCY = 1.4826
-_INCREMENTAL_METHOD = "sample_keyed_incremental_downstream_v2"
-_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v2"
-_FAMILY_GAIN_ESTIMAND = "joint_fit_family_only_prediction_v1"
+_INCREMENTAL_METHOD = "sample_keyed_autonomous_projected_incremental_v4"
+_INCREMENTAL_PRODUCER_MARKER = "crychic.scoring.incremental_downstream.v4"
+_FAMILY_GAIN_ESTIMAND = "autonomous_orthogonal_family_only_prediction_v3"
+_UNIDENTIFIABLE_FAMILY_REASON = (
+    "family_basis_not_identifiable_after_autonomous_projection"
+)
+_PAIRED_LOSS_DESIGN = "fully_paired_subject_contrasts_v1"
+_INDEPENDENT_LOSS_DESIGN = "independent_subject_pseudocontrasts_v1"
+_LOSS_DESIGNS = frozenset({_PAIRED_LOSS_DESIGN, _INDEPENDENT_LOSS_DESIGN})
+_POSITIVE_GAIN_DENOMINATOR = "positive_receiver_null_loss_ratio_v1"
+_STRUCTURAL_ZERO_GAIN = "zero_receiver_contrast_structural_zero_v1"
+_NOT_ESTIMABLE_GAIN = "not_estimable"
 
 
 def _names(values: tuple[str, ...], *, field_name: str) -> tuple[str, ...]:
@@ -249,6 +267,7 @@ class DownstreamFunctional:
     def to_dict(self) -> dict[str, object]:
         """Return provenance without expanding learned numeric arrays."""
 
+        self._require_intact()
         return {
             "downstream_functional_id": self.downstream_functional_id,
             "receiver": self.receiver,
@@ -269,6 +288,109 @@ class DownstreamFunctional:
             "program_transform": self.program_transform,
         }
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the frozen downstream functional."""
+
+        try:
+            features = _names(tuple(self.feature_ids), field_name="feature_ids")
+            families = _names(tuple(self.family_ids), field_name="family_ids")
+            subjects = tuple(
+                sorted(
+                    _names(
+                        tuple(self.training_subject_ids),
+                        field_name="training_subject_ids",
+                    )
+                )
+            )
+            samples = _names(
+                tuple(self.reference_sample_ids), field_name="reference_sample_ids"
+            )
+            center = np.asarray(self.feature_center, dtype=np.float64)
+            scale = np.asarray(self.feature_scale, dtype=np.float64)
+            support = np.asarray(self.family_support, dtype=np.float64)
+            matrix = sparse.csc_matrix(self.target_weight_matrix, dtype=np.float64)
+            if (
+                center.shape != (len(features),)
+                or scale.shape != center.shape
+                or support.shape != (len(families),)
+                or matrix.shape != (len(features), len(families))
+                or np.any(~np.isfinite(center))
+                or np.any(~np.isfinite(scale))
+                or np.any(scale <= 0)
+                or np.any(scale < self.minimum_scale - 1e-12)
+                or np.any(~np.isfinite(support))
+                or np.any((support < 0) | (support > 1))
+                or np.any(~np.isfinite(matrix.data))
+                or np.any(matrix.data < 0)
+                or np.any(
+                    ~np.isclose(
+                        np.asarray(matrix.sum(axis=0)).ravel(),
+                        1.0,
+                        atol=1e-12,
+                        rtol=1e-12,
+                    )
+                )
+                or not math.isfinite(self.minimum_scale)
+                or self.minimum_scale <= 0
+            ):
+                raise ValueError("invalid downstream functional numerical state")
+            for field_name in (
+                "receiver",
+                "contrast_name",
+                "fold_id",
+                "reference_input_digest",
+                "center_method",
+                "scale_method",
+                "program_transform",
+            ):
+                value = getattr(self, field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"invalid {field_name}")
+            payload = {
+                "center_digest": float64_array_digest(center),
+                "center_method": self.center_method,
+                "contrast_name": self.contrast_name,
+                "family_ids": list(families),
+                "family_support_digest": float64_array_digest(support),
+                "feature_ids": list(features),
+                "fold_id": self.fold_id,
+                "minimum_scale": self.minimum_scale,
+                "program_transform": self.program_transform,
+                "receiver": self.receiver,
+                "reference_input_digest": self.reference_input_digest,
+                "reference_sample_ids": list(samples),
+                "scale_digest": float64_array_digest(scale),
+                "scale_method": self.scale_method,
+                "target_weight_matrix_id": _matrix_digest(matrix),
+                "training_subject_ids": list(subjects),
+            }
+            valid = (
+                isinstance(self.feature_ids, tuple)
+                and isinstance(self.family_ids, tuple)
+                and isinstance(self.training_subject_ids, tuple)
+                and isinstance(self.reference_sample_ids, tuple)
+                and self.feature_ids == features
+                and self.family_ids == families
+                and self.training_subject_ids == subjects
+                and self.reference_sample_ids == samples
+                and stable_id("downstream_functional", payload)
+                == self.downstream_functional_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Downstream functional failed integrity validation",
+                code="downstream_functional_integrity_violation",
+                field="downstream_functional_id",
+                remediation="Refit the downstream functional from training data",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Downstream functional failed integrity validation",
+                code="downstream_functional_integrity_violation",
+                field="downstream_functional_id",
+                remediation="Refit the downstream functional from training data",
+            )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DownstreamApplication:
@@ -278,6 +400,7 @@ class DownstreamApplication:
     raw_program: np.ndarray
     receiver_program_score: np.ndarray
     supported_program_score: np.ndarray
+    application_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.downstream_functional_id:
@@ -301,6 +424,60 @@ class DownstreamApplication:
         object.__setattr__(self, "raw_program", arrays[0])
         object.__setattr__(self, "receiver_program_score", arrays[1])
         object.__setattr__(self, "supported_program_score", arrays[2])
+        object.__setattr__(
+            self,
+            "application_id",
+            stable_id("downstream_application", self._identity_payload()),
+        )
+
+    def _identity_payload(self) -> dict[str, object]:
+        return {
+            "downstream_functional_id": self.downstream_functional_id,
+            "raw_program_digest": _numeric_array_digest(self.raw_program),
+            "receiver_program_score_digest": _numeric_array_digest(
+                self.receiver_program_score
+            ),
+            "supported_program_score_digest": _numeric_array_digest(
+                self.supported_program_score
+            ),
+        }
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of held-out downstream values."""
+
+        try:
+            arrays = (
+                np.asarray(self.raw_program, dtype=np.float64),
+                np.asarray(self.receiver_program_score, dtype=np.float64),
+                np.asarray(self.supported_program_score, dtype=np.float64),
+            )
+            valid = (
+                bool(self.downstream_functional_id)
+                and all(array.ndim == 2 for array in arrays)
+                and len({array.shape for array in arrays}) == 1
+                and all(
+                    not np.any(np.isinf(array))
+                    and not np.any(array < 0)
+                    and not array.flags.writeable
+                    for array in arrays
+                )
+                and stable_id("downstream_application", self._identity_payload())
+                == self.application_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Downstream application failed integrity validation",
+                code="downstream_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact frozen downstream functional",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Downstream application failed integrity validation",
+                code="downstream_application_integrity_violation",
+                field="application_id",
+                remediation="Reapply the intact frozen downstream functional",
+            )
 
 
 def _readonly_array(
@@ -557,6 +734,82 @@ def _subject_context_weights(
     return weights
 
 
+def _subject_loss_design(
+    subject_ids: tuple[str, ...], context_ids: tuple[str, ...]
+) -> str | None:
+    """Classify the supported subject allocation without using response values."""
+
+    contexts = frozenset(context_ids)
+    if len(contexts) < 2:
+        return None
+    contexts_by_subject = {
+        subject: {
+            context
+            for row_subject, context in zip(subject_ids, context_ids, strict=True)
+            if row_subject == subject
+        }
+        for subject in set(subject_ids)
+    }
+    if all(values == contexts for values in contexts_by_subject.values()):
+        return _PAIRED_LOSS_DESIGN
+    if all(len(values) == 1 for values in contexts_by_subject.values()):
+        return _INDEPENDENT_LOSS_DESIGN
+    return None
+
+
+def _independent_context_contrast_weights(
+    context_regressor: np.ndarray,
+    *,
+    subject_ids: tuple[str, ...],
+    context_ids: tuple[str, ...],
+    contrast_floor: float,
+) -> np.ndarray:
+    """Freeze context weights from equal-subject training regressor means."""
+
+    contexts = tuple(sorted(set(context_ids)))
+    context_means: list[float] = []
+    for context in contexts:
+        subjects = tuple(
+            sorted(
+                {
+                    subject
+                    for subject, row_context in zip(
+                        subject_ids, context_ids, strict=True
+                    )
+                    if row_context == context
+                }
+            )
+        )
+        subject_means = [
+            float(
+                np.mean(
+                    context_regressor[
+                        np.asarray(
+                            [
+                                row_subject == subject and row_context == context
+                                for row_subject, row_context in zip(
+                                    subject_ids, context_ids, strict=True
+                                )
+                            ],
+                            dtype=bool,
+                        )
+                    ]
+                )
+            )
+            for subject in subjects
+        ]
+        context_means.append(float(np.mean(subject_means)))
+    centered = np.asarray(context_means, dtype=np.float64)
+    centered -= float(np.mean(centered))
+    norm = float(centered @ centered)
+    if norm <= contrast_floor:
+        raise ValueError(
+            "independent context regressor has no frozen contrast variation"
+        )
+    result: np.ndarray = centered / norm
+    return result
+
+
 def _weighted_lstsq(
     design: np.ndarray, values: np.ndarray, weights: np.ndarray
 ) -> np.ndarray:
@@ -644,12 +897,23 @@ class IncrementalDownstreamFunctional:
     training_sample_context_ids: tuple[str, ...]
     training_context_ids: tuple[str, ...]
     training_subject_ids: tuple[str, ...]
+    loss_design: str
+    loss_context_weights: np.ndarray
     reference_sample_ids: tuple[str, ...]
     training_row_manifest_id: str
     training_input_digest: str
     feature_center: np.ndarray
     feature_scale: np.ndarray
+    autonomous_program_ids: tuple[str, ...]
+    autonomous_basis_id: str | None
+    autonomous_basis: np.ndarray
+    autonomous_projection_id: str
+    identifiability_tolerance: float
+    original_family_basis_id: str
     family_basis: sparse.csc_matrix
+    family_estimable: np.ndarray
+    family_reason_codes: tuple[str | None, ...]
+    family_retained_norm_fraction: np.ndarray
     family_coefficients: np.ndarray
     null_nuisance_coefficients: np.ndarray
     full_nuisance_coefficients: np.ndarray
@@ -687,12 +951,23 @@ class IncrementalDownstreamFunctional:
         training_sample_subject_ids: tuple[str, ...],
         training_sample_context_ids: tuple[str, ...],
         training_subject_ids: tuple[str, ...],
+        loss_design: str,
+        loss_context_weights: np.ndarray,
         reference_sample_ids: tuple[str, ...],
         training_row_manifest_id: str,
         training_input_digest: str,
         feature_center: np.ndarray,
         feature_scale: np.ndarray,
+        autonomous_program_ids: tuple[str, ...],
+        autonomous_basis_id: str | None,
+        autonomous_basis: np.ndarray,
+        autonomous_projection_id: str,
+        identifiability_tolerance: float,
+        original_family_basis_id: str,
         family_basis: sparse.csc_matrix,
+        family_estimable: np.ndarray,
+        family_reason_codes: tuple[str | None, ...],
+        family_retained_norm_fraction: np.ndarray,
         family_coefficients: np.ndarray,
         null_nuisance_coefficients: np.ndarray,
         full_nuisance_coefficients: np.ndarray,
@@ -712,6 +987,8 @@ class IncrementalDownstreamFunctional:
             ("nuisance_design_id", nuisance_design_id),
             ("training_row_manifest_id", training_row_manifest_id),
             ("training_input_digest", training_input_digest),
+            ("autonomous_projection_id", autonomous_projection_id),
+            ("original_family_basis_id", original_family_basis_id),
         ):
             if (
                 not isinstance(scope_value, str)
@@ -723,6 +1000,21 @@ class IncrementalDownstreamFunctional:
         features = _names(feature_ids, field_name="feature_ids")
         families = _names(family_ids, field_name="family_ids")
         nuisance_ids = _names(nuisance_column_ids, field_name="nuisance_column_ids")
+        program_ids = (
+            ()
+            if not autonomous_program_ids
+            else _names(autonomous_program_ids, field_name="autonomous_program_ids")
+        )
+        if autonomous_basis_id is not None and (
+            not isinstance(autonomous_basis_id, str)
+            or not autonomous_basis_id
+            or autonomous_basis_id != autonomous_basis_id.strip()
+        ):
+            raise ValueError("autonomous_basis_id must be a canonical non-empty string")
+        if bool(program_ids) != (autonomous_basis_id is not None):
+            raise ValueError(
+                "autonomous_basis_id is required exactly when programs are present"
+            )
         samples = _names(training_sample_ids, field_name="training_sample_ids")
         sample_subjects = _aligned_names(
             training_sample_subject_ids,
@@ -737,6 +1029,28 @@ class IncrementalDownstreamFunctional:
         contexts = tuple(sorted(set(sample_contexts)))
         if len(contexts) < 2:
             raise ValueError("incremental training requires at least two context IDs")
+        if loss_design not in _LOSS_DESIGNS:
+            raise ValueError("loss_design is not a supported subject allocation")
+        context_weight_shape = (
+            (0,) if loss_design == _PAIRED_LOSS_DESIGN else (len(contexts),)
+        )
+        frozen_context_weights = _readonly_array(
+            loss_context_weights,
+            shape=context_weight_shape,
+            field_name="loss_context_weights",
+        )
+        if loss_design == _INDEPENDENT_LOSS_DESIGN and (
+            float(frozen_context_weights @ frozen_context_weights) <= 0
+            or not math.isclose(
+                float(np.sum(frozen_context_weights)),
+                0.0,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ValueError(
+                "independent loss context weights must be non-zero and sum to zero"
+            )
         subjects = tuple(
             sorted(
                 _names(
@@ -753,6 +1067,7 @@ class IncrementalDownstreamFunctional:
             ("null_loss_floor", null_loss_floor, False),
             ("lambda1", lambda1, True),
             ("lambda2", lambda2, True),
+            ("identifiability_tolerance", identifiability_tolerance, False),
         ):
             valid = math.isfinite(numeric_value) and (
                 numeric_value >= 0 if allow_zero else numeric_value > 0
@@ -771,16 +1086,46 @@ class IncrementalDownstreamFunctional:
         )
         if np.any(scale <= 0) or np.any(scale < minimum_scale - 1e-12):
             raise ValueError("feature_scale must be positive and respect minimum_scale")
+        autonomous = _readonly_array(
+            autonomous_basis,
+            shape=(n_features, len(program_ids)),
+            field_name="autonomous_basis",
+        )
+        if program_ids and np.linalg.matrix_rank(autonomous) != len(program_ids):
+            raise ValueError("autonomous_basis must have full column rank")
         basis = sparse.csc_matrix(family_basis, dtype=np.float64).copy()
         if basis.shape != (n_features, n_families):
             raise ValueError("family_basis shape must equal features x families")
-        if np.any(~np.isfinite(basis.data)) or np.any(basis.data < 0):
-            raise ValueError("family_basis must be finite and non-negative")
+        if np.any(~np.isfinite(basis.data)):
+            raise ValueError("family_basis must be finite")
         basis.sum_duplicates()
         basis.sort_indices()
         column_norms = np.sqrt(np.asarray(basis.power(2).sum(axis=0)).ravel())
-        if np.any(~np.isclose(column_norms, 1.0, atol=1e-12, rtol=1e-12)):
-            raise ValueError("every family basis column must have unit L2 norm")
+        estimable = np.asarray(family_estimable, dtype=bool)
+        if estimable.shape != (n_families,):
+            raise ValueError("family_estimable must align with family_ids")
+        if np.any(
+            ~np.isclose(column_norms[estimable], 1.0, atol=1e-12, rtol=1e-12)
+        ) or np.any(column_norms[~estimable] > 1e-12):
+            raise ValueError(
+                "estimable family basis columns must be normalized and other "
+                "columns zero"
+            )
+        reasons = tuple(family_reason_codes)
+        if len(reasons) != n_families or any(
+            (bool(reason) if is_estimable else reason != _UNIDENTIFIABLE_FAMILY_REASON)
+            for is_estimable, reason in zip(estimable, reasons, strict=True)
+        ):
+            raise ValueError("family reason codes do not match estimability")
+        retained = _readonly_array(
+            family_retained_norm_fraction,
+            shape=(n_families,),
+            field_name="family_retained_norm_fraction",
+        )
+        if np.any((retained < 0) | (retained > 1 + 1e-12)):
+            raise ValueError("family retained norm fractions must lie in [0, 1]")
+        if np.any(estimable != (retained > identifiability_tolerance)):
+            raise ValueError("family estimability must follow the frozen tolerance")
         coefficients = _readonly_array(
             family_coefficients,
             shape=(n_families,),
@@ -822,10 +1167,21 @@ class IncrementalDownstreamFunctional:
             "training_sample_context_ids": sample_contexts,
             "training_context_ids": contexts,
             "training_subject_ids": subjects,
+            "loss_design": loss_design,
+            "loss_context_weights": frozen_context_weights,
             "reference_sample_ids": references,
             "feature_center": center,
             "feature_scale": scale,
+            "autonomous_program_ids": program_ids,
+            "autonomous_basis_id": autonomous_basis_id,
+            "autonomous_basis": autonomous,
+            "autonomous_projection_id": autonomous_projection_id,
+            "identifiability_tolerance": identifiability_tolerance,
+            "original_family_basis_id": original_family_basis_id,
             "family_basis": basis,
+            "family_estimable": _immutable_native_vector(estimable),
+            "family_reason_codes": reasons,
+            "family_retained_norm_fraction": retained,
             "family_coefficients": coefficients,
             "null_nuisance_coefficients": null_coefficients,
             "full_nuisance_coefficients": full_coefficients,
@@ -837,7 +1193,11 @@ class IncrementalDownstreamFunctional:
             "lambda2": lambda2,
             "identity_scope": "sample_keyed_v2",
             "family_gain_estimand": _FAMILY_GAIN_ESTIMAND,
-            "certification_status": "partial_not_oof_certified",
+            "certification_status": (
+                "autonomous_program_projected_partial_not_oof_certified"
+                if program_ids
+                else "formula_nuisance_incremental_diagnostic_only"
+            ),
             "_producer_marker": _INCREMENTAL_PRODUCER_MARKER,
         }
         for name, value in attributes.items():
@@ -863,6 +1223,10 @@ class IncrementalDownstreamFunctional:
         return {
             "algorithm": _INCREMENTAL_METHOD,
             "center_digest": float64_array_digest(self.feature_center),
+            "autonomous_basis_digest": float64_array_digest(self.autonomous_basis),
+            "autonomous_basis_id": self.autonomous_basis_id,
+            "autonomous_program_ids": list(self.autonomous_program_ids),
+            "autonomous_projection_id": self.autonomous_projection_id,
             "certification_status": self.certification_status,
             "context_regressor_id": self.context_regressor_id,
             "contrast_name": self.contrast_name,
@@ -870,6 +1234,11 @@ class IncrementalDownstreamFunctional:
             "family_coefficient_digest": float64_array_digest(self.family_coefficients),
             "family_gain_estimand": self.family_gain_estimand,
             "family_ids": list(self.family_ids),
+            "family_estimable": self.family_estimable.astype(bool).tolist(),
+            "family_reason_codes": list(self.family_reason_codes),
+            "family_retained_norm_fraction_digest": float64_array_digest(
+                self.family_retained_norm_fraction
+            ),
             "family_nuisance_digest": float64_array_digest(
                 self.family_nuisance_coefficients
             ),
@@ -879,8 +1248,13 @@ class IncrementalDownstreamFunctional:
                 self.full_nuisance_coefficients
             ),
             "identity_scope": self.identity_scope,
+            "identifiability_tolerance": self.identifiability_tolerance,
             "lambda1": self.lambda1,
             "lambda2": self.lambda2,
+            "loss_context_weights_digest": float64_array_digest(
+                self.loss_context_weights
+            ),
+            "loss_design": self.loss_design,
             "minimum_scale": self.minimum_scale,
             "nuisance_column_ids": list(self.nuisance_column_ids),
             "nuisance_design_id": self.nuisance_design_id,
@@ -889,6 +1263,7 @@ class IncrementalDownstreamFunctional:
                 self.null_nuisance_coefficients
             ),
             "precision_digest": float64_array_digest(self.precision_weights),
+            "original_family_basis_id": self.original_family_basis_id,
             "receiver": self.receiver,
             "reference_sample_ids": list(self.reference_sample_ids),
             "scale_digest": float64_array_digest(self.feature_scale),
@@ -957,7 +1332,17 @@ class IncrementalDownstreamFunctional:
             "training_input_digest": self.training_input_digest,
             "feature_center_digest": float64_array_digest(self.feature_center),
             "feature_scale_digest": float64_array_digest(self.feature_scale),
+            "autonomous_program_ids": list(self.autonomous_program_ids),
+            "autonomous_basis_id": self.autonomous_basis_id,
+            "autonomous_basis_digest": float64_array_digest(self.autonomous_basis),
+            "autonomous_projection_id": self.autonomous_projection_id,
             "family_basis_id": _matrix_digest(self.family_basis),
+            "original_family_basis_id": self.original_family_basis_id,
+            "family_estimable": self.family_estimable.astype(bool).tolist(),
+            "family_reason_codes": list(self.family_reason_codes),
+            "family_retained_norm_fraction_digest": float64_array_digest(
+                self.family_retained_norm_fraction
+            ),
             "family_coefficient_digest": float64_array_digest(self.family_coefficients),
             "null_nuisance_digest": float64_array_digest(
                 self.null_nuisance_coefficients
@@ -973,6 +1358,11 @@ class IncrementalDownstreamFunctional:
             "null_loss_floor": self.null_loss_floor,
             "lambda1": self.lambda1,
             "lambda2": self.lambda2,
+            "loss_design": self.loss_design,
+            "loss_context_weights_digest": float64_array_digest(
+                self.loss_context_weights
+            ),
+            "identifiability_tolerance": self.identifiability_tolerance,
             "identity_scope": self.identity_scope,
             "family_gain_estimand": self.family_gain_estimand,
             "certification_status": self.certification_status,
@@ -999,6 +1389,7 @@ class IncrementalDownstreamApplication:
     full_loss: float | None
     model_gain: float | None
     raw_model_gain: float | None
+    gain_denominator_status: str
     family_losses: np.ndarray
     family_gains: np.ndarray
     raw_family_gains: np.ndarray
@@ -1087,7 +1478,31 @@ class IncrementalDownstreamApplication:
             array = np.asarray(values, dtype=np.float64)
             if array.shape != shape or np.any(np.isinf(array)):
                 raise ValueError(f"{field_name} has invalid shape or infinite values")
-            if observed and np.any(~np.isfinite(array)):
+            family_indexed = field_name in {
+                "family_losses",
+                "family_gains",
+                "raw_family_gains",
+                "sample_family_losses",
+                "subject_family_losses",
+            }
+            if observed and family_indexed and functional.autonomous_program_ids:
+                family_axis = 0 if array.ndim == 1 else 1
+                estimable_values = np.take(
+                    array, np.flatnonzero(functional.family_estimable), axis=family_axis
+                )
+                unidentifiable_values = np.take(
+                    array,
+                    np.flatnonzero(~functional.family_estimable),
+                    axis=family_axis,
+                )
+                if (
+                    np.any(~np.isfinite(estimable_values))
+                    or not np.isnan(unidentifiable_values).all()
+                ):
+                    raise ValueError(
+                        f"observed {field_name} must match family estimability"
+                    )
+            elif observed and np.any(~np.isfinite(array)):
                 raise ValueError(f"observed {field_name} must be finite")
             if not observed and not np.isnan(array).all():
                 raise ValueError(f"not-estimable {field_name} must be NaN")
@@ -1098,12 +1513,17 @@ class IncrementalDownstreamApplication:
             immutable.setflags(write=False)
             frozen[field_name] = immutable
         scalars = (null_loss, full_loss, model_gain, raw_model_gain)
+        gain_denominator_status = _NOT_ESTIMABLE_GAIN
         if observed:
             if any(value is None or not math.isfinite(value) for value in scalars):
                 raise ValueError("observed incremental evidence requires finite losses")
             if model_gain is None or not 0 <= model_gain <= 1:
                 raise ValueError("observed model_gain must lie in [0, 1]")
-            if np.any((frozen["family_gains"] < 0) | (frozen["family_gains"] > 1)):
+            estimable = functional.family_estimable
+            if np.any(
+                (frozen["family_gains"][estimable] < 0)
+                | (frozen["family_gains"][estimable] > 1)
+            ):
                 raise ValueError("observed family_gains must lie in [0, 1]")
             loss_fields = (
                 "family_losses",
@@ -1114,40 +1534,66 @@ class IncrementalDownstreamApplication:
                 "subject_full_losses",
                 "subject_family_losses",
             )
-            if any(np.any(frozen[field_name] < 0) for field_name in loss_fields):
+            if any(
+                np.any(frozen[field_name][np.isfinite(frozen[field_name])] < 0)
+                for field_name in loss_fields
+            ):
                 raise ValueError("observed prediction losses must be non-negative")
             assert null_loss is not None
             assert full_loss is not None
             assert raw_model_gain is not None
             assert model_gain is not None
-            if null_loss <= functional.null_loss_floor or full_loss < 0:
+            if full_loss < 0:
                 raise ValueError("observed aggregate losses are invalid")
-            expected_raw_model = (null_loss - full_loss) / null_loss
-            if not math.isclose(
-                raw_model_gain,
-                expected_raw_model,
-                rel_tol=1e-12,
-                abs_tol=1e-12,
-            ) or not math.isclose(
-                model_gain,
-                float(np.clip(raw_model_gain, 0.0, 1.0)),
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            ):
-                raise ValueError("model gains do not match aggregate losses")
-            expected_raw_family = (null_loss - frozen["family_losses"]) / null_loss
-            if not np.allclose(
-                frozen["raw_family_gains"],
-                expected_raw_family,
-                rtol=1e-12,
-                atol=1e-12,
-            ) or not np.allclose(
-                frozen["family_gains"],
-                np.clip(frozen["raw_family_gains"], 0.0, 1.0),
-                rtol=0.0,
-                atol=1e-12,
-            ):
-                raise ValueError("family gains do not match aggregate losses")
+            if null_loss <= functional.null_loss_floor:
+                gain_denominator_status = _STRUCTURAL_ZERO_GAIN
+                if (
+                    raw_model_gain != 0.0
+                    or model_gain != 0.0
+                    or not np.allclose(
+                        frozen["raw_family_gains"][estimable],
+                        0.0,
+                        rtol=0.0,
+                        atol=0.0,
+                    )
+                    or not np.allclose(
+                        frozen["family_gains"][estimable],
+                        0.0,
+                        rtol=0.0,
+                        atol=0.0,
+                    )
+                ):
+                    raise ValueError(
+                        "zero receiver contrast must have structural-zero gains"
+                    )
+            else:
+                gain_denominator_status = _POSITIVE_GAIN_DENOMINATOR
+                expected_raw_model = (null_loss - full_loss) / null_loss
+                if not math.isclose(
+                    raw_model_gain,
+                    expected_raw_model,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                ) or not math.isclose(
+                    model_gain,
+                    float(np.clip(raw_model_gain, 0.0, 1.0)),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    raise ValueError("model gains do not match aggregate losses")
+                expected_raw_family = (null_loss - frozen["family_losses"]) / null_loss
+                if not np.allclose(
+                    frozen["raw_family_gains"][estimable],
+                    expected_raw_family[estimable],
+                    rtol=1e-12,
+                    atol=1e-12,
+                ) or not np.allclose(
+                    frozen["family_gains"][estimable],
+                    np.clip(frozen["raw_family_gains"][estimable], 0.0, 1.0),
+                    rtol=0.0,
+                    atol=1e-12,
+                ):
+                    raise ValueError("family gains do not match aggregate losses")
             aggregate_checks = (
                 (null_loss, frozen["subject_null_losses"]),
                 (full_loss, frozen["subject_full_losses"]),
@@ -1161,8 +1607,8 @@ class IncrementalDownstreamApplication:
                 )
                 for aggregate, values in aggregate_checks
             ) or not np.allclose(
-                frozen["family_losses"],
-                np.mean(frozen["subject_family_losses"], axis=0),
+                frozen["family_losses"][estimable],
+                np.mean(frozen["subject_family_losses"], axis=0)[estimable],
                 rtol=1e-12,
                 atol=1e-12,
             ):
@@ -1173,6 +1619,13 @@ class IncrementalDownstreamApplication:
         heldout_subjects = tuple(sorted(set(sample_subjects)))
         if subjects != heldout_subjects:
             raise ValueError("subject_ids must equal the held-out row subject universe")
+        loss_aggregation = (
+            "mean_technical_within_subject_context_then_frozen_regressor_"
+            "contrast_then_equal_subject_mean_v4"
+            if functional.loss_design == _PAIRED_LOSS_DESIGN
+            else "mean_technical_within_subject_context_then_frozen_independent_"
+            "pseudocontrast_then_equal_subject_mean_v1"
+        )
         self = object.__new__(cls)
         attributes: dict[str, Any] = {
             "incremental_functional_id": functional.incremental_functional_id,
@@ -1189,11 +1642,9 @@ class IncrementalDownstreamApplication:
             "full_loss": full_loss,
             "model_gain": model_gain,
             "raw_model_gain": raw_model_gain,
+            "gain_denominator_status": gain_denominator_status,
             "subject_ids": subjects,
-            "loss_aggregation": (
-                "mean_technical_within_subject_context_then_equal_context_"
-                "within_subject_then_equal_subject_mean_v2"
-            ),
+            "loss_aggregation": loss_aggregation,
             "_producer_marker": _INCREMENTAL_PRODUCER_MARKER,
             **frozen,
         }
@@ -1235,6 +1686,7 @@ class IncrementalDownstreamApplication:
             ],
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "incremental_functional_id": self.incremental_functional_id,
+            "gain_denominator_status": self.gain_denominator_status,
             "loss_aggregation": self.loss_aggregation,
             "model_gain": self.model_gain,
             "null_loss": self.null_loss,
@@ -1301,6 +1753,7 @@ class IncrementalDownstreamApplication:
             "full_loss": self.full_loss,
             "model_gain": self.model_gain,
             "raw_model_gain": self.raw_model_gain,
+            "gain_denominator_status": self.gain_denominator_status,
             "family_losses_digest": _numeric_array_digest(self.family_losses),
             "family_gains_digest": _numeric_array_digest(self.family_gains),
             "raw_family_gains_digest": _numeric_array_digest(self.raw_family_gains),
@@ -1328,6 +1781,36 @@ def _normalize_family_basis(
     return sparse.csc_matrix(normalized)
 
 
+def _project_feature_values(
+    values: np.ndarray,
+    *,
+    autonomous_basis: np.ndarray,
+    precision_weights: np.ndarray,
+) -> np.ndarray:
+    """Apply the same weighted autonomous-span projection to row feature values."""
+
+    programs = np.asarray(autonomous_basis, dtype=np.float64)
+    observed = np.asarray(values, dtype=np.float64)
+    if programs.shape[1] == 0:
+        result: np.ndarray = np.array(observed, dtype=np.float64, copy=True)
+        return result
+    residual, numerical_rank = _precision_weighted_span_residual(
+        observed.T,
+        span_basis=programs,
+        precision=precision_weights,
+        projection_rcond=1e-12,
+    )
+    if numerical_rank != programs.shape[1]:
+        raise ContractError(
+            "Frozen autonomous programs lost precision-supported rank",
+            code="autonomous_program_support_not_estimable",
+            field="autonomous_basis",
+            remediation="Rebuild the functional from supported autonomous programs",
+        )
+    result = np.asarray(residual.T, dtype=np.float64)
+    return result
+
+
 def fit_incremental_downstream_functional(
     response_matrix: np.ndarray,
     *,
@@ -1346,6 +1829,8 @@ def fit_incremental_downstream_functional(
     nuisance_column_ids: tuple[str, ...],
     training_subject_ids: tuple[str, ...],
     family_basis: sparse.spmatrix | np.ndarray,
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None = None,
+    identifiability_tolerance: float = 1e-6,
     precision_weights: np.ndarray | None = None,
     minimum_scale: float = 0.25,
     null_loss_floor: float = 1e-8,
@@ -1388,6 +1873,21 @@ def fit_incremental_downstream_functional(
         raise ValueError("minimum_scale must be finite and positive")
     if not math.isfinite(null_loss_floor) or null_loss_floor <= 0:
         raise ValueError("null_loss_floor must be finite and positive")
+    loss_design = _subject_loss_design(canonical.subject_ids, canonical.context_ids)
+    if loss_design is None:
+        raise ValueError(
+            "incremental training requires fully paired or independent subjects"
+        )
+    loss_context_weights = (
+        np.empty(0, dtype=np.float64)
+        if loss_design == _PAIRED_LOSS_DESIGN
+        else _independent_context_contrast_weights(
+            regressor,
+            subject_ids=canonical.subject_ids,
+            context_ids=canonical.context_ids,
+            contrast_floor=null_loss_floor,
+        )
+    )
     reference_by_subject = _subject_reference_summary(
         response,
         reference=reference,
@@ -1402,8 +1902,6 @@ def fit_incremental_downstream_functional(
         canonical.subject_ids, canonical.context_ids
     )
 
-    null_coefficients = _weighted_lstsq(nuisance, standardized, training_weights)
-    null_residual = standardized - nuisance @ null_coefficients
     regressor_nuisance = _weighted_lstsq(nuisance, regressor, training_weights)
     residualized_regressor = regressor - nuisance @ regressor_nuisance
     regressor_norm = float(
@@ -1414,43 +1912,143 @@ def fit_incremental_downstream_functional(
     )
     if regressor_norm <= null_loss_floor:
         raise ValueError("context regressor has no variation after nuisance projection")
-    effect = (
-        (residualized_regressor * training_weights) @ null_residual / regressor_norm
-    )
-    directional_effect = np.maximum(np.asarray(effect, dtype=np.float64), 0.0)
-    basis = _normalize_family_basis(
-        family_basis,
-        n_features=n_features,
-        n_families=len(families),
-    )
     precision = (
         np.ones(n_features, dtype=np.float64)
         if precision_weights is None
         else np.asarray(precision_weights, dtype=np.float64)
     )
-    solution = solve_nonnegative_elastic_net(
-        basis,
-        directional_effect,
-        precision_weights=precision,
-        lambda1=lambda1,
-        lambda2=lambda2,
+    if (
+        precision.shape != (n_features,)
+        or np.any(~np.isfinite(precision))
+        or np.any(precision < 0)
+        or not np.any(precision > 0)
+    ):
+        raise ValueError(
+            "precision_weights must be finite, non-negative, and align features"
+        )
+    if (
+        not math.isfinite(identifiability_tolerance)
+        or not 0 < identifiability_tolerance < 1
+    ):
+        raise ValueError("identifiability_tolerance must be finite in (0, 1)")
+    original_basis = _normalize_family_basis(
+        family_basis,
+        n_features=n_features,
+        n_families=len(families),
     )
+    if autonomous_program_resource is None:
+        autonomous_program_ids: tuple[str, ...] = ()
+        autonomous_basis_id: str | None = None
+        programs = np.empty((n_features, 0), dtype=np.float64)
+        basis = original_basis
+        retained: np.ndarray = np.ones(len(families), dtype=np.float64)
+        family_estimable: np.ndarray = np.ones(len(families), dtype=bool)
+        residualization_id = stable_id(
+            "autonomous_feature_projection",
+            {
+                "feature_ids": list(features),
+                "mode": "no_autonomous_resource_diagnostic",
+                "original_family_basis_id": _matrix_digest(original_basis),
+                "precision_digest": _dense_input_digest(precision),
+            },
+            schema_version="1",
+        )
+    else:
+        if not isinstance(
+            autonomous_program_resource, ReceiverAutonomousProgramResource
+        ):
+            raise TypeError(
+                "autonomous_program_resource must be a "
+                "ReceiverAutonomousProgramResource"
+            )
+        autonomous_program_resource._require_producer_owned()
+        autonomous_program_ids = autonomous_program_resource.program_ids
+        autonomous_basis_id = autonomous_program_resource.artifact_id
+        programs = autonomous_program_resource.matrix_for_features(features)
+        residualization = residualize_against_autonomous_programs(
+            np.asarray(original_basis.toarray(), dtype=np.float64),
+            feature_ids=features,
+            candidate_ids=families,
+            precision=precision,
+            program_resource=autonomous_program_resource,
+            projection_rcond=1e-12,
+            identifiability_tolerance=identifiability_tolerance,
+        )
+        retained = np.asarray(residualization.retained_fractions, dtype=np.float64)
+        family_estimable = np.asarray(residualization.identifiable, dtype=bool)
+        projected = np.asarray(
+            residualization.residualized_basis, dtype=np.float64
+        ).copy()
+        projected[:, ~family_estimable] = 0.0
+        norms = np.linalg.norm(projected, axis=0)
+        projected[:, family_estimable] /= norms[family_estimable]
+        basis = sparse.csc_matrix(projected)
+        residualization_id = residualization.residualization_id
+    if not np.any(family_estimable):
+        raise ContractError(
+            "No family basis is identifiable after autonomous projection",
+            code=("all_family_bases_not_identifiable_after_autonomous_projection"),
+            field="family_basis",
+            remediation=(
+                "Report family-grain not-estimable status or revise the "
+                "caller-declared static autonomous program resource"
+            ),
+        )
+    projected_standardized = _project_feature_values(
+        standardized,
+        autonomous_basis=programs,
+        precision_weights=precision,
+    )
+    null_coefficients = _weighted_lstsq(
+        nuisance, projected_standardized, training_weights
+    )
+    projected_null_residual = projected_standardized - nuisance @ null_coefficients
+    projected_effect = np.asarray(
+        (residualized_regressor * training_weights)
+        @ projected_null_residual
+        / regressor_norm,
+        dtype=np.float64,
+    )
+    solver_response = (
+        projected_effect
+        if autonomous_program_ids
+        else np.maximum(projected_effect, 0.0)
+    )
+    estimable_indices = np.flatnonzero(family_estimable)
+    if autonomous_program_ids:
+        solution = solve_nonnegative_residual_elastic_net(
+            basis[:, estimable_indices],
+            solver_response,
+            precision_weights=precision,
+            lambda1=lambda1,
+            lambda2=lambda2,
+        )
+    else:
+        solution = solve_nonnegative_elastic_net(
+            basis[:, estimable_indices],
+            solver_response,
+            precision_weights=precision,
+            lambda1=lambda1,
+            lambda2=lambda2,
+        )
     if solution.diagnostics.status is not SolverStatus.CONVERGED:
         raise ValueError(
             "incremental downstream family solver did not converge: "
             f"{solution.diagnostics.failure_reason}"
         )
-    predicted_effect = np.asarray(basis @ solution.coefficients).ravel()
-    full_adjusted = standardized - np.outer(regressor, predicted_effect)
+    family_coefficients: np.ndarray = np.zeros(len(families), dtype=np.float64)
+    family_coefficients[estimable_indices] = solution.coefficients
+    predicted_effect = np.asarray(basis @ family_coefficients).ravel()
+    full_adjusted = projected_standardized - np.outer(regressor, predicted_effect)
     full_coefficients = _weighted_lstsq(nuisance, full_adjusted, training_weights)
     family_nuisance = np.empty(
         (len(families), nuisance.shape[1], n_features), dtype=np.float64
     )
-    for family_index, coefficient in enumerate(solution.coefficients):
+    for family_index, coefficient in enumerate(family_coefficients):
         contribution = (
             np.asarray(basis.getcol(family_index).toarray()).ravel() * coefficient
         )
-        adjusted = standardized - np.outer(regressor, contribution)
+        adjusted = projected_standardized - np.outer(regressor, contribution)
         family_nuisance[family_index] = _weighted_lstsq(
             nuisance, adjusted, training_weights
         )
@@ -1471,10 +2069,17 @@ def fit_incremental_downstream_functional(
         "incremental_training_input",
         {
             "algorithm": _INCREMENTAL_METHOD,
+            "autonomous_basis_digest": _dense_input_digest(programs),
+            "autonomous_basis_id": autonomous_basis_id,
+            "autonomous_program_ids": list(autonomous_program_ids),
             "family_basis_id": _matrix_digest(basis),
+            "original_family_basis_id": _matrix_digest(original_basis),
+            "family_retained_norm_fraction": retained.tolist(),
             "feature_ids": list(features),
             "nuisance_column_ids": list(nuisance_ids),
             "nuisance_digest": _dense_input_digest(nuisance),
+            "loss_context_weights_digest": _dense_input_digest(loss_context_weights),
+            "loss_design": loss_design,
             "precision_digest": _dense_input_digest(precision),
             "reference_sample_ids": list(reference_sample_ids),
             "regressor_digest": _dense_input_digest(regressor),
@@ -1483,6 +2088,7 @@ def fit_incremental_downstream_functional(
         },
         schema_version="2",
     )
+    autonomous_projection_id = residualization_id
     return IncrementalDownstreamFunctional._from_training(
         receiver=receiver,
         contrast_name=contrast_name,
@@ -1496,13 +2102,27 @@ def fit_incremental_downstream_functional(
         training_sample_subject_ids=canonical.subject_ids,
         training_sample_context_ids=canonical.context_ids,
         training_subject_ids=derived_subjects,
+        loss_design=loss_design,
+        loss_context_weights=loss_context_weights,
         reference_sample_ids=reference_sample_ids,
         training_row_manifest_id=row_manifest.manifest_id,
         training_input_digest=training_input_digest,
         feature_center=center,
         feature_scale=scale,
+        autonomous_program_ids=tuple(autonomous_program_ids),
+        autonomous_basis_id=autonomous_basis_id,
+        autonomous_basis=programs,
+        autonomous_projection_id=autonomous_projection_id,
+        identifiability_tolerance=identifiability_tolerance,
+        original_family_basis_id=_matrix_digest(original_basis),
         family_basis=basis,
-        family_coefficients=solution.coefficients,
+        family_estimable=family_estimable,
+        family_reason_codes=tuple(
+            None if value else _UNIDENTIFIABLE_FAMILY_REASON
+            for value in family_estimable
+        ),
+        family_retained_norm_fraction=retained,
+        family_coefficients=family_coefficients,
         null_nuisance_coefficients=null_coefficients,
         full_nuisance_coefficients=full_coefficients,
         family_nuisance_coefficients=family_nuisance,
@@ -1530,63 +2150,132 @@ def _subject_context_prediction_losses(
     precision: np.ndarray,
     sample_subject_ids: tuple[str, ...],
     sample_context_ids: tuple[str, ...],
-) -> tuple[tuple[str, ...], np.ndarray, float]:
+    context_regressor: np.ndarray,
+    *,
+    loss_design: str,
+    frozen_context_weights: np.ndarray,
+    contrast_floor: float,
+) -> tuple[tuple[str, ...], np.ndarray, float] | None:
     observed_values = np.asarray(observed, dtype=np.float64)
     predicted_values = np.asarray(predicted, dtype=np.float64)
+    regressor = np.asarray(context_regressor, dtype=np.float64)
     if (
         observed_values.ndim != 2
         or predicted_values.shape != observed_values.shape
         or observed_values.shape[0] != len(sample_subject_ids)
         or len(sample_context_ids) != len(sample_subject_ids)
         or precision.shape != (observed_values.shape[1],)
+        or regressor.shape != (len(sample_subject_ids),)
+        or np.any(~np.isfinite(regressor))
+        or not math.isfinite(contrast_floor)
+        or contrast_floor <= 0
+        or loss_design not in _LOSS_DESIGNS
     ):
         raise ValueError("predictions must align with subject/context feature rows")
     residual = observed_values - predicted_values
     subjects = tuple(sorted(set(sample_subject_ids)))
-    subject_losses: np.ndarray = np.asarray(
-        [
-            np.mean(
-                [
-                    np.sum(
-                        np.square(
-                            np.mean(
-                                residual[
-                                    np.asarray(
-                                        [
-                                            row_subject == subject
-                                            and row_context == context
-                                            for row_subject, row_context in zip(
-                                                sample_subject_ids,
-                                                sample_context_ids,
-                                                strict=True,
-                                            )
-                                        ],
-                                        dtype=bool,
-                                    )
-                                ],
-                                axis=0,
-                            )
+    contexts = tuple(sorted(set(sample_context_ids)))
+    if len(contexts) < 2:
+        return None
+    observed_loss_design = _subject_loss_design(sample_subject_ids, sample_context_ids)
+    if observed_loss_design != loss_design:
+        return None
+    if loss_design == _INDEPENDENT_LOSS_DESIGN:
+        weights = np.asarray(frozen_context_weights, dtype=np.float64)
+        if (
+            weights.shape != (len(contexts),)
+            or np.any(~np.isfinite(weights))
+            or float(weights @ weights) <= contrast_floor
+            or not math.isclose(float(np.sum(weights)), 0.0, rel_tol=0.0, abs_tol=1e-12)
+        ):
+            raise ValueError("frozen independent context weights are invalid")
+        residual_by_subject_context: dict[tuple[str, str], np.ndarray] = {}
+        for subject in subjects:
+            for context in contexts:
+                mask = np.asarray(
+                    [
+                        row_subject == subject and row_context == context
+                        for row_subject, row_context in zip(
+                            sample_subject_ids,
+                            sample_context_ids,
+                            strict=True,
                         )
-                        * precision
+                    ],
+                    dtype=bool,
+                )
+                if np.any(mask):
+                    residual_by_subject_context[(subject, context)] = np.mean(
+                        residual[mask], axis=0
                     )
-                    for context in sorted(
-                        {
-                            row_context
-                            for row_subject, row_context in zip(
-                                sample_subject_ids,
-                                sample_context_ids,
-                                strict=True,
-                            )
-                            if row_subject == subject
-                        }
-                    )
-                ]
+        context_residual_means: dict[str, np.ndarray] = {}
+        for context in contexts:
+            values = [
+                value
+                for (_, row_context), value in residual_by_subject_context.items()
+                if row_context == context
+            ]
+            if not values:
+                return None
+            context_residual_means[context] = np.mean(values, axis=0)
+        independent_subject_losses: list[float] = []
+        for subject in subjects:
+            subject_contexts = tuple(
+                context
+                for context in contexts
+                if (subject, context) in residual_by_subject_context
             )
-            for subject in subjects
-        ],
-        dtype=np.float64,
-    )
-    return subjects, subject_losses, float(np.mean(subject_losses))
+            if len(subject_contexts) != 1:
+                return None
+            own_context = subject_contexts[0]
+            pseudo_contrast = np.zeros(residual.shape[1], dtype=np.float64)
+            for context, weight in zip(contexts, weights, strict=True):
+                context_value = (
+                    residual_by_subject_context[(subject, context)]
+                    if context == own_context
+                    else context_residual_means[context]
+                )
+                pseudo_contrast += float(weight) * context_value
+            independent_subject_losses.append(
+                float(np.sum(np.square(pseudo_contrast) * precision))
+            )
+        subject_loss_array = np.asarray(independent_subject_losses, dtype=np.float64)
+        return subjects, subject_loss_array, float(np.mean(subject_loss_array))
+
+    if np.asarray(frozen_context_weights).size:
+        raise ValueError("paired loss cannot retain independent context weights")
+    subject_losses: list[float] = []
+    for subject in subjects:
+        masks = [
+            np.asarray(
+                [
+                    row_subject == subject and row_context == context
+                    for row_subject, row_context in zip(
+                        sample_subject_ids,
+                        sample_context_ids,
+                        strict=True,
+                    )
+                ],
+                dtype=bool,
+            )
+            for context in contexts
+        ]
+        if any(not np.any(mask) for mask in masks):
+            return None
+        context_residual = np.vstack(
+            [np.mean(residual[mask], axis=0) for mask in masks]
+        )
+        context_regressor_mean = np.asarray(
+            [np.mean(regressor[mask]) for mask in masks], dtype=np.float64
+        )
+        centered_regressor = context_regressor_mean - np.mean(context_regressor_mean)
+        regressor_norm = float(centered_regressor @ centered_regressor)
+        if regressor_norm <= contrast_floor:
+            return None
+        contrast_weights = centered_regressor / regressor_norm
+        contrast_residual = contrast_weights @ context_residual
+        subject_losses.append(float(np.sum(np.square(contrast_residual) * precision)))
+    subject_loss_array = np.asarray(subject_losses, dtype=np.float64)
+    return subjects, subject_loss_array, float(np.mean(subject_loss_array))
 
 
 def _not_estimable_incremental_application(
@@ -1626,6 +2315,67 @@ def _not_estimable_incremental_application(
         subject_null_losses=missing_subject,
         subject_full_losses=missing_subject.copy(),
         subject_family_losses=np.full((len(subject_ids), n_families), np.nan),
+    )
+
+
+def _heldout_input_digest_from_canonical(
+    canonical: _CanonicalIncrementalRows,
+    *,
+    row_manifest_id: str,
+    context_regressor_id: str,
+    nuisance_design_id: str,
+) -> str:
+    result: str = stable_id(
+        "incremental_heldout_input",
+        {
+            "nuisance_digest": _dense_input_digest(canonical.nuisance),
+            "nuisance_design_id": nuisance_design_id,
+            "context_regressor_id": context_regressor_id,
+            "regressor_digest": _dense_input_digest(canonical.regressor),
+            "response_digest": _dense_input_digest(canonical.response),
+            "row_manifest_id": row_manifest_id,
+        },
+        schema_version="2",
+    )
+    return result
+
+
+def incremental_heldout_input_digest(
+    response_matrix: np.ndarray,
+    *,
+    row_manifest: DownstreamRowManifest,
+    design_sample_ids: tuple[str, ...],
+    nuisance_matrix: np.ndarray,
+    context_regressor: np.ndarray,
+    context_regressor_id: str,
+    nuisance_design_id: str,
+    feature_ids: tuple[str, ...],
+    nuisance_column_ids: tuple[str, ...],
+) -> str:
+    """Bind the complete canonical numerical input for one held-out application."""
+
+    features = _names(tuple(feature_ids), field_name="feature_ids")
+    nuisance_ids = _names(tuple(nuisance_column_ids), field_name="nuisance_column_ids")
+    for field_name, value in (
+        ("context_regressor_id", context_regressor_id),
+        ("nuisance_design_id", nuisance_design_id),
+    ):
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ValueError(f"{field_name} must be a canonical non-empty string")
+    canonical = _canonical_incremental_rows(
+        response_matrix,
+        row_manifest=row_manifest,
+        nuisance_matrix=nuisance_matrix,
+        context_regressor=context_regressor,
+        design_sample_ids=design_sample_ids,
+        n_features=len(features),
+        n_nuisance=len(nuisance_ids),
+    )
+    return _heldout_input_digest_from_canonical(
+        canonical,
+        row_manifest_id=row_manifest.manifest_id,
+        context_regressor_id=context_regressor_id,
+        nuisance_design_id=nuisance_design_id,
     )
 
 
@@ -1684,17 +2434,11 @@ def apply_incremental_downstream_functional(
         raise ValueError(
             "heldout subjects overlap training subjects: " + ", ".join(sorted(overlap))
         )
-    heldout_input_digest = stable_id(
-        "incremental_heldout_input",
-        {
-            "nuisance_digest": _dense_input_digest(nuisance),
-            "nuisance_design_id": nuisance_design_id,
-            "context_regressor_id": context_regressor_id,
-            "regressor_digest": _dense_input_digest(regressor),
-            "response_digest": _dense_input_digest(response),
-            "row_manifest_id": row_manifest.manifest_id,
-        },
-        schema_version="2",
+    heldout_input_digest = _heldout_input_digest_from_canonical(
+        canonical,
+        row_manifest_id=row_manifest.manifest_id,
+        context_regressor_id=context_regressor_id,
+        nuisance_design_id=nuisance_design_id,
     )
     heldout_contexts = tuple(sorted(set(canonical.context_ids)))
     if heldout_contexts != functional.training_context_ids:
@@ -1714,26 +2458,41 @@ def apply_incremental_downstream_functional(
             heldout_input_digest=heldout_input_digest,
         )
     standardized = (response - functional.feature_center) / functional.feature_scale
+    standardized = _project_feature_values(
+        standardized,
+        autonomous_basis=functional.autonomous_basis,
+        precision_weights=functional.precision_weights,
+    )
     null_prediction = nuisance @ functional.null_nuisance_coefficients
     sample_null_losses = _prediction_losses(
         standardized, null_prediction, functional.precision_weights
     )
-    subject_ids, subject_null_losses, null_loss = _subject_context_prediction_losses(
+    null_summary = _subject_context_prediction_losses(
         standardized,
         null_prediction,
         functional.precision_weights,
         canonical.subject_ids,
         canonical.context_ids,
+        regressor,
+        loss_design=functional.loss_design,
+        frozen_context_weights=functional.loss_context_weights,
+        contrast_floor=functional.null_loss_floor,
     )
-    n_families = len(functional.family_ids)
-    if null_loss <= functional.null_loss_floor:
+    if null_summary is None:
         return _not_estimable_incremental_application(
             functional,
-            reason_code="heldout_receiver_null_loss_below_floor",
+            reason_code=(
+                "paired_contrast_loss_required"
+                if functional.loss_design == _PAIRED_LOSS_DESIGN
+                else "independent_context_loss_required"
+            ),
             canonical=canonical,
             heldout_row_manifest_id=row_manifest.manifest_id,
             heldout_input_digest=heldout_input_digest,
         )
+    subject_ids, subject_null_losses, null_loss = null_summary
+    n_families = len(functional.family_ids)
+    structural_zero = null_loss <= functional.null_loss_floor
     predicted_effect = np.asarray(
         functional.family_basis @ functional.family_coefficients
     ).ravel()
@@ -1743,19 +2502,26 @@ def apply_incremental_downstream_functional(
     sample_full_losses = _prediction_losses(
         standardized, full_prediction, functional.precision_weights
     )
-    full_subject_ids, subject_full_losses, full_loss = (
-        _subject_context_prediction_losses(
-            standardized,
-            full_prediction,
-            functional.precision_weights,
-            canonical.subject_ids,
-            canonical.context_ids,
-        )
+    full_summary = _subject_context_prediction_losses(
+        standardized,
+        full_prediction,
+        functional.precision_weights,
+        canonical.subject_ids,
+        canonical.context_ids,
+        regressor,
+        loss_design=functional.loss_design,
+        frozen_context_weights=functional.loss_context_weights,
+        contrast_floor=functional.null_loss_floor,
     )
+    if full_summary is None:
+        raise RuntimeError("validated paired contrast loss became unavailable")
+    full_subject_ids, subject_full_losses, full_loss = full_summary
     if full_subject_ids != subject_ids:
         raise RuntimeError("subject loss aggregation changed subject order")
-    raw_model_gain = float((null_loss - full_loss) / null_loss)
-    model_gain = float(np.clip(raw_model_gain, 0.0, 1.0))
+    raw_model_gain = (
+        0.0 if structural_zero else float((null_loss - full_loss) / null_loss)
+    )
+    model_gain = 0.0 if structural_zero else float(np.clip(raw_model_gain, 0.0, 1.0))
     family_losses: np.ndarray = np.empty(n_families, dtype=np.float64)
     family_gains: np.ndarray = np.empty(n_families, dtype=np.float64)
     raw_family_gains: np.ndarray = np.empty(n_families, dtype=np.float64)
@@ -1766,6 +2532,15 @@ def apply_incremental_downstream_functional(
         (len(subject_ids), n_families), dtype=np.float64
     )
     for family_index, coefficient in enumerate(functional.family_coefficients):
+        if functional.autonomous_program_ids and not bool(
+            functional.family_estimable[family_index]
+        ):
+            family_losses[family_index] = np.nan
+            raw_family_gains[family_index] = np.nan
+            family_gains[family_index] = np.nan
+            sample_family_losses[:, family_index] = np.nan
+            subject_family_losses[:, family_index] = np.nan
+            continue
         contribution = (
             np.asarray(functional.family_basis.getcol(family_index).toarray()).ravel()
             * coefficient
@@ -1776,20 +2551,33 @@ def apply_incremental_downstream_functional(
         sample_loss = _prediction_losses(
             standardized, prediction, functional.precision_weights
         )
-        family_subject_ids, subject_loss, loss = _subject_context_prediction_losses(
+        family_summary = _subject_context_prediction_losses(
             standardized,
             prediction,
             functional.precision_weights,
             canonical.subject_ids,
             canonical.context_ids,
+            regressor,
+            loss_design=functional.loss_design,
+            frozen_context_weights=functional.loss_context_weights,
+            contrast_floor=functional.null_loss_floor,
         )
+        if family_summary is None:
+            raise RuntimeError("validated paired contrast loss became unavailable")
+        family_subject_ids, subject_loss, loss = family_summary
         if family_subject_ids != subject_ids:
             raise RuntimeError("family loss aggregation changed subject order")
         sample_family_losses[:, family_index] = sample_loss
         subject_family_losses[:, family_index] = subject_loss
         family_losses[family_index] = loss
-        raw_family_gains[family_index] = (null_loss - loss) / null_loss
-        family_gains[family_index] = np.clip(raw_family_gains[family_index], 0.0, 1.0)
+        if structural_zero:
+            raw_family_gains[family_index] = 0.0
+            family_gains[family_index] = 0.0
+        else:
+            raw_family_gains[family_index] = (null_loss - loss) / null_loss
+            family_gains[family_index] = np.clip(
+                raw_family_gains[family_index], 0.0, 1.0
+            )
     return IncrementalDownstreamApplication._from_application(
         functional=functional,
         status="observed",

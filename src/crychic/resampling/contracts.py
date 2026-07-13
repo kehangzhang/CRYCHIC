@@ -124,6 +124,8 @@ class FoldManifest:
             or not 0 <= self.fold_index < self.effective_n_splits
         ):
             raise ValueError("fold_index must be within the effective fold count")
+        if not isinstance(self.estimable, bool):
+            raise TypeError("estimable must be a boolean")
         if self.estimable == (self.reason_code is not None):
             raise ValueError(
                 "reason_code must be present exactly when a fold is not estimable"
@@ -137,11 +139,16 @@ class FoldManifest:
 
         payload = {
             "contrast_ids": list(contrasts),
+            "context_support": dict(train_support),
             "design_matrix_id": self.design_matrix_id.strip(),
             "effective_n_splits": self.effective_n_splits,
+            "estimable": self.estimable,
             "fold_index": self.fold_index,
+            "reason_code": self.reason_code,
             "repeat_id": self.repeat_id.strip(),
+            "requested_n_splits": self.requested_n_splits,
             "seed_lineage": self.seed_lineage.to_dict(),
+            "test_context_support": dict(test_support),
             "test_subject_ids": list(test),
             "train_subject_ids": list(train),
         }
@@ -154,9 +161,65 @@ class FoldManifest:
         object.__setattr__(self, "test_context_support", test_support)
         object.__setattr__(self, "fold_id", stable_id("subject_fold", payload))
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of a persisted fold manifest."""
+
+        try:
+            repeated = FoldManifest(
+                repeat_id=self.repeat_id,
+                train_subject_ids=self.train_subject_ids,
+                test_subject_ids=self.test_subject_ids,
+                design_matrix_id=self.design_matrix_id,
+                contrast_ids=self.contrast_ids,
+                context_support=self.context_support,
+                test_context_support=self.test_context_support,
+                estimable=self.estimable,
+                reason_code=self.reason_code,
+                seed_lineage=self.seed_lineage,
+                requested_n_splits=self.requested_n_splits,
+                effective_n_splits=self.effective_n_splits,
+                fold_index=self.fold_index,
+            )
+            valid = (
+                isinstance(self.train_subject_ids, tuple)
+                and isinstance(self.test_subject_ids, tuple)
+                and isinstance(self.contrast_ids, tuple)
+                and self.repeat_id == repeated.repeat_id
+                and self.train_subject_ids == repeated.train_subject_ids
+                and self.test_subject_ids == repeated.test_subject_ids
+                and self.design_matrix_id == repeated.design_matrix_id
+                and self.contrast_ids == repeated.contrast_ids
+                and dict(self.context_support) == dict(repeated.context_support)
+                and dict(self.test_context_support)
+                == dict(repeated.test_context_support)
+                and self.estimable == repeated.estimable
+                and self.reason_code == repeated.reason_code
+                and self.seed_lineage.to_dict()
+                == repeated.seed_lineage.to_dict()
+                and self.requested_n_splits == repeated.requested_n_splits
+                and self.effective_n_splits == repeated.effective_n_splits
+                and self.fold_index == repeated.fold_index
+                and self.fold_id == repeated.fold_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Fold manifest failed integrity validation",
+                code="fold_manifest_integrity_violation",
+                field="fold_id",
+                remediation="Regenerate the fold manifest from the planning inputs",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Fold manifest failed integrity validation",
+                code="fold_manifest_integrity_violation",
+                field="fold_id",
+                remediation="Regenerate the fold manifest from the planning inputs",
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return a manifest-ready fold representation."""
 
+        self._require_intact()
         return {
             "fold_id": self.fold_id,
             "repeat_id": self.repeat_id,
@@ -191,6 +254,9 @@ class SubjectFoldPlan:
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.repeat_id, str) or not self.repeat_id.strip():
+            raise ValueError("repeat_id must be a non-empty string")
+        repeat_id = self.repeat_id.strip()
         allowed = tuple(self.allowed_n_splits)
         if (
             not allowed
@@ -211,16 +277,26 @@ class SubjectFoldPlan:
             )
         subjects = _names(tuple(self.subject_ids), field_name="subject_ids")
         folds = tuple(self.folds)
+        if any(not isinstance(fold, FoldManifest) for fold in folds):
+            raise TypeError("folds must contain FoldManifest values")
+        for fold in folds:
+            fold._require_intact()
         if len(folds) != self.effective_n_splits:
             raise ValueError("fold count must equal effective_n_splits")
         if any(not fold.estimable for fold in folds):
             raise ValueError(
                 "a selected SubjectFoldPlan may contain only estimable folds"
             )
-        if any(fold.repeat_id != self.repeat_id for fold in folds):
+        if any(fold.repeat_id != repeat_id for fold in folds):
             raise ValueError("every fold must use the plan repeat_id")
+        if any(fold.requested_n_splits != self.requested_n_splits for fold in folds):
+            raise ValueError("every fold must use the plan requested_n_splits")
         if any(fold.effective_n_splits != self.effective_n_splits for fold in folds):
             raise ValueError("every fold must use the selected effective_n_splits")
+        if {fold.fold_index for fold in folds} != set(
+            range(self.effective_n_splits)
+        ):
+            raise ValueError("fold indexes must exactly cover the selected fold count")
         expected = set(subjects)
         test_counts = dict.fromkeys(subjects, 0)
         for fold in folds:
@@ -252,14 +328,29 @@ class SubjectFoldPlan:
             raise ValueError("rejected candidate reasons must be non-empty")
         if not isinstance(self.seed_lineage, SeedLineage):
             raise TypeError("seed_lineage must be a SeedLineage")
+        if any(
+            fold.seed_lineage
+            != self.seed_lineage.derive(
+                "crossfit",
+                repeat_id,
+                f"k={self.effective_n_splits}",
+                f"fold={fold.fold_index}",
+            )
+            for fold in folds
+        ):
+            raise ValueError("fold seed lineages must derive from the plan lineage")
         payload = {
             "allowed_n_splits": list(allowed),
             "effective_n_splits": self.effective_n_splits,
             "fold_ids": [fold.fold_id for fold in folds],
-            "repeat_id": self.repeat_id,
+            "reduction_reason_code": self.reduction_reason_code,
+            "rejected_candidate_reasons": [list(value) for value in rejected],
+            "repeat_id": repeat_id,
+            "requested_n_splits": self.requested_n_splits,
             "seed_lineage": self.seed_lineage.to_dict(),
             "subject_ids": list(subjects),
         }
+        object.__setattr__(self, "repeat_id", repeat_id)
         object.__setattr__(self, "allowed_n_splits", allowed)
         object.__setattr__(self, "subject_ids", subjects)
         object.__setattr__(self, "folds", folds)
@@ -272,6 +363,7 @@ class SubjectFoldPlan:
     def to_dict(self) -> dict[str, object]:
         """Return a persisted plan with fold and reduction provenance."""
 
+        self._require_intact()
         return {
             "plan_id": self.plan_id,
             "repeat_id": self.repeat_id,
@@ -287,6 +379,56 @@ class SubjectFoldPlan:
             ],
             "folds": [fold.to_dict() for fold in self.folds],
         }
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of a persisted subject-fold plan."""
+
+        try:
+            for fold in self.folds:
+                fold._require_intact()
+            repeated = SubjectFoldPlan(
+                repeat_id=self.repeat_id,
+                requested_n_splits=self.requested_n_splits,
+                effective_n_splits=self.effective_n_splits,
+                allowed_n_splits=self.allowed_n_splits,
+                subject_ids=self.subject_ids,
+                folds=self.folds,
+                seed_lineage=self.seed_lineage,
+                reduction_reason_code=self.reduction_reason_code,
+                rejected_candidate_reasons=self.rejected_candidate_reasons,
+            )
+            valid = (
+                isinstance(self.allowed_n_splits, tuple)
+                and isinstance(self.subject_ids, tuple)
+                and isinstance(self.folds, tuple)
+                and isinstance(self.rejected_candidate_reasons, tuple)
+                and self.repeat_id == repeated.repeat_id
+                and self.requested_n_splits == repeated.requested_n_splits
+                and self.effective_n_splits == repeated.effective_n_splits
+                and self.allowed_n_splits == repeated.allowed_n_splits
+                and self.subject_ids == repeated.subject_ids
+                and self.folds == repeated.folds
+                and self.seed_lineage.to_dict()
+                == repeated.seed_lineage.to_dict()
+                and self.reduction_reason_code == repeated.reduction_reason_code
+                and self.rejected_candidate_reasons
+                == repeated.rejected_candidate_reasons
+                and self.plan_id == repeated.plan_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Subject-fold plan failed integrity validation",
+                code="subject_fold_plan_integrity_violation",
+                field="plan_id",
+                remediation="Regenerate the subject-fold plan from raw metadata",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Subject-fold plan failed integrity validation",
+                code="subject_fold_plan_integrity_violation",
+                field="plan_id",
+                remediation="Regenerate the subject-fold plan from raw metadata",
+            )
 
 
 class FoldPlanningError(ContractError):

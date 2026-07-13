@@ -20,21 +20,25 @@ preserving the exploratory v0.1 behavior:
 
 - downstream output separates the source-agnostic `receiver_program_score`
   from `incremental_downstream`. Public cross-fit now fits a typed fold response,
-  response-parented precision and formula-nuisance incremental diagnostic. The
-  official component remains `not_estimable` because receiver-autonomous
-  programs and inner-fold tuning are not yet frozen;
+  response-parented precision and incremental diagnostic. A caller-declared
+  static receiver-autonomous program resource can be projected in the exact
+  precision-weighted gene space, but remains explicitly unverified. The
+  official component therefore stays `not_estimable`; a trusted resource loader
+  and connected subject-blocked inner tuning are still required;
 - attribution now consumes a producer-owned v2 winsorized, median-normalized
   response-precision artifact. Its public cross-fit form binds the exact
   fold-response parent, training rows, subjects, encoder, ordered features and
   values. The legacy full-data API is explicitly unparented and exploratory;
-- low-level incremental downstream v2 uses explicit sample-subject-context row
+- low-level incremental downstream v4 uses explicit sample-subject-context row
   manifests, keyed response/design alignment, full training-input digests,
-  sample diagnostics and technical-row-mean/equal-context/equal-subject
-  held-out losses, signed diagnostic gains and bounded score gains. It rejects
-  training sample/subject reuse and freezes the contrast context universe. A
-  workflow adapter now derives matrices, reference masks, eligible family bases
-  and IDs from producer-owned parents. The array API remains a research
-  primitive; autonomous nuisance and inner tuning are still missing;
+  sample diagnostics, paired-subject contrast losses and frozen independent-
+  group pseudocontrast losses. A zero receiver contrast is recorded as an
+  explicit structural-zero downstream gain rather than an undefined 0/0 ratio.
+  Exact/near autonomous overlap, precision-supported rank loss and technical-row
+  replication fail closed or remain invariant as appropriate. Deterministic
+  relative-penalty scaling and one-SE selection primitives exist for both the
+  ordinary and signed residual spaces, but inner-fold fit/apply production is
+  not yet connected;
 - opt-in attribution candidates provide hard receptor eligibility, directional
   response channels, strict family-first bases, and evidence-weighted member
   allocation without changing the legacy default;
@@ -65,7 +69,8 @@ preserving the exploratory v0.1 behavior:
   also freeze nuisance encoders, receptor gates, strict family bases,
   receiver-program transforms, fold responses and response precision. A second
   audit covers every planned held-out `fold x contrast x receiver x sample`
-  row, including receiver missingness. Formula-nuisance gains are diagnostic;
+  row, including receiver missingness. Caller-declared autonomous projection
+  and formula-only gains are diagnostic;
   official rows remain `not_estimable` with
   `receiver_autonomous_nuisance_not_frozen`. Family attribution/tuning and
   common scoring remain unconnected, so `is_oof_certified` remains false;
@@ -80,6 +85,12 @@ preserving the exploratory v0.1 behavior:
   11.86 and 11.11 seconds, and a 10,057-cell Kang subset in 26.28 seconds;
   these are pipeline and performance checks, not integrated-edge accuracy or
   biological claims;
+- current small algorithm checks record zero generic-only gain, `0.937149`
+  active unique gain under autonomous overlap, and exact invariance to large
+  subject-constant baselines. Public cross-fit v5 runs paired synthetic controls
+  and gives larger bounded and raw active diagnostic gain than ligand-only,
+  while all official rows remain unavailable; independent-group execution is
+  covered separately by unit and public-workflow integration tests;
 - the benchmark layer includes a frozen categorical repeated-measures backend
   for mixed paired/unpaired subjects and within-subject technical replicates.
   A metadata-only audit of the 29-sample Kuppe atlas found all 10 region
@@ -115,6 +126,10 @@ gates; the holdout equal-edge active-minus-ligand-only margin was `0.341761`
 with a 95% CI of `[0.335538, 0.347985]`. This is a synthetic mechanism-specificity
 result, not evidence of real-data accuracy, and G1.5 alone cannot switch the
 default method. See [the result summary](docs/results/g1-5-mechanism-specificity.md).
+The current sample-keyed structural-zero generator uses the separate
+`mechanism_specificity_v3.json` development contract and seed namespace. Its
+holdout namespace is nonpublication test-only and cannot be promoted to an
+independent holdout, so the live runner rejects `--phase independent_holdout`.
 
 ## Install
 
@@ -192,11 +207,7 @@ uv run --extra benchmark python benchmarks/run_canonical_v01.py
 uv run --extra benchmark python -m benchmarks.simulation.run_negative_controls \
   --output-dir ../benchmark_work/synthetic_v01 --seed 20260712
 uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
-  --phase development \
-  --output-dir benchmark_work/g1_5_v2/development
-uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
-  --phase independent_holdout \
-  --output-dir benchmark_work/g1_5_v2/independent_holdout
+  --phase development
 uv run --extra resources --extra benchmark --extra plotting \
   python benchmarks/report/generate_canonical_report.py --workspace-root ..
 uv run python -m benchmarks.metrics.finalize_multicondition \
@@ -208,7 +219,7 @@ uv run python -m benchmarks.report.generate_multicondition_report \
   --report-id multicondition_v02
 uv run python -m benchmarks.simulation.run_crossfit_smoke \
   --workspace-root .. --scenarios active ligand_only \
-  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v4.json
+  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v5.json
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json

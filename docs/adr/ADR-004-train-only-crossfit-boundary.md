@@ -151,25 +151,32 @@ separately reports `verified_train_only_oof_partial_pipeline` and
 `is_oof_certified=false`. This distinction verifies the implemented stages
 without certifying the complete method.
 
-The formula-nuisance incremental gain is now executed only as a development
-diagnostic. It is not a receiver-autonomous null model, so every official row
-is `not_estimable` with `receiver_autonomous_nuisance_not_frozen`. Family
-attribution, subject-blocked inner tuning, autonomous programs and a common
+The incremental gain is executed only as a development diagnostic. Public
+cross-fit may project a typed caller-declared static receiver-autonomous program
+resource, but that constructor cannot prove the supplied matrix came from a
+trusted preregistered manifest. Every official row therefore remains
+`not_estimable` with `receiver_autonomous_nuisance_not_frozen`. A trusted
+resource loader, subject-blocked inner tuning, family attribution and a common
 scoring manifest remain. No default-method switch is eligible.
 
 The low-level precision and incremental primitives were hardened before their
 public integration. Precision v2 binds the raw and transformed ordered feature
-vector plus receiver/contrast/fold scope. Incremental v2 requires explicit
+vector plus receiver/contrast/fold scope. Incremental v4 requires explicit
 sample-to-subject-to-context manifests and independently keyed design rows,
 hashes every raw training input, rejects held-out sample or subject reuse,
 reports signed and bounded gains, averages technical rows within
-subject/context, and then weights contexts and subjects equally. Direct calls
+subject/context, supports paired contrasts and frozen independent-group
+pseudocontrasts, and records a zero receiver contrast as an explicit structural
+zero rather than an undefined ratio. Direct calls
 still rely on caller-declared design IDs and remain exploratory. The public
 adapter closes that lineage gap by accepting only producer-owned encoder,
 fold-response, response-precision and receiver-family parents and by deriving
-all matrices and IDs internally. This establishes train/apply provenance for
-the diagnostic, but not an official incremental estimand: autonomous nuisance,
-inner tuning, family attribution and common scoring are still absent.
+all matrices and IDs internally. Deterministic relative-penalty and one-SE
+selection artifacts now exist for ordinary and signed residual spaces, but
+caller-authored fold losses are not certification evidence. This establishes
+train/apply provenance for the diagnostic, but not an official incremental
+estimand: trusted autonomous provenance, connected inner tuning, family
+attribution and common scoring are still absent.
 
 The nuisance encoder reparameterizes the full training Patsy matrix as
 `[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast

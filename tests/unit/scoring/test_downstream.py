@@ -5,6 +5,8 @@ import pytest
 from scipy import sparse
 
 from crychic.core import ContractError
+from crychic.resources import GeneNamespace, Species
+from crychic.response import build_receiver_autonomous_program_resource
 from crychic.scoring import (
     DownstreamFunctional,
     DownstreamRowManifest,
@@ -15,6 +17,7 @@ from crychic.scoring import (
     fit_downstream_functional,
     fit_incremental_downstream_functional,
 )
+from crychic.scoring.downstream import _project_feature_values
 
 
 def _paired_manifest(regressor: np.ndarray, *, prefix: str) -> DownstreamRowManifest:
@@ -37,6 +40,21 @@ def _paired_manifest(regressor: np.ndarray, *, prefix: str) -> DownstreamRowMani
     return DownstreamRowManifest(
         sample_ids=sample_ids,
         subject_ids=subject_ids,
+        context_ids=context_ids,
+    )
+
+
+def _independent_manifest(
+    context_ids: tuple[str, ...], *, prefix: str
+) -> DownstreamRowManifest:
+    return DownstreamRowManifest(
+        sample_ids=tuple(
+            f"{prefix}-sample-{index}-{context}"
+            for index, context in enumerate(context_ids)
+        ),
+        subject_ids=tuple(
+            f"{prefix}-subject-{index}" for index in range(len(context_ids))
+        ),
         context_ids=context_ids,
     )
 
@@ -82,6 +100,41 @@ def _functional() -> DownstreamFunctional:
         family_support=np.asarray([1.0, 0.5]),
         minimum_scale=0.5,
     )
+
+
+def _autonomous_resource(
+    matrix: np.ndarray,
+    *,
+    feature_ids: tuple[str, ...] = ("TARGET", "AUTO", "BACKGROUND"),
+):
+    return build_receiver_autonomous_program_resource(
+        matrix,
+        feature_ids=feature_ids,
+        program_ids=("generic_program",),
+        resource_id="test-generic-programs",
+        version="1",
+        manifest_digest="a" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+
+def test_heldout_projection_removes_ill_conditioned_exact_span() -> None:
+    rng = np.random.default_rng(4)
+    left, _ = np.linalg.qr(rng.normal(size=(10, 3)))
+    right, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+    smallest = 10.0 ** rng.uniform(-11.9, -9.5)
+    programs = left @ np.diag([1.0, 0.1, smallest]) @ right.T
+    coefficients = rng.normal(size=(3, 2))
+    exact_span_rows = (programs @ coefficients).T
+
+    projected = _project_feature_values(
+        exact_span_rows,
+        autonomous_basis=programs,
+        precision_weights=np.ones(10),
+    )
+
+    np.testing.assert_allclose(projected, 0.0, atol=1e-10)
 
 
 def test_fit_uses_reference_median_mad_and_apply_is_hand_computable() -> None:
@@ -329,6 +382,41 @@ def _incremental_functional():
     )
 
 
+def _independent_incremental_functional():
+    regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
+    response = np.column_stack(
+        [
+            np.asarray([0.0, 0.1, -0.1, 0.0, 2.0, 2.1, 1.9, 2.0]),
+            np.asarray([3.0, 3.1, 2.9, 3.0, 3.0, 3.1, 2.9, 3.0]),
+        ]
+    )
+    manifest = _independent_manifest(
+        ("reference",) * 4 + ("target",) * 4,
+        prefix="independent-training",
+    )
+    return fit_incremental_downstream_functional(
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=np.ones((8, 1)),
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="stim_vs_ctrl",
+        fold_id="fold-independent",
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=manifest.subject_ids,
+        family_basis=np.asarray([[1.0], [0.0]]),
+        precision_weights=np.ones(2),
+        minimum_scale=0.25,
+        null_loss_floor=1e-8,
+    )
+
+
 def test_heldout_active_response_has_positive_incremental_family_gain() -> None:
     functional = _incremental_functional()
     regressor = np.asarray([-1.0, -1.0, 1.0, 1.0])
@@ -345,6 +433,120 @@ def test_heldout_active_response_has_positive_incremental_family_gain() -> None:
     assert result.family_gains[0] > 0.95
     assert result.full_loss is not None and result.null_loss is not None
     assert result.full_loss < result.null_loss
+
+
+def _projected_overlap_functional(*, active_unique_effect: float = 0.0):
+    regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
+    generic = np.asarray([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+    response = np.zeros((8, 3), dtype=np.float64)
+    subject_noise = np.asarray([-0.12, -0.04, 0.05, 0.11])
+    response[:4, 2] = subject_noise
+    response[4:, 2] = subject_noise + 0.1
+    response[4:] += 2.0 * generic
+    response[4:, 0] += active_unique_effect
+    manifest = _paired_manifest(regressor, prefix="projected-training")
+    return fit_incremental_downstream_functional(
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=np.ones((8, 1)),
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="stim_vs_ctrl",
+        fold_id="fold-1",
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO", "BACKGROUND"),
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
+        family_basis=np.asarray([[1.0], [0.0], [0.0]]),
+        autonomous_program_resource=_autonomous_resource(generic[:, None]),
+        precision_weights=np.ones(3),
+        minimum_scale=0.25,
+    )
+
+
+def _apply_projected(functional, *, active_unique_effect: float = 0.0):
+    regressor = np.asarray([-1.0, -1.0, 1.0, 1.0])
+    generic = np.asarray([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+    response = np.zeros((4, 3), dtype=np.float64)
+    response[:, 2] = np.asarray([-0.1, 0.1, 0.0, 0.2])
+    response[2:] += 2.0 * generic
+    response[2:, 0] += active_unique_effect
+    manifest = _paired_manifest(regressor, prefix="projected-heldout")
+    return apply_incremental_downstream_functional(
+        functional,
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        nuisance_matrix=np.ones((4, 1)),
+        context_regressor=regressor,
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO", "BACKGROUND"),
+        nuisance_column_ids=("intercept",),
+    )
+
+
+def test_overlapping_autonomous_program_does_not_create_false_family_gain() -> None:
+    functional = _projected_overlap_functional()
+    result = _apply_projected(functional)
+
+    assert functional.autonomous_program_ids == ("generic_program",)
+    assert functional.family_estimable.tolist() == [True]
+    assert functional.family_retained_norm_fraction[0] == pytest.approx(
+        1.0 / np.sqrt(2.0)
+    )
+    assert result.status == "observed"
+    assert result.model_gain == pytest.approx(0.0, abs=1e-12)
+    assert result.family_gains[0] == pytest.approx(0.0, abs=1e-12)
+    assert functional.family_coefficients[0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_unique_lr_effect_survives_overlapping_autonomous_projection() -> None:
+    functional = _projected_overlap_functional(active_unique_effect=1.0)
+    result = _apply_projected(functional, active_unique_effect=1.0)
+
+    assert result.status == "observed"
+    assert result.model_gain is not None and result.model_gain > 0.9
+    assert result.family_gains[0] > 0.9
+
+
+def test_exact_autonomous_family_overlap_fails_closed() -> None:
+    regressor = np.asarray([-1.0] * 4 + [1.0] * 4)
+    response = np.column_stack(
+        [np.asarray([0.0] * 4 + [2.0] * 4), np.linspace(0.0, 0.2, 8)]
+    )
+    manifest = _paired_manifest(regressor, prefix="exact-overlap")
+
+    with pytest.raises(ContractError) as error:
+        fit_incremental_downstream_functional(
+            response,
+            row_manifest=manifest,
+            design_sample_ids=manifest.sample_ids,
+            reference_mask=regressor < 0,
+            nuisance_matrix=np.ones((8, 1)),
+            context_regressor=regressor,
+            receiver="Receiver",
+            contrast_name="stim_vs_ctrl",
+            fold_id="fold-1",
+            context_regressor_id="stim_vs_ctrl_regressor_v1",
+            nuisance_design_id="intercept_only_v1",
+            feature_ids=("TARGET", "AUTO"),
+            family_ids=("LR_family",),
+            nuisance_column_ids=("intercept",),
+            training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
+            family_basis=np.asarray([[1.0], [0.0]]),
+            autonomous_program_resource=_autonomous_resource(
+                np.asarray([[1.0], [0.0]]), feature_ids=("TARGET", "AUTO")
+            ),
+            precision_weights=np.ones(2),
+        )
+    assert error.value.details.code == (
+        "all_family_bases_not_identifiable_after_autonomous_projection"
+    )
 
 
 def test_ligand_only_and_receiver_autonomous_have_no_family_gain() -> None:
@@ -370,8 +572,16 @@ def test_ligand_only_and_receiver_autonomous_have_no_family_gain() -> None:
     ligand_result = _apply_incremental(functional, ligand_only, regressor)
     autonomous_result = _apply_incremental(functional, autonomous, regressor)
 
-    assert ligand_result.family_gains[0] == pytest.approx(0.0)
+    assert ligand_result.status == "observed"
+    assert ligand_result.reason_code is None
+    assert ligand_result.gain_denominator_status == (
+        "zero_receiver_contrast_structural_zero_v1"
+    )
+    assert ligand_result.family_gains[0] == 0.0
+    assert autonomous_result.status == "observed"
     assert autonomous_result.family_gains[0] == pytest.approx(0.0)
+    assert autonomous_result.raw_family_gains[0] < 0
+    assert ligand_result.raw_family_gains[0] == 0.0
 
 
 def test_target_only_can_have_gain_without_an_integrated_edge_claim() -> None:
@@ -393,17 +603,22 @@ def test_target_only_can_have_gain_without_an_integrated_edge_claim() -> None:
     assert result.family_gains[0] > 0.9
 
 
-def test_incremental_gain_is_not_estimable_when_null_loss_is_tiny() -> None:
+def test_incremental_gain_is_structural_zero_when_null_loss_is_tiny() -> None:
     functional = _incremental_functional()
     nuisance = np.ones((2, 1))
     null_standardized = nuisance @ functional.null_nuisance_coefficients
     response = functional.feature_center + null_standardized * functional.feature_scale
     result = _apply_incremental(functional, response, np.asarray([-1.0, 1.0]))
 
-    assert result.status == "not_estimable"
-    assert result.reason_code == "heldout_receiver_null_loss_below_floor"
-    assert result.null_loss is None
-    assert np.isnan(result.family_gains).all()
+    assert result.status == "observed"
+    assert result.reason_code is None
+    assert result.gain_denominator_status == (
+        "zero_receiver_contrast_structural_zero_v1"
+    )
+    assert result.null_loss is not None
+    assert result.null_loss <= functional.null_loss_floor
+    assert result.model_gain == 0.0
+    np.testing.assert_array_equal(result.family_gains, 0.0)
 
 
 def test_incremental_gain_is_not_estimable_for_changed_context_universe() -> None:
@@ -819,7 +1034,7 @@ def test_incremental_reports_negative_raw_gain_without_negative_bounded_gain() -
     assert result.family_gains[0] == 0.0
 
 
-def test_incremental_loss_gives_each_subject_equal_weight() -> None:
+def test_incremental_loss_requires_every_subject_in_every_context() -> None:
     functional = _incremental_functional()
     manifest = DownstreamRowManifest(
         sample_ids=("a1", "a2", "a3", "b1"),
@@ -840,8 +1055,97 @@ def test_incremental_loss_gives_each_subject_equal_weight() -> None:
         nuisance_column_ids=("intercept",),
     )
 
-    assert result.null_loss == pytest.approx(np.mean(result.subject_null_losses))
-    assert result.null_loss != pytest.approx(np.mean(result.sample_null_losses))
+    assert result.status == "not_estimable"
+    assert result.reason_code == "paired_contrast_loss_required"
+    assert result.null_loss is None
+
+
+def test_incremental_loss_supports_independent_subject_groups() -> None:
+    functional = _independent_incremental_functional()
+    manifest = _independent_manifest(
+        ("reference", "reference", "target", "target"),
+        prefix="independent-heldout",
+    )
+    response = np.asarray([[0.05, 3.05], [-0.05, 2.95], [2.05, 3.05], [1.95, 2.95]])
+    result = apply_incremental_downstream_functional(
+        functional,
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        nuisance_matrix=np.ones((4, 1)),
+        context_regressor=np.asarray([-1.0, -1.0, 1.0, 1.0]),
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        nuisance_column_ids=("intercept",),
+    )
+
+    assert functional.loss_design == "independent_subject_pseudocontrasts_v1"
+    np.testing.assert_allclose(functional.loss_context_weights, [-0.5, 0.5])
+    assert result.status == "observed"
+    assert result.model_gain is not None and result.model_gain > 0.9
+    assert result.family_gains[0] > 0.9
+    assert result.subject_ids == manifest.subject_ids
+    assert "independent_pseudocontrast" in result.loss_aggregation
+
+
+def test_incremental_loss_supports_independent_multicontext_contrast() -> None:
+    contexts = (
+        "reference-a",
+        "reference-a",
+        "reference-b",
+        "reference-b",
+        "target",
+        "target",
+    )
+    regressor = np.asarray([-1.0, -1.0, -1.0, -1.0, 2.0, 2.0])
+    response = np.column_stack(
+        [
+            np.asarray([0.0, 0.1, -0.1, 0.0, 3.0, 3.1]),
+            np.asarray([2.9, 3.1, 3.0, 3.0, 3.1, 2.9]),
+        ]
+    )
+    training_manifest = _independent_manifest(contexts, prefix="multicontext-training")
+    functional = fit_incremental_downstream_functional(
+        response,
+        row_manifest=training_manifest,
+        design_sample_ids=training_manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=np.ones((6, 1)),
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="target_vs_two_references",
+        fold_id="fold-multicontext",
+        context_regressor_id="multicontext_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=training_manifest.subject_ids,
+        family_basis=np.asarray([[1.0], [0.0]]),
+        precision_weights=np.ones(2),
+        minimum_scale=0.25,
+    )
+    heldout_manifest = _independent_manifest(contexts, prefix="multicontext-heldout")
+    heldout = apply_incremental_downstream_functional(
+        functional,
+        response + np.asarray([0.02, -0.02]),
+        row_manifest=heldout_manifest,
+        design_sample_ids=heldout_manifest.sample_ids,
+        nuisance_matrix=np.ones((6, 1)),
+        context_regressor=regressor,
+        context_regressor_id="multicontext_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        nuisance_column_ids=("intercept",),
+    )
+
+    np.testing.assert_allclose(
+        functional.loss_context_weights,
+        [-1.0 / 6.0, -1.0 / 6.0, 1.0 / 3.0],
+    )
+    assert heldout.status == "observed"
+    assert heldout.model_gain is not None and heldout.model_gain > 0.9
 
 
 def test_incremental_loss_averages_technical_rows_within_subject_context() -> None:
@@ -954,6 +1258,28 @@ def test_incremental_loss_averages_variable_technical_values_before_squaring() -
     assert split.null_loss == pytest.approx(base.null_loss)
     assert split.full_loss == pytest.approx(base.full_loss)
     np.testing.assert_allclose(split.family_gains, base.family_gains)
+
+
+def test_incremental_contrast_loss_is_invariant_to_subject_constant_baselines() -> None:
+    functional = _incremental_functional()
+    regressor = np.asarray([-1.0, -1.0, 1.0, 1.0])
+    response = np.asarray([[0.0, 3.0], [0.1, 3.1], [2.0, 3.0], [2.1, 3.1]])
+    shifted = response.copy()
+    subject_offsets = np.asarray([-25.0, 40.0])
+    shifted[:2, 0] += subject_offsets
+    shifted[2:, 0] += subject_offsets
+
+    base = _apply_incremental(functional, response, regressor)
+    with_baselines = _apply_incremental(functional, shifted, regressor)
+
+    assert with_baselines.null_loss == pytest.approx(base.null_loss)
+    assert with_baselines.full_loss == pytest.approx(base.full_loss)
+    assert with_baselines.model_gain == pytest.approx(base.model_gain)
+    np.testing.assert_allclose(
+        with_baselines.subject_null_losses, base.subject_null_losses
+    )
+    np.testing.assert_allclose(with_baselines.family_gains, base.family_gains)
+    assert not np.allclose(with_baselines.sample_null_losses, base.sample_null_losses)
 
 
 def test_incremental_fit_ignores_exact_technical_replication_weight() -> None:

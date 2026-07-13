@@ -28,6 +28,7 @@ from .downstream import (
     apply_incremental_downstream_functional,
     fit_downstream_functional,
     fit_incremental_downstream_functional,
+    incremental_heldout_input_digest,
 )
 from .integration import (
     mechanistic_strength,
@@ -72,6 +73,7 @@ __all__ = [
     "fit_incremental_downstream_functional",
     "fit_receiver_family_scoring_artifact",
     "float64_array_digest",
+    "incremental_heldout_input_digest",
     "mark_receiver_family_application_not_estimable",
     "mark_receiver_family_scoring_not_estimable",
     "mechanistic_strength",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from crychic.core import SeedLineage
+from crychic.core import ContractError, SeedLineage
 from crychic.design import balanced_contrast
 from crychic.resampling import (
     DesignFoldChecker,
@@ -88,6 +88,20 @@ def test_complete_oof_table_passes_exact_assignment_and_functional_audit() -> No
     assert audit.subject_ids == plan.subject_ids
     assert audit.n_rows == 8
     assert audit.to_dict()["common_functional_validated"] is True
+
+
+def test_oof_audit_rejects_forced_provenance_mutation() -> None:
+    plan, table = _table()
+    audit = validate_oof_subject_coverage(
+        table,
+        plan,
+        contrast_contexts=_contexts(plan),
+    )
+    object.__setattr__(audit, "subject_ids", ("POISON",))
+
+    with pytest.raises(ContractError) as error:
+        audit.to_dict()
+    assert error.value.details.code == "oof_coverage_audit_integrity_violation"
 
 
 def test_training_subject_in_test_fold_is_rejected_as_leakage() -> None:

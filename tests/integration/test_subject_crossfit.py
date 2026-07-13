@@ -22,6 +22,7 @@ from crychic.resources import (
     Species,
     TargetPrior,
 )
+from crychic.response import build_receiver_autonomous_program_resource
 from crychic.sender import ContrastCommonSenderParameters
 from crychic.workflow import (
     CrossFitArtifacts,
@@ -121,6 +122,46 @@ def _adata() -> AnnData:
     adata.layers["counts"] = counts
     adata.uns["test_only_poison"] = {"must_be_removed": True}
     adata.obsm["test_only_embedding"] = np.ones((adata.n_obs, 2))
+    return adata
+
+
+def _independent_adata() -> AnnData:
+    genes = ("L1", "R1", "L2", "R2", "T1", "T2")
+    rows: list[list[int]] = []
+    metadata: list[dict[str, str]] = []
+    obs_names: list[str] = []
+    allocations = tuple(
+        [(f"control-{index}", "control") for index in range(4)]
+        + [(f"stim-{index}", "stim") for index in range(4)]
+    )
+    for subject_index, (subject, condition) in enumerate(allocations):
+        high = 70 + 3 * subject_index
+        low = 3 + subject_index
+        target_one = low if condition == "control" else 25 + subject_index
+        target_two = 2 + subject_index if condition == "control" else 14 + subject_index
+        sample = f"sample-{subject}"
+        for cell_type, profile in (
+            ("Sender", [high, 0, low, 0, 1, 1]),
+            ("Receiver", [0, high, 0, low, target_one, target_two]),
+        ):
+            for cell_index in range(3):
+                rows.append(profile)
+                metadata.append(
+                    {
+                        "sample_id": sample,
+                        "subject_id": subject,
+                        "cell_type": cell_type,
+                        "condition": condition,
+                    }
+                )
+                obs_names.append(f"{subject}-{cell_type}-{cell_index}")
+    counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
+    adata = AnnData(
+        X=sparse.csr_matrix(counts.shape, dtype=np.float64),
+        obs=pd.DataFrame(metadata, index=obs_names),
+        var=pd.DataFrame(index=genes),
+    )
+    adata.layers["counts"] = counts
     return adata
 
 
@@ -298,6 +339,103 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     assert "subject_blocked_inner_tuning" in manifest["remaining_stages"]
 
 
+def test_subject_crossfit_supports_independent_subject_groups() -> None:
+    result = _run(_independent_adata())
+    receiver_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_incremental_models
+        if model.receiver == "Receiver"
+    ]
+    receiver_applications = [
+        application
+        for fold in result.folds
+        for model, application in zip(
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+
+    assert receiver_models
+    assert receiver_applications
+    assert all(model.diagnostic_functional is not None for model in receiver_models)
+    assert all(
+        model.diagnostic_functional is not None
+        and model.diagnostic_functional.loss_design
+        == "independent_subject_pseudocontrasts_v1"
+        for model in receiver_models
+    )
+    assert all(
+        application.diagnostic_status == "observed"
+        and application.diagnostic_reason_code is None
+        and application.diagnostic_application is not None
+        and application.diagnostic_application.status == "observed"
+        and application.diagnostic_application.loss_aggregation.endswith(
+            "frozen_independent_pseudocontrast_then_equal_subject_mean_v1"
+        )
+        for application in receiver_applications
+    )
+    receiver_coverage = result.oof_receiver_coverage.loc[
+        result.oof_receiver_coverage["receiver"].eq("Receiver")
+    ]
+    expected_samples = {
+        sample_id
+        for application in receiver_applications
+        for sample_id in application.heldout_sample_ids
+    }
+    assert not receiver_coverage.empty
+    assert len(receiver_coverage) == sum(
+        len(application.heldout_sample_ids) for application in receiver_applications
+    )
+    assert set(receiver_coverage["sample_id"]) == expected_samples
+    assert set(receiver_coverage["diagnostic_status"]) == {"observed"}
+    assert not receiver_coverage.duplicated(
+        ["fold_id", "sample_id", "contrast_id", "receiver"]
+    ).any()
+
+
+def test_subject_crossfit_caller_declared_autonomous_resource_is_noncertifying() -> (
+    None
+):
+    base = _spec()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="crossfit-autonomous-programs",
+        version="1",
+        manifest_digest="a" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=base.allowed_n_splits,
+        autonomous_program_resource=resource,
+    )
+
+    result = run_subject_crossfit(_adata(), _config(), _bundle(), _prior(), spec=spec)
+
+    assert set(result.oof_receiver_coverage["reason_code"]) == {
+        "receiver_autonomous_nuisance_not_frozen"
+    }
+    models = [
+        model for fold in result.folds for model in fold.receiver_incremental_models
+    ]
+    assert all(
+        model.autonomous_program_resource_id == resource.artifact_id for model in models
+    )
+    assert all(
+        (model.autonomous_projection_id is not None)
+        == (model.diagnostic_functional is not None)
+        for model in models
+    )
+    assert "receiver_autonomous_nuisance" in result.to_manifest()["remaining_stages"]
+
+
 def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() -> None:
     result = _run(_adata())
     reversed_rows = result.oof_receiver_coverage.iloc[::-1].reset_index(drop=True)
@@ -364,6 +502,68 @@ def test_manifest_rejects_forced_private_table_poison(
     result = _run(_adata())
     private_table = object.__getattribute__(result, private_name)
     private_table.loc[private_table.index[0], column_name] = poison
+
+    with pytest.raises(ContractError) as error:
+        result.to_manifest()
+    assert error.value.details.code == "crossfit_artifact_integrity_violation"
+
+
+def test_crossfit_spec_rejects_forced_policy_mutation() -> None:
+    spec = _spec()
+    object.__setattr__(spec, "downstream_minimum_scale", 99.0)
+
+    with pytest.raises(ContractError) as error:
+        spec.to_dict()
+    assert error.value.details.code == "crossfit_spec_integrity_violation"
+
+
+def test_crossfit_spec_rejects_forced_nested_sender_policy_mutation() -> None:
+    spec = _spec()
+    object.__setattr__(spec.training_spec.sender_parameters, "min_subjects", 999)
+
+    with pytest.raises(ContractError) as error:
+        spec.to_dict()
+    assert error.value.details.code == "crossfit_spec_integrity_violation"
+
+
+@pytest.mark.parametrize(
+    ("target", "field_name", "poison"),
+    [
+        ("plan", "repeat_id", "poisoned-repeat"),
+        ("plan", "allowed_n_splits", (3, 2)),
+        ("fold", "design_matrix_id", "poisoned-design"),
+    ],
+)
+def test_crossfit_manifest_rejects_forced_fold_plan_mutation(
+    target: str,
+    field_name: str,
+    poison: object,
+) -> None:
+    result = _run(_adata())
+    artifact = result.fold_plan if target == "plan" else result.fold_plan.folds[0]
+    object.__setattr__(artifact, field_name, poison)
+
+    with pytest.raises(ContractError) as error:
+        result.to_manifest()
+    assert error.value.details.code == "crossfit_artifact_integrity_violation"
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["coverage_audit", "availability_table", "receiver_family_application"],
+)
+def test_crossfit_manifest_rejects_forced_nested_child_mutation(
+    target: str,
+) -> None:
+    result = _run(_adata())
+    if target == "coverage_audit":
+        object.__setattr__(result.coverage_audit, "subject_ids", ("POISON",))
+    elif target == "availability_table":
+        table = result.folds[0].application.availability.sample_interactions
+        table.loc[table.index[0], "ligand_availability"] = 0.123
+    else:
+        application = result.folds[0].receiver_family_applications[0]
+        object.__setattr__(application, "active_family_ids", ("POISON",))
 
     with pytest.raises(ContractError) as error:
         result.to_manifest()

@@ -139,6 +139,7 @@ def fit_contrast_common_sender_functional(
     resolved = parameters or ContrastCommonSenderParameters()
     if not isinstance(resolved, ContrastCommonSenderParameters):
         raise TypeError("parameters must be ContrastCommonSenderParameters or None")
+    resolved._require_intact()
     if not isinstance(filter_universe_id, str) or not filter_universe_id:
         raise ValueError("filter_universe_id must be a non-empty string")
     if not isinstance(contrast, ContrastSpec):
@@ -253,6 +254,7 @@ def apply_contrast_common_sender_functional(
 
     if not isinstance(functional, ContrastCommonSenderFunctional):
         raise TypeError("functional must be ContrastCommonSenderFunctional")
+    functional._require_intact()
     table = _validated_availability(sample_availability)
     table = table.loc[table["context_id"].isin(functional.context_ids)].copy()
     if table.empty:

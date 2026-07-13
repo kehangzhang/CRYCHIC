@@ -248,7 +248,7 @@ class SenderEvidenceParameters:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ContrastCommonSenderParameters:
-    """Pre-registered parameters for a contrast-common sender functional."""
+    """Caller-declared parameters for a contrast-common sender functional."""
 
     min_subjects: int = 3
     prevalence_threshold: float = 0.0
@@ -309,9 +309,42 @@ class ContrastCommonSenderParameters:
             ),
         )
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the frozen parameter manifest."""
+
+        try:
+            repeated = ContrastCommonSenderParameters(
+                min_subjects=self.min_subjects,
+                prevalence_threshold=self.prevalence_threshold,
+                softmax_temperature=self.softmax_temperature,
+                schema_version=self.schema_version,
+            )
+            valid = (
+                self.min_subjects == repeated.min_subjects
+                and self.prevalence_threshold == repeated.prevalence_threshold
+                and self.softmax_temperature == repeated.softmax_temperature
+                and self.schema_version == repeated.schema_version
+                and self.parameter_manifest_id == repeated.parameter_manifest_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Common-sender parameters failed integrity validation",
+                code="common_sender_parameter_integrity_violation",
+                field="parameter_manifest_id",
+                remediation="Rebuild the parameters from the declared values",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Common-sender parameters failed integrity validation",
+                code="common_sender_parameter_integrity_violation",
+                field="parameter_manifest_id",
+                remediation="Rebuild the parameters from the declared values",
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return a serialization-ready frozen parameter manifest."""
 
+        self._require_intact()
         return {
             "parameter_manifest_id": self.parameter_manifest_id,
             "min_subjects": self.min_subjects,
@@ -399,9 +432,48 @@ class SenderPrevalencePrior:
             stable_id("sender_prevalence_prior", payload),
         )
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of a frozen sender prevalence prior."""
+
+        try:
+            repeated = SenderPrevalencePrior(
+                receiver=self.receiver,
+                interaction_id=self.interaction_id,
+                sender=self.sender,
+                prevalence_prior=self.prevalence_prior,
+                n_subjects=self.n_subjects,
+                status=self.status,
+                reason_code=self.reason_code,
+            )
+            valid = (
+                self.receiver == repeated.receiver
+                and self.interaction_id == repeated.interaction_id
+                and self.sender == repeated.sender
+                and self.prevalence_prior == repeated.prevalence_prior
+                and self.n_subjects == repeated.n_subjects
+                and self.status == repeated.status
+                and self.reason_code == repeated.reason_code
+                and self.sender_prior_id == repeated.sender_prior_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Sender prevalence prior failed integrity validation",
+                code="sender_prevalence_prior_integrity_violation",
+                field="sender_prior_id",
+                remediation="Refit the sender prior from training availability",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Sender prevalence prior failed integrity validation",
+                code="sender_prevalence_prior_integrity_violation",
+                field="sender_prior_id",
+                remediation="Refit the sender prior from training availability",
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return a serialization-ready sender-prior record."""
 
+        self._require_intact()
         return {
             "sender_prior_id": self.sender_prior_id,
             "receiver": self.receiver,
@@ -434,6 +506,7 @@ class ContrastCommonSenderFunctional:
     def __post_init__(self) -> None:
         if not isinstance(self.parameters, ContrastCommonSenderParameters):
             raise TypeError("parameters must be ContrastCommonSenderParameters")
+        self.parameters._require_intact()
         if not isinstance(self.contrast, ContrastSpec):
             raise TypeError("contrast must be a ContrastSpec")
         if not self.contrast.estimable or len(self.contrast.weights) < 2:
@@ -580,9 +653,56 @@ class ContrastCommonSenderFunctional:
             ),
         )
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the frozen sender functional."""
+
+        try:
+            self.parameters._require_intact()
+            for prior in self.candidate_priors:
+                prior._require_intact()
+            repeated = ContrastCommonSenderFunctional(
+                contrast=self.contrast,
+                contrast_context_ids=self.contrast_context_ids,
+                training_subject_ids=self.training_subject_ids,
+                filter_universe_id=self.filter_universe_id,
+                parameters=self.parameters,
+                candidate_priors=self.candidate_priors,
+                schema_version=self.schema_version,
+            )
+            valid = (
+                isinstance(self.contrast_context_ids, tuple)
+                and isinstance(self.training_subject_ids, tuple)
+                and isinstance(self.candidate_priors, tuple)
+                and self.contrast_context_ids == repeated.contrast_context_ids
+                and self.training_subject_ids == repeated.training_subject_ids
+                and self.filter_universe_id == repeated.filter_universe_id
+                and self.candidate_priors == repeated.candidate_priors
+                and self.schema_version == repeated.schema_version
+                and self.contrast_name == repeated.contrast_name
+                and self.contrast_manifest_id == repeated.contrast_manifest_id
+                and self.contrast_weights == repeated.contrast_weights
+                and self.context_ids == repeated.context_ids
+                and self.sender_functional_id == repeated.sender_functional_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Common sender functional failed integrity validation",
+                code="common_sender_functional_integrity_violation",
+                field="sender_functional_id",
+                remediation="Refit the sender functional from training availability",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Common sender functional failed integrity validation",
+                code="common_sender_functional_integrity_violation",
+                field="sender_functional_id",
+                remediation="Refit the sender functional from training availability",
+            )
+
     def to_dict(self) -> dict[str, object]:
         """Return the complete frozen sender functional manifest."""
 
+        self._require_intact()
         return {
             "sender_functional_id": self.sender_functional_id,
             "schema_version": self.schema_version,
@@ -613,6 +733,7 @@ class CommonSenderApplication:
     def __post_init__(self) -> None:
         if not isinstance(self.functional, ContrastCommonSenderFunctional):
             raise TypeError("functional must be ContrastCommonSenderFunctional")
+        self.functional._require_intact()
         if not isinstance(self.table, pd.DataFrame):
             raise TypeError("common sender application must be a pandas DataFrame")
         table = self.table.copy(deep=True)

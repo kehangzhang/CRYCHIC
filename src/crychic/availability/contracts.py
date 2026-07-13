@@ -170,9 +170,56 @@ class FrozenInteractionUniverse:
             ),
         )
 
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the frozen interaction universe."""
+
+        try:
+            repeated = FrozenInteractionUniverse(
+                interaction_ids=self.interaction_ids,
+                training_subject_ids=self.training_subject_ids,
+                resource_id=self.resource_id,
+                resource_version=self.resource_version,
+                resource_manifest_digest=self.resource_manifest_digest,
+                min_pooled_availability=self.min_pooled_availability,
+                max_interactions=self.max_interactions,
+                selection_policy=self.selection_policy,
+                schema_version=self.schema_version,
+            )
+            valid = (
+                isinstance(self.interaction_ids, tuple)
+                and isinstance(self.training_subject_ids, tuple)
+                and self.interaction_ids == repeated.interaction_ids
+                and self.training_subject_ids == repeated.training_subject_ids
+                and self.resource_id == repeated.resource_id
+                and self.resource_version == repeated.resource_version
+                and self.resource_manifest_digest
+                == repeated.resource_manifest_digest
+                and self.min_pooled_availability
+                == repeated.min_pooled_availability
+                and self.max_interactions == repeated.max_interactions
+                and self.selection_policy == repeated.selection_policy
+                and self.schema_version == repeated.schema_version
+                and self.filter_universe_id == repeated.filter_universe_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Frozen interaction universe failed integrity validation",
+                code="frozen_interaction_universe_integrity_violation",
+                field="filter_universe_id",
+                remediation="Refit the interaction universe from raw training data",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Frozen interaction universe failed integrity validation",
+                code="frozen_interaction_universe_integrity_violation",
+                field="filter_universe_id",
+                remediation="Refit the interaction universe from raw training data",
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """Return a serialization-ready frozen filter manifest."""
 
+        self._require_intact()
         return {
             "filter_universe_id": self.filter_universe_id,
             "schema_version": self.schema_version,

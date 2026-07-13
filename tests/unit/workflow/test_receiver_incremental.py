@@ -34,7 +34,12 @@ from crychic.resources import GeneNamespace, MappingReport, Species, TargetPrior
 from crychic.response import (
     FoldGeneResponseArtifact,
     apply_fold_gene_response,
+    build_receiver_autonomous_program_resource,
     fit_fold_gene_response,
+)
+from crychic.scoring import (
+    DownstreamRowManifest,
+    apply_incremental_downstream_functional,
 )
 from crychic.workflow import (
     ReceiverIncrementalApplication,
@@ -232,6 +237,7 @@ def test_public_fit_and_apply_signatures_accept_only_typed_parents() -> None:
         "response",
         "precision",
         "receiver_family",
+        "autonomous_program_resource",
         "minimum_scale",
         "null_loss_floor",
         "lambda1",
@@ -281,6 +287,77 @@ def test_typed_fit_joins_samples_and_keeps_official_status_honest() -> None:
     assert model.to_dict()["response_artifact_id"] == response.artifact_id
 
 
+def test_caller_declared_autonomous_resource_remains_noncertifying() -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="a" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family, resource
+    )
+
+    assert model.autonomous_program_resource_id == resource.artifact_id
+    assert model.autonomous_projection_id is not None
+    assert model.certification_status == "formula_nuisance_incremental_diagnostic_only"
+    assert model.official_incremental_status == "not_estimable"
+    assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+    assert model.is_oof_certified is False
+    assert model.diagnostic_functional is not None
+    assert model.diagnostic_functional.autonomous_program_ids == ("generic_program",)
+
+
+def test_autonomous_resource_without_aligned_support_fails_closed() -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("OTHER1", "OTHER2"),
+        program_ids=("unsupported_program",),
+        resource_id="unsupported-autonomous-programs",
+        version="1",
+        manifest_digest="b" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family, resource
+    )
+
+    assert model.diagnostic_status == "not_estimable"
+    assert model.diagnostic_reason_code == "autonomous_program_support_not_estimable"
+    assert model.diagnostic_functional is None
+    assert model.autonomous_program_resource_id == resource.artifact_id
+    assert model.autonomous_projection_id is None
+    model.to_dict()
+
+
+def test_training_wrapper_rejects_a_different_valid_functional() -> None:
+    encoder, response, precision, family = _training_parents()
+    model = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family, lambda2=0.01
+    )
+    other = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family, lambda2=0.02
+    )
+    assert other.diagnostic_functional is not None
+
+    object.__setattr__(model, "diagnostic_functional", other.diagnostic_functional)
+
+    with pytest.raises(ContractError) as error:
+        model.to_dict()
+    assert error.value.details.code == (
+        "receiver_incremental_training_integrity_violation"
+    )
+
+
 def test_heldout_application_is_order_stable_and_does_not_fit() -> None:
     encoder, response, precision, family = _training_parents()
     model = fit_receiver_incremental_training_artifact(
@@ -310,6 +387,49 @@ def test_heldout_application_is_order_stable_and_does_not_fit() -> None:
     assert applied.reason_code == "receiver_autonomous_nuisance_not_frozen"
     assert applied.is_oof_certified is False
     applied.to_dict()
+
+
+def test_application_wrapper_rejects_valid_diagnostic_from_other_values() -> None:
+    encoder, response, precision, family = _training_parents()
+    model = fit_receiver_incremental_training_artifact(
+        encoder, response, precision, family
+    )
+    assert model.diagnostic_functional is not None
+    metadata = _metadata(("q1", "q2"))
+    design = apply_frozen_design_encoder(encoder, metadata)
+    heldout_response = apply_fold_gene_response(
+        _aggregate(metadata, offset=7), response, design
+    )
+    row_manifest = DownstreamRowManifest(
+        sample_ids=heldout_response.sample_ids,
+        subject_ids=heldout_response.sample_subject_ids,
+        context_ids=heldout_response.sample_context_ids,
+    )
+    alternate_values = np.asarray(heldout_response.sample_values).copy()
+    alternate_values[0, 0] += 100.0
+    alternate = apply_incremental_downstream_functional(
+        model.diagnostic_functional,
+        alternate_values,
+        row_manifest=row_manifest,
+        design_sample_ids=design.sample_ids,
+        nuisance_matrix=design.nuisance_matrix,
+        context_regressor=design.context_regressor,
+        context_regressor_id=design.context_regressor_id,
+        nuisance_design_id=design.nuisance_design_id,
+        feature_ids=heldout_response.feature_ids,
+        nuisance_column_ids=model.diagnostic_functional.nuisance_column_ids,
+    )
+    assert alternate.status == "observed"
+
+    with pytest.raises(ContractError) as error:
+        ReceiverIncrementalApplication._from_application(
+            model=model,
+            response_application=heldout_response,
+            design_application=design,
+            diagnostic_application=alternate,
+            diagnostic_reason_code=None,
+        )
+    assert error.value.details.code == "receiver_incremental_parent_mismatch"
 
 
 def test_wrong_family_parent_and_training_subject_overlap_are_rejected() -> None:

@@ -21,11 +21,15 @@ from benchmarks.simulation.mechanism_specificity import (
     DEVELOPMENT_PHASE,
     EDGE_PROFILES,
     EVIDENCE_COLUMNS,
+    GENERATOR_SCHEMA_VERSION,
     HOLDOUT_PHASE,
+    PHASE_SEED_NAMESPACES,
     generate_mechanism_specificity_evidence,
     phase_seed_lineages,
 )
 from benchmarks.simulation.run_mechanism_specificity import (
+    DEFAULT_CONFIG,
+    DEFAULT_OUTPUT_ROOT,
     publish_generated_campaign,
     run_campaign,
 )
@@ -37,7 +41,8 @@ from crychic.scoring import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v2.json"
+HISTORICAL_CONFIG_PATH = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v2.json"
+LIVE_CONFIG_PATH = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v3.json"
 TRUTH_PATH = REPO_ROOT / "benchmarks/truth/component_truth_matrix.yaml"
 SUMMARY_PATH = REPO_ROOT / "benchmarks/results/g1_5_v2_summary.json"
 
@@ -52,7 +57,9 @@ def _truth() -> ComponentTruthMatrix:
 
 
 def _config() -> dict[str, object]:
-    return cast(dict[str, object], json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+    return cast(
+        dict[str, object], json.loads(LIVE_CONFIG_PATH.read_text(encoding="utf-8"))
+    )
 
 
 def _write_test_config(path: Path, *, phase: str, seed_count: int) -> Path:
@@ -68,7 +75,7 @@ def test_published_summary_is_locked_to_frozen_inputs_and_sources() -> None:
     inputs = cast(dict[str, str], summary["inputs"])
 
     assert inputs == {
-        "config_sha256": _sha256(CONFIG_PATH),
+        "config_sha256": _sha256(HISTORICAL_CONFIG_PATH),
         "truth_sha256": _sha256(TRUTH_PATH),
         # v2 is a historical locked campaign. The live generator now uses the
         # sample-keyed incremental API and must publish under a new campaign.
@@ -99,6 +106,28 @@ def test_published_summary_is_locked_to_frozen_inputs_and_sources() -> None:
     assert phases[HOLDOUT_PHASE]["tuning_performed"] is False
     assert phases[HOLDOUT_PHASE]["holdout_tuning_forbidden"] is True
     assert all(bool(item["overall_gate_passed"]) for item in phases.values())
+
+
+def test_live_generator_uses_a_distinct_v3_contract_and_default_output() -> None:
+    config = _config()
+    contract = cast(dict[str, object], config["generator_contract"])
+
+    assert config["schema_version"] == "crychic-mechanism-specificity-v3"
+    assert GENERATOR_SCHEMA_VERSION == (
+        "crychic-g1.5-sample-keyed-structural-zero-development-generator-v3"
+    )
+    assert contract["schema_version"] == GENERATOR_SCHEMA_VERSION
+    assert contract["phase_seed_namespaces"] == PHASE_SEED_NAMESPACES
+    assert all(":v3:" in namespace for namespace in PHASE_SEED_NAMESPACES.values())
+    assert DEFAULT_CONFIG == LIVE_CONFIG_PATH
+    assert DEFAULT_OUTPUT_ROOT.name == "g1_5_sample_keyed_development_v3"
+    assert (
+        _sha256(HISTORICAL_CONFIG_PATH)
+        == cast(
+            dict[str, str],
+            json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))["inputs"],
+        )["config_sha256"]
+    )
 
 
 def test_small_generator_is_deterministic_and_calls_real_scoring_apis() -> None:
@@ -138,10 +167,25 @@ def test_small_generator_is_deterministic_and_calls_real_scoring_apis() -> None:
     assert apply.call_count == call_count
     assert integrate.call_count == call_count
     assert set(first.application_statuses) == {"observed"}
-    assert first.audit_summary()["model_call_counts"] == {
+    audit = first.audit_summary()
+    assert audit["model_call_counts"] == {
         "fit_incremental_downstream_functional": call_count,
         "apply_incremental_downstream_functional": call_count,
         "mechanistic_strength": call_count,
+    }
+    assert audit["gain_denominator_status_counts"] == {
+        "positive_receiver_null_loss_ratio_v1": 12,
+        "zero_receiver_contrast_structural_zero_v1": 9,
+    }
+    assert audit["gain_denominator_status_counts_by_scenario"] == {
+        scenario: {
+            (
+                "zero_receiver_contrast_structural_zero_v1"
+                if scenario in {"global_null", "abundance_only", "ligand_only"}
+                else "positive_receiver_null_loss_ratio_v1"
+            ): len(truth.known_edge_ids)
+        }
+        for scenario in REQUIRED_SCENARIOS
     }
 
 
@@ -280,6 +324,13 @@ def test_atomic_campaign_bundle_contains_evidence_manifest_and_metrics(
     assert manifest["audit"]["application_status_counts"] == {
         "observed": seed_count * 3 * 7
     }
+    assert manifest["audit"]["gain_denominator_status_counts"] == {
+        "positive_receiver_null_loss_ratio_v1": seed_count * 3 * 4,
+        "zero_receiver_contrast_structural_zero_v1": seed_count * 3 * 3,
+    }
+    assert manifest["frozen_design"]["generator_schema_version"] == (
+        GENERATOR_SCHEMA_VERSION
+    )
     assert not list(tmp_path.glob(f".{output.name}.tmp-*"))
 
     with pytest.raises(FileExistsError, match="already exists"):
@@ -344,4 +395,52 @@ def test_live_sample_keyed_runner_cannot_republish_historical_holdout(
             config_path=config_path,
             truth_path=TRUTH_PATH,
             output_dir=tmp_path / "holdout",
+        )
+
+
+def test_live_generator_rejects_the_historical_v2_config(tmp_path: Path) -> None:
+    generated = generate_mechanism_specificity_evidence(
+        phase=DEVELOPMENT_PHASE,
+        seed_count=2,
+        truth=_truth(),
+    )
+
+    with pytest.raises(ValueError, match="requires mechanism_specificity_v3"):
+        publish_generated_campaign(
+            generated,
+            config_path=HISTORICAL_CONFIG_PATH,
+            truth_path=TRUTH_PATH,
+            output_dir=tmp_path / "historical-config",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "message"),
+    [
+        ("schema_version", "generator schema"),
+        ("phase_seed_namespaces", "seed namespaces"),
+    ],
+)
+def test_live_config_binds_generator_schema_and_seed_namespaces(
+    tmp_path: Path,
+    field_name: str,
+    message: str,
+) -> None:
+    generated = generate_mechanism_specificity_evidence(
+        phase=DEVELOPMENT_PHASE,
+        seed_count=2,
+        truth=_truth(),
+    )
+    config = _config()
+    contract = cast(dict[str, object], config["generator_contract"])
+    contract[field_name] = "poisoned"
+    config_path = tmp_path / f"{field_name}.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        publish_generated_campaign(
+            generated,
+            config_path=config_path,
+            truth_path=TRUTH_PATH,
+            output_dir=tmp_path / field_name,
         )

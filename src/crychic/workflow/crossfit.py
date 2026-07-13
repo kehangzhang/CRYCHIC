@@ -53,6 +53,7 @@ from crychic.resources import ResourceBundle, TargetPrior
 from crychic.response import (
     FoldGeneResponseApplication,
     FoldGeneResponseArtifact,
+    ReceiverAutonomousProgramResource,
     apply_fold_gene_response,
     fit_fold_gene_response,
 )
@@ -93,7 +94,6 @@ _REMAINING_PUBLIC_STAGES = (
     "common_scoring_functional",
     "family_attribution",
     "incremental_downstream",
-    "receiver_autonomous_nuisance",
     "subject_blocked_inner_tuning",
 )
 _CPM_SCALE = 1_000_000.0
@@ -198,6 +198,7 @@ class CrossFitSpec:
     receptor_gate_threshold: float = 0.1
     family_cosine_threshold: float = 0.95
     downstream_minimum_scale: float = 0.25
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -223,6 +224,7 @@ class CrossFitSpec:
         )
         if not isinstance(self.training_spec, FoldTrainingSpec):
             raise TypeError("training_spec must be a FoldTrainingSpec")
+        self.training_spec._require_intact()
         declared = self.training_spec.sender_contrasts
         if declared is not None and {
             _contrast_id(contrast) for contrast in declared
@@ -261,6 +263,16 @@ class CrossFitSpec:
         gate_threshold = float(self.receptor_gate_threshold)
         family_threshold = float(self.family_cosine_threshold)
         minimum_scale = float(self.downstream_minimum_scale)
+        autonomous_resource = self.autonomous_program_resource
+        if autonomous_resource is not None:
+            if not isinstance(
+                autonomous_resource, ReceiverAutonomousProgramResource
+            ):
+                raise TypeError(
+                    "autonomous_program_resource must be a "
+                    "ReceiverAutonomousProgramResource"
+                )
+            autonomous_resource._require_producer_owned()
         if not np.isfinite(gate_threshold) or not 0 < gate_threshold <= 1:
             raise ValueError("receptor_gate_threshold must be finite in (0, 1]")
         if not np.isfinite(family_threshold) or not 0 <= family_threshold <= 1:
@@ -281,6 +293,10 @@ class CrossFitSpec:
             "strata_keys": list(strata),
             "training_spec_id": training_spec.spec_id,
         }
+        if autonomous_resource is not None:
+            payload["autonomous_program_resource_id"] = (
+                autonomous_resource.artifact_id
+            )
         spec_id = stable_id(
             "subject_crossfit_spec", payload, schema_version=self.schema_version
         )
@@ -291,6 +307,7 @@ class CrossFitSpec:
         object.__setattr__(self, "receptor_gate_threshold", gate_threshold)
         object.__setattr__(self, "family_cosine_threshold", family_threshold)
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
+        object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
         object.__setattr__(self, "spec_id", spec_id)
         object.__setattr__(
             self,
@@ -301,6 +318,7 @@ class CrossFitSpec:
     def to_dict(self) -> dict[str, object]:
         """Return the pre-registered cross-fit policy manifest."""
 
+        self._require_intact()
         return {
             "spec_id": self.spec_id,
             "repeat_id": self.repeat_id,
@@ -314,7 +332,57 @@ class CrossFitSpec:
             "receptor_gate_threshold": self.receptor_gate_threshold,
             "family_cosine_threshold": self.family_cosine_threshold,
             "downstream_minimum_scale": self.downstream_minimum_scale,
+            "autonomous_program_resource": (
+                None
+                if self.autonomous_program_resource is None
+                else self.autonomous_program_resource.to_dict()
+            ),
         }
+
+    def _require_intact(self) -> None:
+        """Reject forced mutation of the frozen cross-fit policy."""
+
+        try:
+            repeated = CrossFitSpec(
+                contrasts=self.contrasts,
+                training_spec=self.training_spec,
+                strata_keys=self.strata_keys,
+                allowed_n_splits=self.allowed_n_splits,
+                min_train_subjects_per_context=(
+                    self.min_train_subjects_per_context
+                ),
+                min_test_subjects_per_context=self.min_test_subjects_per_context,
+                receptor_gate_threshold=self.receptor_gate_threshold,
+                family_cosine_threshold=self.family_cosine_threshold,
+                downstream_minimum_scale=self.downstream_minimum_scale,
+                autonomous_program_resource=self.autonomous_program_resource,
+                schema_version=self.schema_version,
+            )
+            valid = (
+                isinstance(self.contrasts, tuple)
+                and isinstance(self.strata_keys, tuple)
+                and isinstance(self.allowed_n_splits, tuple)
+                and self.contrasts == repeated.contrasts
+                and self.training_spec.spec_id == repeated.training_spec.spec_id
+                and self.strata_keys == repeated.strata_keys
+                and self.allowed_n_splits == repeated.allowed_n_splits
+                and self.spec_id == repeated.spec_id
+                and self.repeat_id == repeated.repeat_id
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Cross-fit specification failed integrity validation",
+                code="crossfit_spec_integrity_violation",
+                field="spec_id",
+                remediation="Rebuild CrossFitSpec from the declared policy",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Cross-fit specification failed integrity validation",
+                code="crossfit_spec_integrity_violation",
+                field="spec_id",
+                remediation="Rebuild CrossFitSpec from the declared policy",
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -339,8 +407,10 @@ class CrossFitFoldArtifacts:
             raise ValueError("fold_id must be a non-empty identifier")
         if not isinstance(self.training, TrainingArtifacts):
             raise TypeError("training must be TrainingArtifacts")
+        self.training._require_intact()
         if not isinstance(self.application, TrainingArtifactApplication):
             raise TypeError("application must be TrainingArtifactApplication")
+        self.application._require_intact()
         if self.application.training_artifact_id != self.training.training_artifact_id:
             raise ValueError("fold application is not bound to its training artifacts")
         encoders = tuple(self.design_encoders)
@@ -389,6 +459,7 @@ class CrossFitFoldArtifacts:
         ):
             model._require_producer_owned()
             model.receiver_family_artifact._require_producer_owned()
+            receiver_application._require_intact()
             if model.training_subject_ids != self.training.training_subject_ids:
                 raise ValueError(
                     "receiver-family training subjects do not match the fold"
@@ -396,6 +467,22 @@ class CrossFitFoldArtifacts:
             if receiver_application.training_artifact_id != model.training_artifact_id:
                 raise ValueError(
                     "receiver-family application does not match its training model"
+                )
+            if receiver_application.active_family_ids != model.active_family_ids:
+                raise ValueError(
+                    "receiver-family application families do not match its model"
+                )
+            receiver_downstream = receiver_application.downstream_application
+            if (
+                receiver_downstream is not None
+                and (
+                    model.downstream_functional is None
+                    or receiver_downstream.downstream_functional_id
+                    != model.downstream_functional.downstream_functional_id
+                )
+            ):
+                raise ValueError(
+                    "receiver-family application functional does not match its model"
                 )
             if not set(receiver_application.heldout_subject_ids).issubset(
                 self.application.heldout_subject_ids
@@ -470,6 +557,11 @@ class CrossFitFoldArtifacts:
                 or incremental_model.receiver_family_training_artifact_id
                 != family_model.receiver_family_artifact.training_artifact_id
                 or incremental_model.encoder_id != encoder.encoder_id
+                or incremental_model.context_regressor_id
+                != encoder.context_regressor_id
+                or incremental_model.nuisance_design_id != encoder.nuisance_design_id
+                or incremental_model.nuisance_column_ids
+                != encoder.nuisance_column_ids
             ):
                 raise ValueError(
                     "receiver incremental training parent chain is invalid"
@@ -569,8 +661,16 @@ class CrossFitArtifacts:
             raise ValueError("partial cross-fit artifacts cannot claim another status")
         if not isinstance(self.spec, CrossFitSpec):
             raise TypeError("spec must be a CrossFitSpec")
+        self.spec._require_intact()
         if not isinstance(self.fold_plan, SubjectFoldPlan):
             raise TypeError("fold_plan must be a SubjectFoldPlan")
+        self.fold_plan._require_intact()
+        if self.fold_plan.repeat_id != self.spec.repeat_id:
+            raise ValueError("fold plan repeat_id does not match the cross-fit spec")
+        if self.fold_plan.allowed_n_splits != self.spec.allowed_n_splits:
+            raise ValueError(
+                "fold plan allowed_n_splits do not match the cross-fit spec"
+            )
         folds = tuple(self.folds)
         if any(not isinstance(item, CrossFitFoldArtifacts) for item in folds):
             raise TypeError("folds must contain CrossFitFoldArtifacts")
@@ -594,6 +694,25 @@ class CrossFitArtifacts:
             }
             if observed_contrasts != set(manifest.contrast_ids):
                 raise ValueError("design encoders do not match planned fold contrasts")
+            expected_autonomous_id = (
+                None
+                if self.spec.autonomous_program_resource is None
+                else self.spec.autonomous_program_resource.artifact_id
+            )
+            if any(
+                model.autonomous_program_resource_id != expected_autonomous_id
+                or model.autonomous_program_verification_status
+                != (
+                    None
+                    if self.spec.autonomous_program_resource is None
+                    else self.spec.autonomous_program_resource.verification_status
+                )
+                for model in item.receiver_incremental_models
+            ):
+                raise ValueError(
+                    "receiver incremental models do not match the cross-fit "
+                    "autonomous program resource"
+                )
         coverage = self._oof_coverage.copy(deep=True)
         if tuple(coverage.columns) != _COVERAGE_COLUMNS:
             raise ValueError("oof_coverage columns do not match the stage contract")
@@ -615,6 +734,7 @@ class CrossFitArtifacts:
                 raise ValueError("sender application IDs must be globally unique")
         if self.coverage_audit.fold_plan_id != self.fold_plan.plan_id:
             raise ValueError("coverage audit does not match the fold plan")
+        self.coverage_audit._require_intact()
         if self.coverage_audit.n_rows != len(coverage):
             raise ValueError("coverage audit row count does not match its table")
         contrast_contexts = {
@@ -748,7 +868,8 @@ class CrossFitArtifacts:
                 str(row.subject_id) not in manifest.test_subject_ids
                 or str(row.subject_id) in manifest.train_subject_ids
                 or str(row.official_incremental_status) != "not_estimable"
-                or str(row.reason_code) != "receiver_autonomous_nuisance_not_frozen"
+                or str(row.reason_code)
+                != "receiver_autonomous_nuisance_not_frozen"
                 or str(row.stage) != _RECEIVER_STAGE_NAME
             ):
                 raise ValueError(
@@ -820,6 +941,7 @@ class CrossFitArtifacts:
                 {
                     "fold_id": item.fold_id,
                     "heldout_input_digest": item.application.heldout_input_digest,
+                    "training_application_id": item.application.application_id,
                     "training_artifact_id": item.training.training_artifact_id,
                     "design_encoder_ids": [
                         encoder.encoder_id for encoder in item.design_encoders
@@ -837,6 +959,10 @@ class CrossFitArtifacts:
                     ],
                     "receiver_family_application_statuses": [
                         application.application_status
+                        for application in item.receiver_family_applications
+                    ],
+                    "receiver_family_application_ids": [
+                        application.application_id
                         for application in item.receiver_family_applications
                     ],
                     "receiver_response_ids": [
@@ -963,6 +1089,13 @@ class CrossFitArtifacts:
         """Return an auditable summary without embedding tabular payloads."""
 
         self._require_intact()
+        remaining_stages = list(_REMAINING_PUBLIC_STAGES)
+        if (
+            self.spec.autonomous_program_resource is None
+            or self.spec.autonomous_program_resource.verification_status
+            == "caller_declared_static_unverified"
+        ):
+            remaining_stages.insert(-1, "receiver_autonomous_nuisance")
         return {
             "crossfit_id": self.crossfit_id,
             "certification_status": self.certification_status,
@@ -1053,7 +1186,7 @@ class CrossFitArtifacts:
                     )
                 },
             },
-            "remaining_stages": list(_REMAINING_PUBLIC_STAGES),
+            "remaining_stages": remaining_stages,
         }
 
 
@@ -1299,6 +1432,7 @@ def _fit_receiver_incremental_chains(
     fold_id: str,
     minimum_scale: float,
     min_subjects_per_context: int,
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None,
 ) -> tuple[
     tuple[FoldGeneResponseArtifact, ...],
     tuple[PrecisionTransformResult, ...],
@@ -1324,6 +1458,7 @@ def _fit_receiver_incremental_chains(
             response,
             precision,
             model.receiver_family_artifact,
+            autonomous_program_resource,
             minimum_scale=minimum_scale,
         )
         responses.append(response)
@@ -1558,6 +1693,15 @@ def run_subject_crossfit(
         raise TypeError("target_prior must be a TargetPrior")
     if not isinstance(spec, CrossFitSpec):
         raise TypeError("spec must be a CrossFitSpec")
+    spec._require_intact()
+    if spec.autonomous_program_resource is not None and (
+        spec.autonomous_program_resource.species is not resource_bundle.species
+        or spec.autonomous_program_resource.gene_namespace
+        is not resource_bundle.gene_namespace
+    ):
+        raise ValueError(
+            "autonomous program resource species and namespace must match LR resources"
+        )
 
     validated = validate_anndata(adata, _input_schema(config))
     if validated.mode is not InputMode.COUNTS:
@@ -1695,6 +1839,7 @@ def run_subject_crossfit(
             fold_id=fold.fold_id,
             minimum_scale=spec.downstream_minimum_scale,
             min_subjects_per_context=spec.min_train_subjects_per_context,
+            autonomous_program_resource=spec.autonomous_program_resource,
         )
         (
             receiver_response_applications,

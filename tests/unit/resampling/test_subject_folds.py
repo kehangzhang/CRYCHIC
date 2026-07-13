@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from crychic.core import SeedLineage
+from crychic.core import ContractError, SeedLineage
 from crychic.design import balanced_contrast
 from crychic.resampling import (
     DesignFoldChecker,
@@ -85,6 +85,47 @@ def test_fold_plan_is_deterministic_and_input_order_invariant() -> None:
     )
 
     assert shuffled.to_dict() == first.to_dict()
+
+
+def test_fold_manifest_rejects_forced_semantic_mutation() -> None:
+    plan = plan_subject_folds(
+        _paired_metadata(),
+        design_checker=_checker(),
+        context_keys=("condition",),
+        allowed_n_splits=(4, 3, 2),
+        seed_lineage=SeedLineage(91),
+    )
+    fold = plan.folds[0]
+    object.__setattr__(fold, "context_support", {"ctrl": 999, "stim": 999})
+
+    with pytest.raises(ContractError) as error:
+        fold.to_dict()
+    assert error.value.details.code == "fold_manifest_integrity_violation"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "poison"),
+    [
+        ("repeat_id", "poisoned-repeat"),
+        ("allowed_n_splits", (5, 4, 3, 2)),
+    ],
+)
+def test_subject_fold_plan_rejects_forced_policy_mutation(
+    field_name: str,
+    poison: object,
+) -> None:
+    plan = plan_subject_folds(
+        _paired_metadata(),
+        design_checker=_checker(),
+        context_keys=("condition",),
+        allowed_n_splits=(4, 3, 2),
+        seed_lineage=SeedLineage(91),
+    )
+    object.__setattr__(plan, field_name, poison)
+
+    with pytest.raises(ContractError) as error:
+        plan.to_dict()
+    assert error.value.details.code == "subject_fold_plan_integrity_violation"
 
 
 def test_independent_groups_are_stratified_by_context_and_batch() -> None:

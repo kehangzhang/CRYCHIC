@@ -24,7 +24,7 @@ from crychic.scoring import (
 )
 
 GENERATOR_SCHEMA_VERSION = (
-    "crychic-g1.5-sample-keyed-development-generator-v2"
+    "crychic-g1.5-sample-keyed-structural-zero-development-generator-v3"
 )
 DEVELOPMENT_PHASE = "development"
 HOLDOUT_PHASE = "independent_holdout"
@@ -34,8 +34,8 @@ PHASE_ROOT_SEEDS: Final[dict[str, int]] = {
     HOLDOUT_PHASE: 2_026_071_301,
 }
 PHASE_SEED_NAMESPACES: Final[dict[str, str]] = {
-    DEVELOPMENT_PHASE: "crychic:g1.5:v2:development:frozen-20260713",
-    HOLDOUT_PHASE: "crychic:g1.5:v2:independent-holdout:frozen-20260713",
+    DEVELOPMENT_PHASE: "crychic:g1.5:v3:development:frozen-20260713",
+    HOLDOUT_PHASE: "crychic:g1.5:v3:nonpublication-holdout-policy-test-20260713",
 }
 EVIDENCE_COLUMNS = (
     "seed",
@@ -184,6 +184,7 @@ class GeneratedMechanismEvidence:
     seed_lineages: tuple[SeedLineage, ...]
     functional_ids: tuple[str, ...]
     application_statuses: tuple[str, ...]
+    gain_denominator_records: tuple[tuple[str, str], ...]
     null_losses: tuple[float | None, ...]
     ecosystem_effects: tuple[float, ...]
 
@@ -198,10 +199,29 @@ class GeneratedMechanismEvidence:
     def audit_summary(self) -> dict[str, object]:
         """Return deterministic aggregate provenance for the manifest."""
 
+        if len(self.gain_denominator_records) != self.row_count:
+            raise RuntimeError(
+                "gain denominator audit records do not match generated evidence"
+            )
         observed_losses = np.asarray(
             [value for value in self.null_losses if value is not None], dtype=float
         )
         ecosystem = np.asarray(self.ecosystem_effects, dtype=float)
+        denominator_counts = Counter(
+            status for _, status in self.gain_denominator_records
+        )
+        denominator_counts_by_scenario = {
+            scenario: dict(
+                sorted(
+                    Counter(
+                        status
+                        for row_scenario, status in self.gain_denominator_records
+                        if row_scenario == scenario
+                    ).items()
+                )
+            )
+            for scenario in REQUIRED_SCENARIOS
+        }
         return {
             "model_call_counts": {
                 "fit_incremental_downstream_functional": self.row_count,
@@ -210,6 +230,10 @@ class GeneratedMechanismEvidence:
             },
             "application_status_counts": dict(
                 sorted(Counter(self.application_statuses).items())
+            ),
+            "gain_denominator_status_counts": dict(sorted(denominator_counts.items())),
+            "gain_denominator_status_counts_by_scenario": (
+                denominator_counts_by_scenario
             ),
             "incremental_functional_id_digest": canonical_digest(
                 {"ids": list(self.functional_ids)}, prefix="functional-set"
@@ -395,7 +419,7 @@ def _simulate_record(
     scenario: str,
     profile: EdgeProfile,
     shared: _SharedSeedEdgeInputs,
-) -> tuple[dict[str, object], str, float | None, float]:
+) -> tuple[dict[str, object], str, str, float | None, float]:
     mechanism = SCENARIO_MECHANISMS[scenario]
     expression_effect = _expression_effect(mechanism, profile, shared)
     train_response, train_regressor, train_nuisance = _paired_context_matrix(
@@ -406,8 +430,7 @@ def _simulate_record(
     )
     record_scope = f"{phase}:{lineage.seed}:{profile.known_edge_id}:{scenario}"
     train_subjects = tuple(
-        f"{record_scope}:train:{index:02d}"
-        for index in range(N_TRAIN_SUBJECTS)
+        f"{record_scope}:train:{index:02d}" for index in range(N_TRAIN_SUBJECTS)
     )
     train_manifest = DownstreamRowManifest(
         sample_ids=tuple(
@@ -417,13 +440,11 @@ def _simulate_record(
         ),
         subject_ids=tuple(train_subjects + train_subjects),
         context_ids=tuple(
-            ["reference"] * N_TRAIN_SUBJECTS
-            + ["target"] * N_TRAIN_SUBJECTS
+            ["reference"] * N_TRAIN_SUBJECTS + ["target"] * N_TRAIN_SUBJECTS
         ),
     )
     test_subjects = tuple(
-        f"{record_scope}:test:{index:02d}"
-        for index in range(N_TEST_SUBJECTS)
+        f"{record_scope}:test:{index:02d}" for index in range(N_TEST_SUBJECTS)
     )
     test_manifest = DownstreamRowManifest(
         sample_ids=tuple(
@@ -533,6 +554,7 @@ def _simulate_record(
     return (
         record,
         functional.incremental_functional_id,
+        application.gain_denominator_status,
         application.null_loss,
         ecosystem_effect,
     )
@@ -594,6 +616,7 @@ def generate_mechanism_specificity_evidence(
     rows: list[dict[str, object]] = []
     functional_ids: list[str] = []
     statuses: list[str] = []
+    gain_denominator_records: list[tuple[str, str]] = []
     null_losses: list[float | None] = []
     ecosystem_effects: list[float] = []
     for lineage in seed_lineages:
@@ -601,7 +624,13 @@ def generate_mechanism_specificity_evidence(
             profile = EDGE_PROFILES[edge_id]
             shared = _shared_inputs(lineage, profile)
             for scenario in REQUIRED_SCENARIOS:
-                record, functional_id, null_loss, ecosystem_effect = _simulate_record(
+                (
+                    record,
+                    functional_id,
+                    gain_denominator_status,
+                    null_loss,
+                    ecosystem_effect,
+                ) = _simulate_record(
                     phase=phase,
                     lineage=lineage,
                     scenario=scenario,
@@ -611,6 +640,7 @@ def generate_mechanism_specificity_evidence(
                 rows.append(record)
                 functional_ids.append(functional_id)
                 statuses.append(str(record["status"]))
+                gain_denominator_records.append((scenario, gain_denominator_status))
                 null_losses.append(null_loss)
                 if scenario == "abundance_only":
                     ecosystem_effects.append(ecosystem_effect)
@@ -635,6 +665,7 @@ def generate_mechanism_specificity_evidence(
         seed_lineages=seed_lineages,
         functional_ids=tuple(functional_ids),
         application_statuses=tuple(statuses),
+        gain_denominator_records=tuple(gain_denominator_records),
         null_losses=tuple(null_losses),
         ecosystem_effects=tuple(ecosystem_effects),
     )
@@ -696,6 +727,9 @@ def frozen_design_manifest() -> dict[str, object]:
             ),
             "incremental_downstream_effect": (
                 "apply_incremental_downstream_functional.family_gains[0]"
+            ),
+            "gain_denominator_status": (
+                "apply_incremental_downstream_functional.gain_denominator_status"
             ),
             "sender_effect": "heldout mean sender allocation weight",
             "integrated_lr_effect": (

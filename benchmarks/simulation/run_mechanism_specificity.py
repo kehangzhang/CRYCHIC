@@ -28,7 +28,9 @@ from benchmarks.metrics.mechanism_specificity import (
 )
 from benchmarks.simulation.mechanism_specificity import (
     EVIDENCE_COLUMNS,
+    GENERATOR_SCHEMA_VERSION,
     HOLDOUT_PHASE,
+    PHASE_SEED_NAMESPACES,
     PHASES,
     GeneratedMechanismEvidence,
     frozen_design_manifest,
@@ -36,18 +38,19 @@ from benchmarks.simulation.mechanism_specificity import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v2.json"
+DEFAULT_CONFIG = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v3.json"
 DEFAULT_TRUTH = REPO_ROOT / "benchmarks/truth/component_truth_matrix.yaml"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "benchmark_work/g1_5_sample_keyed_development_v2"
-MANIFEST_SCHEMA_VERSION = "crychic-g1.5-generation-manifest-v2"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "benchmark_work/g1_5_sample_keyed_development_v3"
+LIVE_CONFIG_SCHEMA_VERSION = "crychic-mechanism-specificity-v3"
+MANIFEST_SCHEMA_VERSION = "crychic-g1.5-generation-manifest-v3"
 
 
 def _require_publishable_live_phase(phase: str) -> None:
     if phase == HOLDOUT_PHASE:
         raise ValueError(
             "the historical G1.5 v2 holdout has already been inspected; "
-            "the sample-keyed generator requires a new preregistered holdout "
-            "configuration and seed namespace before publication"
+            "the v3 holdout namespace is nonpublication test-only and is not "
+            "an independent holdout"
         )
 
 
@@ -75,6 +78,25 @@ def _phase_policy(config: Mapping[str, object], phase: str) -> Mapping[str, obje
     if phase == HOLDOUT_PHASE and bool(raw_policy.get("may_tune_candidate")):
         raise ValueError("independent holdout configuration must forbid tuning")
     return cast(Mapping[str, object], raw_policy)
+
+
+def _validate_live_config(config: Mapping[str, object]) -> None:
+    if config.get("schema_version") != LIVE_CONFIG_SCHEMA_VERSION:
+        raise ValueError(
+            "live sample-keyed generator requires mechanism_specificity_v3 config"
+        )
+    raw_contract = config.get("generator_contract")
+    if not isinstance(raw_contract, Mapping):
+        raise ValueError("config.generator_contract must be an object")
+    if raw_contract.get("schema_version") != GENERATOR_SCHEMA_VERSION:
+        raise ValueError("config generator schema does not match the live generator")
+    raw_namespaces = raw_contract.get("phase_seed_namespaces")
+    if (
+        not isinstance(raw_namespaces, Mapping)
+        or {str(key): str(value) for key, value in raw_namespaces.items()}
+        != PHASE_SEED_NAMESPACES
+    ):
+        raise ValueError("config seed namespaces do not match the live generator")
 
 
 def _validate_contract_columns(
@@ -200,6 +222,7 @@ def publish_generated_campaign(
     if output.exists():
         raise FileExistsError(f"output directory already exists: {output}")
     config = _json_object(config_file)
+    _validate_live_config(config)
     truth = component_truth_from_mapping(_yaml_object(truth_file))
     specification = specification_from_config(config, evaluation_phase=generated.phase)
     phase_policy = _phase_policy(config, generated.phase)
@@ -256,7 +279,7 @@ def run_campaign(
     truth_path: str | Path = DEFAULT_TRUTH,
     output_dir: str | Path | None = None,
 ) -> dict[str, object]:
-    """Generate the frozen 50- or 200-seed phase and publish it atomically."""
+    """Generate the current development phase and publish it atomically."""
 
     if phase not in PHASES:
         raise ValueError(f"unknown G1.5 phase: {phase!r}")
@@ -271,6 +294,7 @@ def run_campaign(
     if output.exists():
         raise FileExistsError(f"output directory already exists: {output}")
     config = _json_object(config_file)
+    _validate_live_config(config)
     _phase_policy(config, phase)
     specification = specification_from_config(config, evaluation_phase=phase)
     truth = component_truth_from_mapping(_yaml_object(truth_file))

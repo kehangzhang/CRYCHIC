@@ -12,7 +12,7 @@ from scipy import sparse
 import crychic.sender.common as common_sender_module
 import crychic.workflow.training as training_module
 from crychic.availability import BatchAvailability, InteractionFilterApplication
-from crychic.core import CrychicConfig
+from crychic.core import ContractError, CrychicConfig
 from crychic.resources import (
     GeneNamespace,
     Interaction,
@@ -167,6 +167,116 @@ def test_training_entry_accepts_only_raw_and_preregistered_inputs() -> None:
     assert forbidden.isdisjoint(parameters)
     with pytest.raises(TypeError, match="producer-owned"):
         TrainingArtifacts()
+
+
+def test_training_entry_rejects_forced_nested_sender_policy_mutation() -> None:
+    spec = FoldTrainingSpec(
+        min_cells=1,
+        max_interactions=1,
+        sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+    )
+    object.__setattr__(spec.sender_parameters, "min_subjects", 999)
+
+    with pytest.raises(ContractError) as error:
+        fit_training_artifacts(
+            _adata(("train-1", "train-2"), first_high=True),
+            _config(),
+            _bundle(),
+            _prior(),
+            spec=spec,
+        )
+    assert error.value.details.code == "fold_training_spec_integrity_violation"
+
+
+def test_application_rejects_forced_training_availability_policy_mutation() -> None:
+    artifacts = _fit()
+    object.__setattr__(artifacts.spec.availability_parameters, "complex_power", 99.0)
+
+    with pytest.raises(ContractError) as error:
+        apply_training_artifacts(
+            artifacts,
+            _adata(("heldout-1", "heldout-2"), first_high=False),
+        )
+    assert error.value.details.code == "training_artifact_integrity_violation"
+
+
+def test_application_rejects_forced_training_subject_scope_mutation() -> None:
+    artifacts = _fit()
+    object.__setattr__(artifacts, "training_subject_ids", ("train-1",))
+
+    with pytest.raises(ContractError) as error:
+        apply_training_artifacts(
+            artifacts,
+            _adata(("train-2", "heldout-1"), first_high=False),
+        )
+    assert error.value.details.code == "training_artifact_integrity_violation"
+
+
+def test_application_rejects_forced_training_resource_content_mutation() -> None:
+    artifacts = _fit()
+    interaction = artifacts.resource_bundle.interactions[0]
+    object.__setattr__(interaction, "ligand_subunits", ("POISON",))
+
+    with pytest.raises(ContractError) as error:
+        apply_training_artifacts(
+            artifacts,
+            _adata(("heldout-1", "heldout-2"), first_high=False),
+        )
+    assert error.value.details.code == "training_artifact_integrity_violation"
+
+
+def test_training_artifact_rejects_forced_target_prior_content_mutation() -> None:
+    artifacts = _fit()
+    poisoned = tuple(value + 1.0 for value in artifacts.target_prior.weights)
+    object.__setattr__(artifacts.target_prior, "weights", poisoned)
+
+    with pytest.raises(ContractError) as error:
+        artifacts._require_intact()
+    assert error.value.details.code == "training_artifact_integrity_violation"
+
+
+def test_application_rejects_forced_frozen_universe_mutation() -> None:
+    artifacts = _fit()
+    object.__setattr__(
+        artifacts.frozen_interaction_universe,
+        "interaction_ids",
+        (),
+    )
+
+    with pytest.raises(ContractError) as error:
+        apply_training_artifacts(
+            artifacts,
+            _adata(("heldout-1", "heldout-2"), first_high=False),
+        )
+    assert error.value.details.code == "training_artifact_integrity_violation"
+
+
+def test_training_application_rejects_nested_availability_table_mutation() -> None:
+    application = apply_training_artifacts(
+        _fit(),
+        _adata(("heldout-1", "heldout-2"), first_high=False),
+    )
+    application.availability.sample_interactions.loc[
+        application.availability.sample_interactions.index[0],
+        "ligand_availability",
+    ] = 0.123
+
+    with pytest.raises(ContractError) as error:
+        application._require_intact()
+    assert error.value.details.code == "training_application_integrity_violation"
+
+
+def test_training_application_rejects_nested_sender_table_mutation() -> None:
+    application = apply_training_artifacts(
+        _fit(),
+        _adata(("heldout-1", "heldout-2"), first_high=False),
+    )
+    assignment = application.sender_assignments[0]
+    assignment.table.loc[assignment.table.index[0], "assignment_weight"] = 0.0
+
+    with pytest.raises(ContractError) as error:
+        application._require_intact()
+    assert error.value.details.code == "training_application_integrity_violation"
 
 
 def test_raw_training_scope_derives_identity_and_fits_a_real_universe() -> None:
