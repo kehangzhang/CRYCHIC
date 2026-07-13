@@ -100,7 +100,9 @@ default or authorize a real-data rerun.
 
 ## G1.5 mechanism-specificity gate
 
-Run the frozen development and independent-holdout campaigns separately:
+The published v2 development and independent-holdout campaigns are historical
+source locks. Reproduce them from commit `5e8b4b8`, not with the live
+sample-keyed generator:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
@@ -112,7 +114,10 @@ uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specifici
 ```
 
 The runner writes atomic evidence, generation provenance, and evaluator metrics.
-It refuses to overwrite an existing phase directory and forbids tuning in the
-independent holdout. Published lightweight results and exact artifact hashes are
+The live runner refuses to republish the already inspected historical holdout.
+It may run development checks under
+`benchmark_work/g1_5_sample_keyed_development_v2/`; a future independent
+holdout requires a new preregistered configuration and seed namespace.
+Published historical lightweight results and exact artifact hashes are
 in [`benchmarks/results/g1_5_v2_summary.json`](../results/g1_5_v2_summary.json).
 The synthetic gate never switches the public default by itself.

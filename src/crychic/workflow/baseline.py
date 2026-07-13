@@ -76,7 +76,7 @@ _DEFAULT_AVAILABILITY_PARAMETERS = AvailabilityParameters()
 _PRECISION_LOWER_QUANTILE = 0.05
 _PRECISION_UPPER_QUANTILE = 0.95
 _MIN_POSITIVE_PRECISION_FEATURES = 2
-_PRECISION_METHOD = "winsorized_median_normalized_v1"
+_PRECISION_METHOD = "winsorized_median_normalized_v2"
 _TRACKED_GEOMETRIC_SCORE_VERSION = "geometric_v1_tracked"
 
 
@@ -1005,6 +1005,10 @@ def _run_attribution(
             ).to_numpy(dtype=float)
             precision_transform = winsorized_normalized_precision(
                 raw_precision,
+                feature_ids=response.feature_ids,
+                receiver=_string_identifier(receiver),
+                contrast_name=spec.name,
+                fold_id="exploratory_full_data",
                 lower_quantile=_PRECISION_LOWER_QUANTILE,
                 upper_quantile=_PRECISION_UPPER_QUANTILE,
                 min_positive_features=_MIN_POSITIVE_PRECISION_FEATURES,
@@ -1037,6 +1041,12 @@ def _run_attribution(
                     )
                 )
                 continue
+            precision_transform.require_compatible(
+                feature_ids=response.feature_ids,
+                receiver=_string_identifier(receiver),
+                contrast_name=spec.name,
+                fold_id="exploratory_full_data",
+            )
             try:
                 basis, result = attribute_target_prior(
                     prior,
@@ -1049,6 +1059,12 @@ def _run_attribution(
                     cosine_threshold=cosine_threshold,
                 )
                 status = RunStatus.OK if result.succeeded else RunStatus.FAILED
+                if not np.array_equal(
+                    result.precision_weights, precision_transform.values
+                ):
+                    raise RuntimeError(
+                        "attribution did not preserve frozen precision weights"
+                    )
                 reason = (
                     None
                     if result.succeeded

@@ -23,8 +23,20 @@ preserving the exploratory v0.1 behavior:
   receiver-null loss gain and subject-fold contracts are available, while the
   public workflow still reports this field as `not_estimable` until every
   upstream data-driven transform is fitted inside the training fold;
-- attribution now consumes winsorized, median-normalized response precision and
-  records its fitted transform and support diagnostics;
+- attribution now consumes a producer-owned v2 winsorized, median-normalized
+  response-precision artifact whose identity binds the raw/transformed ordered
+  feature vector and receiver/contrast/fold scope. The exploratory solver path
+  validates artifact compatibility and exact consumed weights; training-subject
+  provenance remains a public cross-fit integration requirement;
+- low-level incremental downstream v2 uses explicit sample-subject-context row
+  manifests, keyed response/design alignment, full training-input digests,
+  sample diagnostics and technical-row-mean/equal-context/equal-subject
+  held-out losses, signed diagnostic gains and bounded score gains. It rejects
+  training sample/subject reuse, freezes the contrast context universe, and
+  requires caller-declared design IDs to match. Authentic design lineage still
+  requires direct `FrozenDesignApplication` integration; the primitive remains
+  partial until autonomous nuisance, inner tuning and public cross-fit coverage
+  are connected;
 - opt-in attribution candidates provide hard receptor eligibility, directional
   response channels, strict family-first bases, and evidence-weighted member
   allocation without changing the legacy default;

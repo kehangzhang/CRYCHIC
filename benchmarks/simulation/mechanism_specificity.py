@@ -17,12 +17,15 @@ from benchmarks.metrics.mechanism_specificity import (
 )
 from crychic.core import SeedLineage
 from crychic.scoring import (
+    DownstreamRowManifest,
     apply_incremental_downstream_functional,
     fit_incremental_downstream_functional,
     mechanistic_strength,
 )
 
-GENERATOR_SCHEMA_VERSION = "crychic-g1.5-deterministic-generator-v1"
+GENERATOR_SCHEMA_VERSION = (
+    "crychic-g1.5-sample-keyed-development-generator-v2"
+)
 DEVELOPMENT_PHASE = "development"
 HOLDOUT_PHASE = "independent_holdout"
 PHASES = (DEVELOPMENT_PHASE, HOLDOUT_PHASE)
@@ -401,8 +404,42 @@ def _simulate_record(
     test_response, test_regressor, test_nuisance = _paired_context_matrix(
         shared.test_reference_expression, expression_effect
     )
+    record_scope = f"{phase}:{lineage.seed}:{profile.known_edge_id}:{scenario}"
+    train_subjects = tuple(
+        f"{record_scope}:train:{index:02d}"
+        for index in range(N_TRAIN_SUBJECTS)
+    )
+    train_manifest = DownstreamRowManifest(
+        sample_ids=tuple(
+            f"{subject}:{context}"
+            for context in ("reference", "target")
+            for subject in train_subjects
+        ),
+        subject_ids=tuple(train_subjects + train_subjects),
+        context_ids=tuple(
+            ["reference"] * N_TRAIN_SUBJECTS
+            + ["target"] * N_TRAIN_SUBJECTS
+        ),
+    )
+    test_subjects = tuple(
+        f"{record_scope}:test:{index:02d}"
+        for index in range(N_TEST_SUBJECTS)
+    )
+    test_manifest = DownstreamRowManifest(
+        sample_ids=tuple(
+            f"{subject}:{context}"
+            for context in ("reference", "target")
+            for subject in test_subjects
+        ),
+        subject_ids=tuple(test_subjects + test_subjects),
+        context_ids=tuple(
+            ["reference"] * N_TEST_SUBJECTS + ["target"] * N_TEST_SUBJECTS
+        ),
+    )
     functional = fit_incremental_downstream_functional(
         train_response,
+        row_manifest=train_manifest,
+        design_sample_ids=train_manifest.sample_ids,
         reference_mask=train_regressor < 0,
         nuisance_matrix=train_nuisance,
         context_regressor=train_regressor,
@@ -414,10 +451,7 @@ def _simulate_record(
         feature_ids=FEATURE_IDS,
         family_ids=(profile.family_id,),
         nuisance_column_ids=NUISANCE_COLUMN_IDS,
-        training_subject_ids=tuple(
-            f"{lineage.seed}:{profile.known_edge_id}:train:{index:02d}"
-            for index in range(N_TRAIN_SUBJECTS)
-        ),
+        training_subject_ids=train_subjects,
         family_basis=np.asarray([[1.0], [0.0], [0.0]], dtype=float),
         precision_weights=np.ones(len(FEATURE_IDS), dtype=float),
         minimum_scale=MINIMUM_SCALE,
@@ -428,8 +462,12 @@ def _simulate_record(
     application = apply_incremental_downstream_functional(
         functional,
         test_response,
+        row_manifest=test_manifest,
+        design_sample_ids=test_manifest.sample_ids,
         nuisance_matrix=test_nuisance,
         context_regressor=test_regressor,
+        context_regressor_id="paired_binary_minus1_plus1_v1",
+        nuisance_design_id="intercept_only_v1",
         feature_ids=FEATURE_IDS,
         nuisance_column_ids=NUISANCE_COLUMN_IDS,
     )

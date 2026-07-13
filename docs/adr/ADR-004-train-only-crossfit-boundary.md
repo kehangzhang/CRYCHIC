@@ -157,6 +157,24 @@ downstream evidence remains `not_estimable` in the public baseline workflow and
 no default-method switch is eligible. The legacy sender assignment remains
 unchanged and context-specific.
 
+The low-level precision and incremental primitives were hardened before their
+public integration. Precision v2 is producer-owned and binds the raw and
+transformed ordered feature vector plus receiver/contrast/fold scope. The
+incremental v2 primitive requires explicit sample-to-subject-to-context row
+manifests and independently keyed design rows, hashes every raw training input,
+rejects held-out reuse of training samples or subjects, reports signed and
+bounded gains, requires matching nuisance/regressor lineage, averages technical
+rows within subject/context before squared loss, and then weights contexts and
+subjects equally. The low-level design check is only a caller-declared ID
+assertion; authentic lineage requires the future public consumer to accept a
+producer-owned `FrozenDesignApplication` from the same encoder. These contracts
+make direct research calls auditable, but they do not prove OOF provenance:
+neither primitive is accepted as caller input by the public workflow, and
+incremental v2 remains
+`partial_not_oof_certified` until training response precision, autonomous
+nuisance, inner tuning and exact receiver coverage are connected inside the
+physical fold boundary.
+
 The nuisance encoder reparameterizes the full training Patsy matrix as
 `[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast
 direction satisfies `l^T q = 1`. Consequently, the final regression coefficient

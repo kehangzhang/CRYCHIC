@@ -288,7 +288,7 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
     assert dict(attribution.receptor_gates).keys() == {"L"}
     assert dict(attribution.receptor_gates)["L"] > 0
     assert attribution.attribution is not None
-    assert attribution.precision_method == "winsorized_median_normalized_v1"
+    assert attribution.precision_method == "winsorized_median_normalized_v2"
     assert attribution.precision_transform_id is not None
     positive_precision = attribution.attribution.precision_weights
     assert attribution.n_positive_precision_features == int(

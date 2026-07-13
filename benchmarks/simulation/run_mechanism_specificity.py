@@ -38,8 +38,17 @@ from benchmarks.simulation.mechanism_specificity import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = REPO_ROOT / "benchmarks/configs/mechanism_specificity_v2.json"
 DEFAULT_TRUTH = REPO_ROOT / "benchmarks/truth/component_truth_matrix.yaml"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "benchmark_work/g1_5_v2"
-MANIFEST_SCHEMA_VERSION = "crychic-g1.5-generation-manifest-v1"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "benchmark_work/g1_5_sample_keyed_development_v2"
+MANIFEST_SCHEMA_VERSION = "crychic-g1.5-generation-manifest-v2"
+
+
+def _require_publishable_live_phase(phase: str) -> None:
+    if phase == HOLDOUT_PHASE:
+        raise ValueError(
+            "the historical G1.5 v2 holdout has already been inspected; "
+            "the sample-keyed generator requires a new preregistered holdout "
+            "configuration and seed namespace before publication"
+        )
 
 
 def _json_object(path: Path) -> dict[str, object]:
@@ -194,6 +203,7 @@ def publish_generated_campaign(
     truth = component_truth_from_mapping(_yaml_object(truth_file))
     specification = specification_from_config(config, evaluation_phase=generated.phase)
     phase_policy = _phase_policy(config, generated.phase)
+    _require_publishable_live_phase(generated.phase)
     if generated.seed_count != specification.expected_seed_count:
         raise ValueError(
             "generated seed count does not equal the frozen phase requirement"
@@ -250,6 +260,7 @@ def run_campaign(
 
     if phase not in PHASES:
         raise ValueError(f"unknown G1.5 phase: {phase!r}")
+    _require_publishable_live_phase(phase)
     config_file = Path(config_path).resolve()
     truth_file = Path(truth_path).resolve()
     output = (

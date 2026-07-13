@@ -13,10 +13,10 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | --- | --- | --- |
 | Four semantic outputs | Partial | Workflow contracts separate components, but public integrated scoring remains the legacy baseline and incremental downstream is `not_estimable`. |
 | Explained-share v3 | Partial | Implemented and tested as a candidate support method; the baseline default remains relative-coefficient v1. |
-| Held-out incremental downstream gain | Partial | Fit/apply primitives and mechanism tests exist, but the public stage-level cross-fit orchestrator does not invoke them. The primitive still lacks canonical sample-subject-context row provenance, subject-blocked inner tuning, subject-grain held-out output and an autonomous nuisance basis; an overlapping generic-program/LR-target counterexample can therefore produce a near-one false gain. |
+| Held-out incremental downstream gain | Partial | Producer-owned sample-keyed fit/apply primitives now bind canonical sample-subject-context rows, raw response/design/reference inputs and fitted artifacts; reject training sample/subject overlap; freeze the contrast context universe; retain sample/subject loss diagnostics; average technical rows before loss at subject-context grain; weight contexts within subjects and subjects equally; and preserve raw signed plus bounded gains. Low-level nuisance/regressor IDs are caller-declared consistency assertions, not authentic encoder lineage. The public cross-fit orchestrator still does not invoke them, and direct `FrozenDesignApplication` consumption, subject-blocked inner tuning, a frozen response-precision parent and an autonomous nuisance basis remain absent. An overlapping generic-program/LR-target counterexample can therefore still produce a near-one false gain. |
 | Soft-min integration | Partial | Candidate integration and ablation tests exist; the public baseline still uses legacy four-component scoring. |
 | Hard receptor eligibility | Partial | Public partial cross-fit freezes a condition-blind, scale-invariant hard gate in each training fold and performs no held-out gate fitting. It remains absent from the legacy default integrated score and lacks a receiver-stage exact-coverage audit. |
-| Winsorized normalized precision | Partial | The transform and attribution integration exist, but independent audit found that `precision_transform_id` does not hash the raw/transformed feature-aligned values and the result is not producer-owned. This identity contract must be repaired before public cross-fit integration. |
+| Winsorized normalized precision | Partial | The producer-owned v2 transform binds raw and transformed feature-aligned values, ordered feature IDs, receiver, contrast and fold scope; immutable buffers, integrity checks and solver-boundary compatibility tests prevent silent ID/weight drift. Training sample/subject provenance and a public cross-fit consumer of the complete artifact remain required before OOF certification. |
 | Strict complete-link families | Implemented | Chaining counterexamples are covered by family tests. The deterministic incremental complete-link implementation matches a brute-force reference across random sparse profiles, zero-similarity and tolerance cases, and reuses one static partition per fold feature universe while retaining receiver-specific gates and artifact IDs. |
 | True family-first fitting | Partial | Public partial cross-fit freezes hard eligibility, strict complete-link families and one medoid basis column per family for every planned training cell type. Separate attribution primitives preserve signed residuals and evidence-only member allocation, but family attribution/tuning and integrated scoring are not connected and the legacy baseline still fits members before aggregation. |
 | Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. |
@@ -94,10 +94,11 @@ or method-superiority claim was evaluated. Compact evidence is in
 
 1. Connect response precision, family attribution and incremental downstream
    gain to public artifacts, add exact receiver-stage coverage, and rerun G1.5
-   through the public workflow. Before connection, make the precision transform
-   producer-owned and bind its ID to raw/transformed feature-aligned values;
-   likewise bind incremental models to canonical sample-subject-context rows,
-   raw response/design matrices, inner-fold tuning and held-out overlap checks.
+   through the public workflow. Precision and incremental primitives now have
+   producer-owned, feature/sample-keyed identities and held-out overlap checks;
+   the remaining connection must add training response provenance, autonomous
+   nuisance and subject-blocked inner-fold tuning without accepting caller-made
+   matrices or provenance IDs.
 2. Reuse prepared fold aggregates across stages and complete exact-equivalence
    sparse/block performance work.
 3. Replace receiver row-union views with a true contrast-common OOF functional,

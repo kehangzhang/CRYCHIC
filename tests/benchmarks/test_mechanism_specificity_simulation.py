@@ -27,6 +27,7 @@ from benchmarks.simulation.mechanism_specificity import (
 )
 from benchmarks.simulation.run_mechanism_specificity import (
     publish_generated_campaign,
+    run_campaign,
 )
 
 from crychic.scoring import (
@@ -69,13 +70,21 @@ def test_published_summary_is_locked_to_frozen_inputs_and_sources() -> None:
     assert inputs == {
         "config_sha256": _sha256(CONFIG_PATH),
         "truth_sha256": _sha256(TRUTH_PATH),
-        "generator_sha256": _sha256(
-            REPO_ROOT / "benchmarks/simulation/mechanism_specificity.py"
+        # v2 is a historical locked campaign. The live generator now uses the
+        # sample-keyed incremental API and must publish under a new campaign.
+        "generator_sha256": (
+            "8288453ba365723cbbcf1590c0ee62524c14d03c578e5bc6e4b2fd9cbb4d2a4c"
         ),
-        "runner_sha256": _sha256(
-            REPO_ROOT / "benchmarks/simulation/run_mechanism_specificity.py"
+        "runner_sha256": (
+            "871a89b7ea061f3ca7ac5592fde422a05d37ab0d8a5ce9fc35fca07eadf95d85"
         ),
     }
+    assert inputs["generator_sha256"] != _sha256(
+        REPO_ROOT / "benchmarks/simulation/mechanism_specificity.py"
+    )
+    assert inputs["runner_sha256"] != _sha256(
+        REPO_ROOT / "benchmarks/simulation/run_mechanism_specificity.py"
+    )
     assert summary["truth_set_id"] == _truth().truth_set_id
     assert summary["default_switch_allowed"] is False
     assert summary["real_data_accuracy_claim"] is False
@@ -306,3 +315,33 @@ def test_independent_holdout_policy_cannot_enable_tuning(tmp_path: Path) -> None
 
     assert not output.exists()
     assert not list(tmp_path.glob(f".{output.name}.tmp-*"))
+
+
+def test_live_sample_keyed_runner_cannot_republish_historical_holdout(
+    tmp_path: Path,
+) -> None:
+    generated = generate_mechanism_specificity_evidence(
+        phase=HOLDOUT_PHASE,
+        seed_count=2,
+        truth=_truth(),
+    )
+    config = _config()
+    phases = cast(dict[str, dict[str, object]], config["evaluation_phases"])
+    phases[HOLDOUT_PHASE]["required_paired_seeds"] = 2
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already been inspected"):
+        publish_generated_campaign(
+            generated,
+            config_path=config_path,
+            truth_path=TRUTH_PATH,
+            output_dir=tmp_path / "holdout",
+        )
+    with pytest.raises(ValueError, match="already been inspected"):
+        run_campaign(
+            phase=HOLDOUT_PHASE,
+            config_path=config_path,
+            truth_path=TRUTH_PATH,
+            output_dir=tmp_path / "holdout",
+        )

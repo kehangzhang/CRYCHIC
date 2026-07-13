@@ -21,6 +21,7 @@ from .contracts import (
 from .downstream import (
     DownstreamApplication,
     DownstreamFunctional,
+    DownstreamRowManifest,
     IncrementalDownstreamApplication,
     IncrementalDownstreamFunctional,
     apply_downstream_functional,
@@ -53,6 +54,7 @@ __all__ = [
     "CommunicationScores",
     "DownstreamApplication",
     "DownstreamFunctional",
+    "DownstreamRowManifest",
     "IncrementalDownstreamApplication",
     "IncrementalDownstreamFunctional",
     "ReceiverFamilyScoringApplication",

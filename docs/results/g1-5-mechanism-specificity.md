@@ -42,7 +42,14 @@ It records exact input, generator, evidence, manifest, and metric SHA256 values.
 The full evidence and evaluator outputs remain under the ignored local directory
 `benchmark_work/g1_5_v2/`; they are not part of the Git repository.
 
-Reproduce both phases with:
+This v2 summary is a historical source lock. The live development generator
+now calls the sample-keyed incremental v2 primitive, so its source hash is
+deliberately different. It may be used for development smoke tests, but a new
+publication campaign must use a new schema and seed namespace. Reusing the
+already inspected v2 holdout would be a reanalysis, not a new independent
+holdout, and must not overwrite this summary.
+
+Reproduce both historical phases from commit `5e8b4b8` with:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specificity \
@@ -52,6 +59,9 @@ uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specifici
   --phase independent_holdout \
   --output-dir benchmark_work/g1_5_v2/independent_holdout
 ```
+
+The live runner intentionally rejects `--phase independent_holdout`; a new
+sample-keyed holdout must receive a new preregistered config and seed namespace.
 
 ## Interpretation Boundary
 
