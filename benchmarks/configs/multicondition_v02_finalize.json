@@ -7,6 +7,7 @@
     "UCSC_Lerma_Martin_MS_snRNA": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
   },
   "biology_support": "../../../benchmark_work/multicondition_v02/biology/biology_support_v02.tsv",
+  "iteration_comparison": "../../../benchmark_work/multicondition_v02/inputs/iteration_comparison_v01_to_v02.tsv",
   "coverage_records": "../../../benchmark_work/multicondition_v02/inputs/native_coverage_summary_external_only.tsv",
   "simulation_records": "../../../benchmark_work/multicondition_v01/track_a_differential_truth/simulation_records.tsv",
   "native_sensitivity_index": "../../../benchmark_work/multicondition_v02/inputs/native_sensitivity_index_external_only.tsv",
@@ -55,6 +56,8 @@
     "native_coverage_summary_records": 6,
     "biology_support_v02_sha256": "6038e1c5dc94560005505b3ed8d23707a6246a937141d478fe334d464d38b4db",
     "biology_support_v02_records": 72,
+    "iteration_comparison_v01_to_v02_sha256": "2428b9dab5023d3c0b2100f2666c5c3c98df31135d92f1f1266d4c13ca339fff",
+    "iteration_comparison_v01_to_v02_records": 21,
     "cscc_compact_manifest_sha256": "e9891b127fb2b562674a62a2a188d936c96d3af8675a8580765295e358f8a2ec",
     "cscc_source_pipeline_manifest_sha256": "f9059dd23120a6e1461ee1d5ff6d5e3ea39c9820da6214a6c21802c29669a734",
     "ms_compact_manifest_sha256": "074171edee85f33b2640f4a3c43a76ca94fed9d584fa35e969961d8d664eb6d9",
