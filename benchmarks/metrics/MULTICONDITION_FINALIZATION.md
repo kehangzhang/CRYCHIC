@@ -91,6 +91,27 @@ The locked supportive-biology YAML is required. When biology evidence or
 iteration comparisons are absent, the corresponding report table is still
 emitted with `not_estimable` and a stable `reason_code`.
 
+Per-method supportive-biology tables intended for
+`benchmarks.metrics.merge_biology_support` must retain an explicit source
+label. Generate them with:
+
+```bash
+uv run python -m benchmarks.metrics.evaluate_supportive_biology \
+  benchmarks/truth/multicondition_supportive_biology.yaml \
+  /path/to/interactions_long.parquet \
+  /path/to/method_biology_support.tsv \
+  --dataset-id GSE144236_Ji_cSCC \
+  --reference Normal --target Tumor \
+  --input-format external-long --context-key condition --design paired \
+  --contrast Tumor_vs_Normal --run-id <primary-run-id> \
+  --source-label method_biology_support.tsv
+```
+
+`--source-label` appends `source_biology_file` as the final column with one
+non-empty deterministic value. Omitting the option preserves the released
+evaluator schema for consumers that do not use the strict merge stage. Tabs
+and newlines are rejected in labels.
+
 `supportive_biology_dataset_aliases` is an optional one-to-one mapping from a
 locked atlas/cohort identifier to the exact analyzed subset identifier. It may
 change only dataset identity metadata, never observation IDs or expectations.

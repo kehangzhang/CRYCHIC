@@ -18,14 +18,21 @@ from crychic.core import (
     canonical_digest,
     canonical_json,
 )
+from crychic.scoring.contracts import (
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
+)
 
 from ._schema import (
     RESULT_SCHEMA_VERSION,
     TABLE_NAMES,
     edge_evidence_contract,
+    scoring_collections_contract,
     table_contract,
     validate_edge_evidence,
     validate_edge_evidence_links,
+    validate_scoring_collection_links,
+    validate_scoring_collections,
     validate_table,
 )
 from .errors import ResultWriteError
@@ -184,11 +191,14 @@ def write_result(
     run_manifest: Mapping[str, object],
     tables: Mapping[str, pd.DataFrame],
     edge_evidence: pd.DataFrame | None = None,
+    scoring_collections: (
+        ScoringCollectionDocument | Sequence[ScoringCollectionManifest] | None
+    ) = None,
 ) -> CrychicResult:
     """Validate and atomically publish a complete v0.1 result directory.
 
-    ``edge_evidence`` is an optional, independently versioned result extension.
-    Omitting it preserves the original v0.1.0 manifest and directory shape.
+    Optional extensions are independently versioned. Omitting both preserves
+    the original v0.1.0 manifest and directory shape.
     """
 
     output = Path(destination)
@@ -256,6 +266,29 @@ def write_result(
                 "linked_tables": {
                     table_name: table_records[table_name]["sha256"]
                     for table_name in extension_contract.linked_tables
+                },
+            }
+        if scoring_collections is not None:
+            collection_contract = scoring_collections_contract()
+            collection_document = validate_scoring_collections(scoring_collections)
+            validate_scoring_collection_links(
+                collection_document,
+                tables["sample_scores"],
+                tables["interactions"],
+            )
+            collection_path = temporary / collection_contract.filename
+            write_json(collection_path, collection_document.to_dict())
+            extension_records[collection_contract.name] = {
+                "extension_schema_version": (
+                    collection_contract.extension_schema_version
+                ),
+                "filename": collection_contract.filename,
+                "collections": len(collection_document.collections),
+                "sha256": sha256_file(collection_path),
+                "schema": collection_contract.schema_filename,
+                "linked_tables": {
+                    table_name: table_records[table_name]["sha256"]
+                    for table_name in collection_contract.linked_tables
                 },
             }
 

@@ -54,3 +54,37 @@ tiers = assign_stable_tiers(intervals, top_k=1)
 The frozen universe, RBO persistence, Kendall weight power, interval confidence,
 minimum observed ranks, top-k cutoff, and selection-frequency threshold must be
 recorded in the benchmark configuration before interpreting the output.
+
+## Multi-condition integration
+
+`benchmarks.metrics.multicondition_rank_stability` applies these primitives to
+subject-resampled differential rankings. The preregistered policy is RBO
+`p=0.9`, weighted-Kendall power `1`, 200 split repeats, 2,000 subject
+bootstraps, 95% intervals, a minimum selection frequency of `0.80`, and seed
+`20260712`. It emits four report tables: agreement summaries, complete top-k
+curves, bootstrap rank intervals, and stable tiers.
+
+The score contract currently supports three observed ranking grains:
+
+- `lr`: interaction identity aggregated over comparison-eligible cell pairs;
+- `sender`: sender identity aggregated over eligible receivers and LR items;
+- `sender_receiver_pair`: a network pair aggregated over eligible LR items.
+
+`sender_receiver_pair` is not called a biological LR family. A frozen LR
+equivalence/driver-family identifier is not yet present in the score contract,
+so the preregistered `lr_family` curve (`k=1..25`) and family selection
+frequency remain explicit `not_estimable` with reason
+`lr_family_mapping_not_available_in_score_contract`. LR curves cover
+`k=1..100`. NicheNet Track B cannot emit LR or sender rankings, and unsupported
+Kuppe/PancVAX designs retain explicit NE rows.
+
+## Performance provenance
+
+Finalizer adapter runs default to `performance_role=method_total`, preserving
+the v1 behavior. Readback-only adapters must use
+`performance_role=adapter_readback`; that elapsed time is retained as a
+component but excluded from method runtime. A bound source runtime can be
+declared with `performance_override.source_manifest`, an optional
+`expected_sha256`, and `source_role` (`method_total`, `core_fit`, or
+`source_pipeline_total`). This prevents a compact readback duration from being
+reported as the complete method runtime.

@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -43,6 +43,11 @@ from benchmarks.metrics.multicondition import (
     unpaired_leave_one_subject_influence,
     within_context_reproducibility,
 )
+from benchmarks.metrics.multicondition_rank_stability import (
+    RankStabilityParameters,
+    evaluate_multicondition_rank_stability,
+    not_estimable_rank_stability,
+)
 
 SPEC_SCHEMA_VERSION = "crychic-multicondition-finalize-v1"
 REPORT_INPUT_SCHEMA_VERSION = "multicondition-report-inputs.v1"
@@ -59,6 +64,10 @@ METRIC_FILES: dict[str, str] = {
     "biology_support": "biology_support.tsv",
     "simulation_truth": "simulation_truth_metrics.tsv",
     "iteration_comparison": "iteration_comparison.tsv",
+    "ranking_agreement": "ranking_agreement_summary.tsv",
+    "ranking_top_k_curve": "ranking_top_k_stability_curve.tsv",
+    "ranking_intervals": "bootstrap_rank_intervals.tsv",
+    "ranking_tiers": "stable_ranking_tiers.tsv",
 }
 
 EXTERNAL_LR_COLUMNS = (
@@ -117,6 +126,18 @@ BIOLOGY_SUPPORT_STATUSES = frozenset(
         "not_estimable",
         "not_evaluated",
     }
+)
+PERFORMANCE_ROLES = frozenset(
+    {
+        "method_total",
+        "core_fit",
+        "source_pipeline_total",
+        "adapter_readback",
+        "excluded",
+    }
+)
+METHOD_RUNTIME_ROLES = frozenset(
+    {"method_total", "core_fit", "source_pipeline_total"}
 )
 
 
@@ -426,7 +447,7 @@ def _parameters(payload: Mapping[str, Any]) -> dict[str, int]:
         "n_bootstrap": 2000,
         "n_split_repeats": 200,
         "min_subjects_per_half": 2,
-        "random_seed": 0,
+        "random_seed": 20260712,
     }
     result: dict[str, int] = {}
     for name, default in defaults.items():
@@ -515,6 +536,68 @@ def _manifest_score_views(
         if not isinstance(candidates, list):
             raise ValueError("score view contrast_candidates must be a list")
         result[run_id] = tuple(map(str, candidates))
+    return result
+
+
+def _manifest_score_view_record(
+    manifest: Mapping[str, Any], run_id: str
+) -> Mapping[str, Any] | None:
+    raw = _manifest_value(manifest, "source_result", "score_views")
+    if raw is None:
+        raw = manifest.get("score_views")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("adapter manifest score_views must be a list")
+    matches = [
+        item
+        for item in raw
+        if isinstance(item, Mapping) and str(item.get("run_id")) == run_id
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"adapter manifest contains duplicate score view {run_id!r}")
+    return cast(Mapping[str, Any] | None, matches[0] if matches else None)
+
+
+def _rank_scope_for_view(
+    run: Mapping[str, Any], manifest: Mapping[str, Any], view: ScoreView
+) -> tuple[str, str | None]:
+    requested = run.get("rank_scope")
+    if requested is not None and str(requested) not in {
+        "global_common_functional",
+        "within_receiver_macro",
+        "not_estimable",
+    }:
+        raise ValueError(
+            "adapter_runs[].rank_scope must be global_common_functional, "
+            "within_receiver_macro, or not_estimable"
+        )
+    record = _manifest_score_view_record(manifest, view.run_id)
+    common_claim = record.get("common_functional_claim") if record else None
+    if common_claim is False:
+        if requested == "global_common_functional":
+            raise ValueError(
+                "common_functional_claim=false forbids global rank_scope"
+            )
+        # The current finalizer cannot apply one receiver-stratified estimand to
+        # every primary, concordance, and supportive-biology endpoint yet.
+        return (
+            "not_estimable_receiver_child_functionals",
+            "receiver_child_functionals_not_globally_comparable",
+        )
+    if requested == "within_receiver_macro":
+        return (
+            "not_estimable_within_receiver_pipeline_incomplete",
+            "within_receiver_rank_scope_not_applied_to_all_endpoints",
+        )
+    if requested == "not_estimable":
+        return "not_estimable_by_specification", "rank_scope_disabled_by_specification"
+    return "global_common_functional", None
+
+
+def _annotate_rank_scope(table: pd.DataFrame, rank_scope: str) -> pd.DataFrame:
+    result = table.copy(deep=True)
+    result["rank_scope"] = rank_scope
     return result
 
 
@@ -834,7 +917,8 @@ def _cross_dataset_primary(
     result["endpoint_scope"] = "cross_dataset"
     result["n_subjects_total"] = result["n_subjects_estimable"]
     result["truth_scope"] = "real_data"
-    return result
+    result["rank_scope"] = "global_common_functional"
+    return cast(pd.DataFrame, result)
 
 
 def _track_b_reason(identity: RunIdentity) -> str:
@@ -845,11 +929,36 @@ def _track_b_reason(identity: RunIdentity) -> str:
     )
 
 
+def _manifest_output_bytes(
+    manifest: Mapping[str, Any], manifest_path: Path | None
+) -> int | None:
+    declared = _manifest_value(manifest, "output", "bytes")
+    if declared is not None:
+        value = int(declared)
+        if value < 0:
+            raise ValueError("manifest output.bytes must be non-negative")
+        return value
+    table = _manifest_value(manifest, "output", "table")
+    if isinstance(table, str) and table and manifest_path is not None:
+        output_path = (manifest_path.parent / table).resolve()
+        if output_path.is_file():
+            return output_path.stat().st_size
+    return None
+
+
 def _derived_performance_record(
     identity: RunIdentity,
     manifest: Mapping[str, Any],
     long_path: Path | None,
+    *,
+    performance_role: str = "method_total",
+    source_manifest_path: Path | None = None,
+    source_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
+    if performance_role not in PERFORMANCE_ROLES:
+        raise ValueError(
+            f"performance_role must be one of {sorted(PERFORMANCE_ROLES)}"
+        )
     status = str(manifest.get("status", "failed"))
     if status not in {"complete", "failed", "not_supported", "skipped"}:
         status = "failed"
@@ -866,9 +975,11 @@ def _derived_performance_record(
         "status": status,
         "wall_time_seconds": manifest.get("elapsed_seconds"),
         "peak_rss_mb": _manifest_value(manifest, "performance", "peak_rss_mb"),
-        "output_bytes": long_path.stat().st_size
-        if long_path and long_path.is_file()
-        else None,
+        "output_bytes": (
+            long_path.stat().st_size
+            if long_path and long_path.is_file()
+            else _manifest_output_bytes(manifest, source_manifest_path)
+        ),
         "threads": 1 if threads is None else threads,
         "determinism_key": _manifest_value(manifest, "parameters", "determinism_key"),
         "output_sha256": (
@@ -876,7 +987,226 @@ def _derived_performance_record(
             if status == "complete"
             else None
         ),
+        "performance_role": performance_role,
+        "include_in_method_runtime": performance_role in METHOD_RUNTIME_ROLES,
+        "performance_source_manifest": (
+            source_manifest_path.as_posix() if source_manifest_path else None
+        ),
+        "performance_source_manifest_sha256": source_manifest_sha256,
     }
+
+
+def _performance_records_for_run(
+    *,
+    spec_root: Path,
+    identity: RunIdentity,
+    run: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+    long_path: Path | None,
+) -> tuple[list[dict[str, Any]], tuple[Path, ...]]:
+    """Resolve method-runtime versus adapter-only performance provenance."""
+    role = str(run.get("performance_role", "method_total"))
+    current_digest = _sha256(manifest_path)
+    current = _derived_performance_record(
+        identity,
+        manifest,
+        long_path,
+        performance_role=role,
+        source_manifest_path=manifest_path,
+        source_manifest_sha256=current_digest,
+    )
+    override = run.get("performance_override")
+    if override is None:
+        return [current], ()
+    if not isinstance(override, Mapping):
+        raise ValueError("adapter_runs[].performance_override must be an object")
+    unknown = set(override).difference(
+        {"source_manifest", "source_role", "expected_sha256"}
+    )
+    if unknown:
+        raise ValueError(
+            "performance_override contains unsupported fields: "
+            f"{sorted(unknown)}"
+        )
+    if role not in {"adapter_readback", "excluded"}:
+        raise ValueError(
+            "performance_override requires performance_role='adapter_readback' "
+            "or 'excluded' so adapter elapsed time cannot also enter method runtime"
+        )
+    source_path = _resolve(
+        spec_root,
+        override.get("source_manifest"),
+        field="adapter_runs[].performance_override.source_manifest",
+    )
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    source_digest = _sha256(source_path)
+    expected_digest = override.get("expected_sha256")
+    if expected_digest is not None and str(expected_digest) != source_digest:
+        raise ValueError(
+            "performance override source manifest SHA256 mismatch: "
+            f"expected={expected_digest}, observed={source_digest}"
+        )
+    source_role = str(override.get("source_role", "source_pipeline_total"))
+    if source_role not in METHOD_RUNTIME_ROLES:
+        raise ValueError(
+            "performance_override.source_role must identify a method runtime: "
+            f"{sorted(METHOD_RUNTIME_ROLES)}"
+        )
+    source_manifest = _read_json(source_path)
+    source_bindings = {
+        "dataset": source_manifest.get("dataset_id"),
+        "method": _manifest_value(source_manifest, "method", "id")
+        or source_manifest.get("method_id"),
+        "resource": _manifest_value(source_manifest, "resource", "id")
+        or _manifest_value(source_manifest, "resource", "resource_id")
+        or source_manifest.get("resource_id"),
+        "resource_mode": _manifest_value(source_manifest, "resource", "mode")
+        or source_manifest.get("resource_mode"),
+    }
+    expected_bindings = {
+        "dataset": identity.dataset,
+        "method": identity.method,
+        "resource": identity.resource,
+        "resource_mode": identity.resource_mode,
+    }
+    missing_bindings = [
+        name for name, value in source_bindings.items() if value is None
+    ]
+    if missing_bindings:
+        raise ValueError(
+            "performance override source manifest lacks identity bindings: "
+            f"{missing_bindings}"
+        )
+    mismatched_bindings = {
+        name: {"expected": expected_bindings[name], "observed": str(value)}
+        for name, value in source_bindings.items()
+        if str(value) != expected_bindings[name]
+    }
+    if mismatched_bindings:
+        raise ValueError(
+            "performance override source manifest identity mismatch: "
+            f"{mismatched_bindings}"
+        )
+    source = _derived_performance_record(
+        identity,
+        source_manifest,
+        None,
+        performance_role=source_role,
+        source_manifest_path=source_path,
+        source_manifest_sha256=source_digest,
+    )
+    source["run_id"] = f"{source['run_id']}:{source_role}"
+    current["run_id"] = f"{current['run_id']}:{role}"
+    return [source, current], (source_path,)
+
+
+def _prepare_performance_runtime_input(records: pd.DataFrame) -> pd.DataFrame:
+    """Exclude adapter-only timing while retaining an explicit NE identity."""
+    prepared = records.copy(deep=True)
+    if "performance_role" not in prepared:
+        prepared["performance_role"] = "method_total"
+    prepared["performance_role"] = (
+        prepared["performance_role"].fillna("method_total").replace("", "method_total")
+    )
+    prepared["include_in_method_runtime"] = prepared["performance_role"].isin(
+        METHOD_RUNTIME_ROLES
+    )
+    invalid_roles = set(prepared["performance_role"].astype(str)).difference(
+        PERFORMANCE_ROLES
+    )
+    if invalid_roles:
+        raise ValueError(f"unsupported performance roles: {sorted(invalid_roles)}")
+    identity = [
+        "dataset",
+        "method",
+        "method_version",
+        "analysis_track",
+        "resource",
+        "resource_version",
+        "resource_mode",
+    ]
+    runtime_rows: list[pd.DataFrame] = []
+    for _, group in prepared.groupby(identity, sort=False, observed=True):
+        included = group.loc[group["include_in_method_runtime"].astype(bool)].copy()
+        included_roles = set(included["performance_role"].astype(str))
+        if len(included_roles) > 1:
+            raise ValueError(
+                "one method identity cannot mix multiple included runtime roles: "
+                f"{sorted(included_roles)}"
+            )
+        if included.empty:
+            placeholder = group.iloc[[0]].copy()
+            placeholder["status"] = "skipped"
+            placeholder["wall_time_seconds"] = np.nan
+            placeholder["peak_rss_mb"] = np.nan
+            placeholder["output_bytes"] = np.nan
+            placeholder["performance_role"] = "excluded"
+            placeholder["run_id"] = (
+                placeholder["run_id"].astype(str) + ":method_runtime_excluded"
+            )
+            runtime_rows.append(placeholder)
+        else:
+            runtime_rows.append(included)
+    return pd.concat(runtime_rows, ignore_index=True, sort=False)
+
+
+def _performance_component_summary(records: pd.DataFrame) -> pd.DataFrame:
+    identity = [
+        "dataset",
+        "method",
+        "method_version",
+        "analysis_track",
+        "resource",
+        "resource_version",
+        "resource_mode",
+    ]
+    prepared = records.copy(deep=True)
+    if "performance_role" not in prepared:
+        prepared["performance_role"] = "method_total"
+    prepared["performance_role"] = (
+        prepared["performance_role"].fillna("method_total").replace("", "method_total")
+    )
+    prepared["include_in_method_runtime"] = prepared["performance_role"].isin(
+        METHOD_RUNTIME_ROLES
+    )
+    rows: list[dict[str, Any]] = []
+    for keys, group in prepared.groupby(identity, sort=False, observed=True):
+        row = dict(zip(identity, keys, strict=True))
+        complete = group.loc[group["status"].eq("complete")]
+        roles = sorted(
+            set(
+                complete.loc[
+                    complete["include_in_method_runtime"].astype(bool),
+                    "performance_role",
+                ].astype(str)
+            )
+        )
+        row["method_runtime_role"] = roles[0] if len(roles) == 1 else "not_available"
+        row["performance_component_count"] = len(group)
+        for role in sorted(PERFORMANCE_ROLES):
+            values = pd.to_numeric(
+                complete.loc[
+                    complete["performance_role"].eq(role), "wall_time_seconds"
+                ],
+                errors="coerce",
+            ).dropna()
+            row[f"median_{role}_wall_time_seconds"] = (
+                float(values.median()) if len(values) else np.nan
+            )
+        source_digests = sorted(
+            set(
+                complete.get(
+                    "performance_source_manifest_sha256", pd.Series(dtype=str)
+                )
+                .dropna()
+                .astype(str)
+            )
+        )
+        row["performance_source_manifest_sha256"] = ";".join(source_digests)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _truth_observations(path: Path) -> pd.DataFrame:
@@ -960,6 +1290,21 @@ def _biology_support_table(
         raise ValueError("supportive biology aliases create duplicate observations")
 
     variant_columns = ["dataset", "method", "resource_mode"]
+    if variants.empty or "rank_scope" not in variants:
+        rank_scope_policy = pd.DataFrame(
+            columns=[*variant_columns, "rank_scope"]
+        )
+    else:
+        rank_scope_policy = variants.loc[
+            :, [*variant_columns, "rank_scope"]
+        ].dropna(subset=["rank_scope"]).drop_duplicates()
+        duplicated_scope = rank_scope_policy.duplicated(
+            variant_columns, keep=False
+        )
+        if duplicated_scope.any():
+            raise ValueError(
+                "one biology method/resource variant cannot mix rank_scope values"
+            )
     if variants.empty:
         variants = pd.DataFrame(columns=variant_columns)
     else:
@@ -1035,18 +1380,37 @@ def _biology_support_table(
         grids.append(grid)
     grid = pd.concat(grids, ignore_index=True)
     result = grid.merge(evidence, on=key, how="left", validate="one_to_one")
+    result = result.merge(
+        rank_scope_policy,
+        on=variant_columns,
+        how="left",
+        validate="many_to_one",
+    )
+    result["rank_scope"] = result["rank_scope"].fillna(
+        "annotation_only_unbound_rank_scope"
+    )
     defaults: dict[str, str] = {
         "support_status": "not_evaluated",
         "observed_direction": "",
         "evidence_note": "supportive_evidence_not_supplied",
         "status": "not_estimable",
         "reason_code": "supportive_evidence_not_supplied",
+        "source_biology_file": "",
     }
     for column, default in defaults.items():
         if column not in result:
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
+    invalid_scope = result["rank_scope"].astype(str).str.startswith("not_estimable")
+    result.loc[invalid_scope, "support_status"] = "not_estimable"
+    result.loc[invalid_scope, "status"] = "not_estimable"
+    result.loc[invalid_scope, "reason_code"] = (
+        "receiver_child_functionals_not_globally_comparable"
+    )
+    result.loc[invalid_scope, "evidence_note"] = (
+        "supportive_biology_evidence_rejected_by_rank_scope_guard"
+    )
     return result
 
 
@@ -1227,6 +1591,10 @@ def finalize(
     sensitivity_loso_frames: list[pd.DataFrame] = []
     sensitivity_influence_frames: list[pd.DataFrame] = []
     sensitivity_simulation_frames: list[pd.DataFrame] = []
+    ranking_agreement_frames: list[pd.DataFrame] = []
+    ranking_curve_frames: list[pd.DataFrame] = []
+    ranking_interval_frames: list[pd.DataFrame] = []
+    ranking_tier_frames: list[pd.DataFrame] = []
     score_index_rows: list[dict[str, Any]] = []
     performance_records: list[dict[str, Any]] = []
     variant_rows: list[dict[str, str]] = []
@@ -1236,6 +1604,27 @@ def finalize(
     source_records: list[dict[str, Any]] = [
         _source_record(spec_path, "run specification")
     ]
+    # Ranking stability has a separately preregistered, fixed resampling policy.
+    rank_parameters = RankStabilityParameters()
+
+    def collect_rank_tables(
+        tables: Any,
+        *,
+        truth_scope: str,
+        view: ScoreView | None = None,
+    ) -> None:
+        frames_and_tables = (
+            (ranking_agreement_frames, tables.agreement),
+            (ranking_curve_frames, tables.top_k_curve),
+            (ranking_interval_frames, tables.rank_intervals),
+            (ranking_tier_frames, tables.stable_tiers),
+        )
+        for frames, table in frames_and_tables:
+            annotated = table.copy(deep=True)
+            if view is not None:
+                annotated = _annotate_view(annotated, view)
+            annotated["truth_scope"] = truth_scope
+            frames.append(annotated)
 
     try:
         copied_spec = _copy_input(
@@ -1246,6 +1635,12 @@ def finalize(
         _write_tsv(staging / "metrics" / METRIC_FILES["dataset_design"], design)
 
         for dataset_index, dataset in enumerate(datasets):
+            dataset_rank_parameters = replace(
+                rank_parameters,
+                min_subjects=max(
+                    3, int(dataset.comparison.get("min_subjects", 3))
+                ),
+            )
             generated_dataset_manifest = (
                 staging / "datasets" / _slug(dataset.dataset) / "dataset_manifest.json"
             )
@@ -1292,7 +1687,14 @@ def finalize(
                 )
 
             if not dataset.adapter_runs:
-                reason = "dataset_has_no_adapter_runs"
+                if str(dataset.comparison.get("design")) == "unsupported":
+                    reason = str(
+                        dataset.design.get("reason_code")
+                        or dataset.comparison.get("reason_code")
+                        or "unsupported_comparison_design"
+                    )
+                else:
+                    reason = "dataset_has_no_adapter_runs"
                 identity = RunIdentity(
                     dataset=dataset.dataset,
                     method="No adapter run",
@@ -1313,6 +1715,14 @@ def finalize(
                 )
                 stability_frames.append(
                     pd.DataFrame([_not_estimable_stability(identity, reason)])
+                )
+                collect_rank_tables(
+                    not_estimable_rank_stability(
+                        identity.metric_values(),
+                        reason_code=reason,
+                        parameters=dataset_rank_parameters,
+                    ),
+                    truth_scope=dataset.truth_scope,
                 )
                 score_index_rows.append(
                     {
@@ -1388,9 +1798,32 @@ def finalize(
                     if long_value is not None
                     else None
                 )
-                performance_records.append(
-                    _derived_performance_record(fallback_identity, manifest, long_path)
+                run_performance, performance_sources = _performance_records_for_run(
+                    spec_root=spec_root,
+                    identity=fallback_identity,
+                    run=run,
+                    manifest=manifest,
+                    manifest_path=manifest_path,
+                    long_path=long_path,
                 )
+                performance_records.extend(run_performance)
+                for performance_source in performance_sources:
+                    source_records.append(
+                        _source_record(
+                            performance_source,
+                            "method runtime source manifest",
+                        )
+                    )
+                    _copy_input(
+                        performance_source,
+                        staging
+                        / "provenance"
+                        / "performance_manifests"
+                        / (
+                            f"{dataset_index:03d}_{run_index:03d}_"
+                            f"{performance_source.name}"
+                        ),
+                    )
                 if long_path is None or not long_path.is_file():
                     reason = (
                         "adapter_long_table_missing_after_failed_run"
@@ -1417,6 +1850,14 @@ def finalize(
                         pd.DataFrame(
                             [_not_estimable_stability(fallback_identity, reason)]
                         )
+                    )
+                    collect_rank_tables(
+                        not_estimable_rank_stability(
+                            fallback_identity.metric_values(),
+                            reason_code=reason,
+                            parameters=dataset_rank_parameters,
+                        ),
+                        truth_scope=dataset.truth_scope,
                     )
                     score_index_rows.append(
                         {
@@ -1528,6 +1969,15 @@ def finalize(
                             coverage_frames.append(_annotate_view(coverage_ne, view))
                             primary_frames.append(_annotate_view(primary_ne, view))
                             stability_frames.append(_annotate_view(stability_ne, view))
+                            collect_rank_tables(
+                                not_estimable_rank_stability(
+                                    identity.metric_values(),
+                                    reason_code=reason,
+                                    parameters=dataset_rank_parameters,
+                                ),
+                                truth_scope=dataset.truth_scope,
+                                view=view,
+                            )
                         else:
                             sensitivity_coverage_frames.append(
                                 _annotate_view(coverage_ne, view)
@@ -1577,6 +2027,9 @@ def finalize(
                     identity = _view_identity(
                         base_view_identity, view, multiple_views=multiple_views
                     )
+                    rank_scope, rank_scope_reason = _rank_scope_for_view(
+                        run, manifest, view
+                    )
                     index_base = {
                         "schema_version": SCORE_INDEX_SCHEMA_VERSION,
                         **identity.metric_values(),
@@ -1587,6 +2040,7 @@ def finalize(
                         "score_view_primary": view.primary,
                         "source_path": long_path.as_posix(),
                         "source_sha256": source_digest,
+                        "rank_scope": rank_scope,
                     }
                     if not view.include:
                         score_index_rows.append(
@@ -1613,6 +2067,7 @@ def finalize(
                     )
                     del selected_external
                     mapped = _annotate_view(mapped, view)
+                    mapped = _annotate_rank_scope(mapped, rank_scope)
                     output_name = (
                         f"{dataset_index:03d}_{run_index:03d}_{view_index:03d}_"
                         f"{_slug(dataset.dataset)}_{_slug(identity.method)}_"
@@ -1636,15 +2091,8 @@ def finalize(
                     coverage_result = _annotate_view(
                         score_coverage_summary(mapped, validated=True), view
                     )
-                    within = _annotate_view(
-                        _stability_long(
-                            within_context_reproducibility(
-                                mapped,
-                                top_k=parameters["top_k"],
-                                validated=True,
-                            )
-                        ),
-                        view,
+                    coverage_result = _annotate_rank_scope(
+                        coverage_result, rank_scope
                     )
                     coverage_target = (
                         coverage_frames if view.primary else sensitivity_coverage_frames
@@ -1655,11 +2103,151 @@ def finalize(
                         else sensitivity_stability_frames
                     )
                     coverage_target.append(coverage_result)
-                    stability_target.append(within)
                     design_type = str(dataset.comparison["design"])
                     reference = str(dataset.comparison.get("reference", ""))
                     target = str(dataset.comparison.get("target", ""))
                     minimum = int(dataset.comparison.get("min_subjects", 3))
+                    support = mapped.loc[
+                        mapped["context"].astype(str).isin((reference, target)),
+                        ["subject_id", "context"],
+                    ].drop_duplicates()
+                    reference_subjects = set(
+                        support.loc[
+                            support["context"].astype(str).eq(reference), "subject_id"
+                        ].astype(str)
+                    )
+                    target_subjects = set(
+                        support.loc[
+                            support["context"].astype(str).eq(target), "subject_id"
+                        ].astype(str)
+                    )
+                    paired_subjects = reference_subjects & target_subjects
+                    variant_rows.append(
+                        {
+                            "dataset": identity.dataset,
+                            "method": identity.method,
+                            "resource_mode": identity.resource_mode,
+                            "rank_scope": rank_scope,
+                        }
+                    )
+                    if rank_scope_reason is not None:
+                        primary_ne = _annotate_rank_scope(
+                            _annotate_view(
+                                pd.DataFrame(
+                                    [
+                                        _not_estimable_primary(
+                                            identity, rank_scope_reason
+                                        )
+                                    ]
+                                ),
+                                view,
+                            ),
+                            rank_scope,
+                        )
+                        stability_ne = _annotate_rank_scope(
+                            _annotate_view(
+                                pd.DataFrame(
+                                    [
+                                        _not_estimable_stability(
+                                            identity, rank_scope_reason
+                                        )
+                                    ]
+                                ),
+                                view,
+                            ),
+                            rank_scope,
+                        )
+                        if view.primary:
+                            primary_frames.append(primary_ne)
+                            stability_frames.append(stability_ne)
+                            if dataset.truth_scope == "real_data":
+                                collect_rank_tables(
+                                    not_estimable_rank_stability(
+                                        identity.metric_values(),
+                                        reason_code=rank_scope_reason,
+                                        parameters=dataset_rank_parameters,
+                                        design=design_type,
+                                        reference=reference,
+                                        target=target,
+                                        rank_scope=rank_scope,
+                                        n_reference_subjects=len(reference_subjects),
+                                        n_target_subjects=len(target_subjects),
+                                        n_paired_subjects=len(paired_subjects),
+                                    ),
+                                    truth_scope=dataset.truth_scope,
+                                    view=view,
+                                )
+                        else:
+                            sensitivity_primary_frames.append(primary_ne)
+                            sensitivity_stability_frames.append(stability_ne)
+                        if truth is not None:
+                            truth_ne = _annotate_rank_scope(
+                                _annotate_view(
+                                    pd.DataFrame(
+                                        [
+                                            identity.metric_values()
+                                            | {
+                                                "truth_scope": dataset.truth_scope,
+                                                "metric": "edge_truth",
+                                                "estimate": np.nan,
+                                                "status": "not_estimable",
+                                                "reason_code": rank_scope_reason,
+                                            }
+                                        ]
+                                    ),
+                                    view,
+                                ),
+                                rank_scope,
+                            )
+                            truth_target = (
+                                simulation_frames
+                                if view.primary
+                                else sensitivity_simulation_frames
+                            )
+                            truth_target.append(truth_ne)
+                        del mapped
+                        gc.collect()
+                        continue
+
+                    within = _annotate_rank_scope(
+                        _annotate_view(
+                            _stability_long(
+                                within_context_reproducibility(
+                                    mapped,
+                                    top_k=parameters["top_k"],
+                                    validated=True,
+                                )
+                            ),
+                            view,
+                        ),
+                        rank_scope,
+                    )
+                    stability_target.append(within)
+                    if view.primary and dataset.truth_scope == "real_data":
+                        if design_type in {"paired", "unpaired"}:
+                            collect_rank_tables(
+                                evaluate_multicondition_rank_stability(
+                                    mapped,
+                                    reference=reference,
+                                    target=target,
+                                    design=cast(Any, design_type),
+                                    rank_scope=cast(Any, rank_scope),
+                                    parameters=dataset_rank_parameters,
+                                    validated=True,
+                                ),
+                                truth_scope=dataset.truth_scope,
+                                view=view,
+                            )
+                        else:
+                            collect_rank_tables(
+                                not_estimable_rank_stability(
+                                    identity.metric_values(),
+                                    reason_code="unsupported_comparison_design",
+                                    parameters=dataset_rank_parameters,
+                                ),
+                                truth_scope=dataset.truth_scope,
+                                view=view,
+                            )
                     if design_type == "paired":
                         effects = _annotate_view(
                             paired_edge_effects(
@@ -1671,6 +2259,7 @@ def finalize(
                             ),
                             view,
                         )
+                        effects = _annotate_rank_scope(effects, rank_scope)
                         loso = _annotate_view(
                             paired_differential_loso_reproducibility(
                                 mapped,
@@ -1682,6 +2271,7 @@ def finalize(
                             ),
                             view,
                         )
+                        loso = _annotate_rank_scope(loso, rank_scope)
                         summary = _annotate_view(
                             summarize_loso_primary_endpoint(
                                 loso,
@@ -1690,6 +2280,7 @@ def finalize(
                             ),
                             view,
                         )
+                        summary = _annotate_rank_scope(summary, rank_scope)
                         if view.primary:
                             effects_frames.append(effects)
                             paired_loso_frames.append(loso)
@@ -1711,6 +2302,7 @@ def finalize(
                             ),
                             view,
                         )
+                        effects = _annotate_rank_scope(effects, rank_scope)
                         split = _annotate_view(
                             unpaired_differential_split_half_reproducibility(
                                 mapped,
@@ -1726,6 +2318,7 @@ def finalize(
                             ),
                             view,
                         )
+                        split = _annotate_rank_scope(split, rank_scope)
                         influence = _annotate_view(
                             unpaired_leave_one_subject_influence(
                                 mapped,
@@ -1737,6 +2330,7 @@ def finalize(
                             ),
                             view,
                         )
+                        influence = _annotate_rank_scope(influence, rank_scope)
                         if view.primary:
                             effects_frames.append(effects)
                             influence_frames.append(influence)
@@ -1780,6 +2374,7 @@ def finalize(
                             ),
                             view,
                         )
+                        truth_result = _annotate_rank_scope(truth_result, rank_scope)
                         truth_target = (
                             simulation_frames
                             if view.primary
@@ -1822,6 +2417,7 @@ def finalize(
             concordance = pd.DataFrame()
 
         concordance = _annotate_truth_scope(concordance, dataset_truth_scopes)
+        concordance["rank_scope"] = "global_common_functional"
         if concordance.empty or not concordance["truth_scope"].eq("real_data").any():
             real_data_ne = pd.DataFrame(
                 [
@@ -1993,10 +2589,24 @@ def finalize(
             performance_input = _read_table(explicit_performance)
         else:
             performance_input = pd.DataFrame(performance_records)
-        performance = _annotate_truth_scope(
-            summarize_run_performance(performance_input),
-            dataset_truth_scopes,
+        runtime_input = _prepare_performance_runtime_input(performance_input)
+        performance = summarize_run_performance(runtime_input)
+        performance_components = _performance_component_summary(performance_input)
+        performance = performance.merge(
+            performance_components,
+            on=[
+                "dataset",
+                "method",
+                "method_version",
+                "analysis_track",
+                "resource",
+                "resource_version",
+                "resource_mode",
+            ],
+            how="left",
+            validate="one_to_one",
         )
+        performance = _annotate_truth_scope(performance, dataset_truth_scopes)
 
         truth_value = payload.get("supportive_biology_truth")
         if truth_value is None:
@@ -2045,6 +2655,48 @@ def finalize(
         )
         iteration = _iteration_table(iteration_path, real_datasets)
 
+        if ranking_agreement_frames:
+            ranking_agreement = pd.concat(
+                ranking_agreement_frames, ignore_index=True, sort=False
+            )
+            ranking_curve = pd.concat(
+                ranking_curve_frames, ignore_index=True, sort=False
+            )
+            ranking_intervals = pd.concat(
+                ranking_interval_frames, ignore_index=True, sort=False
+            )
+            ranking_tiers = pd.concat(
+                ranking_tier_frames, ignore_index=True, sort=False
+            )
+        else:
+            fallback_rank = not_estimable_rank_stability(
+                {
+                    "dataset": "__none_real_data__",
+                    "method": "NE",
+                    "method_version": "not_available",
+                    "analysis_track": "lr_stlr",
+                    "resource": "not_available",
+                    "resource_version": "not_available",
+                    "resource_mode": "native",
+                    "score_semantics": "not_available",
+                    "universe_id": "not_available",
+                    "contrast": "not_available",
+                },
+                reason_code="no_real_data_ranking_inputs",
+                parameters=rank_parameters,
+            )
+            ranking_agreement = fallback_rank.agreement
+            ranking_curve = fallback_rank.top_k_curve
+            ranking_intervals = fallback_rank.rank_intervals
+            ranking_tiers = fallback_rank.stable_tiers
+            for table in (
+                ranking_agreement,
+                ranking_curve,
+                ranking_intervals,
+                ranking_tiers,
+            ):
+                table["truth_scope"] = "real_data"
+
         metric_tables = {
             "coverage": coverage,
             "loso_primary": primary,
@@ -2054,6 +2706,10 @@ def finalize(
             "biology_support": biology,
             "simulation_truth": simulation,
             "iteration_comparison": iteration,
+            "ranking_agreement": ranking_agreement,
+            "ranking_top_k_curve": ranking_curve,
+            "ranking_intervals": ranking_intervals,
+            "ranking_tiers": ranking_tiers,
         }
         for key, table in metric_tables.items():
             _write_tsv(staging / "metrics" / METRIC_FILES[key], table)
@@ -2084,11 +2740,38 @@ def finalize(
         _write_json(staging / "report_inputs.json", report_inputs)
 
         generated_at = str(payload.get("generated_at", datetime.now(UTC).isoformat()))
+        frozen_main_inputs = payload.get("frozen_main_inputs", {})
+        if not isinstance(frozen_main_inputs, Mapping):
+            raise ValueError("frozen_main_inputs must be an annotation object")
         final_manifest: dict[str, Any] = {
             "schema_version": FINALIZATION_SCHEMA_VERSION,
             "specification_schema_version": SPEC_SCHEMA_VERSION,
             "generated_at": generated_at,
             "parameters": parameters,
+            "ranking_parameters": {
+                **asdict(rank_parameters),
+                "family_top_k_curve": [1, 25],
+                "lr_top_k_curve": [1, 100],
+                "sender_top_k_curve": [1, 25],
+                "sender_receiver_pair_top_k_curve": [1, 25],
+                "lr_family_mapping_status": "not_available_in_score_contract",
+                "resampling_unit": "subject",
+                "rank_interval_conditioning": "conditional_on_rank_availability",
+                "rank_availability_frequency_denominator": (
+                    "all_requested_replicates"
+                ),
+                "top_k_frequency_denominator": "all_requested_replicates",
+                "tie_policy": "average_rank_and_tie_inclusive_top_k",
+            },
+            "frozen_main_inputs": dict(frozen_main_inputs),
+            "frozen_main_inputs_validation": {
+                "status": "annotation_only_unless_bound_by_path_contract",
+                "reason_code": (
+                    "legacy frozen_main_inputs keys do not declare source paths; "
+                    "adapter output hashes, performance_override.expected_sha256, "
+                    "and copied input checksums are validated separately"
+                ),
+            },
             "datasets": [dataset.dataset for dataset in datasets],
             "counts": {
                 "adapter_runs": sum(len(dataset.adapter_runs) for dataset in datasets),
@@ -2120,6 +2803,10 @@ def finalize(
                 "stability_rows": len(stability),
                 "concordance_rows": len(concordance),
                 "simulation_truth_rows": len(simulation),
+                "ranking_agreement_rows": len(ranking_agreement),
+                "ranking_top_k_curve_rows": len(ranking_curve),
+                "ranking_interval_rows": len(ranking_intervals),
+                "ranking_tier_rows": len(ranking_tiers),
             },
             "guardrails": {
                 "real_data_edge_auroc_reported": False,
@@ -2128,6 +2815,9 @@ def finalize(
                 "preregistered_track_b_primary_reported": False,
                 "track_b_proxy_mislabelled_as_native_nichenet": False,
                 "unpaired_leave_one_out_labelled_independent_replication": False,
+                "nichenet_lr_or_sender_ranking_reported": False,
+                "ranking_missing_items_imputed_as_zero": False,
+                "receiver_child_functionals_ranked_globally": False,
             },
             "supportive_biology_dataset_aliases": biology_dataset_aliases,
             "report_inputs": "report_inputs.json",

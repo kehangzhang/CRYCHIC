@@ -60,9 +60,10 @@
     "extensions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["edge_evidence"],
+      "minProperties": 1,
       "properties": {
-        "edge_evidence": {"$ref": "#/$defs/edgeEvidenceRecord"}
+        "edge_evidence": {"$ref": "#/$defs/edgeEvidenceRecord"},
+        "scoring_collections": {"$ref": "#/$defs/scoringCollectionsRecord"}
       }
     },
     "stages": {
@@ -113,6 +114,27 @@
           "additionalProperties": false,
           "required": ["sample_scores"],
           "properties": {
+            "sample_scores": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      }
+    },
+    "scoringCollectionsRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extension_schema_version", "filename", "collections", "sha256", "schema", "linked_tables"],
+      "properties": {
+        "extension_schema_version": {"const": "1.0.0"},
+        "filename": {"const": "scoring_collections.json"},
+        "collections": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "schema": {"const": "scoring_collections.schema.json"},
+        "linked_tables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactions", "sample_scores"],
+          "properties": {
+            "interactions": {"$ref": "#/$defs/sha256"},
             "sample_scores": {"$ref": "#/$defs/sha256"}
           }
         }

@@ -9,6 +9,7 @@ import pytest
 from anndata import AnnData
 from scipy import sparse
 
+import crychic.sender.common as common_sender_module
 import crychic.workflow.training as training_module
 from crychic.availability import BatchAvailability, InteractionFilterApplication
 from crychic.core import CrychicConfig
@@ -20,6 +21,7 @@ from crychic.resources import (
     Species,
     TargetPrior,
 )
+from crychic.sender import ContrastCommonSenderParameters
 from crychic.workflow import (
     FoldTrainingSpec,
     TrainingArtifacts,
@@ -91,22 +93,25 @@ def _adata(subject_ids: tuple[str, ...], *, first_high: bool) -> AnnData:
     metadata: list[dict[str, str]] = []
     obs_names: list[str] = []
     for subject in subject_ids:
-        sample = f"sample-{subject}"
-        for cell_type, profile in (
-            ("Sender", [high, 0, low, 0, 1, 1]),
-            ("Receiver", [0, high, 0, low, 1, 1]),
-        ):
-            for cell_index in range(3):
-                rows.append(profile)
-                metadata.append(
-                    {
-                        "sample_id": sample,
-                        "subject_id": subject,
-                        "cell_type": cell_type,
-                        "condition": "stim",
-                    }
-                )
-                obs_names.append(f"{subject}-{cell_type}-{cell_index}")
+        for condition in ("control", "stim"):
+            sample = f"sample-{subject}-{condition}"
+            for cell_type, profile in (
+                ("Sender", [high, 0, low, 0, 1, 1]),
+                ("Receiver", [0, high, 0, low, 1, 1]),
+            ):
+                for cell_index in range(3):
+                    rows.append(profile)
+                    metadata.append(
+                        {
+                            "sample_id": sample,
+                            "subject_id": subject,
+                            "cell_type": cell_type,
+                            "condition": condition,
+                        }
+                    )
+                    obs_names.append(
+                        f"{subject}-{condition}-{cell_type}-{cell_index}"
+                    )
     counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
     adata = AnnData(
         X=sparse.csr_matrix(counts.shape, dtype=np.float64),
@@ -133,7 +138,11 @@ def _fit_adata(adata: AnnData) -> TrainingArtifacts:
         _config(),
         _bundle(),
         _prior(),
-        spec=FoldTrainingSpec(min_cells=1, max_interactions=1),
+        spec=FoldTrainingSpec(
+            min_cells=1,
+            max_interactions=1,
+            sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+        ),
     )
 
 
@@ -165,11 +174,17 @@ def test_raw_training_scope_derives_identity_and_fits_a_real_universe() -> None:
 
     assert artifacts.training_subject_ids == ("train-1", "train-2")
     assert artifacts.training_sample_ids == (
-        "sample-train-1",
-        "sample-train-2",
+        "sample-train-1-control",
+        "sample-train-1-stim",
+        "sample-train-2-control",
+        "sample-train-2-stim",
     )
     assert artifacts.cell_type_ids == ("Receiver", "Sender")
-    assert artifacts.completed_stages == ("availability_filter",)
+    assert artifacts.completed_stages == (
+        "availability_filter",
+        "common_sender_functional",
+    )
+    assert "common_sender_functional" not in artifacts.remaining_stages
     assert "common_scoring_functional" in artifacts.remaining_stages
     assert artifacts.certification_status == "training_only_partial_not_oof"
     assert artifacts.is_oof_certified is False
@@ -177,6 +192,17 @@ def test_raw_training_scope_derives_identity_and_fits_a_real_universe() -> None:
     assert artifacts.frozen_interaction_universe.training_subject_ids == (
         "train-1",
         "train-2",
+    )
+    assert len(artifacts.sender_functionals) == 1
+    sender_functional = artifacts.sender_functionals[0]
+    assert sender_functional.training_subject_ids == (
+        "train-1",
+        "train-2",
+    )
+    assert len(sender_functional.context_ids) == 2
+    assert sender_functional.contrast_manifest_id
+    assert sender_functional.filter_universe_id == (
+        artifacts.frozen_interaction_universe.filter_universe_id
     )
 
 
@@ -208,7 +234,10 @@ def test_training_stage_receives_only_sanitized_declared_input(
     )
 
     artifacts = _fit()
-    assert artifacts.completed_stages == ("availability_filter",)
+    assert artifacts.completed_stages == (
+        "availability_filter",
+        "common_sender_functional",
+    )
 
 
 def _assert_declared_metadata_changes_digest(metadata_kind: str) -> None:
@@ -289,6 +318,16 @@ def test_application_uses_frozen_universe_when_training_fits_are_poisoned(
 
     monkeypatch.setattr(training_module, "fit_training_artifacts", forbidden_fit)
     monkeypatch.setattr(training_module, "_fit_interaction_universe", forbidden_fit)
+    monkeypatch.setattr(
+        training_module,
+        "fit_contrast_common_sender_functional",
+        forbidden_fit,
+    )
+    monkeypatch.setattr(
+        common_sender_module,
+        "fit_contrast_common_sender_functional",
+        forbidden_fit,
+    )
     heldout = _adata(("test-1",), first_high=False)
     application = apply_training_artifacts(artifacts, heldout)
 
@@ -305,6 +344,13 @@ def test_application_uses_frozen_universe_when_training_fits_are_poisoned(
     assert application.availability.filter_universe_id == (
         artifacts.frozen_interaction_universe.filter_universe_id
     )
+    assert len(application.sender_assignments) == 1
+    sender_assignment = application.sender_assignments[0]
+    assert sender_assignment.functional.sender_functional_id == (
+        artifacts.sender_functionals[0].sender_functional_id
+    )
+    assert sender_assignment.table["assignment_weight"].notna().any()
+    assert not sender_assignment.is_oof_certified
 
 
 def test_heldout_expression_poison_cannot_change_training_artifacts() -> None:
@@ -322,6 +368,18 @@ def test_heldout_expression_poison_cannot_change_training_artifacts() -> None:
     assert applied_a.heldout_input_digest != applied_b.heldout_input_digest
     assert not applied_a.availability.sample_interactions.equals(
         applied_b.availability.sample_interactions
+    )
+    assert len(first.sender_functionals) == 1
+    assert len(applied_a.sender_assignments) == 1
+    assert len(applied_b.sender_assignments) == 1
+    assert applied_a.sender_assignments[0].functional.sender_functional_id == (
+        first.sender_functionals[0].sender_functional_id
+    )
+    assert applied_b.sender_assignments[0].functional.sender_functional_id == (
+        first.sender_functionals[0].sender_functional_id
+    )
+    assert not applied_a.sender_assignments[0].table.equals(
+        applied_b.sender_assignments[0].table
     )
 
 

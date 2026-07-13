@@ -317,6 +317,22 @@ def test_fit_baseline_preserves_units_common_functional_and_missing_evidence() -
         == artifacts.availability.filter_universe_id
         for run in artifacts.score_runs
     )
+    collections = artifacts.scoring_collections
+    assert collections
+    assert all(
+        not collection.common_functional_across_receivers
+        for collection in collections
+    )
+    assert {
+        child.scoring_functional_id
+        for collection in collections
+        for child in collection.children
+    } == {
+        run.functional.scoring_function_id for run in artifacts.score_runs
+    }
+    assert sum(
+        collection.source_score_row_count for collection in collections
+    ) == len(artifacts.sample_scores)
     availability_parameters = artifacts.run_parameters["availability"]
     assert availability_parameters["filter_application"] == "training_selection_v1"
     assert availability_parameters["application_subject_ids"] == (
@@ -690,6 +706,7 @@ def test_public_facade_atomically_persists_queryable_v0_1_result(tmp_path) -> No
 
     assert isinstance(result, crychic.CrychicResult)
     assert not result.has_edge_evidence
+    assert result.has_scoring_collections
     assert "edge_evidence_not_persisted" in result.manifest["warnings"]
     assert result.manifest["mode"] == "exploratory"
     assert result.manifest["workflow_parameters"]["pseudobulk"] == {"min_cells": 2}
@@ -714,6 +731,15 @@ def test_public_facade_atomically_persists_queryable_v0_1_result(tmp_path) -> No
     assert not interactions.empty
     assert not responses.empty
     assert not sample_scores.empty
+    collections = result.read_scoring_collections()
+    assert collections
+    assert all(
+        not collection.common_functional_across_receivers
+        for collection in collections
+    )
+    assert sum(
+        collection.source_score_row_count for collection in collections
+    ) == len(sample_scores)
     assert interactions["comm_probability"].isna().all()
     assert responses["p_value"].isna().all()
     contrast = next(
@@ -742,6 +768,7 @@ def test_public_facade_persists_opt_in_edge_evidence_extension(tmp_path) -> None
 
     assert isinstance(result, crychic.CrychicResult)
     assert result.has_edge_evidence
+    assert result.has_scoring_collections
     assert "edge_evidence_not_persisted" not in result.manifest["warnings"]
     extension = result.manifest["extensions"]["edge_evidence"]
     assert extension["rows"] > 0

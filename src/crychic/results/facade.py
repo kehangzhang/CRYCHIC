@@ -19,13 +19,19 @@ from crychic.core import (
     canonical_digest,
     canonical_json,
 )
+from crychic.scoring.contracts import (
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
+)
 
 from ._schema import (
     RESULT_SCHEMA_VERSION,
     TABLE_NAMES,
     edge_evidence_contract,
     load_schema_document,
+    scoring_collections_contract,
     table_contract,
+    validate_scoring_collection_links,
     validate_table,
 )
 from .errors import IncompleteResultError, ResultValidationError
@@ -209,56 +215,103 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
             )
     if "extensions" in value:
         extensions = value["extensions"]
-        extension_contract = edge_evidence_contract()
-        if not isinstance(extensions, Mapping) or set(extensions) != {
-            extension_contract.name
-        }:
+        edge_contract = edge_evidence_contract()
+        collection_contract = scoring_collections_contract()
+        allowed_extensions = {edge_contract.name, collection_contract.name}
+        if (
+            not isinstance(extensions, Mapping)
+            or not extensions
+            or not set(extensions).issubset(allowed_extensions)
+        ):
             _fail(
                 "Run manifest result extensions are invalid",
                 code="invalid_run_manifest",
                 field_name="extensions",
             )
-        extension = extensions[extension_contract.name]
-        expected_fields = {
-            "extension_schema_version",
-            "filename",
-            "rows",
-            "sha256",
-            "schema",
-            "linked_tables",
-        }
-        if not isinstance(extension, Mapping) or set(extension) != expected_fields:
-            _fail(
-                "Run manifest edge-evidence extension record is invalid",
-                code="invalid_run_manifest",
-                field_name=extension_contract.name,
-            )
-        linked_tables = extension["linked_tables"]
-        if (
-            extension["extension_schema_version"]
-            != extension_contract.extension_schema_version
-            or extension["filename"] != extension_contract.filename
-            or extension["schema"] != extension_contract.schema_filename
-            or not isinstance(extension["rows"], int)
-            or isinstance(extension["rows"], bool)
-            or extension["rows"] < 0
-            or not isinstance(extension["sha256"], str)
-            or _SHA256.fullmatch(extension["sha256"]) is None
-            or not isinstance(linked_tables, Mapping)
-            or set(linked_tables) != set(extension_contract.linked_tables)
-        ):
-            _fail(
-                "Run manifest edge-evidence extension record is incompatible",
-                code="invalid_run_manifest",
-                field_name=extension_contract.name,
-            )
-        for linked_table in extension_contract.linked_tables:
-            if linked_tables[linked_table] != tables[linked_table]["sha256"]:
+        if edge_contract.name in extensions:
+            extension = extensions[edge_contract.name]
+            expected_fields = {
+                "extension_schema_version",
+                "filename",
+                "rows",
+                "sha256",
+                "schema",
+                "linked_tables",
+            }
+            if not isinstance(extension, Mapping) or set(extension) != expected_fields:
                 _fail(
-                    "Edge-evidence extension linkage does not match its table",
-                    code="result_digest_mismatch",
-                    field_name=extension_contract.name,
+                    "Run manifest edge-evidence extension record is invalid",
+                    code="invalid_run_manifest",
+                    field_name=edge_contract.name,
                 )
+            linked_tables = extension["linked_tables"]
+            if (
+                extension["extension_schema_version"]
+                != edge_contract.extension_schema_version
+                or extension["filename"] != edge_contract.filename
+                or extension["schema"] != edge_contract.schema_filename
+                or not isinstance(extension["rows"], int)
+                or isinstance(extension["rows"], bool)
+                or extension["rows"] < 0
+                or not isinstance(extension["sha256"], str)
+                or _SHA256.fullmatch(extension["sha256"]) is None
+                or not isinstance(linked_tables, Mapping)
+                or set(linked_tables) != set(edge_contract.linked_tables)
+            ):
+                _fail(
+                    "Run manifest edge-evidence extension record is incompatible",
+                    code="invalid_run_manifest",
+                    field_name=edge_contract.name,
+                )
+            for linked_table in edge_contract.linked_tables:
+                if linked_tables[linked_table] != tables[linked_table]["sha256"]:
+                    _fail(
+                        "Edge-evidence extension linkage does not match its table",
+                        code="result_digest_mismatch",
+                        field_name=edge_contract.name,
+                    )
+        if collection_contract.name in extensions:
+            extension = extensions[collection_contract.name]
+            expected_fields = {
+                "extension_schema_version",
+                "filename",
+                "collections",
+                "sha256",
+                "schema",
+                "linked_tables",
+            }
+            if not isinstance(extension, Mapping) or set(extension) != expected_fields:
+                _fail(
+                    "Run manifest scoring-collection extension record is invalid",
+                    code="invalid_run_manifest",
+                    field_name=collection_contract.name,
+                )
+            linked_tables = extension["linked_tables"]
+            if (
+                extension["extension_schema_version"]
+                != collection_contract.extension_schema_version
+                or extension["filename"] != collection_contract.filename
+                or extension["schema"] != collection_contract.schema_filename
+                or not isinstance(extension["collections"], int)
+                or isinstance(extension["collections"], bool)
+                or extension["collections"] <= 0
+                or not isinstance(extension["sha256"], str)
+                or _SHA256.fullmatch(extension["sha256"]) is None
+                or not isinstance(linked_tables, Mapping)
+                or set(linked_tables) != set(collection_contract.linked_tables)
+            ):
+                _fail(
+                    "Run manifest scoring-collection extension is incompatible",
+                    code="invalid_run_manifest",
+                    field_name=collection_contract.name,
+                )
+            for linked_table in collection_contract.linked_tables:
+                if linked_tables[linked_table] != tables[linked_table]["sha256"]:
+                    _fail(
+                        "Scoring-collection linkage does not match its table",
+                        code="result_digest_mismatch",
+                        field_name=collection_contract.name,
+                    )
     if not isinstance(value["stages"], list) or not isinstance(value["warnings"], list):
         _fail(
             "Run manifest stages and warnings must be arrays",
@@ -429,8 +482,8 @@ class CrychicResult:
                 )
             validate_table(table_name, frame)
 
-        extensions = manifest.get("extensions")
-        if extensions is not None:
+        extensions = manifest.get("extensions", {})
+        if edge_evidence_contract().name in extensions:
             extension_contract = edge_evidence_contract()
             extension_record = extensions[extension_contract.name]
             extension_path = root / extension_contract.filename
@@ -458,6 +511,68 @@ class CrychicResult:
                     code="result_digest_mismatch",
                     field_name=extension_contract.name,
                 )
+        if scoring_collections_contract().name in extensions:
+            collection_contract = scoring_collections_contract()
+            collection_record = extensions[collection_contract.name]
+            collection_path = root / collection_contract.filename
+            try:
+                collection_digest = sha256_file(collection_path)
+                collection_value = read_json(collection_path)
+                collection_document = ScoringCollectionDocument.from_dict(
+                    collection_value
+                )
+            except Exception as exc:
+                raise ResultValidationError(
+                    "Scoring-collection extension is missing or corrupted",
+                    code="corrupted_result_extension",
+                    field=collection_contract.name,
+                    remediation="Reject the artifact and regenerate it",
+                ) from exc
+            if (
+                collection_digest != collection_record["sha256"]
+                or len(collection_document.collections)
+                != collection_record["collections"]
+            ):
+                _fail(
+                    "Scoring-collection extension does not match its manifest",
+                    code="result_digest_mismatch",
+                    field_name=collection_contract.name,
+                )
+            try:
+                source_scores = _read_parquet(
+                    root / table_contract("sample_scores").filename,
+                    columns=[
+                        "subject_id",
+                        "sample_id",
+                        "context_id",
+                        "design_row_id",
+                        "edge_id",
+                        "scoring_functional_id",
+                        "repeat_id",
+                        "fold_id",
+                        "mode",
+                    ],
+                    engine="pyarrow",
+                )
+                source_interactions = _read_parquet(
+                    root / table_contract("interactions").filename,
+                    columns=["contrast", "sender", "receiver", "interaction_id"],
+                    engine="pyarrow",
+                )
+                validate_scoring_collection_links(
+                    collection_document,
+                    source_scores,
+                    source_interactions,
+                )
+            except ResultValidationError:
+                raise
+            except Exception as exc:
+                raise ResultValidationError(
+                    "Scoring-collection table linkage cannot be validated",
+                    code="corrupted_result_extension",
+                    field=collection_contract.name,
+                    remediation="Reject the artifact and regenerate it",
+                ) from exc
 
         return cls(
             path=root.resolve(),
@@ -488,7 +603,25 @@ class CrychicResult:
     def has_edge_evidence(self) -> bool:
         """Whether this result includes the optional edge-evidence extension."""
 
-        return "extensions" in self._manifest
+        extensions = self._manifest.get("extensions", {})
+        return edge_evidence_contract().name in extensions
+
+    @property
+    def has_scoring_collections(self) -> bool:
+        """Whether this result declares receiver-partitioned functionals."""
+
+        extensions = self._manifest.get("extensions", {})
+        return scoring_collections_contract().name in extensions
+
+    def read_scoring_collections(self) -> tuple[ScoringCollectionManifest, ...]:
+        """Read validated receiver-child scoring collection manifests."""
+
+        if not self.has_scoring_collections:
+            raise KeyError("scoring_collections")
+        contract = scoring_collections_contract()
+        value = read_json(self.path / contract.filename)
+        document = ScoringCollectionDocument.from_dict(value)
+        return tuple(document.collections)
 
     def read_edge_evidence(
         self,
@@ -582,9 +715,7 @@ class CrychicResult:
             },
         )
         score_column = (
-            "comm_strength"
-            if frame["comm_strength"].notna().any()
-            else "availability"
+            "comm_strength" if frame["comm_strength"].notna().any() else "availability"
         )
         ranked = frame.sort_values(
             [score_column, "interaction_id", "sender"],

@@ -43,6 +43,7 @@ IDENTITY_COLUMNS = (
     "resource_mode",
     "score_semantics",
     "universe_id",
+    "rank_scope",
 )
 EDGE_COLUMNS = ("sender", "receiver", "interaction_id", "ligand", "receptor")
 EXTERNAL_LONG_EFFECT_COLUMNS = (
@@ -223,6 +224,7 @@ def _normalize_effect_table(
         "resource_mode": "unknown",
         "score_semantics": "differential_rank_strength",
         "universe_id": "unknown",
+        "rank_scope": "global_common_functional",
     }
     for name, default in defaults.items():
         result[name] = _identity_value(result, name, default)
@@ -270,8 +272,17 @@ def effect_table_from_score_table(
     design: str,
     min_support: int = 3,
     contrast: str | None = None,
+    rank_scope: str = "global_common_functional",
+    common_functional_claim: bool | None = None,
 ) -> pd.DataFrame:
     """Compute exploratory edge effects from a validated LR score table."""
+
+    if rank_scope != "global_common_functional":
+        raise ValueError(
+            "score-table effects require rank_scope=global_common_functional"
+        )
+    if common_functional_claim is False:
+        raise ValueError("common_functional_claim=false forbids global rank_scope")
 
     if design == "paired":
         return cast(
@@ -368,6 +379,8 @@ def effect_table_from_external_long(
     design: str,
     min_support: int = 3,
     contrast: str | None = None,
+    rank_scope: str = "global_common_functional",
+    common_functional_claim: bool | None = None,
 ) -> pd.DataFrame:
     """Convert a fixed-universe adapter table and compute edge effects.
 
@@ -379,6 +392,12 @@ def effect_table_from_external_long(
     """
 
     del contrast  # The external table stores sample contexts, not contrast labels.
+    if rank_scope not in {"global_common_functional", "within_receiver_macro"}:
+        raise ValueError(
+            "rank_scope must be global_common_functional or within_receiver_macro"
+        )
+    if common_functional_claim is False and rank_scope == "global_common_functional":
+        raise ValueError("common_functional_claim=false forbids global rank_scope")
     if design not in {"paired", "independent"}:
         raise ValueError("design must be 'paired' or 'independent'")
     if isinstance(min_support, bool) or not isinstance(min_support, int):
@@ -526,7 +545,15 @@ def effect_table_from_external_long(
     direction = str(table["score_direction"].iloc[0])
     if direction not in {"higher", "lower"}:
         raise ValueError("score_direction must be 'higher' or 'lower'")
-    if "rank" in working:
+    if rank_scope == "within_receiver_macro":
+        rank_group = [working["sample_id"], working["receiver"]]
+        rank_group_codes, _ = pd.factorize(
+            pd.MultiIndex.from_arrays(rank_group), sort=False
+        )
+    else:
+        rank_group = [working["sample_id"]]
+        rank_group_codes = sample_codes
+    if "rank" in working and rank_scope == "global_common_functional":
         supplied_rank = pd.to_numeric(working["rank"], errors="coerce")
         if supplied_rank.loc[observed].isna().any():
             raise ValueError("observed external rows require a finite adapter rank")
@@ -535,19 +562,25 @@ def effect_table_from_external_long(
         oriented = score if direction == "higher" else -score
         observed_rank = (
             oriented.loc[observed]
-            .groupby(working.loc[observed, "sample_id"], observed=True, sort=False)
+            .groupby(
+                [series.loc[observed] for series in rank_group],
+                observed=True,
+                sort=False,
+            )
             .rank(ascending=False, method="average")
         )
     comparable = metric_status.isin({"observed", "not_predicted"}).to_numpy()
     comparable_size = np.bincount(
-        sample_codes,
+        rank_group_codes,
         weights=comparable.astype(float),
-        minlength=len(sample_labels),
+        minlength=int(rank_group_codes.max()) + 1,
     )
     observed_mask = observed.to_numpy()
     observed_rank_array = observed_rank.to_numpy(dtype=float, copy=False)
     comparison_strength[observed_mask] = (
-        1.0 - (observed_rank_array - 1.0) / comparable_size[sample_codes[observed_mask]]
+        1.0
+        - (observed_rank_array - 1.0)
+        / comparable_size[rank_group_codes[observed_mask]]
     )
     comparison_strength[metric_status.eq("not_predicted").to_numpy()] = 0.0
 
@@ -707,6 +740,7 @@ def effect_table_from_external_long(
         "resource_mode": str(table["resource_mode"].iloc[0]),
         "score_semantics": str(table["score_name"].iloc[0]),
         "universe_id": str(table["universe_id"].iloc[0]),
+        "rank_scope": rank_scope,
     }
     for field, value in identity.items():
         effects[field] = value
@@ -930,12 +964,25 @@ def _network_family_scores(
             }
         )
     result = pd.DataFrame(rows)
-    ranks = result["signed_score"].rank(ascending=False, method="average")
-    result["percentile"] = np.where(
-        len(result) == 1,
-        1.0,
-        1.0 - (ranks - 1.0) / (len(result) - 1.0),
-    )
+    scopes = set(usable["rank_scope"].astype(str))
+    if len(scopes) != 1:
+        raise ValueError("supportive biology table cannot mix rank_scope values")
+    if scopes == {"within_receiver_macro"}:
+        groups = result.groupby("receiver", observed=True, sort=False)
+        ranks = groups["signed_score"].rank(ascending=False, method="average")
+        sizes = groups["signed_score"].transform("size")
+        result["percentile"] = np.where(
+            sizes.eq(1),
+            1.0,
+            1.0 - (ranks - 1.0) / (sizes - 1.0),
+        )
+    else:
+        ranks = result["signed_score"].rank(ascending=False, method="average")
+        result["percentile"] = np.where(
+            len(result) == 1,
+            1.0,
+            1.0 - (ranks - 1.0) / (len(result) - 1.0),
+        )
     return result
 
 
@@ -1489,17 +1536,41 @@ def evaluate_supportive_biology(
     return result
 
 
-def write_biology_support(table: pd.DataFrame, output_path: str | Path) -> Path:
-    """Write the report-ready ``biology_support.tsv`` table."""
+def _source_label(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("source_label must be a string")
+    label = value.strip()
+    if not label:
+        raise ValueError("source_label must not be empty")
+    if any(character in label for character in ("\t", "\n", "\r")):
+        raise ValueError("source_label must not contain tabs or newlines")
+    return label
+
+
+def write_biology_support(
+    table: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    source_label: str | None = None,
+) -> Path:
+    """Write a report-ready supportive-biology table.
+
+    The default remains the released evaluator schema.  A caller
+    preparing inputs for ``merge_biology_support`` may explicitly append the
+    merge-provenance column with ``source_label``.
+    """
 
     missing = set(OUTPUT_COLUMNS).difference(table.columns)
     if missing:
         raise ValueError(
             f"biology support output is missing columns: {sorted(missing)}"
         )
+    output = table.loc[:, OUTPUT_COLUMNS].copy()
+    if source_label is not None:
+        output["source_biology_file"] = _source_label(source_label)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    table.loc[:, OUTPUT_COLUMNS].to_csv(path, sep="\t", index=False)
+    output.to_csv(path, sep="\t", index=False)
     return path
 
 
@@ -1564,6 +1635,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--design", choices=("paired", "independent"))
     parser.add_argument("--min-support", type=int, default=3)
     parser.add_argument("--contrast")
+    parser.add_argument(
+        "--rank-scope",
+        choices=("global_common_functional", "within_receiver_macro"),
+        default="global_common_functional",
+    )
+    parser.add_argument(
+        "--common-functional-claim",
+        choices=("true", "false", "unknown"),
+        default="unknown",
+        help="Fail closed when receiver child functionals are not globally common",
+    )
     parser.add_argument("--mapping-config", type=Path)
     parser.add_argument(
         "--run-id",
@@ -1571,22 +1653,42 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--top-fraction", type=float, default=0.10)
     parser.add_argument("--network-top-fraction", type=float, default=0.25)
+    parser.add_argument(
+        "--source-label",
+        help=(
+            "Append source_biology_file with this non-empty deterministic label; "
+            "omit it to preserve the released evaluator schema"
+        ),
+    )
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
+    common_claim = {
+        "true": True,
+        "false": False,
+        "unknown": None,
+    }[args.common_functional_claim]
+    if common_claim is False and args.rank_scope == "global_common_functional":
+        raise ValueError("common_functional_claim=false forbids global rank_scope")
     source = (
         read_external_long_for_effects(args.input_table, run_id=args.run_id)
         if args.input_format == "external-long"
         else _read_table(args.input_table)
     )
     if args.input_format == "effect":
-        effects = source
+        effects = source.copy(deep=True)
+        if "rank_scope" not in effects:
+            effects["rank_scope"] = args.rank_scope
     else:
         if args.design is None:
             raise ValueError("score and external-long inputs require --design")
         if args.input_format == "score":
+            if args.rank_scope != "global_common_functional":
+                raise ValueError(
+                    "within_receiver_macro currently requires external-long input"
+                )
             effects = effect_table_from_score_table(
                 source,
                 reference=args.reference,
@@ -1594,6 +1696,8 @@ def main() -> None:
                 design=args.design,
                 min_support=args.min_support,
                 contrast=args.contrast,
+                rank_scope=args.rank_scope,
+                common_functional_claim=common_claim,
             )
         else:
             if args.context_key is None:
@@ -1606,6 +1710,8 @@ def main() -> None:
                 design=args.design,
                 min_support=args.min_support,
                 contrast=args.contrast,
+                rank_scope=args.rank_scope,
+                common_functional_claim=common_claim,
             )
     evaluated = evaluate_supportive_biology(
         effects,
@@ -1617,7 +1723,11 @@ def main() -> None:
         top_fraction=args.top_fraction,
         network_top_fraction=args.network_top_fraction,
     )
-    output = write_biology_support(evaluated, args.output_tsv)
+    output = write_biology_support(
+        evaluated,
+        args.output_tsv,
+        source_label=args.source_label,
+    )
     print(_canonical_json({"output": str(output), "rows": len(evaluated)}))
 
 

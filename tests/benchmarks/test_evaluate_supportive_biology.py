@@ -9,6 +9,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 from benchmarks.metrics.evaluate_supportive_biology import (
     EVIDENCE_CLASSES,
+    OUTPUT_COLUMNS,
     REPORT_SUPPORT_STATUSES,
     _validated_frozen_edge_ids,
     effect_table_from_external_long,
@@ -16,6 +17,7 @@ from benchmarks.metrics.evaluate_supportive_biology import (
     evaluate_supportive_biology,
     load_biology_mappings,
     load_supportive_biology,
+    main,
     read_external_long_for_effects,
     write_biology_support,
 )
@@ -292,6 +294,55 @@ def _score_table() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _receiver_scaled_external_long(*, receiver_c_scale: float = 1.0) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    edges = (
+        ("i1", "L1", "R1", "B"),
+        ("i2", "L2", "R2", "B"),
+        ("i3", "L3", "R3", "C"),
+        ("i4", "L4", "R4", "C"),
+    )
+    for subject in ("s1", "s2", "s3"):
+        for context in ("Normal", "Tumor"):
+            scores = {
+                "i1": 0.9 if context == "Normal" else 0.1,
+                "i2": 0.1 if context == "Normal" else 0.9,
+                "i3": 0.8 * receiver_c_scale,
+                "i4": 0.2 * receiver_c_scale,
+            }
+            for interaction, ligand, receptor, receiver in edges:
+                rows.append(
+                    {
+                        "run_id": "run-1",
+                        "dataset_id": "test_dataset",
+                        "method_id": "method-a",
+                        "method_version": "1",
+                        "analysis_track": "lr_stlr",
+                        "resource_mode": "H-common",
+                        "resource_id": "resource-a",
+                        "resource_version": "1",
+                        "universe_id": "u1",
+                        "universe_member": True,
+                        "universe_size": len(edges),
+                        "sample_id": f"{subject}_{context}",
+                        "subject_id": subject,
+                        "context_json": json.dumps({"condition": context}),
+                        "sender": "A",
+                        "receiver": receiver,
+                        "interaction_id": interaction,
+                        "ligand": ligand,
+                        "receptor": receptor,
+                        "target": "",
+                        "score": scores[interaction],
+                        "score_name": "magnitude",
+                        "score_direction": "higher",
+                        "rank": 1.0,
+                        "status": "ok",
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def test_score_table_conversion_preserves_paired_subject_unit() -> None:
     effects = effect_table_from_score_table(
         _score_table(),
@@ -308,6 +359,50 @@ def test_score_table_conversion_preserves_paired_subject_unit() -> None:
     assert second["effect"] < 0
     assert first["n_pairs"] == 3
     assert first["status"] == "exploratory"
+
+
+def test_common_functional_false_forbids_global_rank_scope() -> None:
+    table = _receiver_scaled_external_long()
+
+    with pytest.raises(ValueError, match="forbids global rank_scope"):
+        effect_table_from_external_long(
+            table,
+            context_key="condition",
+            reference="Normal",
+            target="Tumor",
+            design="paired",
+            common_functional_claim=False,
+        )
+    with pytest.raises(ValueError, match="forbids global rank_scope"):
+        effect_table_from_score_table(
+            _score_table(),
+            reference="Normal",
+            target="Tumor",
+            design="paired",
+            common_functional_claim=False,
+        )
+
+
+def test_within_receiver_rank_scope_is_invariant_to_other_receiver_scale() -> None:
+    def effects(scale: float) -> pd.DataFrame:
+        return effect_table_from_external_long(
+            _receiver_scaled_external_long(receiver_c_scale=scale),
+            context_key="condition",
+            reference="Normal",
+            target="Tumor",
+            design="paired",
+            min_support=3,
+            rank_scope="within_receiver_macro",
+            common_functional_claim=False,
+        ).sort_values("interaction_id")
+
+    baseline = effects(1.0)
+    shifted = effects(100.0)
+
+    assert set(baseline["rank_scope"]) == {"within_receiver_macro"}
+    np.testing.assert_allclose(baseline["effect"], shifted["effect"])
+    assert baseline.loc[baseline["interaction_id"].eq("i1"), "effect"].iloc[0] < 0
+    assert baseline.loc[baseline["interaction_id"].eq("i2"), "effect"].iloc[0] > 0
 
 
 def test_external_track_b_retains_source_agnostic_semantics() -> None:
@@ -556,5 +651,140 @@ def test_write_report_ready_table(tmp_path: Path) -> None:
     output = write_biology_support(evaluated, tmp_path / "biology_support.tsv")
 
     persisted = pd.read_csv(output, sep="\t")
+    assert persisted.columns.tolist() == list(OUTPUT_COLUMNS)
+    assert "source_biology_file" not in persisted
     assert persisted["observation_id"].tolist() == ["one"]
     assert persisted["support_status"].tolist() == ["supported"]
+
+
+def test_write_report_ready_table_appends_deterministic_source_label(
+    tmp_path: Path,
+) -> None:
+    evaluated = evaluate_supportive_biology(
+        _effect_rows(),
+        _truth([_observation("one", interactions=[["L1", "R1"]])]),
+        dataset_id="test_dataset",
+        reference="Normal",
+        target="Tumor",
+    )
+
+    output = write_biology_support(
+        evaluated,
+        tmp_path / "biology_support.tsv",
+        source_label="  candidate_v02.tsv  ",
+    )
+
+    persisted = pd.read_csv(output, sep="\t")
+    assert persisted.columns.tolist() == [*OUTPUT_COLUMNS, "source_biology_file"]
+    assert persisted["source_biology_file"].tolist() == ["candidate_v02.tsv"]
+
+
+@pytest.mark.parametrize("source_label", ["", "   ", "bad\tlabel", "bad\nlabel"])
+def test_write_report_ready_table_rejects_invalid_source_label(
+    tmp_path: Path,
+    source_label: str,
+) -> None:
+    evaluated = evaluate_supportive_biology(
+        _effect_rows(),
+        _truth([_observation("one", interactions=[["L1", "R1"]])]),
+        dataset_id="test_dataset",
+        reference="Normal",
+        target="Tumor",
+    )
+
+    with pytest.raises(ValueError, match="source_label"):
+        write_biology_support(
+            evaluated,
+            tmp_path / "biology_support.tsv",
+            source_label=source_label,
+        )
+
+
+def test_cli_source_label_emits_merge_ready_column(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    truth_path = tmp_path / "truth.yaml"
+    truth_path.write_text(
+        yaml.safe_dump(_truth([_observation("one", interactions=[["L1", "R1"]])])),
+        encoding="utf-8",
+    )
+    effects_path = tmp_path / "effects.tsv"
+    _effect_rows().to_csv(effects_path, sep="\t", index=False)
+    output_path = tmp_path / "biology_support.tsv"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evaluate_supportive_biology",
+            str(truth_path),
+            str(effects_path),
+            str(output_path),
+            "--dataset-id",
+            "test_dataset",
+            "--reference",
+            "Normal",
+            "--target",
+            "Tumor",
+            "--source-label",
+            "candidate_v02.tsv",
+        ],
+    )
+
+    main()
+
+    summary = json.loads(capsys.readouterr().out)
+    persisted = pd.read_csv(output_path, sep="\t")
+    assert summary == {"output": str(output_path), "rows": 1}
+    assert persisted.columns[-1] == "source_biology_file"
+    assert persisted["source_biology_file"].tolist() == ["candidate_v02.tsv"]
+
+
+def test_cli_within_receiver_scope_persists_scope_and_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    truth_path = tmp_path / "truth.yaml"
+    truth_path.write_text(
+        yaml.safe_dump(_truth([_observation("one", interactions=[["L1", "R1"]])])),
+        encoding="utf-8",
+    )
+    external_path = tmp_path / "external.tsv"
+    _receiver_scaled_external_long().to_csv(external_path, sep="\t", index=False)
+    output_path = tmp_path / "biology_support.tsv"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evaluate_supportive_biology",
+            str(truth_path),
+            str(external_path),
+            str(output_path),
+            "--dataset-id",
+            "test_dataset",
+            "--reference",
+            "Normal",
+            "--target",
+            "Tumor",
+            "--input-format",
+            "external-long",
+            "--context-key",
+            "condition",
+            "--design",
+            "paired",
+            "--rank-scope",
+            "within_receiver_macro",
+            "--common-functional-claim",
+            "false",
+            "--source-label",
+            "within_receiver.tsv",
+        ],
+    )
+
+    main()
+
+    summary = json.loads(capsys.readouterr().out)
+    persisted = pd.read_csv(output_path, sep="\t")
+    assert summary == {"output": str(output_path), "rows": 1}
+    assert set(persisted["rank_scope"]) == {"within_receiver_macro"}
+    assert set(persisted["source_biology_file"]) == {"within_receiver.tsv"}

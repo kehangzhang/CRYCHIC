@@ -30,6 +30,12 @@ from crychic.results import (
     empty_table,
     write_result,
 )
+from crychic.scoring import (
+    ReceiverScoringFunctionalManifest,
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
+    scoring_source_key_digest,
+)
 from crychic.sender import SenderEvidenceParameters, assign_senders
 
 from .contracts import BaselineArtifacts, RunStatus
@@ -60,9 +66,7 @@ def _context_payload(
     return dict(node_context_mapping(value, context_keys))
 
 
-def _context_fields(
-    value: Hashable, context_keys: tuple[str, ...]
-) -> tuple[str, str]:
+def _context_fields(value: Hashable, context_keys: tuple[str, ...]) -> tuple[str, str]:
     return node_context_fields(value, context_keys)
 
 
@@ -332,6 +336,68 @@ def _integrated_score_rows(artifacts: BaselineArtifacts) -> pd.DataFrame:
     return _typed_table("sample_scores", pd.DataFrame.from_records(records))
 
 
+def baseline_scoring_collections(
+    artifacts: BaselineArtifacts,
+    *,
+    sample_scores: pd.DataFrame | None = None,
+) -> tuple[ScoringCollectionManifest, ...]:
+    """Build verifiable partial receiver partitions from emitted score rows."""
+
+    if not isinstance(artifacts, BaselineArtifacts):
+        raise TypeError("artifacts must be BaselineArtifacts")
+    if not artifacts.score_runs:
+        return ()
+    source = (
+        _integrated_score_rows(artifacts)
+        if sample_scores is None
+        else sample_scores.copy(deep=False)
+    )
+    runs_by_functional = {
+        run.functional.scoring_function_id: run for run in artifacts.score_runs
+    }
+    if len(runs_by_functional) != len(artifacts.score_runs):
+        raise ValueError("score runs must have unique scoring functional IDs")
+    functional_ids = source["scoring_functional_id"].astype(str)
+    if set(functional_ids) != set(runs_by_functional):
+        raise ValueError("score runs do not exactly cover persisted sample scores")
+
+    grouped_children: dict[
+        tuple[str, str, str], list[ReceiverScoringFunctionalManifest]
+    ] = {}
+    for functional_id, run in runs_by_functional.items():
+        child_source = source.loc[functional_ids.eq(functional_id)]
+        if child_source.empty:
+            raise ValueError("receiver score run has no persisted source rows")
+        repeat_ids = set(child_source["repeat_id"].astype(str))
+        fold_ids = set(child_source["fold_id"].astype(str))
+        if len(repeat_ids) != 1 or len(fold_ids) != 1:
+            raise ValueError("receiver score rows span multiple repeat/fold groups")
+        repeat_id = next(iter(repeat_ids))
+        fold_id = next(iter(fold_ids))
+        child = ReceiverScoringFunctionalManifest(
+            receiver=str(run.receiver),
+            scoring_functional_id=functional_id,
+            source_score_key_digest=scoring_source_key_digest(child_source),
+            source_score_row_count=len(child_source),
+        )
+        grouped_children.setdefault((run.contrast, repeat_id, fold_id), []).append(
+            child
+        )
+
+    collections = tuple(
+        ScoringCollectionManifest(
+            contrast=contrast,
+            repeat_id=repeat_id,
+            fold_id=fold_id,
+            emitted_receivers=tuple(child.receiver for child in children),
+            children=tuple(children),
+        )
+        for (contrast, repeat_id, fold_id), children in grouped_children.items()
+    )
+    document = ScoringCollectionDocument(collections=collections)
+    return tuple(document.collections)
+
+
 def _interaction_table(
     artifacts: BaselineArtifacts,
     sample_scores: pd.DataFrame,
@@ -375,12 +441,13 @@ def _interaction_table(
         index=scored.index,
     )
     contrast_by_function = {
-        run.functional.scoring_function_id: run.contrast
-        for run in artifacts.score_runs
+        run.functional.scoring_function_id: run.contrast for run in artifacts.score_runs
     }
-    scored["contrast"] = scored["scoring_functional_id"].map(
-        contrast_by_function
-    ).fillna(_AVAILABILITY_CONTRAST)
+    scored["contrast"] = (
+        scored["scoring_functional_id"]
+        .map(contrast_by_function)
+        .fillna(_AVAILABILITY_CONTRAST)
+    )
     subject_keys = [
         "context_id",
         "context_json",
@@ -504,12 +571,13 @@ def write_baseline_result(
 
     if not isinstance(persist_edge_evidence, bool):
         raise TypeError("persist_edge_evidence must be a bool")
-    tables = baseline_result_tables(
-        artifacts, sender_parameters=sender_parameters
+    tables = baseline_result_tables(artifacts, sender_parameters=sender_parameters)
+    scoring_collections = baseline_scoring_collections(
+        artifacts,
+        sample_scores=tables["sample_scores"],
     )
     bundle_key = (
-        f"{artifacts.resource_bundle.resource_id}:"
-        f"{artifacts.resource_bundle.version}"
+        f"{artifacts.resource_bundle.resource_id}:{artifacts.resource_bundle.version}"
     )
     resources = {bundle_key: artifacts.resource_bundle.manifest_digest}
     if artifacts.target_prior is not None:
@@ -536,14 +604,12 @@ def write_baseline_result(
             "workflow_digest": artifacts.run_parameters_digest,
         },
     )
-    response_ok = (
-        not artifacts.response.contrasts.empty
-        and bool((artifacts.response.contrasts["status"] == "ok").any())
+    response_ok = not artifacts.response.contrasts.empty and bool(
+        (artifacts.response.contrasts["status"] == "ok").any()
     )
     availability_ok = not artifacts.availability.sample_interactions.empty
-    sender_ok = (
-        not artifacts.sender_assignment.table.empty
-        and bool((artifacts.sender_assignment.table["status"] == "ok").any())
+    sender_ok = not artifacts.sender_assignment.table.empty and bool(
+        (artifacts.sender_assignment.table["status"] == "ok").any()
     )
     attribution_ok = any(
         run.status is RunStatus.OK for run in artifacts.attribution_runs
@@ -620,9 +686,7 @@ def write_baseline_result(
                 "name": "scoring",
                 "status": "complete" if artifacts.score_runs else "skipped",
                 "reason_code": (
-                    None
-                    if artifacts.score_runs
-                    else "integrated_strength_unavailable"
+                    None if artifacts.score_runs else "integrated_strength_unavailable"
                 ),
             },
             {"name": "results", "status": "complete", "reason_code": None},
@@ -636,7 +700,12 @@ def write_baseline_result(
         run_manifest=manifest,
         tables=tables,
         edge_evidence=(artifacts.edge_evidence if persist_edge_evidence else None),
+        scoring_collections=scoring_collections or None,
     )
 
 
-__all__ = ["baseline_result_tables", "write_baseline_result"]
+__all__ = [
+    "baseline_result_tables",
+    "baseline_scoring_collections",
+    "write_baseline_result",
+]

@@ -32,6 +32,12 @@ preserving the exploratory v0.1 behavior:
   fitted basis, coefficient digest, receptor gates, target weights, sender and
   downstream functionals, availability and precision transforms, filtering,
   and tuning artifacts;
+- integrated result directories now persist a versioned
+  `scoring_collections.json` registry. Each contrast/repeat/fold collection
+  enumerates only the emitted receiver-specific scoring functional IDs and
+  source-score key digests. It is marked `partial_emitted_only`, records
+  `common_functional_across_receivers=false`, and does not claim a complete
+  planned receiver universe or verified persisted model metadata;
 - availability state and ecosystem eligibility have separate status and reason
   fields, and missing sender evidence no longer receives an implicit uniform
   assignment;
@@ -44,9 +50,12 @@ preserving the exploratory v0.1 behavior:
   `persist_edge_evidence=True`;
 - a producer-owned partial train/apply API now learns the interaction universe
   from sanitized training-fold observations and applies it unchanged to
-  held-out observations. It is explicitly labelled `partial_not_oof`; receptor,
-  response, family, downstream, sender, and common-scoring stages remain to be
-  connected before certified cross-fitting;
+  held-out observations. The same candidate path now also freezes a
+  contrast-common sender universe, pooled training prevalence priors, support
+  threshold, and temperature, then applies them using only held-out
+  sample-local ligand evidence. It is explicitly labelled `partial_not_oof`;
+  receptor, response, family, downstream, and common-scoring stages remain to
+  be connected before certified cross-fitting;
 - benchmark utilities now provide frozen-universe RBO, weighted Kendall,
   top-k curves, rank intervals, and stable-tier assignments. They are not yet
   connected to the real-data report campaign.

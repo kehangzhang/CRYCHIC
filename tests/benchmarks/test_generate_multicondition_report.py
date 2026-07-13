@@ -69,6 +69,36 @@ def _fixture(root: Path) -> Path:
         "        metric: paired_differential_rank\n",
         encoding="utf-8",
     )
+    ranking_parameters = {
+        "n_bootstrap": 2000,
+        "n_split_repeats": 200,
+        "rank_interval_quantile_level": 0.95,
+        "minimum_top_k_frequency": 0.8,
+        "minimum_estimable_replicate_fraction": 0.8,
+        "minimum_subjects": 3,
+        "minimum_observed_ranks": 2,
+        "rbo_persistence": 0.9,
+        "weighted_kendall_power": 1.0,
+        "random_seed": 20260712,
+    }
+    ranking_identity = {
+        "dataset": "cscc",
+        "method": "CellChat",
+        "resource_mode": "H-common",
+        "analysis_track": "lr_stlr",
+        "truth_scope": "real_data",
+        "contrast": "Tumor_vs_Normal",
+        "rank_scope": "global_common_functional",
+        "design": "paired",
+        "reference": "Normal",
+        "target": "Tumor",
+        "n_reference_subjects": 10,
+        "n_target_subjects": 10,
+        "n_paired_subjects": 10,
+        "ranking_level": "sender_receiver_pair",
+        "ranking_universe_size": 3,
+        **ranking_parameters,
+    }
 
     metrics = {
         "dataset_design": _write_tsv(
@@ -332,6 +362,99 @@ def _fixture(root: Path) -> Path:
                 },
             ],
         ),
+        "ranking_agreement": _write_tsv(
+            root,
+            "ranking_agreement_summary.tsv",
+            [
+                {
+                    **ranking_identity,
+                    "metric": metric,
+                    "estimate": estimate,
+                    "envelope_lower": estimate - 0.1,
+                    "envelope_upper": estimate + 0.1,
+                    "interval_type": "split_repeat_quantile_envelope",
+                    "n_repeats_requested": 200,
+                    "n_repeats_estimable": 200,
+                    "status": "observed",
+                    "reason_code": "",
+                }
+                for metric, estimate in (
+                    ("rank_biased_overlap", 0.72),
+                    ("weighted_kendall_tau", 0.61),
+                )
+            ],
+        ),
+        "ranking_top_k_curve": _write_tsv(
+            root,
+            "ranking_top_k_stability_curve.tsv",
+            [
+                {
+                    **ranking_identity,
+                    "metric": "tie_inclusive_top_k_jaccard",
+                    "k": k,
+                    "estimate": estimate,
+                    "envelope_lower": max(0.0, estimate - 0.1),
+                    "envelope_upper": min(1.0, estimate + 0.1),
+                    "interval_type": "split_repeat_quantile_envelope",
+                    "n_repeats_requested": 200,
+                    "n_repeats_estimable": 200,
+                    "status": "observed",
+                    "reason_code": "",
+                }
+                for k, estimate in ((1, 0.8), (2, 0.65), (3, 0.55))
+            ],
+        ),
+        "ranking_intervals": _write_tsv(
+            root,
+            "bootstrap_rank_intervals.tsv",
+            [
+                {
+                    **ranking_identity,
+                    "item_id": f"family_{index}",
+                    "item_label": label,
+                    "lower_rank": lower,
+                    "median_rank": median,
+                    "upper_rank": upper,
+                    "rank_availability_frequency": 1.0,
+                    "top_k_frequency": frequency,
+                    "n_replicates_requested": 2000,
+                    "status": "observed",
+                    "reason_code": "",
+                }
+                for index, (label, lower, median, upper, frequency) in enumerate(
+                    (
+                        ("Tumor -> Fibroblast", 1.0, 1.0, 2.0, 0.96),
+                        ("Fibroblast -> Tumor", 1.0, 2.0, 3.0, 0.82),
+                    ),
+                    start=1,
+                )
+            ],
+        ),
+        "ranking_tiers": _write_tsv(
+            root,
+            "stable_ranking_tiers.tsv",
+            [
+                {
+                    **ranking_identity,
+                    "item_id": f"family_{index}",
+                    "item_label": label,
+                    "tier": tier,
+                    "lower_rank": lower,
+                    "upper_rank": upper,
+                    "rank_availability_frequency": 1.0,
+                    "top_k_frequency": frequency,
+                    "status": "observed",
+                    "reason_code": "",
+                }
+                for index, (label, tier, lower, upper, frequency) in enumerate(
+                    (
+                        ("Tumor -> Fibroblast", "stable_top_k", 1.0, 2.0, 0.96),
+                        ("Fibroblast -> Tumor", "possible_top_k", 1.0, 3.0, 0.82),
+                    ),
+                    start=1,
+                )
+            ],
+        ),
     }
     spec = {
         "schema_version": module.INPUT_SCHEMA_VERSION,
@@ -382,6 +505,7 @@ def test_generate_multicondition_report_from_frozen_fixture(tmp_path: Path) -> N
         "figure05_supportive_biology",
         "figure06_simulation_truth",
         "figure07_iteration_comparison",
+        "figure08_rank_stability",
     )
     for stem in stems:
         for suffix in ("png", "svg", "pdf"):
@@ -395,7 +519,10 @@ def test_generate_multicondition_report_from_frozen_fixture(tmp_path: Path) -> N
     assert not manifest["guardrails"]["preregistered_track_b_primary_reported"]
     assert manifest["endpoint_status_counts"]["loso_not_estimable"] == 1
     assert manifest["endpoint_status_counts"]["iteration_regressions"] == 1
-    assert len(manifest["artifacts"]) == 31
+    assert len(manifest["artifacts"]) == 35
+    assert manifest["ranking_parameters"]["n_bootstrap"] == 2000
+    assert not manifest["guardrails"]["nichenet_lr_or_sender_ranking_reported"]
+    assert manifest["endpoint_status_counts"]["ranking_agreement_observed"] == 2
     assert all(record["bytes"] > 0 for record in manifest["artifacts"])
     assert all(
         len(record["sha256"]) == 64 for record in manifest["artifacts"]

@@ -22,6 +22,12 @@ from .multicondition import (
     validate_score_table,
     within_context_reproducibility,
 )
+from .multicondition_rank_stability import (
+    RankStabilityParameters,
+    RankStabilityTables,
+    evaluate_multicondition_rank_stability,
+    not_estimable_rank_stability,
+)
 from .ranking_stability import (
     RankAgreement,
     Ranking,
@@ -38,6 +44,8 @@ from .ranking_stability import (
 __all__ = [
     "RankAgreement",
     "RankInterval",
+    "RankStabilityParameters",
+    "RankStabilityTables",
     "Ranking",
     "StableTier",
     "TopKStabilityPoint",
@@ -45,7 +53,9 @@ __all__ = [
     "assign_stable_tiers",
     "bootstrap_rank_intervals",
     "cross_method_concordance",
+    "evaluate_multicondition_rank_stability",
     "external_long_to_score_table",
+    "not_estimable_rank_stability",
     "paired_descriptive_effects",
     "paired_differential_loso_reproducibility",
     "paired_edge_effects",

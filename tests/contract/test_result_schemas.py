@@ -16,6 +16,7 @@ ROOT = Path(__file__).parents[2]
     [
         "run_manifest.schema.json",
         "edge_evidence.schema.json",
+        "scoring_collections.schema.json",
         "interactions.schema.json",
         "differential.schema.json",
         "responses.schema.json",
@@ -72,6 +73,21 @@ def test_run_manifest_schema_accepts_v0_1_shape() -> None:
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 
     manifest["extensions"] = {
+        "scoring_collections": {
+            "extension_schema_version": "1.0.0",
+            "filename": "scoring_collections.json",
+            "collections": 1,
+            "sha256": "e" * 64,
+            "schema": "scoring_collections.schema.json",
+            "linked_tables": {
+                "interactions": tables["interactions"]["sha256"],
+                "sample_scores": tables["sample_scores"]["sha256"],
+            },
+        }
+    }
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
+
+    manifest["extensions"] = {
         "edge_evidence": {
             "extension_schema_version": "1.0.0",
             "filename": "edge_evidence.parquet",
@@ -81,6 +97,17 @@ def test_run_manifest_schema_accepts_v0_1_shape() -> None:
             "linked_tables": {
                 "sample_scores": tables["sample_scores"]["sha256"]
             },
-        }
+        },
+        "scoring_collections": {
+            "extension_schema_version": "1.0.0",
+            "filename": "scoring_collections.json",
+            "collections": 1,
+            "sha256": "e" * 64,
+            "schema": "scoring_collections.schema.json",
+            "linked_tables": {
+                "interactions": tables["interactions"]["sha256"],
+                "sample_scores": tables["sample_scores"]["sha256"],
+            },
+        },
     }
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)

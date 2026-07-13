@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
@@ -31,12 +32,18 @@ from crychic.data import (
     ValidatedInput,
     validate_anndata,
 )
+from crychic.design import ContrastSpec, balanced_contrast
 from crychic.pseudobulk import (
     ExploratoryAggregate,
     PseudobulkDataset,
     aggregate_pseudobulk,
 )
 from crychic.resources import ResourceBundle, TargetPrior
+from crychic.sender import (
+    ContrastCommonSenderFunctional,
+    ContrastCommonSenderParameters,
+    fit_contrast_common_sender_functional,
+)
 
 _PRODUCER_MARKER = "crychic.workflow.training.v1"
 _PARTIAL_STATUS = "training_only_partial_not_oof"
@@ -66,6 +73,9 @@ class FoldTrainingSpec:
     availability_parameters: AvailabilityParameters = field(
         default_factory=AvailabilityParameters
     )
+    sender_parameters: ContrastCommonSenderParameters = field(
+        default_factory=ContrastCommonSenderParameters
+    )
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
 
@@ -88,6 +98,10 @@ class FoldTrainingSpec:
             raise TypeError(
                 "availability_parameters must be an AvailabilityParameters instance"
             )
+        if not isinstance(self.sender_parameters, ContrastCommonSenderParameters):
+            raise TypeError(
+                "sender_parameters must be ContrastCommonSenderParameters"
+            )
         if self.schema_version != "1.0.0":
             raise ValueError("FoldTrainingSpec schema_version must be 1.0.0")
         payload: dict[str, object] = {
@@ -98,6 +112,9 @@ class FoldTrainingSpec:
             "min_cells": self.min_cells,
             "min_pooled_availability": threshold,
             "schema_version": self.schema_version,
+            "sender_parameter_manifest_id": (
+                self.sender_parameters.parameter_manifest_id
+            ),
         }
         object.__setattr__(self, "min_pooled_availability", threshold)
         object.__setattr__(
@@ -124,6 +141,7 @@ class TrainingArtifacts:
     cell_type_ids: tuple[str, ...]
     training_input_digest: str
     frozen_interaction_universe: FrozenInteractionUniverse
+    sender_functionals: tuple[ContrastCommonSenderFunctional, ...]
     completed_stages: tuple[str, ...]
     remaining_stages: tuple[str, ...]
     certification_status: str
@@ -148,6 +166,7 @@ class TrainingArtifacts:
         cell_type_ids: tuple[str, ...],
         training_input_digest: str,
         frozen_interaction_universe: FrozenInteractionUniverse,
+        sender_functionals: tuple[ContrastCommonSenderFunctional, ...],
     ) -> TrainingArtifacts:
         subjects = tuple(sorted(training_subject_ids))
         samples = tuple(sorted(training_sample_ids))
@@ -162,22 +181,45 @@ class TrainingArtifacts:
             raise ValueError(
                 "frozen interaction universe subjects do not match the raw input"
             )
-        completed = ("availability_filter",)
-        remaining = (
+        functionals = tuple(sender_functionals)
+        if functionals:
+            if any(
+                functional.training_subject_ids != subjects
+                or functional.filter_universe_id
+                != frozen_interaction_universe.filter_universe_id
+                for functional in functionals
+            ):
+                raise ValueError(
+                    "sender functional provenance does not match training artifacts"
+                )
+            contrast_ids = {item.contrast_manifest_id for item in functionals}
+            if len(contrast_ids) != len(functionals):
+                raise ValueError("sender functionals must bind unique contrasts")
+            completed: tuple[str, ...] = (
+                "availability_filter",
+                "common_sender_functional",
+            )
+        else:
+            completed = ("availability_filter",)
+        remaining: tuple[str, ...] = (
             "receptor_gate",
             "response_precision",
             "family_basis",
             "attribution_tuning",
             "incremental_downstream",
-            "common_sender_functional",
             "common_scoring_functional",
         )
+        if not functionals:
+            remaining = (*remaining[:-1], "common_sender_functional", remaining[-1])
         payload = {
             "cell_type_ids": list(cell_types),
             "completed_stages": list(completed),
             "config_digest": config.digest,
             "filter_universe_id": (frozen_interaction_universe.filter_universe_id),
             "resource_manifest_digest": resource_bundle.manifest_digest,
+            "sender_functional_ids": [
+                functional.sender_functional_id for functional in functionals
+            ],
             "spec_id": spec.spec_id,
             "target_prior_manifest_digest": target_prior.manifest_digest,
             "training_input_digest": training_input_digest,
@@ -196,6 +238,7 @@ class TrainingArtifacts:
             "cell_type_ids": cell_types,
             "training_input_digest": training_input_digest,
             "frozen_interaction_universe": frozen_interaction_universe,
+            "sender_functionals": functionals,
             "completed_stages": completed,
             "remaining_stages": remaining,
             "certification_status": _PARTIAL_STATUS,
@@ -413,6 +456,33 @@ def _fit_interaction_universe(
     )
 
 
+def _planned_sender_contrasts(
+    sample_interactions: pd.DataFrame,
+    context_keys: tuple[str, ...],
+) -> tuple[ContrastSpec, ...]:
+    nodes: set[Hashable] = set()
+    for row in sample_interactions.itertuples(index=False):
+        if len(context_keys) == 1:
+            node: Hashable = getattr(row, context_keys[0])
+        else:
+            node = tuple((key, getattr(row, key)) for key in context_keys)
+        nodes.add(node)
+    ordered = tuple(sorted(nodes, key=canonical_json))
+    return tuple(
+        balanced_contrast(
+            (left,),
+            (right,),
+            name=(
+                "sender_pair:"
+                f"{canonical_json(left)}-vs-{canonical_json(right)}"
+            ),
+            family="sender_pairwise",
+        )
+        for left_index, left in enumerate(ordered)
+        for right in ordered[left_index + 1 :]
+    )
+
+
 def fit_training_artifacts(
     adata: AnnData,
     config: CrychicConfig,
@@ -441,6 +511,19 @@ def fit_training_artifacts(
 
     prepared = _prepare_raw_fold(adata, config, min_cells=spec.min_cells)
     availability = _fit_interaction_universe(prepared, resource_bundle, spec)
+    sender_functionals = tuple(
+        fit_contrast_common_sender_functional(
+            availability.sample_interactions,
+            contrast=contrast,
+            context_keys=tuple(config.context_keys),
+            filter_universe_id=availability.filter_universe_id,
+            parameters=spec.sender_parameters,
+        )
+        for contrast in _planned_sender_contrasts(
+            availability.sample_interactions,
+            tuple(config.context_keys),
+        )
+    )
     return TrainingArtifacts._from_training(
         config=config,
         resource_bundle=resource_bundle,
@@ -451,6 +534,7 @@ def fit_training_artifacts(
         cell_type_ids=prepared.cell_type_ids,
         training_input_digest=prepared.input_digest,
         frozen_interaction_universe=availability.frozen_interaction_universe,
+        sender_functionals=sender_functionals,
     )
 
 

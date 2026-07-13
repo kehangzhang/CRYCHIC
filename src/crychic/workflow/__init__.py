@@ -13,7 +13,11 @@ from .contracts import (
     RunStatus,
     StagePlan,
 )
-from .persistence import baseline_result_tables, write_baseline_result
+from .persistence import (
+    baseline_result_tables,
+    baseline_scoring_collections,
+    write_baseline_result,
+)
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
 
 __all__ = [
@@ -31,6 +35,7 @@ __all__ = [
     "TrainingArtifacts",
     "apply_training_artifacts",
     "baseline_result_tables",
+    "baseline_scoring_collections",
     "dry_run_baseline",
     "fit_baseline",
     "fit_training_artifacts",

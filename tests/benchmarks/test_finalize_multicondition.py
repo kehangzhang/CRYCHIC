@@ -424,12 +424,39 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     assert set(failed["reason_code"]) == {"adapter_long_table_missing_after_failed_run"}
     assert set(failed["truth_scope"]) == {"real_data"}
     unsupported = primary[primary["dataset"].eq("unsupported_design")]
-    assert set(unsupported["reason_code"]) == {"dataset_has_no_adapter_runs"}
+    assert set(unsupported["reason_code"]) == {"unsupported_comparison_design"}
     assert set(unsupported["truth_scope"]) == {"real_data"}
     assert not primary["dataset"].eq("__cross_dataset__").any()
 
     stability = pd.read_csv(output / "metrics/stability_summary.tsv", sep="\t")
     assert set(stability["truth_scope"]) == {"real_data", "simulation"}
+    ranking = pd.read_csv(
+        output / "metrics/ranking_agreement_summary.tsv", sep="\t"
+    )
+    unpaired_ranking = ranking[
+        ranking["dataset"].eq("real_unpaired") & ranking["method"].eq("m1")
+    ]
+    assert "observed" in set(unpaired_ranking["status"])
+    assert set(unpaired_ranking["n_bootstrap"]) == {2000}
+    assert set(unpaired_ranking["n_split_repeats"]) == {200}
+    assert set(unpaired_ranking["random_seed"]) == {20260712}
+    assert set(
+        unpaired_ranking.loc[
+            unpaired_ranking["ranking_level"].eq("lr_family"), "reason_code"
+        ]
+    ) == {"lr_family_mapping_not_available_in_score_contract"}
+    track_b_ranking = ranking[ranking["method"].eq("nichenet")]
+    assert set(track_b_ranking["status"]) == {"not_estimable"}
+    assert set(track_b_ranking["reason_code"]) == {
+        "track_b_ligand_target_program_not_lr_stlr_comparable"
+    }
+    unsupported_ranking = ranking[
+        ranking["dataset"].eq("unsupported_design")
+    ]
+    assert set(unsupported_ranking["status"]) == {"not_estimable"}
+    assert set(unsupported_ranking["reason_code"]) == {
+        "unsupported_comparison_design"
+    }
 
     concordance = pd.read_csv(output / "metrics/concordance_summary.tsv", sep="\t")
     assert set(concordance["truth_scope"]) == {"real_data", "simulation"}
@@ -557,6 +584,101 @@ def test_finalize_forbids_real_data_edge_truth(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="forbidden for real datasets"):
         module.finalize(spec, tmp_path / "invalid")
+
+
+def test_common_functional_false_fails_closed_across_rank_endpoints(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text())
+    payload["datasets"][1]["comparison"]["min_subjects"] = 4
+    run = payload["datasets"][1]["adapter_runs"][0]
+    manifest_path = tmp_path / run["manifest"]
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_result"] = {
+        "score_views": [
+            {
+                "run_id": "run-real_unpaired-m1",
+                "contrast_candidates": [],
+                "common_functional_claim": False,
+            }
+        ]
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = tmp_path / "rank_scope_ne"
+    module.finalize(spec, output)
+
+    reason = "receiver_child_functionals_not_globally_comparable"
+    primary = pd.read_csv(output / "metrics/loso_primary_endpoint.tsv", sep="\t")
+    selected_primary = primary[
+        primary["dataset"].eq("real_unpaired") & primary["method"].eq("m1")
+    ]
+    assert set(selected_primary["status"]) == {"not_estimable"}
+    assert set(selected_primary["reason_code"]) == {reason}
+    assert set(selected_primary["rank_scope"]) == {
+        "not_estimable_receiver_child_functionals"
+    }
+
+    stability = pd.read_csv(output / "metrics/stability_summary.tsv", sep="\t")
+    selected_stability = stability[
+        stability["dataset"].eq("real_unpaired") & stability["method"].eq("m1")
+    ]
+    assert set(selected_stability["status"]) == {"not_estimable"}
+    assert set(selected_stability["reason_code"]) == {reason}
+
+    ranking = pd.read_csv(
+        output / "metrics/ranking_agreement_summary.tsv", sep="\t"
+    )
+    selected_ranking = ranking[
+        ranking["dataset"].eq("real_unpaired") & ranking["method"].eq("m1")
+    ]
+    assert set(selected_ranking["status"]) == {"not_estimable"}
+    assert set(selected_ranking["reason_code"]) == {reason}
+    assert set(selected_ranking["minimum_subjects"]) == {4}
+
+    biology = pd.read_csv(output / "metrics/biology_support.tsv", sep="\t")
+    selected_biology = biology[
+        biology["dataset"].eq("real_unpaired") & biology["method"].eq("m1")
+    ]
+    assert set(selected_biology["support_status"]) == {"not_estimable"}
+    assert set(selected_biology["reason_code"]) == {reason}
+
+    score_index = pd.read_csv(
+        output / "score_tables/score_table_index.tsv", sep="\t"
+    )
+    selected_index = score_index[
+        score_index["dataset"].eq("real_unpaired") & score_index["method"].eq("m1")
+    ]
+    assert set(selected_index["rank_scope"]) == {
+        "not_estimable_receiver_child_functionals"
+    }
+
+
+def test_common_functional_false_rejects_explicit_global_scope(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text())
+    run = payload["datasets"][1]["adapter_runs"][0]
+    run["rank_scope"] = "global_common_functional"
+    manifest_path = tmp_path / run["manifest"]
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_result"] = {
+        "score_views": [
+            {
+                "run_id": "run-real_unpaired-m1",
+                "contrast_candidates": [],
+                "common_functional_claim": False,
+            }
+        ]
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="forbids global rank_scope"):
+        module.finalize(spec, tmp_path / "invalid_global_scope")
 
 
 def test_cli_contract_requires_locked_supportive_truth(tmp_path: Path) -> None:
@@ -747,3 +869,185 @@ def test_real_data_iteration_auroc_aliases_are_forbidden(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="real-data AUROC/AUPRC"):
         module._iteration_table(path, frozenset({"real_unpaired"}))
+
+
+def test_readback_only_elapsed_is_excluded_from_method_runtime(tmp_path: Path) -> None:
+    source_manifest = tmp_path / "source_manifest.json"
+    source_manifest.write_text(
+        json.dumps(
+            {
+                "run_id": "source_pipeline",
+                "dataset_id": "cscc",
+                "method": {"id": "crychic"},
+                "resource": {"id": "common", "mode": "H-common"},
+                "status": "complete",
+                "elapsed_seconds": 7023.0,
+                "environment": {"threads": 8},
+                "output": {"sha256": "a" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_manifest_path = tmp_path / "compact_manifest.json"
+    current_manifest = {
+        "run_id": "compact_readback",
+        "status": "complete",
+        "elapsed_seconds": 212.0,
+        "environment": {"threads": 1},
+        "output": {"sha256": "b" * 64},
+    }
+    current_manifest_path.write_text(
+        json.dumps(current_manifest), encoding="utf-8"
+    )
+    long_path = tmp_path / "scores.parquet"
+    pd.DataFrame({"value": [1]}).to_parquet(long_path, index=False)
+    identity = module.RunIdentity(
+        dataset="cscc",
+        method="crychic",
+        method_version="1",
+        analysis_track="lr_stlr",
+        resource="common",
+        resource_version="1",
+        resource_mode="H-common",
+        score_semantics="comm_strength",
+        universe_id="u1",
+        contrast="Tumor_vs_Normal",
+    )
+
+    records, sources = module._performance_records_for_run(
+        spec_root=tmp_path,
+        identity=identity,
+        run={
+            "performance_role": "adapter_readback",
+            "performance_override": {
+                "source_manifest": source_manifest.name,
+                "source_role": "source_pipeline_total",
+                "expected_sha256": _sha256(source_manifest),
+            },
+        },
+        manifest=current_manifest,
+        manifest_path=current_manifest_path,
+        long_path=long_path,
+    )
+
+    assert sources == (source_manifest,)
+    records_table = pd.DataFrame(records)
+    records_table.loc[
+        records_table["performance_role"].eq("adapter_readback"),
+        "include_in_method_runtime",
+    ] = True
+    records_table.loc[
+        records_table["performance_role"].eq("source_pipeline_total"),
+        "include_in_method_runtime",
+    ] = False
+    runtime_input = module._prepare_performance_runtime_input(records_table)
+    summary = module.summarize_run_performance(runtime_input)
+    components = module._performance_component_summary(records_table)
+    assert summary.iloc[0]["median_wall_time_seconds"] == 7023.0
+    assert summary.iloc[0]["median_wall_time_seconds"] != 212.0
+    assert components.iloc[0]["method_runtime_role"] == "source_pipeline_total"
+    assert components.iloc[0]["median_adapter_readback_wall_time_seconds"] == 212.0
+    assert (
+        components.iloc[0]["median_source_pipeline_total_wall_time_seconds"]
+        == 7023.0
+    )
+
+
+def test_performance_override_source_manifest_is_identity_bound(
+    tmp_path: Path,
+) -> None:
+    source_manifest = tmp_path / "source_manifest.json"
+    source_manifest.write_text(
+        json.dumps(
+            {
+                "run_id": "source_pipeline",
+                "dataset_id": "wrong_dataset",
+                "method": {"id": "crychic"},
+                "resource": {"id": "common", "mode": "H-common"},
+                "status": "complete",
+                "elapsed_seconds": 10.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({"run_id": "readback", "status": "complete"}),
+        encoding="utf-8",
+    )
+    identity = module.RunIdentity(
+        dataset="cscc",
+        method="crychic",
+        method_version="1",
+        analysis_track="lr_stlr",
+        resource="common",
+        resource_version="1",
+        resource_mode="H-common",
+        score_semantics="comm_strength",
+        universe_id="u1",
+        contrast="Tumor_vs_Normal",
+    )
+
+    with pytest.raises(ValueError, match="identity mismatch"):
+        module._performance_records_for_run(
+            spec_root=tmp_path,
+            identity=identity,
+            run={
+                "performance_role": "adapter_readback",
+                "performance_override": {
+                    "source_manifest": source_manifest.name,
+                    "expected_sha256": _sha256(source_manifest),
+                },
+            },
+            manifest={"run_id": "readback", "status": "complete"},
+            manifest_path=current_path,
+            long_path=None,
+        )
+
+
+def test_performance_override_requires_adapter_only_role(tmp_path: Path) -> None:
+    source_manifest = tmp_path / "source_manifest.json"
+    source_manifest.write_text(
+        json.dumps(
+            {
+                "run_id": "source",
+                "status": "complete",
+                "elapsed_seconds": 10.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_path = tmp_path / "current.json"
+    current = {
+        "run_id": "current",
+        "status": "complete",
+        "elapsed_seconds": 2.0,
+    }
+    current_path.write_text(json.dumps(current), encoding="utf-8")
+    identity = module.RunIdentity(
+        dataset="d",
+        method="m",
+        method_version="1",
+        analysis_track="lr_stlr",
+        resource="r",
+        resource_version="1",
+        resource_mode="H-common",
+        score_semantics="s",
+        universe_id="u",
+        contrast="c",
+    )
+
+    with pytest.raises(ValueError, match="adapter_readback"):
+        module._performance_records_for_run(
+            spec_root=tmp_path,
+            identity=identity,
+            run={
+                "performance_role": "method_total",
+                "performance_override": {
+                    "source_manifest": source_manifest.name,
+                },
+            },
+            manifest=current,
+            manifest_path=current_path,
+            long_path=None,
+        )

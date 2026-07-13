@@ -11,6 +11,10 @@ from crychic.availability import (
     InteractionFilterApplication,
     estimate_bundle_availability,
 )
+from crychic.sender import (
+    CommonSenderApplication,
+    apply_contrast_common_sender_functional,
+)
 
 from .training import TrainingArtifacts, _prepare_raw_fold
 
@@ -26,6 +30,7 @@ class TrainingArtifactApplication:
     heldout_sample_ids: tuple[str, ...]
     heldout_input_digest: str
     availability: BatchAvailability
+    sender_assignments: tuple[CommonSenderApplication, ...]
     application_status: str = _APPLICATION_STATUS
 
     def __post_init__(self) -> None:
@@ -41,6 +46,8 @@ class TrainingArtifactApplication:
             raise ValueError("application availability must use a frozen universe")
         if self.application_status != _APPLICATION_STATUS:
             raise ValueError("partial application must not claim OOF certification")
+        if any(item.is_oof_certified for item in self.sender_assignments):
+            raise ValueError("partial sender application cannot claim OOF status")
 
     @property
     def is_oof_certified(self) -> bool:
@@ -81,12 +88,20 @@ def apply_training_artifacts(
         min_pooled_availability=artifacts.spec.min_pooled_availability,
         frozen_interaction_universe=artifacts.frozen_interaction_universe,
     )
+    sender_assignments = tuple(
+        apply_contrast_common_sender_functional(
+            functional,
+            availability.sample_interactions,
+        )
+        for functional in artifacts.sender_functionals
+    )
     return TrainingArtifactApplication(
         training_artifact_id=artifacts.training_artifact_id,
         heldout_subject_ids=prepared.subject_ids,
         heldout_sample_ids=prepared.sample_ids,
         heldout_input_digest=prepared.input_digest,
         availability=availability,
+        sender_assignments=sender_assignments,
     )
 
 

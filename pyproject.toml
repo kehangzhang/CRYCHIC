@@ -85,6 +85,7 @@ packages = ["src/crychic"]
 "schemas/provenance.schema.json" = "crychic/schemas/provenance.schema.json"
 "schemas/run_manifest.schema.json" = "crychic/schemas/run_manifest.schema.json"
 "schemas/edge_evidence.schema.json" = "crychic/schemas/edge_evidence.schema.json"
+"schemas/scoring_collections.schema.json" = "crychic/schemas/scoring_collections.schema.json"
 "schemas/interactions.schema.json" = "crychic/schemas/interactions.schema.json"
 "schemas/differential.schema.json" = "crychic/schemas/differential.schema.json"
 "schemas/responses.schema.json" = "crychic/schemas/responses.schema.json"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
@@ -18,12 +18,21 @@ from numpy.typing import NDArray
 from pandas.api import types as pd_types
 
 from crychic.core import canonical_json, stable_id
+from crychic.scoring.contracts import (
+    SCORING_COLLECTION_DIGEST_METHOD,
+    SCORING_COLLECTION_EXTENSION_VERSION,
+    ReceiverScoringFunctionalManifest,
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
+    scoring_source_key_digest,
+)
 
 from .errors import ResultValidationError
 
 RESULT_SCHEMA_VERSION = "0.1.0"
 EDGE_EVIDENCE_EXTENSION_VERSION = "1.0.0"
 EDGE_EVIDENCE_EXTENSION_NAME = "edge_evidence"
+SCORING_COLLECTION_EXTENSION_NAME = "scoring_collections"
 TABLE_NAMES = (
     "interactions",
     "differential",
@@ -67,6 +76,17 @@ class ResultExtensionContract:
     primary_key: tuple[str, ...]
     linked_tables: tuple[str, ...]
     columns: tuple[str, ...]
+    schema_filename: str
+
+
+@dataclass(frozen=True, slots=True)
+class JsonResultExtensionContract:
+    """Resolved contract for a JSON result extension."""
+
+    name: str
+    extension_schema_version: str
+    filename: str
+    linked_tables: tuple[str, ...]
     schema_filename: str
 
 
@@ -285,9 +305,7 @@ def edge_evidence_contract() -> ResultExtensionContract:
     linked_tables = constant("linked_tables")
     column_block = properties.get("columns")
     raw_columns = (
-        column_block.get("properties")
-        if isinstance(column_block, Mapping)
-        else None
+        column_block.get("properties") if isinstance(column_block, Mapping) else None
     )
     if (
         version != EDGE_EVIDENCE_EXTENSION_VERSION
@@ -335,6 +353,172 @@ def edge_evidence_contract() -> ResultExtensionContract:
         columns=tuple(raw_columns),
         schema_filename=schema_filename,
     )
+
+
+@cache
+def scoring_collections_contract() -> JsonResultExtensionContract:
+    """Resolve the optional receiver scoring-collection extension."""
+
+    schema_filename = "scoring_collections.schema.json"
+    document = load_schema_document(schema_filename)
+    properties = document.get("properties")
+    if not isinstance(properties, Mapping):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has no properties",
+            code="invalid_result_schema",
+            field="properties",
+            remediation="Restore the released schema document",
+        )
+
+    def constant(property_name: str) -> Any:
+        value = properties.get(property_name)
+        if not isinstance(value, Mapping) or "const" not in value:
+            raise ResultValidationError(
+                f"Extension schema {schema_filename} lacks {property_name!r}",
+                code="invalid_result_schema",
+                field=property_name,
+                remediation="Restore the released schema document",
+            )
+        return value["const"]
+
+    version = constant("extension_schema_version")
+    result_version = constant("result_schema_version")
+    collection_kind = constant("collection_kind")
+    digest_method = constant("digest_method")
+    if (
+        version != SCORING_COLLECTION_EXTENSION_VERSION
+        or result_version != RESULT_SCHEMA_VERSION
+        or collection_kind != "receiver_partition"
+        or digest_method != SCORING_COLLECTION_DIGEST_METHOD
+    ):
+        raise ResultValidationError(
+            f"Extension schema {schema_filename} has incompatible metadata",
+            code="invalid_result_schema",
+            field="extension_schema_version",
+            remediation="Use schemas from the installed result extension version",
+        )
+    return JsonResultExtensionContract(
+        name=SCORING_COLLECTION_EXTENSION_NAME,
+        extension_schema_version=version,
+        filename="scoring_collections.json",
+        linked_tables=("interactions", "sample_scores"),
+        schema_filename=schema_filename,
+    )
+
+
+def validate_scoring_collections(
+    value: ScoringCollectionDocument | Sequence[ScoringCollectionManifest],
+) -> ScoringCollectionDocument:
+    """Normalize and validate receiver collection declarations."""
+
+    try:
+        if isinstance(value, ScoringCollectionDocument):
+            document = value
+        elif isinstance(value, Sequence):
+            document = ScoringCollectionDocument(collections=tuple(value))
+        else:
+            raise TypeError("scoring collections must be a document or sequence")
+    except (TypeError, ValueError) as exc:
+        raise ResultValidationError(
+            "Scoring collections do not satisfy their released extension contract",
+            code="invalid_result_extension",
+            field=SCORING_COLLECTION_EXTENSION_NAME,
+            remediation="Regenerate collections from validated workflow artifacts",
+        ) from exc
+    return document
+
+
+def _collection_linkage_error(message: str) -> ResultValidationError:
+    return ResultValidationError(
+        message,
+        code="invalid_result_extension_linkage",
+        field=SCORING_COLLECTION_EXTENSION_NAME,
+        remediation="Persist scoring collections and result tables from one artifact",
+    )
+
+
+def validate_scoring_collection_links(
+    document: ScoringCollectionDocument,
+    sample_scores: pd.DataFrame,
+    interactions: pd.DataFrame,
+) -> None:
+    """Prove that receiver children exactly partition persisted sample scores."""
+
+    if not isinstance(document, ScoringCollectionDocument):
+        raise TypeError("document must be a ScoringCollectionDocument")
+    functional_children: dict[
+        str,
+        tuple[ScoringCollectionManifest, ReceiverScoringFunctionalManifest],
+    ] = {}
+    for collection in document.collections:
+        for child in collection.children:
+            if child.scoring_functional_id in functional_children:
+                raise _collection_linkage_error(
+                    "A scoring functional is assigned to multiple receiver children"
+                )
+            functional_children[child.scoring_functional_id] = (collection, child)
+
+    functional_ids = sample_scores["scoring_functional_id"].astype(str)
+    observed_functionals = set(functional_ids)
+    if observed_functionals != set(functional_children):
+        raise _collection_linkage_error(
+            "Scoring collections do not exactly cover persisted "
+            "sample-score functionals"
+        )
+
+    edge_receivers: dict[tuple[str, str], set[str]] = {}
+    for row in (
+        interactions[["contrast", "sender", "receiver", "interaction_id"]]
+        .drop_duplicates()
+        .itertuples(index=False)
+    ):
+        edge_id = stable_id(
+            "communication_edge",
+            {
+                "interaction_id": str(row.interaction_id),
+                "receiver": str(row.receiver),
+                "sender": str(row.sender),
+            },
+        )
+        edge_receivers.setdefault((str(row.contrast), str(row.receiver)), set()).add(
+            edge_id
+        )
+
+    for functional_id, (collection, child) in functional_children.items():
+        source = sample_scores.loc[
+            functional_ids.eq(functional_id)
+        ]
+        if len(source) != child.source_score_row_count:
+            raise _collection_linkage_error(
+                "Receiver child row count does not match persisted sample scores"
+            )
+        if set(source["repeat_id"].astype(str)) != {collection.repeat_id}:
+            raise _collection_linkage_error(
+                "Receiver child repeat does not match persisted sample scores"
+            )
+        if set(source["fold_id"].astype(str)) != {collection.fold_id}:
+            raise _collection_linkage_error(
+                "Receiver child fold does not match persisted sample scores"
+            )
+        try:
+            source_digest = scoring_source_key_digest(source)
+        except (TypeError, ValueError) as exc:
+            raise _collection_linkage_error(
+                "Persisted source score keys cannot be validated"
+            ) from exc
+        if source_digest != child.source_score_key_digest:
+            raise _collection_linkage_error(
+                "Receiver child source-key digest does not match sample scores"
+            )
+        expected_edges = edge_receivers.get(
+            (collection.contrast, child.receiver), set()
+        )
+        if not expected_edges or not set(source["edge_id"].astype(str)).issubset(
+            expected_edges
+        ):
+            raise _collection_linkage_error(
+                "Receiver child does not match its contrast/receiver edge partition"
+            )
 
 
 def validate_edge_evidence(frame: pd.DataFrame) -> pd.DataFrame:
@@ -472,9 +656,7 @@ def validate_edge_evidence_links(
             field="edge_evidence",
             remediation="Persist sample scores and edge evidence from one artifact",
         )
-    actual = sample_scores.loc[
-        :, list(_EDGE_EVIDENCE_PERSISTED_LINK_COLUMNS)
-    ]
+    actual = sample_scores.loc[:, list(_EDGE_EVIDENCE_PERSISTED_LINK_COLUMNS)]
     actual_hashes = pd.util.hash_pandas_object(actual, index=False).to_numpy(
         dtype="uint64", copy=True
     )

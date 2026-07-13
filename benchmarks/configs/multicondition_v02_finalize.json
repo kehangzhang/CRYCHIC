@@ -1,0 +1,737 @@
+{
+  "schema_version": "crychic-multicondition-finalize-v1",
+  "generated_at": "2026-07-13T10:30:00+08:00",
+  "freeze_status": "frozen_v02_hcommon_nocap_baseline",
+  "supportive_biology_truth": "../truth/multicondition_supportive_biology.yaml",
+  "supportive_biology_dataset_aliases": {
+    "UCSC_Lerma_Martin_MS_snRNA": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
+  },
+  "biology_support": "../../../benchmark_work/multicondition_v02/biology/biology_support_v02.tsv",
+  "coverage_records": "../../../benchmark_work/multicondition_v02/inputs/native_coverage_summary_external_only.tsv",
+  "simulation_records": "../../../benchmark_work/multicondition_v01/track_a_differential_truth/simulation_records.tsv",
+  "native_sensitivity_index": "../../../benchmark_work/multicondition_v02/inputs/native_sensitivity_index_external_only.tsv",
+  "parameters": {
+    "top_k": 100,
+    "minimum_shared_edges": 20,
+    "n_bootstrap": 2000,
+    "n_split_repeats": 200,
+    "min_subjects_per_half": 2,
+    "random_seed": 20260712
+  },
+  "resource_arm_policy": {
+    "primary_lr_endpoint": "H-common_only",
+    "track_b": "source_agnostic_frozen_prior_proxy_diagnostic_not_preregistered_primary",
+    "native_lr": "external_methods_historical_coverage_sensitivity_only",
+    "native_lr_excluded_from_edge_effect_loso_concordance": true
+  },
+  "performance_scope": {
+    "cross_method_timing": "descriptive_only",
+    "reason_code": "concurrent_run_not_controlled",
+    "missing_peak_rss_policy": "NA_not_imputed"
+  },
+  "native_sensitivity_status": {
+    "completed_indexed_arms": 6,
+    "pending_arms": []
+  },
+  "simulation_truth_status": {
+    "status": "frozen",
+    "track_a_differential_records": 728,
+    "track_b_receiver_program_records": 42,
+    "combined_records": 770,
+    "negative_control_classification": "single_class_not_estimable",
+    "formal_inference": "not_computed"
+  },
+  "frozen_main_inputs": {
+    "synthetic_suite_manifest_sha256": "74ef9653e3eb765a0a51929d423f3255abc7ab1f015cb49e15b6d51746db0348",
+    "synthetic_track_a_truth_sha256": "39dd174ee2e051d8334c04d91cc62ef99fc2f0bbc8b29684e99735a1e4af425c",
+    "track_a_differential_manifest_sha256": "a2dea104cc7a9d36b4facfe83743d01500d4aed2f18331d7e62150573e335a61",
+    "track_a_differential_summary_sha256": "de064f076db6041e63b8d2df10cbdac0372befffc7fec4758ab6957715986ad9",
+    "track_b_simulation_records_sha256": "94baf016ddc00dd2a5b6cb66025d2feb5810f1206b2865108c2e49d12c6bef1f",
+    "combined_simulation_records_sha256": "1984b3cfe7782b21a326249b38d1d74a7ce796fde2778fb8f6ff48ae83189fdc",
+    "supportive_biology_truth_sha256": "8e2fb064852b78b9d5d9e3c97a95ad3bd3bded9398a3acaa6bba2e1500edabc9",
+    "native_sensitivity_index_sha256": "7c56b861f2b83197e9723020bef8bdc152cc7ceb3ee8ac017e3b99d1797d01ba",
+    "native_sensitivity_index_records": 6,
+    "native_coverage_summary_sha256": "e20e32f33d7aef20c746de84f63fa2f0e94f07da0e311762b64662a5d49a3b72",
+    "native_coverage_summary_records": 6,
+    "biology_support_v02_sha256": "2b6ac5314de193e9714bcc1150fdf7f7ade59f388466110b113137a9abff6b8c",
+    "biology_support_v02_records": 72,
+    "cscc_compact_manifest_sha256": "e9891b127fb2b562674a62a2a188d936c96d3af8675a8580765295e358f8a2ec",
+    "cscc_source_pipeline_manifest_sha256": "f9059dd23120a6e1461ee1d5ff6d5e3ea39c9820da6214a6c21802c29669a734",
+    "ms_compact_manifest_sha256": "074171edee85f33b2640f4a3c43a76ca94fed9d584fa35e969961d8d664eb6d9",
+    "ms_source_pipeline_manifest_sha256": "b0387c49767955a2d63ede57199dcd13e88affb4e672d719ed3cc9fbadcd7166"
+  },
+  "datasets": [
+    {
+      "dataset_id": "GSE144236_Ji_cSCC",
+      "context_key": "condition",
+      "truth_scope": "real_data",
+      "design": {
+        "n_cells": 47068,
+        "n_samples": 20,
+        "n_subjects": 10,
+        "n_contexts": 2,
+        "n_cell_types": 14,
+        "design_type": "fully_paired_subjects",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "Normal",
+        "target": "Tumor",
+        "contrast": "Tumor_vs_Normal",
+        "min_subjects": 5,
+        "primary_score_view": "global:'Tumor'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/prepared/GSE144236_cscc_paired.conversion.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/cellchat/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/cellphonedb/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/cscc/H-common/liana/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc_compact/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc_compact/interactions_long.parquet",
+          "arm_role": "primary_hcommon",
+          "performance_role": "adapter_readback",
+          "performance_override": {
+            "source_manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/cscc/manifest.json",
+            "source_role": "source_pipeline_total",
+            "expected_sha256": "f9059dd23120a6e1461ee1d5ff6d5e3ea39c9820da6214a6c21802c29669a734"
+          },
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_fbc9410e658081e29697d9b97fef5a21",
+              "contrast_candidate": "global:'Tumor'",
+              "label": "tumor_receiver_union_v02",
+              "role": "primary",
+              "contrast": "Tumor_vs_Normal"
+            },
+            {
+              "run_id": "crychic_benchmark_run_b2c006fdfa4f363d68a8fa444efeb580",
+              "contrast_candidate": "global:'Normal'",
+              "label": "normal_receiver_union_v02",
+              "role": "sensitivity",
+              "contrast": "Tumor_vs_Normal"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/cscc/native/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/cscc/native/nichenet/interactions_long.parquet",
+          "arm_role": "primary_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+      "context_key": "lesion_type",
+      "truth_scope": "real_data",
+      "design": {
+        "n_cells": 75004,
+        "n_samples": 12,
+        "n_subjects": 11,
+        "n_contexts": 2,
+        "n_cell_types": 9,
+        "design_type": "independent_subjects",
+        "formula": "~ batch + lesion_type",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "unpaired",
+        "reference": "Ctrl",
+        "target": "CA",
+        "contrast": "CA_vs_Ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'CA'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/prepared/UCSC_Lerma_Martin_MS_CA_vs_Ctrl.subset.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/cellchat/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/cellphonedb/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/ms/H-common/liana/interactions_long.parquet",
+          "arm_role": "primary_hcommon"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms_compact/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms_compact/interactions_long.parquet",
+          "arm_role": "primary_hcommon",
+          "performance_role": "adapter_readback",
+          "performance_override": {
+            "source_manifest": "../../../benchmark_work/multicondition_v02/crychic_hcommon_nocap/ms/manifest.json",
+            "source_role": "source_pipeline_total",
+            "expected_sha256": "b0387c49767955a2d63ede57199dcd13e88affb4e672d719ed3cc9fbadcd7166"
+          },
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_f7d399dd0035915895aa9de8935b57c9",
+              "contrast_candidate": "global:'Ctrl'",
+              "label": "ctrl_receiver_union_v02",
+              "role": "sensitivity",
+              "contrast": "CA_vs_Ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_265addd75f04d000d81d108305892ef5",
+              "contrast_candidate": "global:'CA'",
+              "label": "ca_receiver_union_v02",
+              "role": "primary",
+              "contrast": "CA_vs_Ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/external_initial/ms/native/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/external_initial/ms/native/nichenet/interactions_long.parquet",
+          "arm_role": "primary_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "Kuppe_MI_Zenodo6578047",
+      "context_key": "region",
+      "truth_scope": "real_data",
+      "design": {
+        "n_cells": 191795,
+        "n_samples": 29,
+        "n_subjects": 20,
+        "n_contexts": 5,
+        "n_cell_types": 11,
+        "design_type": "mixed_paired_unpaired_multi_region",
+        "status": "not_estimable",
+        "reason_code": "mixed_paired_unpaired_multi_region_design_unsupported"
+      },
+      "comparison": {
+        "design": "unsupported",
+        "contrast": "region_response_not_estimable"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/prepared/kuppe_design_audit/snRNA-seq-submission.design_audit.json",
+      "adapter_runs": []
+    },
+    {
+      "dataset_id": "GSE244992_Panc02_PancVAX",
+      "context_key": "treatment",
+      "truth_scope": "real_data",
+      "design": {
+        "n_cells": 56674,
+        "n_samples": 16,
+        "n_subjects": null,
+        "n_contexts": 8,
+        "n_cell_types": 14,
+        "design_type": "pooled_nonindependent_demonstration",
+        "status": "not_estimable",
+        "reason_code": "pooled_nonindependent_objects_no_subject_id"
+      },
+      "comparison": {
+        "design": "unsupported",
+        "contrast": "pooled_treatment_response_not_estimable"
+      },
+      "dataset_manifest": "../datasets/dataset_inventory.json",
+      "adapter_runs": []
+    },
+    {
+      "dataset_id": "synthetic_active",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3733,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "active",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_7d4057d512d539c38051eea3b6d2dcbb",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_192c5f33cbf0a58d42a5bb9b2bc98067",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/active/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_global_null",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3863,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "global_null",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_9705f6b259e85700a68fd8a802fecfc7",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_cd49dcbc5ca6afd582eebcbe300399c4",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/global_null/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_abundance_only",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3910,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "abundance_only",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_3eae9350f3dd55f01c35d2e7fb2d64b4",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_6f0f8f7570a1ad3ef68cc5ac2d913397",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/abundance_only/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_receiver_autonomous",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3701,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "receiver_autonomous",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_dd9128ff4961ef37e2aa42cfb4c8c8fd",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_0d652bc13a2c831f1ece950444392345",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receiver_autonomous/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_ligand_only",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3886,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "ligand_only",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_f60d4b932100440be0128d5ea677e6b8",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_14f741cdee75b64f428855e8c9e0de11",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/ligand_only/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_target_only",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3877,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "target_only",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_b56ecb4b53496bfc82841a2062b67f4b",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_de492531896ece4c164b6ae2d35e7ba8",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/target_only/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    },
+    {
+      "dataset_id": "synthetic_receptor_knockout",
+      "context_key": "condition",
+      "truth_scope": "simulation",
+      "simulation_truth": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/track_a_edge_truth.tsv",
+      "design": {
+        "n_cells": 3864,
+        "n_samples": 16,
+        "n_subjects": 8,
+        "n_contexts": 2,
+        "n_cell_types": 3,
+        "design_type": "fully_paired_subjects",
+        "scenario": "receptor_knockout",
+        "status": "observed",
+        "reason_code": null
+      },
+      "comparison": {
+        "design": "paired",
+        "reference": "ctrl",
+        "target": "stim",
+        "contrast": "stim_vs_ctrl",
+        "min_subjects": 4,
+        "primary_score_view": "global:'stim'"
+      },
+      "dataset_manifest": "../../../benchmark_work/multicondition_v01/synthetic_controls/manifest.json",
+      "adapter_runs": [
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/cellchat/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/cellchat/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/cellphonedb/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/cellphonedb/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/liana/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/liana/interactions_long.parquet",
+          "arm_role": "synthetic_track_a"
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/crychic/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/crychic/interactions_long.parquet",
+          "arm_role": "synthetic_track_a",
+          "score_views": [
+            {
+              "run_id": "crychic_benchmark_run_d610a24bbfd0be325a3ad2b5131b0cf3",
+              "contrast_candidate": "global:'stim'",
+              "label": "stim_functional",
+              "role": "primary",
+              "contrast": "stim_vs_ctrl"
+            },
+            {
+              "run_id": "crychic_benchmark_run_4679f82d170a8f526ce5c603c31c6091",
+              "contrast_candidate": "global:'ctrl'",
+              "label": "ctrl_functional",
+              "role": "sensitivity",
+              "contrast": "stim_vs_ctrl"
+            }
+          ]
+        },
+        {
+          "manifest": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/nichenet/manifest.json",
+          "long_table": "../../../benchmark_work/multicondition_v01/synthetic_multimethod/receptor_knockout/nichenet/interactions_long.parquet",
+          "arm_role": "synthetic_track_b"
+        }
+      ]
+    }
+  ]
+}

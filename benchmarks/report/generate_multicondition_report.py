@@ -85,6 +85,22 @@ METRIC_FILENAMES: dict[str, tuple[str, ...]] = {
         "iteration_comparison.tsv",
         "iteration_comparison.csv",
     ),
+    "ranking_agreement": (
+        "ranking_agreement_summary.tsv",
+        "ranking_agreement_summary.csv",
+    ),
+    "ranking_top_k_curve": (
+        "ranking_top_k_stability_curve.tsv",
+        "ranking_top_k_stability_curve.csv",
+    ),
+    "ranking_intervals": (
+        "bootstrap_rank_intervals.tsv",
+        "bootstrap_rank_intervals.csv",
+    ),
+    "ranking_tiers": (
+        "stable_ranking_tiers.tsv",
+        "stable_ranking_tiers.csv",
+    ),
 }
 
 
@@ -416,6 +432,10 @@ def _ne_source(*, reason_code: str, dataset: str = "All") -> pd.DataFrame:
         "iteration_to": "not_available",
         "metric_direction": "higher",
         "change_class": "not_estimable",
+        "ranking_level": "not_available",
+        "item_id": "__not_estimable__",
+        "item_label": "NE",
+        "tier": "not_estimable",
     }
     for column in (
         "n_cells",
@@ -447,6 +467,16 @@ def _ne_source(*, reason_code: str, dataset: str = "All") -> pd.DataFrame:
         "after",
         "signed_improvement",
         "relative_improvement",
+        "ranking_universe_size",
+        "n_repeats_requested",
+        "n_repeats_estimable",
+        "k",
+        "lower_rank",
+        "median_rank",
+        "upper_rank",
+        "rank_availability_frequency",
+        "top_k_frequency",
+        "n_replicates_requested",
     ):
         row[column] = math.nan
     return pd.DataFrame([row])
@@ -680,6 +710,9 @@ def _loso_source(table: pd.DataFrame) -> pd.DataFrame:
             "truth_scope": _text(table, ("truth_scope",), "unknown"),
             "endpoint_scope": _text(table, ("endpoint_scope",), "dataset"),
             "contrast": _text(table, ("contrast",), "not_recorded"),
+            "rank_scope": _text(
+                table, ("rank_scope",), "global_common_functional"
+            ),
             "estimate": _numeric(
                 table,
                 ("estimate", "effect_spearman", "macro_effect_spearman"),
@@ -723,6 +756,9 @@ def _stability_source(table: pd.DataFrame) -> pd.DataFrame:
             "analysis_track": _text(table, ("analysis_track",), "lr_stlr"),
             "truth_scope": _text(table, ("truth_scope",), "unknown"),
             "contrast": _text(table, ("contrast",), "not_recorded"),
+            "rank_scope": _text(
+                table, ("rank_scope",), "global_common_functional"
+            ),
             "context": _text(table, ("context",), ""),
             "status": _status(table, "not_estimable"),
             "reason_code": _text(table, ("reason_code",), ""),
@@ -753,6 +789,275 @@ def _stability_source(table: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def _ranking_identity_source(table: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "dataset": _text(table, ("dataset",), "unknown"),
+            "method": _text(table, ("method", "method_id"), "unknown"),
+            "resource_mode": _text(table, ("resource_mode",), "unknown"),
+            "analysis_track": _text(table, ("analysis_track",), "lr_stlr"),
+            "truth_scope": _text(table, ("truth_scope",), "unknown"),
+            "contrast": _text(table, ("contrast",), "not_recorded"),
+            "rank_scope": _text(
+                table, ("rank_scope",), "global_common_functional"
+            ),
+            "design": _text(table, ("design",), "not_available"),
+            "reference": _text(table, ("reference",), "not_available"),
+            "target": _text(table, ("target",), "not_available"),
+            "ranking_level": _text(table, ("ranking_level",), "unknown"),
+            "ranking_universe_size": _numeric(table, ("ranking_universe_size",)),
+            "n_bootstrap": _numeric(table, ("n_bootstrap",)),
+            "n_split_repeats": _numeric(table, ("n_split_repeats",)),
+            "rank_interval_quantile_level": _numeric(
+                table, ("rank_interval_quantile_level",)
+            ),
+            "minimum_top_k_frequency": _numeric(
+                table, ("minimum_top_k_frequency",)
+            ),
+            "minimum_estimable_replicate_fraction": _numeric(
+                table, ("minimum_estimable_replicate_fraction",)
+            ),
+            "minimum_subjects": _numeric(table, ("minimum_subjects",)),
+            "minimum_observed_ranks": _numeric(
+                table, ("minimum_observed_ranks",)
+            ),
+            "n_reference_subjects": _numeric(table, ("n_reference_subjects",)),
+            "n_target_subjects": _numeric(table, ("n_target_subjects",)),
+            "n_paired_subjects": _numeric(table, ("n_paired_subjects",)),
+            "rbo_persistence": _numeric(table, ("rbo_persistence",)),
+            "weighted_kendall_power": _numeric(
+                table, ("weighted_kendall_power",)
+            ),
+            "random_seed": _numeric(table, ("random_seed",)),
+            "status": _status(table, "not_estimable"),
+            "reason_code": _text(table, ("reason_code",), ""),
+        }
+    )
+
+
+def _validate_nichenet_rank_claims(source: pd.DataFrame) -> None:
+    unsupported = (
+        source["method"].str.contains("nichenet", case=False, regex=False)
+        & source["ranking_level"].isin({"lr", "sender"})
+        & source["status"].isin(OBSERVED_STATUSES)
+    )
+    if unsupported.any():
+        raise ValueError(
+            "NicheNet Track B cannot report observed LR or sender rankings"
+        )
+
+
+def _validate_rank_scope_claims(source: pd.DataFrame) -> None:
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    allowed = {"global_common_functional", "within_receiver_macro"}
+    if (observed & ~source["rank_scope"].isin(allowed)).any():
+        raise ValueError("observed ranking rows require an estimable rank_scope")
+
+
+def _validate_rank_protocol(source: pd.DataFrame) -> None:
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    expected = {
+        "n_bootstrap": 2000.0,
+        "n_split_repeats": 200.0,
+        "rank_interval_quantile_level": 0.95,
+        "minimum_top_k_frequency": 0.8,
+        "minimum_estimable_replicate_fraction": 0.8,
+        "minimum_observed_ranks": 2.0,
+        "rbo_persistence": 0.9,
+        "weighted_kendall_power": 1.0,
+        "random_seed": 20260712.0,
+    }
+    for column, value in expected.items():
+        close = pd.Series(
+            np.isclose(source[column].to_numpy(dtype=float), value, atol=1e-12),
+            index=source.index,
+        )
+        invalid = observed & (source[column].isna() | ~close)
+        if invalid.any():
+            raise ValueError(
+                f"observed ranking rows violate preregistered {column}={value:g}"
+            )
+    minimum_subjects = source["minimum_subjects"]
+    invalid_minimum = observed & (
+        minimum_subjects.isna()
+        | minimum_subjects.lt(3)
+        | minimum_subjects.mod(1).ne(0)
+    )
+    if invalid_minimum.any():
+        raise ValueError(
+            "observed ranking rows require an integer minimum_subjects >= 3"
+        )
+
+
+def _ranking_agreement_source(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return _ne_source(reason_code="ranking_agreement_missing")
+    source = _ranking_identity_source(table)
+    source["metric"] = _text(table, ("metric",), "unknown")
+    source["estimate"] = _numeric(table, ("estimate",))
+    source["envelope_lower"] = _numeric(table, ("envelope_lower",))
+    source["envelope_upper"] = _numeric(table, ("envelope_upper",))
+    source["interval_type"] = _text(table, ("interval_type",), "")
+    source["n_repeats_requested"] = _numeric(table, ("n_repeats_requested",))
+    source["n_repeats_estimable"] = _numeric(table, ("n_repeats_estimable",))
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    invalid = observed & (
+        source[["estimate", "envelope_lower", "envelope_upper"]]
+        .isna()
+        .any(axis=1)
+        | source["envelope_lower"].gt(source["estimate"])
+        | source["envelope_upper"].lt(source["estimate"])
+        | source["interval_type"].ne("split_repeat_quantile_envelope")
+    )
+    if invalid.any():
+        raise ValueError("observed ranking agreement requires ordered intervals")
+    rbo = observed & source["metric"].eq("rank_biased_overlap")
+    kendall = observed & source["metric"].eq("weighted_kendall_tau")
+    rbo_values = source.loc[
+        rbo, ["estimate", "envelope_lower", "envelope_upper"]
+    ]
+    kendall_values = source.loc[
+        kendall, ["estimate", "envelope_lower", "envelope_upper"]
+    ]
+    if (
+        ((rbo_values < 0) | (rbo_values > 1)).any().any()
+        or ((kendall_values < -1) | (kendall_values > 1)).any().any()
+    ):
+        raise ValueError("ranking agreement estimates are outside metric bounds")
+    _validate_nichenet_rank_claims(source)
+    _validate_rank_scope_claims(source)
+    _validate_rank_protocol(source)
+    source = source.loc[source["truth_scope"].eq("real_data")].reset_index(drop=True)
+    return source if not source.empty else _ne_source(
+        reason_code="real_data_ranking_agreement_missing"
+    )
+
+
+def _ranking_curve_source(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return _ne_source(reason_code="ranking_top_k_curve_missing")
+    source = _ranking_identity_source(table)
+    source["metric"] = _text(table, ("metric",), "top_k_jaccard")
+    source["k"] = _numeric(table, ("k",))
+    source["estimate"] = _numeric(table, ("estimate",))
+    source["envelope_lower"] = _numeric(table, ("envelope_lower",))
+    source["envelope_upper"] = _numeric(table, ("envelope_upper",))
+    source["interval_type"] = _text(table, ("interval_type",), "")
+    source["n_repeats_estimable"] = _numeric(table, ("n_repeats_estimable",))
+    source["median_realized_k_left"] = _numeric(
+        table, ("median_realized_k_left",)
+    )
+    source["median_realized_k_right"] = _numeric(
+        table, ("median_realized_k_right",)
+    )
+    source["median_boundary_tie_size_left"] = _numeric(
+        table, ("median_boundary_tie_size_left",)
+    )
+    source["median_boundary_tie_size_right"] = _numeric(
+        table, ("median_boundary_tie_size_right",)
+    )
+    source["boundary_tie_repeat_fraction"] = _numeric(
+        table, ("boundary_tie_repeat_fraction",)
+    )
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    invalid = observed & (
+        source[["k", "estimate", "envelope_lower", "envelope_upper"]]
+        .isna()
+        .any(axis=1)
+        | source["k"].lt(1)
+        | source["envelope_lower"].gt(source["estimate"])
+        | source["envelope_upper"].lt(source["estimate"])
+        | source["interval_type"].ne("split_repeat_quantile_envelope")
+    )
+    bounded = source.loc[
+        observed, ["estimate", "envelope_lower", "envelope_upper"]
+    ]
+    if invalid.any() or ((bounded < 0) | (bounded > 1)).any().any():
+        raise ValueError("observed top-k stability curves are invalid")
+    _validate_nichenet_rank_claims(source)
+    _validate_rank_scope_claims(source)
+    _validate_rank_protocol(source)
+    source = source.loc[source["truth_scope"].eq("real_data")].reset_index(drop=True)
+    return source if not source.empty else _ne_source(
+        reason_code="real_data_ranking_top_k_curve_missing"
+    )
+
+
+def _ranking_intervals_source(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return _ne_source(reason_code="bootstrap_rank_intervals_missing")
+    source = _ranking_identity_source(table)
+    source["item_id"] = _text(table, ("item_id",), "")
+    source["item_label"] = _text(table, ("item_label",), "")
+    source["lower_rank"] = _numeric(table, ("lower_rank",))
+    source["median_rank"] = _numeric(table, ("median_rank",))
+    source["upper_rank"] = _numeric(table, ("upper_rank",))
+    source["rank_availability_frequency"] = _numeric(
+        table, ("rank_availability_frequency",)
+    )
+    source["top_k_frequency"] = _numeric(table, ("top_k_frequency",))
+    source["n_replicates_requested"] = _numeric(
+        table, ("n_replicates_requested",)
+    )
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    invalid = observed & (
+        source[
+            [
+                "lower_rank",
+                "median_rank",
+                "upper_rank",
+                "rank_availability_frequency",
+                "top_k_frequency",
+            ]
+        ].isna().any(axis=1)
+        | source["lower_rank"].lt(1)
+        | source["lower_rank"].gt(source["median_rank"])
+        | source["median_rank"].gt(source["upper_rank"])
+        | ~source["rank_availability_frequency"].between(0, 1)
+        | ~source["top_k_frequency"].between(0, 1)
+    )
+    if invalid.any():
+        raise ValueError("observed bootstrap rank intervals are invalid")
+    _validate_nichenet_rank_claims(source)
+    _validate_rank_scope_claims(source)
+    _validate_rank_protocol(source)
+    source = source.loc[source["truth_scope"].eq("real_data")].reset_index(drop=True)
+    return source if not source.empty else _ne_source(
+        reason_code="real_data_bootstrap_rank_intervals_missing"
+    )
+
+
+def _ranking_tiers_source(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return _ne_source(reason_code="stable_ranking_tiers_missing")
+    source = _ranking_identity_source(table)
+    source["item_id"] = _text(table, ("item_id",), "")
+    source["item_label"] = _text(table, ("item_label",), "")
+    source["tier"] = _text(table, ("tier",), "not_estimable")
+    source["rank_availability_frequency"] = _numeric(
+        table, ("rank_availability_frequency",)
+    )
+    source["top_k_frequency"] = _numeric(table, ("top_k_frequency",))
+    source["lower_rank"] = _numeric(table, ("lower_rank",))
+    source["upper_rank"] = _numeric(table, ("upper_rank",))
+    allowed_tiers = {
+        "stable_top_k",
+        "possible_top_k",
+        "stable_below_top_k",
+        "unstable",
+        "not_estimable",
+    }
+    if not set(source["tier"]).issubset(allowed_tiers):
+        raise ValueError("stable ranking table contains an unsupported tier")
+    _validate_nichenet_rank_claims(source)
+    _validate_rank_scope_claims(source)
+    _validate_rank_protocol(source)
+    source = source.loc[source["truth_scope"].eq("real_data")].reset_index(drop=True)
+    return source if not source.empty else _ne_source(
+        reason_code="real_data_stable_ranking_tiers_missing"
+    )
+
+
 def _concordance_source(table: pd.DataFrame) -> pd.DataFrame:
     if table.empty:
         return _ne_source(reason_code="cross_method_concordance_missing")
@@ -767,6 +1072,9 @@ def _concordance_source(table: pd.DataFrame) -> pd.DataFrame:
             "analysis_track": _text(table, ("analysis_track",), "lr_stlr"),
             "truth_scope": _text(table, ("truth_scope",), "unknown"),
             "contrast": _text(table, ("contrast",), "not_recorded"),
+            "rank_scope": _text(
+                table, ("rank_scope",), "global_common_functional"
+            ),
             "effect_spearman": _numeric(
                 table, ("effect_spearman", "spearman", "rank_correlation")
             ),
@@ -776,6 +1084,11 @@ def _concordance_source(table: pd.DataFrame) -> pd.DataFrame:
             "reason_code": _text(table, ("reason_code",), ""),
         }
     )
+    observed = source["status"].isin(OBSERVED_STATUSES)
+    if (observed & source["rank_scope"].ne("global_common_functional")).any():
+        raise ValueError(
+            "cross-method concordance requires scope-matched global functionals"
+        )
     return source
 
 
@@ -799,6 +1112,24 @@ def _performance_source(table: pd.DataFrame) -> pd.DataFrame:
             "n_failed": _numeric(table, ("n_failed", "failed_runs")),
             "threads_minimum": _numeric(table, ("threads_minimum",)),
             "threads_maximum": _numeric(table, ("threads_maximum",)),
+            "method_runtime_role": _text(
+                table, ("method_runtime_role",), "method_total"
+            ),
+            "median_method_total_wall_time_seconds": _numeric(
+                table, ("median_method_total_wall_time_seconds",)
+            ),
+            "median_core_fit_wall_time_seconds": _numeric(
+                table, ("median_core_fit_wall_time_seconds",)
+            ),
+            "median_source_pipeline_total_wall_time_seconds": _numeric(
+                table, ("median_source_pipeline_total_wall_time_seconds",)
+            ),
+            "median_adapter_readback_wall_time_seconds": _numeric(
+                table, ("median_adapter_readback_wall_time_seconds",)
+            ),
+            "performance_component_count": _numeric(
+                table, ("performance_component_count",)
+            ),
             "status": _status(table, "not_estimable"),
             "reason_code": _text(table, ("reason_code",), ""),
         }
@@ -885,6 +1216,9 @@ def _biology_source(
             ),
             "observed_direction": _text(table, ("observed_direction",), ""),
             "evidence_note": _text(table, ("evidence_note", "note"), ""),
+            "source_biology_file": _text(
+                table, ("source_biology_file",), ""
+            ),
             "n_components_estimable": _numeric(
                 table, ("n_components_estimable",)
             ),
@@ -933,6 +1267,7 @@ def _biology_source(
     source["reason_code"] = source["reason_code"].fillna("not_evaluated")
     source["observed_direction"] = source["observed_direction"].fillna("")
     source["evidence_note"] = source["evidence_note"].fillna("")
+    source["source_biology_file"] = source["source_biology_file"].fillna("")
     return source
 
 
@@ -1549,7 +1884,23 @@ def _plot_robustness(
     track_labels = perf["analysis_track"].replace(
         {"lr_stlr": "Track A", "ligand_target_program": "proxy diagnostic"}
     )
-    perf["label"] = method_names + " | " + perf["resource_mode"] + " | " + track_labels
+    runtime_roles = perf["method_runtime_role"].replace(
+        {
+            "method_total": "method total",
+            "core_fit": "core fit",
+            "source_pipeline_total": "source pipeline total",
+            "not_available": "runtime NE",
+        }
+    )
+    perf["label"] = (
+        method_names
+        + " | "
+        + perf["resource_mode"]
+        + " | "
+        + track_labels
+        + " | "
+        + runtime_roles
+    )
     perf["dataset_label"] = _short_dataset_labels(perf["dataset"])
     categories = list(dict.fromkeys(perf["label"]))
     category_positions = {label: index for index, label in enumerate(categories)}
@@ -1575,6 +1926,24 @@ def _plot_robustness(
                 label=dataset,
                 color=dataset_colors[dataset],
                 s=28,
+            )
+        readback = perf.dropna(
+            subset=["median_adapter_readback_wall_time_seconds"]
+        )
+        if not readback.empty:
+            y = [
+                category_positions[label] + dataset_offsets[dataset]
+                for label, dataset in readback[["label", "dataset_label"]].itertuples(
+                    index=False, name=None
+                )
+            ]
+            axes[1, 0].scatter(
+                readback["median_adapter_readback_wall_time_seconds"],
+                y,
+                marker="x",
+                color=BLACK,
+                s=34,
+                label="adapter readback only",
             )
         axes[1, 0].set_yticks(np.arange(len(categories)), categories, fontsize=6)
         if (runtime["median_wall_time_seconds"] > 0).all():
@@ -2005,6 +2374,256 @@ def _plot_iteration(source: pd.DataFrame, figures_dir: Path) -> None:
     _save_figure(figure, figures_dir, "figure07_iteration_comparison")
 
 
+def _plot_rank_stability(
+    agreement: pd.DataFrame,
+    curve: pd.DataFrame,
+    intervals: pd.DataFrame,
+    tiers: pd.DataFrame,
+    figures_dir: Path,
+) -> None:
+    figure, axes = plt.subplots(2, 2, figsize=(13.4, 10.2))
+    display_methods = {
+        "cellchat": "CellChat",
+        "cellphonedb": "CellPhoneDB",
+        "liana_rank_aggregate": "LIANA",
+        "crychic": "CRYCHIC",
+    }
+
+    observed_agreement = agreement.loc[
+        agreement["status"].isin(OBSERVED_STATUSES)
+        & agreement["analysis_track"].eq("lr_stlr")
+        & agreement["estimate"].notna()
+    ].copy()
+    if observed_agreement.empty:
+        _empty_panel(
+            axes[0, 0], str(agreement.iloc[0].get("reason_code", "NE"))
+        )
+    else:
+        observed_agreement["label"] = (
+            _short_dataset_labels(observed_agreement["dataset"])
+            + " | "
+            + observed_agreement["method"].replace(display_methods)
+            + " | "
+            + observed_agreement["resource_mode"]
+            + " | "
+            + observed_agreement["rank_scope"]
+            + " | "
+            + observed_agreement["ranking_level"]
+            + " | "
+            + observed_agreement["metric"].replace(
+                {
+                    "rank_biased_overlap": "RBO",
+                    "weighted_kendall_tau": "weighted tau",
+                }
+            )
+        )
+        observed_agreement = observed_agreement.sort_values(
+            [
+                "dataset",
+                "method",
+                "resource_mode",
+                "rank_scope",
+                "ranking_level",
+                "metric",
+            ],
+            kind="stable",
+        )
+        positions = np.arange(len(observed_agreement))
+        errors = np.vstack(
+            [
+                observed_agreement["estimate"]
+                - observed_agreement["envelope_lower"],
+                observed_agreement["envelope_upper"]
+                - observed_agreement["estimate"],
+            ]
+        )
+        axes[0, 0].errorbar(
+            observed_agreement["estimate"],
+            positions,
+            xerr=errors,
+            fmt="o",
+            color=BLUE,
+            ecolor=MID_GRAY,
+            capsize=2,
+            markersize=4,
+        )
+        axes[0, 0].axvline(0, color=BLACK, linewidth=0.7)
+        axes[0, 0].set_yticks(
+            positions, observed_agreement["label"], fontsize=5.5
+        )
+        axes[0, 0].set_xlim(-1.05, 1.05)
+        axes[0, 0].set_xlabel("Median split-half agreement (95% repeat envelope)")
+    axes[0, 0].set_title("Top-sensitive rank agreement")
+    _panel_label(axes[0, 0], "A")
+
+    observed_curve = curve.loc[
+        curve["status"].isin(OBSERVED_STATUSES)
+        & curve["analysis_track"].eq("lr_stlr")
+        & curve["ranking_level"].isin(
+            {"lr_family", "lr", "sender_receiver_pair"}
+        )
+        & curve["estimate"].notna()
+    ].copy()
+    if observed_curve.empty:
+        _empty_panel(axes[0, 1], str(curve.iloc[0].get("reason_code", "NE")))
+    else:
+        group_columns = [
+            "dataset",
+            "method",
+            "resource_mode",
+            "rank_scope",
+            "ranking_level",
+        ]
+        for index, (keys, group) in enumerate(
+            observed_curve.groupby(group_columns, sort=False, observed=True)
+        ):
+            dataset, method, resource_mode, rank_scope, level = keys
+            label = (
+                f"{_short_dataset_labels(pd.Series([dataset])).iloc[0]} | "
+                f"{display_methods.get(str(method), method)} | {resource_mode} | "
+                f"{rank_scope} | {level}"
+            )
+            group = group.sort_values("k", kind="stable")
+            axes[0, 1].plot(
+                group["k"],
+                group["estimate"],
+                label=label,
+                color=PALETTE[index % len(PALETTE)],
+                linewidth=1.2,
+            )
+        axes[0, 1].set_xlim(left=1)
+        axes[0, 1].set_ylim(-0.02, 1.02)
+        axes[0, 1].set_xlabel(
+            "Top-k cutoff (LR family/pair 1-25; LR 1-100)"
+        )
+        axes[0, 1].set_ylabel("Median split-half Jaccard")
+        axes[0, 1].legend(fontsize=5, loc="best")
+    axes[0, 1].set_title("Complete top-k stability curves")
+    _panel_label(axes[0, 1], "B")
+
+    observed_tiers = tiers.loc[
+        tiers["analysis_track"].eq("lr_stlr")
+        & tiers["tier"].isin(
+            {"stable_top_k", "possible_top_k", "unstable", "stable_below_top_k"}
+        )
+    ].copy()
+    if observed_tiers.empty:
+        _empty_panel(axes[1, 0], str(tiers.iloc[0].get("reason_code", "NE")))
+    else:
+        observed_tiers["label"] = (
+            _short_dataset_labels(observed_tiers["dataset"])
+            + " | "
+            + observed_tiers["method"].replace(display_methods)
+            + " | "
+            + observed_tiers["resource_mode"]
+            + " | "
+            + observed_tiers["rank_scope"]
+            + " | "
+            + observed_tiers["ranking_level"]
+        )
+        tier_order = [
+            "stable_top_k",
+            "possible_top_k",
+            "unstable",
+            "stable_below_top_k",
+        ]
+        counts = (
+            observed_tiers.groupby(["label", "tier"], sort=False, observed=True)
+            .size()
+            .unstack(fill_value=0)
+            .reindex(columns=tier_order, fill_value=0)
+        )
+        left: np.ndarray = np.zeros(len(counts), dtype=float)
+        tier_colors = [GREEN, ORANGE, VERMILLION, LIGHT_GRAY]
+        for tier, color in zip(tier_order, tier_colors, strict=True):
+            axes[1, 0].barh(
+                counts.index,
+                counts[tier],
+                left=left,
+                color=color,
+                label=tier.replace("_", " "),
+            )
+            left += counts[tier].to_numpy(dtype=float)
+        axes[1, 0].set_xlabel("Number of frozen-universe items")
+        axes[1, 0].tick_params(axis="y", labelsize=5.5)
+        axes[1, 0].legend(fontsize=5, ncol=2, loc="best")
+    axes[1, 0].set_title("Bootstrap-supported stable tiers")
+    _panel_label(axes[1, 0], "C")
+
+    observed_intervals = intervals.loc[
+        intervals["status"].isin(OBSERVED_STATUSES)
+        & intervals["analysis_track"].eq("lr_stlr")
+        & intervals["median_rank"].notna()
+        & intervals["top_k_frequency"].notna()
+    ].copy()
+    if observed_intervals.empty:
+        _empty_panel(
+            axes[1, 1], str(intervals.iloc[0].get("reason_code", "NE"))
+        )
+    else:
+        observed_intervals = (
+            observed_intervals.sort_values(
+                ["top_k_frequency", "median_rank"],
+                ascending=[False, True],
+                kind="stable",
+            )
+            .groupby(
+                [
+                    "dataset",
+                    "method",
+                    "resource_mode",
+                    "rank_scope",
+                    "ranking_level",
+                ],
+                # Keep each resource arm and ranking estimand visually distinct.
+                sort=False,
+                observed=True,
+            )
+            .head(10)
+        )
+        for keys, group in observed_intervals.groupby(
+            ["dataset", "method", "resource_mode", "rank_scope", "ranking_level"],
+            sort=False,
+            observed=True,
+        ):
+            dataset, method, resource_mode, rank_scope, level = keys
+            xerr = np.vstack(
+                [
+                    group["median_rank"] - group["lower_rank"],
+                    group["upper_rank"] - group["median_rank"],
+                ]
+            )
+            axes[1, 1].errorbar(
+                group["median_rank"],
+                group["top_k_frequency"],
+                xerr=xerr,
+                fmt="o",
+                label=(
+                    f"{_short_dataset_labels(pd.Series([dataset])).iloc[0]} | "
+                    f"{display_methods.get(str(method), method)} | {resource_mode} | "
+                    f"{rank_scope} | {level}"
+                ),
+                alpha=0.75,
+                markersize=4,
+                capsize=2,
+            )
+        axes[1, 1].axhline(0.8, color=BLACK, linestyle="--", linewidth=0.8)
+        axes[1, 1].set_xscale("log")
+        axes[1, 1].set_xlim(left=0.9)
+        axes[1, 1].set_ylim(-0.02, 1.02)
+        axes[1, 1].set_xlabel("Conditional median bootstrap rank (log scale)")
+        axes[1, 1].set_ylabel("Tie-inclusive top-k frequency (all replicates)")
+        axes[1, 1].legend(fontsize=5)
+    axes[1, 1].set_title("Average-rank interval and top-k frequency")
+    _panel_label(axes[1, 1], "D")
+
+    figure.suptitle("Real-data ranking stability beyond Spearman and one top-k cutoff")
+    figure.subplots_adjust(
+        left=0.27, right=0.97, top=0.91, bottom=0.09, hspace=0.35, wspace=0.42
+    )
+    _save_figure(figure, figures_dir, "figure08_rank_stability")
+
+
 def _markdown_table(
     table: pd.DataFrame, columns: Sequence[str], limit: int = 30
 ) -> str:
@@ -2036,6 +2655,8 @@ def _report_markdown(
     biology: pd.DataFrame,
     simulation: pd.DataFrame,
     iteration: pd.DataFrame,
+    ranking_agreement: pd.DataFrame,
+    ranking_tiers: pd.DataFrame,
     adapter_records: pd.DataFrame,
 ) -> str:
     observed_loso = int(loso["status"].isin(OBSERVED_STATUSES).sum())
@@ -2122,7 +2743,7 @@ supportive silver standard, not comprehensive edge truth and not a basis for
 real-data AUROC. Cells with reverse-direction components are annotated with the
 number of `opp` components, including mixed partial-support rows.
 
-{_markdown_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "observed_direction", "n_components_strong", "n_components_directional", "n_components_opposite", "status", "reason_code"))}
+{_markdown_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "observed_direction", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
 
 ## Synthetic and perturbation truth
 
@@ -2152,6 +2773,27 @@ regression. Concurrent wall-time and RSS comparisons are not scored and appear
 as `NE` with their reason codes.
 
 {_markdown_table(iteration, ("dataset", "method", "metric", "iteration_from", "iteration_to", "before", "after", "metric_direction", "signed_improvement", "change_class", "status", "reason_code"))}
+
+## Top-sensitive ranking stability
+
+![Figure 8](figures/figure08_rank_stability.png)
+
+**Figure 8.** Subject split-half rank-biased overlap (`p=0.9`), top-weighted
+Kendall tau (`power=1`), preregistered LR-family top-k curves (`k=1..25`) and LR curves
+(`k=1..100`), plus 2,000-subject-bootstrap average-rank intervals, rank
+availability, tie-inclusive top-k frequency, and stable tiers (`95%` quantile
+intervals; minimum top-k frequency `0.80`; seed `20260712`). Rank availability
+is a missingness diagnostic, not model/family selection frequency; top-k
+frequency uses all requested replicates, including non-estimable replicates, in
+its denominator. NicheNet Track B does not support LR or sender
+rank claims, and unsupported Kuppe/PancVAX designs remain explicit `NE`. The
+current score contract has no frozen LR equivalence/driver-family identifier,
+so `lr_family` remains `NE`; observed `sender_receiver_pair` rows are labelled
+separately and are not represented as mechanistic LR families.
+
+{_markdown_table(ranking_agreement, ("dataset", "method", "resource_mode", "rank_scope", "ranking_level", "metric", "estimate", "envelope_lower", "envelope_upper", "n_repeats_estimable", "status", "reason_code"))}
+
+{_markdown_table(ranking_tiers, ("dataset", "method", "resource_mode", "rank_scope", "ranking_level", "item_label", "tier", "rank_availability_frequency", "top_k_frequency", "lower_rank", "upper_rank", "status", "reason_code"))}
 
 ## Adapter inventory
 
@@ -2207,6 +2849,8 @@ def _report_html(
     biology: pd.DataFrame,
     simulation: pd.DataFrame,
     iteration: pd.DataFrame,
+    ranking_agreement: pd.DataFrame,
+    ranking_tiers: pd.DataFrame,
     adapter_records: pd.DataFrame,
 ) -> str:
     figures = [
@@ -2247,6 +2891,13 @@ def _report_html(
             "figure07_iteration_comparison.png",
             "Only observed controlled comparisons are scored; uncontrolled timing is NE.",
         ),
+        (
+            "Top-sensitive ranking stability",
+            "figure08_rank_stability.png",
+            "RBO, weighted Kendall, complete top-k curves, bootstrap rank "
+            "intervals, selection frequency, and stable tiers; unsupported "
+            "rank claims remain NE.",
+        ),
     ]
     figure_html = "".join(
         f"<h2>{html.escape(title)}</h2><figure>"
@@ -2284,11 +2935,15 @@ target-program macro-AUPRC primary endpoint was not completed and remains
 <h2>Primary subject-level endpoint</h2>
 {_html_table(loso, ("dataset", "method", "resource_mode", "contrast", "estimate", "ci_lower", "ci_upper", "n_subjects_estimable", "status", "reason_code"))}
 <h2>Supportive biology table</h2>
-{_html_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "n_components_strong", "n_components_directional", "n_components_opposite", "status", "reason_code"))}
+{_html_table(biology, ("dataset", "observation_id", "expected_direction", "method", "resource_mode", "support_status", "n_components_strong", "n_components_directional", "n_components_opposite", "source_biology_file", "status", "reason_code"))}
 <h2>Simulation truth table</h2>
 {_html_table(simulation, ("dataset", "scenario", "method", "resource_mode", "estimand", "record_source", "truth_scope", "metric", "estimate", "status", "reason_code"))}
 <h2>Iteration comparison</h2>
 {_html_table(iteration, ("dataset", "method", "metric", "before", "after", "metric_direction", "signed_improvement", "change_class", "status", "reason_code"))}
+<h2>Top-sensitive ranking agreement</h2>
+{_html_table(ranking_agreement, ("dataset", "method", "resource_mode", "rank_scope", "ranking_level", "metric", "estimate", "envelope_lower", "envelope_upper", "n_repeats_estimable", "status", "reason_code"))}
+<h2>Bootstrap-supported stable tiers</h2>
+{_html_table(ranking_tiers, ("dataset", "method", "resource_mode", "rank_scope", "ranking_level", "item_label", "tier", "rank_availability_frequency", "top_k_frequency", "lower_rank", "upper_rank", "status", "reason_code"))}
 <h2>Adapter inventory</h2>
 {_html_table(adapter_records, ("dataset", "method", "method_version", "resource", "status", "reason_code", "path"))}
 </body></html>"""
@@ -2403,6 +3058,10 @@ def generate(
     )
     simulation = _simulation_source(tables["simulation_truth"])
     iteration = _iteration_source(tables["iteration_comparison"])
+    ranking_agreement = _ranking_agreement_source(tables["ranking_agreement"])
+    ranking_curve = _ranking_curve_source(tables["ranking_top_k_curve"])
+    ranking_intervals = _ranking_intervals_source(tables["ranking_intervals"])
+    ranking_tiers = _ranking_tiers_source(tables["ranking_tiers"])
 
     real_stability = stability.loc[
         stability["truth_scope"].eq("real_data") | stability["method"].eq("NE")
@@ -2423,6 +3082,16 @@ def generate(
         ignore_index=True,
         sort=False,
     )
+    ranking_source = pd.concat(
+        [
+            ranking_agreement.assign(panel="A_agreement"),
+            ranking_curve.assign(panel="B_top_k_curve"),
+            ranking_tiers.assign(panel="C_stable_tiers"),
+            ranking_intervals.assign(panel="D_rank_intervals"),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
     figure_sources = {
         "figure01_design_estimability": design,
         "figure02_coverage_status": coverage,
@@ -2431,6 +3100,7 @@ def generate(
         "figure05_supportive_biology": biology,
         "figure06_simulation_truth": simulation,
         "figure07_iteration_comparison": iteration,
+        "figure08_rank_stability": ranking_source,
     }
     for stem, source in figure_sources.items():
         _save_source(source, source_dir, stem)
@@ -2444,6 +3114,13 @@ def generate(
     _plot_biology(biology, figures_dir)
     _plot_simulation(simulation, figures_dir)
     _plot_iteration(iteration, figures_dir)
+    _plot_rank_stability(
+        ranking_agreement,
+        ranking_curve,
+        ranking_intervals,
+        ranking_tiers,
+        figures_dir,
+    )
 
     adapter_records = pd.DataFrame(_load_manifests(inputs.adapter_manifests))
     if adapter_records.empty:
@@ -2463,6 +3140,10 @@ def generate(
         (
             repo_root / "benchmarks/metrics/multicondition.py",
             "metric implementation source",
+        ),
+        (
+            repo_root / "benchmarks/metrics/multicondition_rank_stability.py",
+            "top-sensitive ranking metric integration source",
         ),
         (repo_root / "pyproject.toml", "Python project specification"),
         (repo_root / "uv.lock", "Python dependency lock"),
@@ -2494,6 +3175,8 @@ def generate(
         biology=biology,
         simulation=simulation,
         iteration=iteration,
+        ranking_agreement=ranking_agreement,
+        ranking_tiers=ranking_tiers,
         adapter_records=adapter_records,
     )
     (output / "REPORT.md").write_text(markdown, encoding="utf-8")
@@ -2511,6 +3194,8 @@ def generate(
         biology=biology,
         simulation=simulation,
         iteration=iteration,
+        ranking_agreement=ranking_agreement,
+        ranking_tiers=ranking_tiers,
         adapter_records=adapter_records,
     )
     html_path = output / "REPORT.html"
@@ -2539,6 +3224,7 @@ def generate(
         "figure05_supportive_biology",
         "figure06_simulation_truth",
         "figure07_iteration_comparison",
+        "figure08_rank_stability",
     )
     artifact_paths: list[tuple[Path, str]] = [
         (output / "input_manifest.tsv", "report input checksum manifest"),
@@ -2573,7 +3259,29 @@ def generate(
             "real_data_rows_require_explicit_truth_scope": True,
             "preregistered_track_b_primary_reported": False,
             "track_b_proxy_mislabelled_as_native_nichenet": False,
+            "nichenet_lr_or_sender_ranking_reported": False,
             "synthetic_truth_scopes": sorted(ALLOWED_SYNTHETIC_SCOPES),
+        },
+        "ranking_parameters": {
+            "rbo_persistence": 0.9,
+            "weighted_kendall_power": 1.0,
+            "family_top_k_curve": [1, 25],
+            "lr_top_k_curve": [1, 100],
+            "sender_receiver_pair_top_k_curve": [1, 25],
+            "lr_family_mapping_status": "not_available_in_score_contract",
+            "n_bootstrap": 2000,
+            "n_split_repeats": 200,
+            "rank_interval_quantile_level": 0.95,
+            "minimum_top_k_frequency": 0.8,
+            "minimum_estimable_replicate_fraction": 0.8,
+            "minimum_subjects": 3,
+            "minimum_observed_ranks": 2,
+            "random_seed": 20260712,
+            "resampling_unit": "subject",
+            "rank_interval_conditioning": "conditional_on_rank_availability",
+            "rank_availability_frequency_denominator": "all_requested_replicates",
+            "top_k_frequency_denominator": "all_requested_replicates",
+            "tie_policy": "average_rank_and_tie_inclusive_top_k",
         },
         "input_manifest": "input_manifest.tsv",
         "artifact_manifest": "artifact_manifest.tsv",
@@ -2615,6 +3323,17 @@ def generate(
             "iteration_regressions": int(
                 iteration.get("change_class", pd.Series(dtype=str))
                 .eq("regressed")
+                .sum()
+            ),
+            "ranking_agreement_observed": int(
+                ranking_agreement["status"].isin(OBSERVED_STATUSES).sum()
+            ),
+            "ranking_agreement_not_estimable": int(
+                (~ranking_agreement["status"].isin(OBSERVED_STATUSES)).sum()
+            ),
+            "stable_top_k_items": int(
+                ranking_tiers.get("tier", pd.Series(dtype=str))
+                .eq("stable_top_k")
                 .sum()
             ),
         },

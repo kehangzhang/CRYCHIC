@@ -4,19 +4,457 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Hashable, Mapping
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 
-from crychic.core import canonical_json, stable_id
+from crychic.core import canonical_digest, canonical_json, stable_id
 
 CORE_COMPONENTS = ("availability", "downstream", "sender", "prior_quality")
 LEGACY_UNTRACKED_SCORE_VERSION = "geometric_v1_untracked"
+SCORING_COLLECTION_EXTENSION_VERSION = "1.0.0"
+SCORING_COLLECTION_DIGEST_METHOD = "sha256_canonical_csv_v1"
+SCORING_SOURCE_KEY_COLUMNS = (
+    "subject_id",
+    "sample_id",
+    "context_id",
+    "design_row_id",
+    "edge_id",
+    "scoring_functional_id",
+    "repeat_id",
+    "fold_id",
+    "mode",
+)
+
+
+class _DigestSink:
+    """Minimal text sink that streams canonical CSV into SHA-256."""
+
+    __slots__ = ("_digest",)
+
+    def __init__(self, digest: Any) -> None:
+        self._digest = digest
+
+    def write(self, value: str) -> int:
+        encoded = value.encode("utf-8")
+        self._digest.update(encoded)
+        return len(value)
+
+
+def scoring_source_key_digest(table: pd.DataFrame) -> str:
+    """Hash a source-score key set independently of input row order."""
+
+    if not isinstance(table, pd.DataFrame):
+        raise TypeError("source score keys must be a pandas DataFrame")
+    missing = set(SCORING_SOURCE_KEY_COLUMNS).difference(table.columns)
+    if missing:
+        raise ValueError(f"source score keys are missing: {sorted(missing)}")
+    keys = table.loc[:, list(SCORING_SOURCE_KEY_COLUMNS)].copy()
+    for column in SCORING_SOURCE_KEY_COLUMNS:
+        if keys[column].isna().any():
+            raise ValueError(f"source score key {column} must not contain NA")
+        values = keys[column].tolist()
+        if any(not isinstance(value, str) or not value for value in values):
+            raise ValueError(
+                f"source score key {column} must contain non-empty strings"
+            )
+    if keys.duplicated(list(SCORING_SOURCE_KEY_COLUMNS)).any():
+        raise ValueError("source score keys must be unique")
+    keys = keys.sort_values(
+        list(SCORING_SOURCE_KEY_COLUMNS),
+        kind="stable",
+        ignore_index=True,
+    )
+    digest = hashlib.sha256()
+    digest.update(f"{SCORING_COLLECTION_DIGEST_METHOD}\n".encode())
+    keys.to_csv(
+        cast(Any, _DigestSink(digest)),
+        index=False,
+        header=True,
+        lineterminator="\n",
+    )
+    return digest.hexdigest()
+
+
+def _required_identifier(value: object, *, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+def _sha256_digest(value: object, *, field_name: str) -> str:
+    normalized = _required_identifier(value, field_name=field_name)
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise ValueError(f"{field_name} must be a lowercase SHA-256 digest")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReceiverScoringFunctionalManifest:
+    """One emitted receiver partition and its verifiable source-score keys."""
+
+    receiver: str
+    scoring_functional_id: str
+    source_score_key_digest: str
+    source_score_row_count: int
+    provenance_status: str = "functional_metadata_not_persisted_unverified"
+    child_manifest_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        identifiers = ("receiver", "scoring_functional_id")
+        payload: dict[str, object] = {}
+        for field_name in identifiers:
+            normalized = _required_identifier(
+                getattr(self, field_name), field_name=field_name
+            )
+            object.__setattr__(self, field_name, normalized)
+            payload[field_name] = normalized
+        if self.provenance_status != "functional_metadata_not_persisted_unverified":
+            raise ValueError(
+                "provenance_status must declare unverified functional metadata"
+            )
+        payload["provenance_status"] = self.provenance_status
+        source_digest = _sha256_digest(
+            self.source_score_key_digest,
+            field_name="source_score_key_digest",
+        )
+        if (
+            isinstance(self.source_score_row_count, bool)
+            or not isinstance(self.source_score_row_count, int)
+            or self.source_score_row_count <= 0
+        ):
+            raise ValueError("source_score_row_count must be a positive integer")
+        object.__setattr__(self, "source_score_key_digest", source_digest)
+        payload.update(
+            {
+                "source_score_key_digest": source_digest,
+                "source_score_row_count": self.source_score_row_count,
+            }
+        )
+        object.__setattr__(
+            self,
+            "child_manifest_id",
+            stable_id("receiver_scoring_functional", payload),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the canonical child-manifest representation."""
+
+        return {
+            "child_manifest_id": self.child_manifest_id,
+            "receiver": self.receiver,
+            "scoring_functional_id": self.scoring_functional_id,
+            "provenance_status": self.provenance_status,
+            "source_score_key_digest": self.source_score_key_digest,
+            "source_score_row_count": self.source_score_row_count,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, object]
+    ) -> ReceiverScoringFunctionalManifest:
+        """Parse a child manifest while verifying its derived stable ID."""
+
+        expected = {
+            "child_manifest_id",
+            "receiver",
+            "scoring_functional_id",
+            "provenance_status",
+            "source_score_key_digest",
+            "source_score_row_count",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ValueError("receiver child manifest fields are invalid")
+        result = cls(
+            receiver=value["receiver"],  # type: ignore[arg-type]
+            scoring_functional_id=value["scoring_functional_id"],  # type: ignore[arg-type]
+            provenance_status=value["provenance_status"],  # type: ignore[arg-type]
+            source_score_key_digest=value["source_score_key_digest"],  # type: ignore[arg-type]
+            source_score_row_count=value["source_score_row_count"],  # type: ignore[arg-type]
+        )
+        if value["child_manifest_id"] != result.child_manifest_id:
+            raise ValueError("receiver child manifest ID does not match its payload")
+        return result
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScoringCollectionManifest:
+    """Partial emitted receiver partition for one contrast, repeat, and fold.
+
+    This contract deliberately does not claim that receiver children share one
+    scoring functional, nor that emitted children cover a planned receiver
+    universe.
+    """
+
+    contrast: str
+    repeat_id: str
+    fold_id: str
+    emitted_receivers: tuple[str, ...]
+    children: tuple[ReceiverScoringFunctionalManifest, ...]
+    common_functional_across_receivers: bool = False
+    partition_key: str = "receiver"
+    receiver_scope: str = "emitted_sample_scores"
+    composition_status: str = "partial_emitted_only"
+    scoring_collection_id: str = field(init=False)
+    source_score_key_digest: str = field(init=False)
+    source_score_row_count: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        contrast = _required_identifier(self.contrast, field_name="contrast")
+        repeat_id = _required_identifier(self.repeat_id, field_name="repeat_id")
+        fold_id = _required_identifier(self.fold_id, field_name="fold_id")
+        if self.common_functional_across_receivers is not False:
+            raise ValueError(
+                "receiver-partition collections must declare "
+                "common_functional_across_receivers=false"
+            )
+        if self.partition_key != "receiver":
+            raise ValueError("partition_key must be 'receiver'")
+        if self.receiver_scope != "emitted_sample_scores":
+            raise ValueError("receiver_scope must be 'emitted_sample_scores'")
+        if self.composition_status != "partial_emitted_only":
+            raise ValueError("composition_status must be 'partial_emitted_only'")
+        receivers = _stable_names(
+            tuple(self.emitted_receivers), field_name="emitted_receivers"
+        )
+        children = tuple(self.children)
+        if not children or any(
+            not isinstance(child, ReceiverScoringFunctionalManifest)
+            for child in children
+        ):
+            raise ValueError(
+                "children must contain ReceiverScoringFunctionalManifest values"
+            )
+        children = tuple(sorted(children, key=lambda child: child.receiver))
+        child_receivers = tuple(child.receiver for child in children)
+        if child_receivers != receivers:
+            raise ValueError(
+                "emitted_receivers must exactly match receiver child partitions"
+            )
+        for field_name in ("child_manifest_id", "scoring_functional_id"):
+            values = [getattr(child, field_name) for child in children]
+            if len(set(values)) != len(values):
+                raise ValueError(
+                    f"receiver children must have unique {field_name} values"
+                )
+        source_row_count = sum(child.source_score_row_count for child in children)
+        source_digest = canonical_digest(
+            {
+                "digest_method": SCORING_COLLECTION_DIGEST_METHOD,
+                "receiver_children": [
+                    {
+                        "receiver": child.receiver,
+                        "source_score_key_digest": child.source_score_key_digest,
+                        "source_score_row_count": child.source_score_row_count,
+                    }
+                    for child in children
+                ],
+            }
+        )
+        payload = {
+            "common_functional_across_receivers": False,
+            "composition_status": "partial_emitted_only",
+            "contrast": contrast,
+            "fold_id": fold_id,
+            "partition_key": "receiver",
+            "receiver_scope": "emitted_sample_scores",
+            "repeat_id": repeat_id,
+            "emitted_receivers": list(receivers),
+            "children": [child.to_dict() for child in children],
+            "source_score_key_digest": source_digest,
+            "source_score_row_count": source_row_count,
+        }
+        object.__setattr__(self, "contrast", contrast)
+        object.__setattr__(self, "repeat_id", repeat_id)
+        object.__setattr__(self, "fold_id", fold_id)
+        object.__setattr__(self, "emitted_receivers", receivers)
+        object.__setattr__(self, "children", children)
+        object.__setattr__(self, "source_score_key_digest", source_digest)
+        object.__setattr__(self, "source_score_row_count", source_row_count)
+        object.__setattr__(
+            self,
+            "scoring_collection_id",
+            stable_id("scoring_collection", payload),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the canonical receiver-collection representation."""
+
+        return {
+            "scoring_collection_id": self.scoring_collection_id,
+            "contrast": self.contrast,
+            "repeat_id": self.repeat_id,
+            "fold_id": self.fold_id,
+            "partition_key": self.partition_key,
+            "receiver_scope": self.receiver_scope,
+            "composition_status": self.composition_status,
+            "common_functional_across_receivers": (
+                self.common_functional_across_receivers
+            ),
+            "emitted_receivers": list(self.emitted_receivers),
+            "children": [child.to_dict() for child in self.children],
+            "source_score_key_digest": self.source_score_key_digest,
+            "source_score_row_count": self.source_score_row_count,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> ScoringCollectionManifest:
+        """Parse a collection while verifying all derived identities."""
+
+        expected = {
+            "scoring_collection_id",
+            "contrast",
+            "repeat_id",
+            "fold_id",
+            "partition_key",
+            "receiver_scope",
+            "composition_status",
+            "common_functional_across_receivers",
+            "emitted_receivers",
+            "children",
+            "source_score_key_digest",
+            "source_score_row_count",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ValueError("scoring collection manifest fields are invalid")
+        raw_receivers = value["emitted_receivers"]
+        raw_children = value["children"]
+        if (
+            not isinstance(raw_receivers, Sequence)
+            or isinstance(raw_receivers, str)
+            or not isinstance(raw_children, Sequence)
+            or isinstance(raw_children, str)
+        ):
+            raise ValueError("scoring collection receivers and children must be arrays")
+        result = cls(
+            contrast=value["contrast"],  # type: ignore[arg-type]
+            repeat_id=value["repeat_id"],  # type: ignore[arg-type]
+            fold_id=value["fold_id"],  # type: ignore[arg-type]
+            partition_key=value["partition_key"],  # type: ignore[arg-type]
+            receiver_scope=value["receiver_scope"],  # type: ignore[arg-type]
+            composition_status=value["composition_status"],  # type: ignore[arg-type]
+            common_functional_across_receivers=value[  # type: ignore[arg-type]
+                "common_functional_across_receivers"
+            ],
+            emitted_receivers=cast(tuple[str, ...], tuple(raw_receivers)),
+            children=tuple(
+                ReceiverScoringFunctionalManifest.from_dict(child)
+                for child in raw_children
+                if isinstance(child, Mapping)
+            ),
+        )
+        if len(result.children) != len(raw_children):
+            raise ValueError("scoring collection children must be objects")
+        derived = result.to_dict()
+        for field_name in (
+            "scoring_collection_id",
+            "source_score_key_digest",
+            "source_score_row_count",
+        ):
+            if value[field_name] != derived[field_name]:
+                raise ValueError(f"{field_name} does not match the collection payload")
+        return result
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScoringCollectionDocument:
+    """Versioned persisted document containing receiver collections."""
+
+    collections: tuple[ScoringCollectionManifest, ...]
+    extension_schema_version: str = SCORING_COLLECTION_EXTENSION_VERSION
+    result_schema_version: str = "0.1.0"
+    collection_kind: str = "receiver_partition"
+    digest_method: str = SCORING_COLLECTION_DIGEST_METHOD
+
+    def __post_init__(self) -> None:
+        if self.extension_schema_version != SCORING_COLLECTION_EXTENSION_VERSION:
+            raise ValueError("unsupported scoring collection extension version")
+        if self.result_schema_version != "0.1.0":
+            raise ValueError("scoring collections require result schema v0.1.0")
+        if self.collection_kind != "receiver_partition":
+            raise ValueError("collection_kind must be 'receiver_partition'")
+        if self.digest_method != SCORING_COLLECTION_DIGEST_METHOD:
+            raise ValueError("unsupported scoring collection digest method")
+        collections = tuple(self.collections)
+        if not collections or any(
+            not isinstance(collection, ScoringCollectionManifest)
+            for collection in collections
+        ):
+            raise ValueError("scoring collection document must not be empty")
+        collections = tuple(
+            sorted(
+                collections,
+                key=lambda item: (item.contrast, item.repeat_id, item.fold_id),
+            )
+        )
+        group_keys = [
+            (item.contrast, item.repeat_id, item.fold_id) for item in collections
+        ]
+        if len(set(group_keys)) != len(group_keys):
+            raise ValueError(
+                "scoring collections must be unique by contrast, repeat, and fold"
+            )
+        child_ids = [
+            child.scoring_functional_id
+            for collection in collections
+            for child in collection.children
+        ]
+        if len(set(child_ids)) != len(child_ids):
+            raise ValueError(
+                "a receiver child functional must belong to exactly one collection"
+            )
+        object.__setattr__(self, "collections", collections)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a schema-ready versioned collection document."""
+
+        return {
+            "extension_schema_version": self.extension_schema_version,
+            "result_schema_version": self.result_schema_version,
+            "collection_kind": self.collection_kind,
+            "digest_method": self.digest_method,
+            "collections": [collection.to_dict() for collection in self.collections],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> ScoringCollectionDocument:
+        """Parse and fully validate a persisted collection document."""
+
+        expected = {
+            "extension_schema_version",
+            "result_schema_version",
+            "collection_kind",
+            "digest_method",
+            "collections",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ValueError("scoring collection document fields are invalid")
+        raw_collections = value["collections"]
+        if not isinstance(raw_collections, Sequence) or isinstance(
+            raw_collections, str
+        ):
+            raise ValueError("scoring collection document collections must be an array")
+        collections = tuple(
+            ScoringCollectionManifest.from_dict(collection)
+            for collection in raw_collections
+            if isinstance(collection, Mapping)
+        )
+        if len(collections) != len(raw_collections):
+            raise ValueError("scoring collections must be objects")
+        return cls(
+            extension_schema_version=value["extension_schema_version"],  # type: ignore[arg-type]
+            result_schema_version=value["result_schema_version"],  # type: ignore[arg-type]
+            collection_kind=value["collection_kind"],  # type: ignore[arg-type]
+            digest_method=value["digest_method"],  # type: ignore[arg-type]
+            collections=collections,
+        )
 
 
 def float64_array_digest(values: np.ndarray) -> str:
@@ -200,9 +638,7 @@ class ScoringFunctional:
             model_manifest_id = None
         else:
             if not isinstance(self.model_manifest, ScoringModelManifest):
-                raise TypeError(
-                    "model_manifest must be a ScoringModelManifest or None"
-                )
+                raise TypeError("model_manifest must be a ScoringModelManifest or None")
             if score_version != self.model_manifest.score_version:
                 raise ValueError(
                     "score_version must match the supplied ScoringModelManifest"

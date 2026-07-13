@@ -19,7 +19,11 @@ from crychic.design import ContextGraph, DesignAudit
 from crychic.pseudobulk import ExploratoryAggregate, PseudobulkDataset
 from crychic.resources import ResourceBundle, TargetPrior
 from crychic.response import ResponseEstimate
-from crychic.scoring import CommunicationScores, ScoringFunctional
+from crychic.scoring import (
+    CommunicationScores,
+    ScoringCollectionManifest,
+    ScoringFunctional,
+)
 from crychic.sender import SenderAssignment
 
 
@@ -494,9 +498,7 @@ class BaselineAttributionRun:
             raise ValueError("receptor gate driver IDs must be unique")
         if any(not 0 <= gate <= 1 for _, gate in self.receptor_gates):
             raise ValueError("receptor gates must lie in [0, 1]")
-        if status is RunStatus.OK and (
-            self.basis is None or self.attribution is None
-        ):
+        if status is RunStatus.OK and (self.basis is None or self.attribution is None):
             raise ValueError("status=ok requires basis and attribution artifacts")
         if status is not RunStatus.OK and not self.reason_code:
             raise ValueError("non-success attribution requires an explicit reason_code")
@@ -628,9 +630,19 @@ class BaselineArtifacts:
 
     @property
     def scoring_functionals(self) -> tuple[ScoringFunctional, ...]:
-        """Return the frozen common functional for every scored branch."""
+        """Return each receiver branch's context-common functional."""
 
         return tuple(run.functional for run in self.score_runs)
+
+    @property
+    def scoring_collections(self) -> tuple[ScoringCollectionManifest, ...]:
+        """Return complete receiver partitions for persisted score branches."""
+
+        if not self.score_runs:
+            return ()
+        from .persistence import baseline_scoring_collections
+
+        return baseline_scoring_collections(self)
 
     @property
     def downstream_activity(self) -> pd.DataFrame:

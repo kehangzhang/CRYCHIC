@@ -29,7 +29,11 @@ directory containing `report_inputs.json` with this schema:
     "performance": "metrics/performance_summary.tsv",
     "biology_support": "metrics/biology_support.tsv",
     "simulation_truth": "metrics/simulation_truth_metrics.tsv",
-    "iteration_comparison": "metrics/iteration_comparison.tsv"
+    "iteration_comparison": "metrics/iteration_comparison.tsv",
+    "ranking_agreement": "metrics/ranking_agreement_summary.tsv",
+    "ranking_top_k_curve": "metrics/ranking_top_k_stability_curve.tsv",
+    "ranking_intervals": "metrics/bootstrap_rank_intervals.tsv",
+    "ranking_tiers": "metrics/stable_ranking_tiers.tsv"
   }
 }
 ```
@@ -70,6 +74,32 @@ silently choose one iteration.
 - `iteration_comparison`: `dataset`, `method`, `metric`, before/after values,
   version labels, `metric_direction` (`higher` or `lower`), `status`, and
   `reason_code`.
+- Ranking tables: method identity, `truth_scope`, `ranking_level`, frozen
+  universe size, the fixed resampling parameters, `status`, and `reason_code`.
+  Agreement rows contain RBO/Kendall estimates and empirical intervals; curve
+  rows contain every requested `k`; interval rows separate conditional rank
+  intervals from unconditional selection frequency; tier rows retain the
+  resulting stable-tier label. `sender_receiver_pair` is never relabelled as an
+  LR family. Until a frozen family mapping is supplied, `lr_family` is NE.
+
+Adapter-run performance provenance defaults to the manifest's complete elapsed
+time. A compact conversion/readback must instead declare
+`performance_role: "adapter_readback"`. It can bind the method runtime to an
+audited source manifest:
+
+```json
+{
+  "performance_role": "adapter_readback",
+  "performance_override": {
+    "source_manifest": "path/to/source_pipeline_manifest.json",
+    "source_role": "source_pipeline_total",
+    "expected_sha256": "<64 lowercase hexadecimal characters>"
+  }
+}
+```
+
+The source elapsed time enters the method-runtime summary; readback elapsed is
+reported separately and cannot silently replace it.
 
 ## Command
 

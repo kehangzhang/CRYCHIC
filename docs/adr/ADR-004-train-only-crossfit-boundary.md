@@ -72,11 +72,13 @@ Application performs only sample-local fixed count transforms, frozen-universe
 availability, frozen gate and design encoding, downstream and sender
 application, and common-functional scoring.
 
-A fold/contrast may contain multiple receiver models. Its aggregate manifest
-hashes the sorted child manifest identifiers. Score rows record both the
-aggregate manifest and their receiver child manifest so that the existing OOF
-coverage checks do not mistake multiple legitimate receiver models for
-inconsistent scoring.
+A fold/contrast may contain multiple receiver models. Its scoring collection
+hashes the sorted receiver child manifest identifiers and explicitly declares
+`common_functional_across_receivers=false`. This is a composition registry, not
+a claim that distinct receiver models are one scoring function. Persisted
+source-key digests validate the emitted rows, while
+`composition_status=partial_emitted_only` makes clear that no planned receiver
+universe or authoritative child model registry is persisted yet.
 
 ## Globally frozen inputs
 
@@ -127,15 +129,19 @@ The public API is intentionally narrower than the low-level research APIs.
 Advanced users may still call primitives directly, but their results remain
 exploratory and cannot be relabeled as certified OOF.
 
-The first implementation adds dedicated training and application modules. It
-fits the interaction universe from a sanitized training scope, rejects subject
-overlap, and applies that universe to held-out observations without calling a
-training fit function. Its producer-owned artifacts enumerate every remaining
-stage and always report `partial_not_oof`.
+The partial implementation adds dedicated training and application modules. It
+fits the interaction universe and a contrast-common sender functional from a
+sanitized training scope, rejects subject overlap, and applies both to held-out
+observations without calling a training fit function. The sender functional
+freezes candidate senders, pooled prevalence priors, minimum support and
+temperature; application consumes only sample-local ligand evidence. Its
+producer-owned artifacts enumerate every remaining stage and always report
+`partial_not_oof`.
 
 A cross-fit orchestrator, fixed sample transform, frozen design encoder,
 receptor gate, response and precision stages, family-first attribution,
-incremental downstream model, common sender functional, and common scoring
-manifest still remain. Until that complete path exists and passes every poison
-test above, incremental downstream evidence remains `not_estimable` in the
-public baseline workflow and no default-method switch is eligible.
+incremental downstream model, and common scoring manifest still remain. Until
+that complete path exists and passes every poison test above, incremental
+downstream evidence remains `not_estimable` in the public baseline workflow and
+no default-method switch is eligible. The legacy sender assignment remains
+unchanged and context-specific.

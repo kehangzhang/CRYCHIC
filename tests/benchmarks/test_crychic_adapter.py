@@ -173,6 +173,46 @@ def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> Non
     )
 
 
+def test_multicondition_v02_finalize_uses_current_real_crychic_arms() -> None:
+    spec = json.loads(
+        (
+            REPO_ROOT
+            / "benchmarks/configs/multicondition_v02_finalize.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert "performance_records" not in spec
+    assert "iteration_comparison" not in spec
+    assert "multicondition_v02/biology/biology_support_v02.tsv" in spec[
+        "biology_support"
+    ]
+    real = {
+        dataset["dataset_id"]: dataset
+        for dataset in spec["datasets"]
+        if dataset["truth_scope"] == "real_data"
+    }
+    for dataset_id in (
+        "GSE144236_Ji_cSCC",
+        "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+    ):
+        crychic = next(
+            run
+            for run in real[dataset_id]["adapter_runs"]
+            if "/crychic_hcommon_nocap/" in run["manifest"]
+        )
+        assert "/multicondition_v02/" in crychic["manifest"]
+        assert crychic["manifest"].endswith("_compact/manifest.json")
+        assert crychic["performance_role"] == "adapter_readback"
+        assert (
+            crychic["performance_override"]["source_role"]
+            == "source_pipeline_total"
+        )
+        assert all(
+            "receiver_union_v02" in view["label"]
+            for view in crychic["score_views"]
+        )
+
+
 def _bundle() -> ResourceBundle:
     return ResourceBundle(
         resource_id="toy",
