@@ -174,15 +174,18 @@ def test_hcommon_configs_are_versioned_without_rewriting_frozen_history() -> Non
 
 
 def test_multicondition_v02_finalize_uses_current_real_crychic_arms() -> None:
-    spec = json.loads(
-        (
-            REPO_ROOT
-            / "benchmarks/configs/multicondition_v02_finalize.json"
-        ).read_text(encoding="utf-8")
-    )
+    spec_path = REPO_ROOT / "benchmarks/configs/multicondition_v02_finalize.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
 
     assert "performance_records" not in spec
-    assert "iteration_comparison" not in spec
+    iteration_path = (spec_path.parent / spec["iteration_comparison"]).resolve()
+    assert iteration_path.is_file()
+    assert (
+        hashlib.sha256(iteration_path.read_bytes()).hexdigest()
+        == spec["frozen_main_inputs"][
+            "iteration_comparison_v01_to_v02_sha256"
+        ]
+    )
     assert "multicondition_v02/biology/biology_support_v02.tsv" in spec[
         "biology_support"
     ]
