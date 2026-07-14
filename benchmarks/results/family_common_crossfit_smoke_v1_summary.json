@@ -13,7 +13,7 @@
     "simulation_source_interaction_id": "CXCL10_CXCR3",
     "simulation_source_namespace": "synthetic_cellchat_style_lr_id"
   },
-  "base_revision": "85ee99c97fe216b19c6d2263f22e2580a9684c61",
+  "base_revision": "509575e62d4549ac2e18a4fb41ced528ca2bbead",
   "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
   "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; receiver-program scoring is connected as a diagnostic-only component",
   "checks": {
@@ -33,8 +33,8 @@
     "method_superiority": false
   },
   "full_artifact": {
-    "canonical_sha256": "29b1ada3979722a5c8b3032ca296a66a65696bdb4b19d26195b3a2711b0a282a",
-    "file_sha256": "98c4698b931ea58cd95d42c0f8428c69f5923189ca15c3d74197799c76507553",
+    "canonical_sha256": "bb8ef8dcc953bce7d81cd8dfe88cba0ab6e06d14afd15ed4626a073386bedb15",
+    "file_sha256": "9f0957b88de7c05ae9354ba4cd563dc82a09b5d0b6d95632c75d332c2ec7c262",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
     "size_bytes": 216759,
     "tracked": false
@@ -488,7 +488,7 @@
     "src/crychic/availability/__init__.py": "c87ed1ae2d387e00f80bb597c9702aee1fdcc986e226bd29e47bb336887ed151",
     "src/crychic/availability/contracts.py": "a1f6168389e938424325a9ea44cb4760c1072ff4922bc2934dcb02c26cf8f4bb",
     "src/crychic/availability/estimation.py": "daa9a5af1100fcee8bcde9cb8d9b9de255c865d4739be4b7c48f69da4a34ba9f",
-    "src/crychic/availability/table.py": "d31da580ae61c11ec8ac51d9cb77e74d4019f29ac4045eb352126da8ccbbb35a",
+    "src/crychic/availability/table.py": "ebdb6e20abfcf69e9a743aec25081cf1e3afc664900d4e5ee194c8ccc944b696",
     "src/crychic/availability/transforms.py": "44a060e008b4dbbc4c89c387cdd45071da9d8a80fdf970dc35c7491f7fbd2e6f",
     "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
     "src/crychic/core/config.py": "6b11c21cc97504367af874ab36c90d0415c295664d3b319998e69e3379e41407",

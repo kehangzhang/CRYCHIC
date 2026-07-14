@@ -1,8 +1,8 @@
 {
-  "base_revision": "85ee99c97fe216b19c6d2263f22e2580a9684c61",
+  "base_revision": "509575e62d4549ac2e18a4fb41ced528ca2bbead",
   "full_artifact": {
-    "canonical_sha256": "055fa875572c73d24dd83b0346506c42210a73c7d288beed4e39512171e67a3d",
-    "file_sha256": "55820f1f940a0cecfd5415ad0bc5b57a137319355031f8f3fa18012c741c3dc9",
+    "canonical_sha256": "e3253b0434b6c9b19bf162c0459ff2b5e9c6e5b6347a810c3a3753f1a383ebfe",
+    "file_sha256": "b14f932047963fd7647466de0dcf76b9ccb1ba6e7849ed8b8b5cce4653ae8c5e",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
     "size_bytes": 15070
   },
@@ -93,7 +93,7 @@
     "src/crychic/availability/__init__.py": "c87ed1ae2d387e00f80bb597c9702aee1fdcc986e226bd29e47bb336887ed151",
     "src/crychic/availability/contracts.py": "a1f6168389e938424325a9ea44cb4760c1072ff4922bc2934dcb02c26cf8f4bb",
     "src/crychic/availability/estimation.py": "daa9a5af1100fcee8bcde9cb8d9b9de255c865d4739be4b7c48f69da4a34ba9f",
-    "src/crychic/availability/table.py": "d31da580ae61c11ec8ac51d9cb77e74d4019f29ac4045eb352126da8ccbbb35a",
+    "src/crychic/availability/table.py": "ebdb6e20abfcf69e9a743aec25081cf1e3afc664900d4e5ee194c8ccc944b696",
     "src/crychic/availability/transforms.py": "44a060e008b4dbbc4c89c387cdd45071da9d8a80fdf970dc35c7491f7fbd2e6f",
     "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
     "src/crychic/core/config.py": "6b11c21cc97504367af874ab36c90d0415c295664d3b319998e69e3379e41407",
