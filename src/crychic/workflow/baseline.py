@@ -90,8 +90,7 @@ def _workflow_contrasts(graph: ContextGraph) -> tuple[ContrastSpec, ...]:
     for contrast in candidates:
         vector = contrast.vector(graph.nodes)
         if any(
-            np.allclose(vector, previous, rtol=0.0, atol=1e-12)
-            for previous in vectors
+            np.allclose(vector, previous, rtol=0.0, atol=1e-12) for previous in vectors
         ):
             continue
         selected.append(contrast)
@@ -838,15 +837,25 @@ def _pooled_receptor_gates(
     selected = selected.dropna(subset=["driver_id"])
     if selected.empty:
         return gates
-    # Receptor values repeat over candidate senders. Pool once per sample/LR,
-    # then over contexts without consulting a context label.
+    # Receptor values repeat over candidate senders. Collapse each sample/LR,
+    # then weight contexts within subjects and subjects within the fold equally.
     per_interaction = selected.groupby(
-        ["sample_id", "driver_id", "interaction_id"], observed=True, sort=False
+        ["sample_id", "subject_id", "context_id", "driver_id", "interaction_id"],
+        observed=True,
+        sort=False,
     )["receptor_availability"].max()
     per_sample = per_interaction.groupby(
-        ["sample_id", "driver_id"], observed=True, sort=False
+        ["sample_id", "subject_id", "context_id", "driver_id"],
+        observed=True,
+        sort=False,
     ).max()
-    pooled = per_sample.groupby("driver_id", observed=True, sort=False).mean()
+    per_subject_context = per_sample.groupby(
+        ["subject_id", "context_id", "driver_id"], observed=True, sort=False
+    ).mean()
+    per_subject = per_subject_context.groupby(
+        ["subject_id", "driver_id"], observed=True, sort=False
+    ).mean()
+    pooled = per_subject.groupby("driver_id", observed=True, sort=False).mean()
     for driver, value in pooled.items():
         gates[str(driver)] = float(min(1.0, max(0.0, value)))
     return gates
@@ -1029,12 +1038,8 @@ def _run_attribution(
                         precision_transform_id=(
                             precision_transform.precision_transform_id
                         ),
-                        precision_lower_quantile=(
-                            precision_transform.lower_quantile
-                        ),
-                        precision_upper_quantile=(
-                            precision_transform.upper_quantile
-                        ),
+                        precision_lower_quantile=(precision_transform.lower_quantile),
+                        precision_upper_quantile=(precision_transform.upper_quantile),
                         n_positive_precision_features=(
                             precision_transform.n_positive_features
                         ),
@@ -1134,8 +1139,7 @@ def _downstream_table(
     sample_rows = _receiver_sample_rows(response, run.receiver)
     support = (
         None
-        if run.attribution is None
-        or run.basis is None
+        if run.attribution is None or run.basis is None
         else downstream_attribution_support(
             run.basis,
             run.attribution,
@@ -1295,9 +1299,7 @@ def _scoring_model_manifest(
         {
             "gate_policy": "continuous_basis_scale_v1",
             "receiver": _string_identifier(run.receiver),
-            "receptor_gates": [
-                [driver, gate] for driver, gate in run.receptor_gates
-            ],
+            "receptor_gates": [[driver, gate] for driver, gate in run.receptor_gates],
         },
     )
     target_weight_manifest_id = stable_id(
@@ -1491,13 +1493,9 @@ def _add_receptor_gate_evidence(
     result["receptor_gate"] = pd.to_numeric(
         result["driver_id"].map(gates), errors="coerce"
     ).where(known_gate)
-    fallback_status = (
-        RunStatus.UNAVAILABLE.value if run.succeeded else run.status.value
-    )
+    fallback_status = RunStatus.UNAVAILABLE.value if run.succeeded else run.status.value
     result["receptor_gate_status"] = fallback_status
-    result["receptor_gate_reason_code"] = (
-        run.reason_code or "receptor_gate_unavailable"
-    )
+    result["receptor_gate_reason_code"] = run.reason_code or "receptor_gate_unavailable"
     result.loc[missing_driver, "receptor_gate_status"] = "missing"
     result.loc[missing_driver, "receptor_gate_reason_code"] = (
         run.reason_code
@@ -2025,9 +2023,7 @@ def fit_baseline(
         component_scales=component_scales,
         config_modes=config.communication_modes,
         attribution_support_method=attribution_support_method,
-        sender_functional_id=(
-            sender_assignment.parameters.assignment_functional_id
-        ),
+        sender_functional_id=(sender_assignment.parameters.assignment_functional_id),
         filter_universe_id=availability.filter_universe_id,
         cosine_threshold=cosine_threshold,
     )

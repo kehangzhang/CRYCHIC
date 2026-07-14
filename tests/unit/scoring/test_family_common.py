@@ -100,6 +100,7 @@ def _receiver_family() -> ReceiverFamilyTrainingArtifact:
         {
             "sample_id": f"p{index}",
             "subject_id": f"p{index}",
+            "context_id": "reference",
             "receiver": "Receiver",
             "interaction_id": interaction_id,
             "receptor_availability": value,
@@ -444,8 +445,7 @@ def test_functional_binds_common_contrast_fold_and_explicit_lineage() -> None:
         for interaction_id in functional.interaction_ids
     ]
     assert [
-        gate["gate_id"]
-        for gate in manifest["interaction_ligand_contrast_gates"]
+        gate["gate_id"] for gate in manifest["interaction_ligand_contrast_gates"]
     ] == expected_gates
     assert manifest["member_allocation_method"].endswith(
         "then_supported_family_normalize_v2"
@@ -571,9 +571,9 @@ def test_receiver_program_stays_observed_when_incremental_parent_is_unavailable(
     assert set(active["status"]) == {"not_estimable"}
     assert "receiver_program_score" not in application.sender_scores.columns
     assert (
-        family.groupby(
-            ["sample_id", "family_id"], observed=True
-        )["receiver_program_score"].nunique()
+        family.groupby(["sample_id", "family_id"], observed=True)[
+            "receiver_program_score"
+        ].nunique()
         == 1
     ).all()
 

@@ -193,7 +193,8 @@
     "ligand_contrast_minimum_effect": 0.0,
     "receptor_gate_threshold": 0.1,
     "penalty_lambda1_fractions": [
-      1.0
+      1.0,
+      0.1
     ],
     "penalty_lambda2_fractions": [
       0.0

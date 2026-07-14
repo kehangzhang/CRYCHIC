@@ -180,6 +180,7 @@ def _receiver_family(
         {
             "sample_id": f"{subject}:ctrl",
             "subject_id": subject,
+            "context_id": "ctrl",
             "receiver": "Receiver",
             "interaction_id": interaction,
             "receptor_availability": receptor_value,
@@ -249,9 +250,7 @@ def _small_tuning_spec(**changes: object) -> PenaltyTuningSpec:
     return PenaltyTuningSpec(**arguments)  # type: ignore[arg-type]
 
 
-def _trusted_autonomous_resource(
-    root: Path, monkeypatch: pytest.MonkeyPatch
-):
+def _trusted_autonomous_resource(root: Path, monkeypatch: pytest.MonkeyPatch):
     payload = b"feature_id\tgeneric_program\nG1\t1\nG2\t1\n"
     payload_path = root / "programs.tsv"
     payload_path.write_bytes(payload)
@@ -381,6 +380,55 @@ def test_typed_fit_joins_samples_and_keeps_official_status_honest() -> None:
     assert model.to_dict()["response_artifact_id"] == response.artifact_id
 
 
+def test_tuned_formula_nuisance_keeps_diagnostic_separate_from_official() -> None:
+    encoder, response, precision, family = _training_parents()
+    tuning_spec = _small_tuning_spec(lambda1_fractions=(1.0,))
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    assert model.inner_fold_plan is not None
+    assert model.penalty_tuning_artifact is not None
+    assert model.penalty_tuning_artifact.status == "selected"
+    assert model.penalty_tuning_artifact.is_oof_certified
+    expected_subjects = set(response.training_subject_ids)
+    for evaluation in model.penalty_tuning_artifact.evaluations:
+        assert set(evaluation.inner_training_subject_ids).isdisjoint(
+            evaluation.validation_subject_ids
+        )
+        assert (
+            set(evaluation.inner_training_subject_ids).union(
+                evaluation.validation_subject_ids
+            )
+            == expected_subjects
+        )
+    assert model.diagnostic_status == "observed"
+    assert model.diagnostic_functional is not None
+    assert model.official_incremental_status == "not_estimable"
+    assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+    assert not model.is_oof_certified
+
+    heldout_metadata = _metadata(("q1", "q2"))
+    heldout_design = apply_frozen_design_encoder(encoder, heldout_metadata)
+    heldout_response = apply_fold_gene_response(
+        _aggregate(heldout_metadata, offset=7), response, heldout_design
+    )
+    application = apply_receiver_incremental_training_artifact(
+        model, heldout_response, heldout_design
+    )
+
+    assert application.diagnostic_status == "observed"
+    assert application.diagnostic_application is not None
+    assert application.official_incremental_status == "not_estimable"
+    assert application.reason_code == "receiver_autonomous_nuisance_not_frozen"
+    assert not application.is_oof_certified
+
+
 def test_caller_declared_autonomous_resource_remains_noncertifying() -> None:
     encoder, response, precision, family = _training_parents()
     resource = build_receiver_autonomous_program_resource(
@@ -444,10 +492,10 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
         "subject_fold_d78fc0d232566059819396df119cd4e7",
     )
     assert tuning.tuning_id == (
-        "penalty_tuning_artifact_07eac8ced8571e92dccaf184f571b03c"
+        "penalty_tuning_artifact_4663847723f770876dbc52a875b12851"
     )
     assert model.training_artifact_id == (
-        "receiver_incremental_training_artifact_751c44bdaec1882d5d231148297d0c45"
+        "receiver_incremental_training_artifact_971ea55ccb0ec8297b5c51b3943380d2"
     )
     assert tuning.status == "selected"
     assert tuning.is_oof_certified
@@ -462,9 +510,12 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
         assert set(evaluation.inner_training_subject_ids).isdisjoint(
             evaluation.validation_subject_ids
         )
-        assert set(evaluation.inner_training_subject_ids).union(
-            evaluation.validation_subject_ids
-        ) == expected_subjects
+        assert (
+            set(evaluation.inner_training_subject_ids).union(
+                evaluation.validation_subject_ids
+            )
+            == expected_subjects
+        )
         assert evaluation.status == "observed"
         assert evaluation.scale_resolution_id is not None
         assert evaluation.resolved_penalty_id is not None
@@ -563,9 +614,7 @@ def test_inner_tuning_plan_failure_is_typed_and_never_falls_back() -> None:
         precision,
         family,
         resource,
-        penalty_tuning_spec=_small_tuning_spec(
-            min_inner_train_subjects_per_context=3
-        ),
+        penalty_tuning_spec=_small_tuning_spec(min_inner_train_subjects_per_context=3),
     )
 
     assert model.inner_fold_plan is None
@@ -739,9 +788,7 @@ def test_trusted_resource_and_verified_tuning_certify_outer_application(
     assert application.reason_code is None
     assert application.is_oof_certified
     assert "outer_frozen_representation" in application.certification_status
-    assert set(application.heldout_subject_ids).isdisjoint(
-        model.training_subject_ids
-    )
+    assert set(application.heldout_subject_ids).isdisjoint(model.training_subject_ids)
     application.to_dict()
 
 

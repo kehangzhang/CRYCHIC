@@ -80,7 +80,7 @@ def test_config_builds_explicit_two_fold_tumor_minus_normal_spec() -> None:
     assert spec.contrasts[0].name == "tumor_vs_normal"
     assert dict(spec.contrasts[0].weights) == {"Normal": -1.0, "Tumor": 1.0}
     assert spec.penalty_tuning_spec is not None
-    assert spec.penalty_tuning_spec.lambda1_fractions == (1.0,)
+    assert spec.penalty_tuning_spec.lambda1_fractions == (1.0, 0.1)
     assert spec.penalty_tuning_spec.lambda2_fractions == (0.0,)
 
 

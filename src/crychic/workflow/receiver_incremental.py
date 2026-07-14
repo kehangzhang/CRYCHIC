@@ -226,8 +226,9 @@ class _InnerFoldDesignChecker:
             reason = "inner_training_requires_two_reference_subjects"
         elif np.linalg.matrix_rank(nuisance) != nuisance.shape[1]:
             reason = "inner_training_nuisance_rank_deficient"
-        elif np.linalg.matrix_rank(np.column_stack((nuisance, regressor))) <= (
-            nuisance.shape[1]
+        elif (
+            np.linalg.matrix_rank(np.column_stack((nuisance, regressor)))
+            <= (nuisance.shape[1])
         ):
             reason = "inner_training_context_regressor_not_identifiable"
         design_matrix_id = stable_id(
@@ -400,8 +401,7 @@ class ReceiverIncrementalTrainingArtifact:
                     else penalty_tuning_artifact.reason_code
                 )
                 official_reason = (
-                    official_reason
-                    or "subject_blocked_inner_tuning_not_estimable"
+                    official_reason or "subject_blocked_inner_tuning_not_estimable"
                 )
         self = object.__new__(cls)
         values: dict[str, Any] = {
@@ -748,8 +748,7 @@ class ReceiverIncrementalTrainingArtifact:
                         None if tuning is None else tuning.reason_code
                     )
                     expected_reason = (
-                        expected_reason
-                        or "subject_blocked_inner_tuning_not_estimable"
+                        expected_reason or "subject_blocked_inner_tuning_not_estimable"
                     )
             expected = stable_id(
                 "receiver_incremental_training_artifact",
@@ -787,9 +786,7 @@ class ReceiverIncrementalTrainingArtifact:
             "training_artifact_id": self.training_artifact_id,
             **self._identity_payload(),
             "inner_fold_plan": (
-                None
-                if self.inner_fold_plan is None
-                else self.inner_fold_plan.to_dict()
+                None if self.inner_fold_plan is None else self.inner_fold_plan.to_dict()
             ),
             "penalty_tuning_artifact": (
                 None
@@ -978,9 +975,7 @@ class ReceiverIncrementalApplication:
             None
             if certified_application
             else (
-                diagnostic_reason_code
-                if model.is_oof_certified
-                else model.reason_code
+                diagnostic_reason_code if model.is_oof_certified else model.reason_code
             )
         )
         self = object.__new__(cls)
@@ -1083,8 +1078,7 @@ class ReceiverIncrementalApplication:
             )
             certified = self.is_oof_certified
             trusted_but_unavailable = (
-                self.certification_status
-                == _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
+                self.certification_status == _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
             )
             valid = (
                 self._producer_marker == _APPLICATION_PRODUCER_MARKER
@@ -1170,9 +1164,7 @@ def _subject_indices(
         ],
         dtype=np.int64,
     )
-    observed = {
-        inputs.sample_subject_ids[index] for index in indices.tolist()
-    }
+    observed = {inputs.sample_subject_ids[index] for index in indices.tolist()}
     if observed != requested:
         raise ValueError("subject subset is absent from incremental training inputs")
     return cast(np.ndarray, indices)
@@ -1189,12 +1181,8 @@ def _fit_incremental_subset(
 ) -> IncrementalDownstreamFunctional:
     indices = _subject_indices(inputs, subject_ids)
     sample_ids = tuple(inputs.sample_ids[index] for index in indices)
-    sample_subject_ids = tuple(
-        inputs.sample_subject_ids[index] for index in indices
-    )
-    sample_context_ids = tuple(
-        inputs.sample_context_ids[index] for index in indices
-    )
+    sample_subject_ids = tuple(inputs.sample_subject_ids[index] for index in indices)
+    sample_context_ids = tuple(inputs.sample_context_ids[index] for index in indices)
     return fit_incremental_downstream_functional(
         inputs.response_matrix[indices],
         row_manifest=DownstreamRowManifest(
@@ -1335,8 +1323,7 @@ def _fit_subject_blocked_penalty_tuning(
         for subject_contexts in contexts_by_subject.values()
     )
     independent = len(contexts) >= 2 and all(
-        len(subject_contexts) == 1
-        for subject_contexts in contexts_by_subject.values()
+        len(subject_contexts) == 1 for subject_contexts in contexts_by_subject.values()
     )
     if independent:
         return None, not_estimable_penalty_tuning(
@@ -1351,15 +1338,6 @@ def _fit_subject_blocked_penalty_tuning(
             tuning_scope_id=tuning_scope_id,
             training_subject_ids=outer_subjects,
             reason_code="mixed_subject_allocation_inner_tuning_not_supported",
-        )
-    if inputs.autonomous_program_resource is None:
-        return None, not_estimable_penalty_tuning(
-            spec,
-            tuning_scope_id=tuning_scope_id,
-            training_subject_ids=outer_subjects,
-            reason_code=(
-                "signed_residual_inner_tuning_requires_autonomous_program_resource"
-            ),
         )
     split_scope_id = stable_id(
         "receiver_incremental_inner_split_scope",
@@ -1407,9 +1385,7 @@ def _fit_subject_blocked_penalty_tuning(
             ),
             context_keys=("context_id",),
             allowed_n_splits=spec.inner_allowed_n_splits,
-            min_train_subjects_per_context=(
-                spec.min_inner_train_subjects_per_context
-            ),
+            min_train_subjects_per_context=(spec.min_inner_train_subjects_per_context),
             min_test_subjects_per_context=(
                 spec.min_inner_validation_subjects_per_context
             ),
@@ -1611,9 +1587,7 @@ def _receiver_incremental_feature_scale(
         raise ValueError("reference response scale requires at least two subjects")
     center = np.median(reference_by_subject, axis=0)
     mad = np.median(np.abs(reference_by_subject - center), axis=0)
-    scale: np.ndarray = np.maximum(
-        _MAD_GAUSSIAN_CONSISTENCY * mad, minimum_scale
-    )
+    scale: np.ndarray = np.maximum(_MAD_GAUSSIAN_CONSISTENCY * mad, minimum_scale)
     return scale
 
 
@@ -1635,12 +1609,14 @@ def fit_receiver_incremental_training_artifact(
 
     For fully paired allocations, inner folds refit response centering, scaling,
     nuisance coefficients and the signed residual solver, and resolve relative
-    penalties from inner-training rows only. Precision, family construction and
-    the encoder remain frozen from the complete outer-training fold;
-    outer-heldout values are unavailable. Independent-group one-SE tuning fails
-    closed until correlated pseudocontrast losses have a valid uncertainty rule.
-    An explicit inner partition lineage changes only the donor allocation; the
-    tuning and model identities remain bound to their exact outer-fold parents.
+    penalties from inner-training rows only. The autonomous basis is optional for
+    this explicitly nonofficial diagnostic; its absence still prevents official
+    certification. Precision, family construction and the encoder remain frozen
+    from the complete outer-training fold; outer-heldout values are unavailable.
+    Independent-group one-SE tuning fails closed until correlated pseudocontrast
+    losses have a valid uncertainty rule. An explicit inner partition lineage
+    changes only the donor allocation; the tuning and model identities remain
+    bound to their exact outer-fold parents.
     """
 
     minimum_scale, null_loss_floor, lambda1, lambda2 = _validated_hyperparameters(
@@ -1660,9 +1636,7 @@ def fit_receiver_incremental_training_artifact(
     if inner_partition_seed_lineage is not None and not isinstance(
         inner_partition_seed_lineage, SeedLineage
     ):
-        raise TypeError(
-            "inner_partition_seed_lineage must be a SeedLineage or None"
-        )
+        raise TypeError("inner_partition_seed_lineage must be a SeedLineage or None")
     if penalty_tuning_spec is None and inner_partition_seed_lineage is not None:
         raise ValueError(
             "inner_partition_seed_lineage requires an explicit penalty_tuning_spec"
@@ -1704,9 +1678,7 @@ def fit_receiver_incremental_training_artifact(
             encoder_id=encoder.encoder_id,
             response_artifact_id=response.artifact_id,
             precision_transform_id=precision.precision_transform_id,
-            receiver_family_training_artifact_id=(
-                receiver_family.training_artifact_id
-            ),
+            receiver_family_training_artifact_id=(receiver_family.training_artifact_id),
             autonomous_program_resource_id=(
                 None
                 if autonomous_program_resource is None
@@ -1802,22 +1774,17 @@ def fit_receiver_incremental_training_artifact(
                 )
             else:
                 assert tuning_scope_id is not None
-                inner_fold_plan, tuning_artifact = (
-                    _fit_subject_blocked_penalty_tuning(
-                        inputs,
-                        spec=penalty_tuning_spec,
-                        tuning_scope_id=tuning_scope_id,
-                        outer_fold_id=response.fold_id,
-                        inner_partition_seed_lineage=(
-                            inner_partition_seed_lineage
-                        ),
-                    )
+                inner_fold_plan, tuning_artifact = _fit_subject_blocked_penalty_tuning(
+                    inputs,
+                    spec=penalty_tuning_spec,
+                    tuning_scope_id=tuning_scope_id,
+                    outer_fold_id=response.fold_id,
+                    inner_partition_seed_lineage=(inner_partition_seed_lineage),
                 )
                 selected = tuning_artifact.selected_candidate
                 if selected is None:
                     reason_code = (
-                        tuning_artifact.reason_code
-                        or "penalty_tuning_not_estimable"
+                        tuning_artifact.reason_code or "penalty_tuning_not_estimable"
                     )
                 else:
                     functional = _fit_incremental_subset(

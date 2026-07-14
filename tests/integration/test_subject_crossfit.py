@@ -355,7 +355,7 @@ def test_repeat_index_changes_repeat_identity_not_algorithm_policy() -> None:
         replace(base, repeat_index=-1)
 
 
-def test_default_outer_partition_policy_preserves_legacy_identity() -> None:
+def test_default_outer_partition_policy_preserves_partition_identity() -> None:
     spec = _spec()
     result = _run(_adata())
 
@@ -371,9 +371,7 @@ def test_default_outer_partition_policy_preserves_legacy_identity() -> None:
         "subject_fold_218f1768ece07284cde48fa7e33efa6a",
         "subject_fold_e713d5365a1199325444c995b43a997c",
     ]
-    assert result.crossfit_id == (
-        "subject_crossfit_40f4dfc5da61c3324f6550358db4e6a3"
-    )
+    assert result.crossfit_id == ("subject_crossfit_e5483448ff6a69e90728d8d19eb23010")
 
 
 def test_autonomous_program_use_scope_preserves_legacy_and_binds_biology() -> None:
@@ -714,9 +712,7 @@ def test_prepared_fold_derives_scope_digest_without_rehashing_cells(
     adata = _adata()
     identity = training_module._sanitized_raw_input_identity(adata, _config())
     selected_subjects = ("p1", "p2")
-    scope = adata[
-        adata.obs["subject_id"].astype(str).isin(selected_subjects)
-    ].copy()
+    scope = adata[adata.obs["subject_id"].astype(str).isin(selected_subjects)].copy()
 
     def fail_rehash(*args: object, **kwargs: object) -> None:
         raise AssertionError("fold fast path must not rehash cell rows")
@@ -953,13 +949,16 @@ def test_aggregate_context_lineage_requires_complete_training_coverage() -> None
         subject_ids=subject_ids[1:],
         context_ids=context_ids[1:],
     )
-    assert crossfit_module._training_response_lineage_reason(
-        prepared,
-        contexts=reference_contexts,
-        sample_ids=sample_ids[1:],
-        subject_ids=subject_ids[1:],
-        context_ids=context_ids[1:],
-    ) == "training_reference_expression_incomplete_sample_coverage"
+    assert (
+        crossfit_module._training_response_lineage_reason(
+            prepared,
+            contexts=reference_contexts,
+            sample_ids=sample_ids[1:],
+            subject_ids=subject_ids[1:],
+            context_ids=context_ids[1:],
+        )
+        == "training_reference_expression_incomplete_sample_coverage"
+    )
     poisoned_contexts = ("forged-context", *context_ids[1:])
     assert not crossfit_module._training_response_lineage_is_valid(
         prepared,
@@ -1596,9 +1595,9 @@ def test_explicit_outer_seed_pairs_inner_tuning_parameter_sensitivity(
     assert first_plans
     assert set(first_plans) == set(second_plans)
     for key in first_plans:
-        first_partitions, first_lineage, first_plan_id, first_tuning_id = (
-            first_plans[key]
-        )
+        first_partitions, first_lineage, first_plan_id, first_tuning_id = first_plans[
+            key
+        ]
         second_partitions, second_lineage, second_plan_id, second_tuning_id = (
             second_plans[key]
         )
@@ -1704,12 +1703,8 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     assert set(stability["n_distinct_partitions_overall"]) == {2}
     fit_estimable = stability.loc[stability["fit_estimable_fraction"].gt(0.0)]
     assert not fit_estimable.empty
-    assert set(
-        fit_estimable["n_distinct_complete_selection_partitions"]
-    ) == {2}
-    assert fit_estimable[
-        "diagnostic_conditional_fit_selection_fraction"
-    ].notna().all()
+    assert set(fit_estimable["n_distinct_complete_selection_partitions"]) == {2}
+    assert fit_estimable["diagnostic_conditional_fit_selection_fraction"].notna().all()
     structural = stability.loc[stability["family_estimable_fraction"].eq(0.0)]
     assert not structural.empty
     assert set(structural["status"]) == {"not_estimable"}
@@ -1806,9 +1801,7 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
         "insufficient_complete_estimable_family_coverage"
     )
     assert incomplete_row["n_repeats_with_observed_selection"] == 0
-    assert pd.isna(
-        incomplete_row["repeat_subject_exposure_selection_fraction_maximum"]
-    )
+    assert pd.isna(incomplete_row["repeat_subject_exposure_selection_fraction_maximum"])
     assert pd.isna(incomplete_row["repeat_fit_selection_fraction_maximum"])
     assert incomplete_row["effect_stability_status"] == "not_estimable"
     assert incomplete_row["effect_stability_reason_code"] == (
@@ -1840,23 +1833,12 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     )
 
 
-def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -> None:
+def test_unadjusted_tuned_diagnostic_reaches_noncertified_family_common() -> None:
     base = _spec()
-    resource = build_receiver_autonomous_program_resource(
-        np.asarray([[1.0], [1.0]]),
-        feature_ids=("T1", "T2"),
-        program_ids=("generic_program",),
-        resource_id="caller-built-autonomous-programs",
-        version="1",
-        manifest_digest="e" * 64,
-        species=Species.HUMAN,
-        gene_namespace=GeneNamespace.HGNC_SYMBOL,
-    )
     spec = CrossFitSpec(
         contrasts=base.contrasts,
         training_spec=base.training_spec,
         allowed_n_splits=(2,),
-        autonomous_program_resource=resource,
         penalty_tuning_spec=PenaltyTuningSpec(
             lambda1_fractions=(1.0, 0.1),
             lambda2_fractions=(0.0,),
@@ -1891,14 +1873,18 @@ def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -
         assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
         assert application.diagnostic_application is not None
         assert application.official_incremental_status == "not_estimable"
-        assert functional.incremental_functional is None
-        assert functional.incremental_reason_code == (
-            "receiver_autonomous_nuisance_not_frozen"
+        assert application.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        assert functional.incremental_functional is model.diagnostic_functional
+        assert functional.incremental_reason_code is None
+        assert functional.autonomous_program_resource_id is None
+        assert not functional.is_oof_certified
+        assert common_application.incremental_application_id == (
+            application.diagnostic_application.application_id
         )
-        assert common_application.incremental_application_id is None
-        assert common_application.heldout_reason_code == (
-            "receiver_autonomous_nuisance_not_frozen"
-        )
+        assert common_application.heldout_reason_code is None
+        assert not common_application.is_oof_certified
+        assert len(common_application.family_scores) > 0
+    assert not result.is_oof_certified
 
 
 def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() -> None:
@@ -2172,14 +2158,11 @@ def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> N
     all_novel = _adata()
     all_novel.obs.loc[all_novel.obs["subject_id"].eq("p1"), "cell_type"] = "Novel"
     complete = _run(all_novel)
-    p1_rows = complete.oof_coverage.loc[
-        complete.oof_coverage["subject_id"].eq("p1")
-    ]
+    p1_rows = complete.oof_coverage.loc[complete.oof_coverage["subject_id"].eq("p1")]
     assert not p1_rows.empty
     assert set(p1_rows["functional_status"]) == {"out_of_fold"}
     assert any(
-        "Novel" in fold.application.excluded_cell_type_ids
-        for fold in complete.folds
+        "Novel" in fold.application.excluded_cell_type_ids for fold in complete.folds
     )
 
     planned = _run(_adata())

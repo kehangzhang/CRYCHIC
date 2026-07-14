@@ -32,7 +32,10 @@ from .family_first import build_family_first_basis
 
 _PRODUCER_MARKER = "crychic.receiver_family_training.v2"
 _TRAINING_STATUS = "training_only_partial_receiver_family_v1"
-_POOLING_METHOD = "condition_blind_sample_max_then_mean_v1"
+_POOLING_METHOD = (
+    "condition_blind_sample_interaction_max_then_sample_driver_max_then_"
+    "equal_context_subject_mean_then_equal_subject_mean_v2"
+)
 _COMPLETED_STAGES = (
     "condition_blind_receptor_gate",
     "strict_family_partition",
@@ -48,6 +51,7 @@ _REMAINING_STAGES = (
 _RECEPTOR_COLUMNS = {
     "sample_id",
     "subject_id",
+    "context_id",
     "receiver",
     "interaction_id",
     "receptor_availability",
@@ -448,12 +452,14 @@ def _pooled_receptor_gates(
         [
             "sample_id",
             "subject_id",
+            "context_id",
             "interaction_id",
             "receptor_availability",
         ],
     ].copy()
     selected["sample_id"] = selected["sample_id"].astype(str)
     selected["subject_id"] = selected["subject_id"].astype(str)
+    selected["context_id"] = selected["context_id"].astype(str)
     selected["interaction_id"] = selected["interaction_id"].astype(str)
     selected["driver_id"] = selected["interaction_id"].map(dict(driver_by_interaction))
     selected["receptor_availability"] = pd.to_numeric(
@@ -471,7 +477,13 @@ def _pooled_receptor_gates(
         selected["driver_id"] = selected["driver_id"].astype(str)
         per_interaction = (
             selected.groupby(
-                ["sample_id", "subject_id", "driver_id", "interaction_id"],
+                [
+                    "sample_id",
+                    "subject_id",
+                    "context_id",
+                    "driver_id",
+                    "interaction_id",
+                ],
                 observed=True,
                 sort=True,
             )["receptor_availability"]
@@ -483,6 +495,7 @@ def _pooled_receptor_gates(
             columns=[
                 "sample_id",
                 "subject_id",
+                "context_id",
                 "driver_id",
                 "interaction_id",
                 "receptor_availability",
@@ -497,6 +510,7 @@ def _pooled_receptor_gates(
             ),
             "sample_id": str(row.sample_id),
             "subject_id": str(row.subject_id),
+            "context_id": str(row.context_id),
         }
         for row in per_interaction.itertuples(index=False)
     ]
@@ -513,11 +527,21 @@ def _pooled_receptor_gates(
     gates = dict.fromkeys(prior.driver_ids, 0.0)
     if not per_interaction.empty:
         per_sample = per_interaction.groupby(
-            ["sample_id", "subject_id", "driver_id"],
+            ["sample_id", "subject_id", "context_id", "driver_id"],
             observed=True,
             sort=True,
         )["receptor_availability"].max()
-        pooled = per_sample.groupby("driver_id", observed=True, sort=True).mean()
+        per_subject_context = per_sample.groupby(
+            ["subject_id", "context_id", "driver_id"],
+            observed=True,
+            sort=True,
+        ).mean()
+        per_subject = per_subject_context.groupby(
+            ["subject_id", "driver_id"],
+            observed=True,
+            sort=True,
+        ).mean()
+        pooled = per_subject.groupby("driver_id", observed=True, sort=True).mean()
         for driver, value in pooled.items():
             gates[str(driver)] = float(np.clip(float(value), 0.0, 1.0))
     return tuple(

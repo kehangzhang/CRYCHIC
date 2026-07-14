@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import crychic.workflow.baseline as baseline_module
 from crychic.attribution import (
     ReceiverFamilyTrainingArtifact,
     ReceptorGatePolicy,
@@ -96,6 +97,7 @@ def _availability(
         {
             "sample_id": f"s{subject_index}",
             "subject_id": f"p{subject_index}",
+            "context_id": "reference",
             "receiver": "Receiver",
             "interaction_id": interaction_id,
             "receptor_availability": interaction_values[subject_index - 1],
@@ -224,6 +226,58 @@ def test_training_freezes_hard_gates_strict_families_and_downstream() -> None:
     )
     assert "common_scoring_functional" in scoring.remaining_stages
     assert not scoring.is_oof_certified
+
+
+def test_receptor_gate_weights_contexts_within_subjects_and_subjects_equally() -> None:
+    base = _availability()
+    rows = [
+        {
+            "sample_id": sample_id,
+            "subject_id": subject_id,
+            "context_id": context_id,
+            "receiver": "Receiver",
+            "interaction_id": "iA",
+            "receptor_availability": receptor_availability,
+        }
+        for sample_id, subject_id, context_id, receptor_availability in (
+            ("p1-a1", "p1", "A", 1.0),
+            ("p1-a2", "p1", "A", 1.0),
+            ("p1-b", "p1", "B", 0.0),
+            ("p2-a", "p2", "A", 0.0),
+            ("p3-a", "p3", "A", 0.0),
+        )
+    ]
+    availability = BatchAvailability(
+        sample_interactions=pd.DataFrame(rows),
+        mapping_summary=base.mapping_summary,
+        resource_id=base.resource_id,
+        resource_version=base.resource_version,
+        detection_available=base.detection_available,
+        frozen_interaction_universe=base.frozen_interaction_universe,
+        filter_application=base.filter_application,
+        application_subject_ids=base.application_subject_ids,
+    )
+    prior = _prior({"A": {"G1": 1.0}})
+    artifact = fit_receiver_family_training_artifact(
+        availability,
+        prior,
+        receiver="Receiver",
+        fold_id="fold-subject-equal",
+        feature_ids=("G1",),
+        driver_by_interaction={"iA": "A"},
+        receptor_gate_threshold=0.3,
+    )
+
+    expected = (0.5 + 0.0 + 0.0) / 3.0
+    assert dict(artifact.receptor_gates)["A"] == pytest.approx(expected)
+    assert artifact.source_basis.receptor_eligible.tolist() == [False]
+    baseline_gates = baseline_module._pooled_receptor_gates(
+        availability,
+        "Receiver",
+        prior,
+        {"iA": "A"},
+    )
+    assert baseline_gates["A"] == pytest.approx(expected)
 
 
 def test_receiver_program_remains_observed_when_every_receptor_is_ineligible() -> None:
@@ -613,9 +667,7 @@ def test_scoring_artifact_and_application_reject_forced_child_mutation() -> None
 
 def test_receiver_family_application_binds_its_training_functional() -> None:
     first = _scoring_artifact()
-    second = _scoring_artifact(
-        np.asarray([[10.0, 3.0], [20.0, 3.0], [30.0, 3.0]])
-    )
+    second = _scoring_artifact(np.asarray([[10.0, 3.0], [20.0, 3.0], [30.0, 3.0]]))
     application = apply_receiver_family_scoring_artifact(
         first,
         np.asarray([[2.0, 3.0], [4.0, 3.0]]),
