@@ -249,6 +249,7 @@ class SubjectFoldPlan:
     subject_ids: tuple[str, ...]
     folds: tuple[FoldManifest, ...]
     seed_lineage: SeedLineage
+    partition_seed_lineage: SeedLineage | None = None
     reduction_reason_code: str | None = None
     rejected_candidate_reasons: tuple[tuple[int, str], ...] = ()
     plan_id: str = field(init=False)
@@ -328,6 +329,11 @@ class SubjectFoldPlan:
             raise ValueError("rejected candidate reasons must be non-empty")
         if not isinstance(self.seed_lineage, SeedLineage):
             raise TypeError("seed_lineage must be a SeedLineage")
+        partition_lineage = self.partition_seed_lineage
+        if partition_lineage is not None and not isinstance(
+            partition_lineage, SeedLineage
+        ):
+            raise TypeError("partition_seed_lineage must be a SeedLineage or None")
         if any(
             fold.seed_lineage
             != self.seed_lineage.derive(
@@ -350,10 +356,13 @@ class SubjectFoldPlan:
             "seed_lineage": self.seed_lineage.to_dict(),
             "subject_ids": list(subjects),
         }
+        if partition_lineage is not None:
+            payload["partition_seed_lineage"] = partition_lineage.to_dict()
         object.__setattr__(self, "repeat_id", repeat_id)
         object.__setattr__(self, "allowed_n_splits", allowed)
         object.__setattr__(self, "subject_ids", subjects)
         object.__setattr__(self, "folds", folds)
+        object.__setattr__(self, "partition_seed_lineage", partition_lineage)
         object.__setattr__(self, "rejected_candidate_reasons", rejected)
         object.__setattr__(self, "plan_id", stable_id("subject_fold_plan", payload))
 
@@ -364,7 +373,7 @@ class SubjectFoldPlan:
         """Return a persisted plan with fold and reduction provenance."""
 
         self._require_intact()
-        return {
+        result: dict[str, object] = {
             "plan_id": self.plan_id,
             "repeat_id": self.repeat_id,
             "requested_n_splits": self.requested_n_splits,
@@ -379,6 +388,11 @@ class SubjectFoldPlan:
             ],
             "folds": [fold.to_dict() for fold in self.folds],
         }
+        if self.partition_seed_lineage is not None:
+            result["partition_seed_lineage"] = (
+                self.partition_seed_lineage.to_dict()
+            )
+        return result
 
     def _require_intact(self) -> None:
         """Reject forced mutation of a persisted subject-fold plan."""
@@ -394,6 +408,7 @@ class SubjectFoldPlan:
                 subject_ids=self.subject_ids,
                 folds=self.folds,
                 seed_lineage=self.seed_lineage,
+                partition_seed_lineage=self.partition_seed_lineage,
                 reduction_reason_code=self.reduction_reason_code,
                 rejected_candidate_reasons=self.rejected_candidate_reasons,
             )
@@ -410,6 +425,16 @@ class SubjectFoldPlan:
                 and self.folds == repeated.folds
                 and self.seed_lineage.to_dict()
                 == repeated.seed_lineage.to_dict()
+                and (
+                    None
+                    if self.partition_seed_lineage is None
+                    else self.partition_seed_lineage.to_dict()
+                )
+                == (
+                    None
+                    if repeated.partition_seed_lineage is None
+                    else repeated.partition_seed_lineage.to_dict()
+                )
                 and self.reduction_reason_code == repeated.reduction_reason_code
                 and self.rejected_candidate_reasons
                 == repeated.rejected_candidate_reasons

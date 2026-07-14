@@ -127,6 +127,7 @@ _REMAINING_PUBLIC_STAGES = (
     "subject_blocked_inner_tuning",
 )
 _CPM_SCALE = 1_000_000.0
+_MAX_SEED = 2**63 - 1
 _FAMILY_EDGE_EVIDENCE_POLICY = (
     "max_sender_local_availability_with_frozen_train_only_ligand_gate_v2"
 )
@@ -226,6 +227,7 @@ class CrossFitSpec:
 
     contrasts: tuple[ContrastSpec, ...]
     repeat_index: int = 0
+    outer_fold_partition_seed: int | None = None
     training_spec: FoldTrainingSpec = field(default_factory=FoldTrainingSpec)
     strata_keys: tuple[str, ...] = ()
     allowed_n_splits: tuple[int, ...] = (5, 4, 3, 2)
@@ -247,6 +249,16 @@ class CrossFitSpec:
             or self.repeat_index < 0
         ):
             raise ValueError("repeat_index must be a non-negative integer")
+        partition_seed = self.outer_fold_partition_seed
+        if partition_seed is not None and (
+            isinstance(partition_seed, bool)
+            or not isinstance(partition_seed, int)
+            or not 0 <= partition_seed <= _MAX_SEED
+        ):
+            raise ValueError(
+                f"outer_fold_partition_seed must be None or an integer between 0 "
+                f"and {_MAX_SEED}"
+            )
         contrasts = tuple(self.contrasts)
         if not contrasts or any(
             not isinstance(contrast, ContrastSpec) for contrast in contrasts
@@ -347,6 +359,8 @@ class CrossFitSpec:
             )
         if tuning_spec is not None:
             payload["penalty_tuning_spec_id"] = tuning_spec.spec_id
+        if partition_seed is not None:
+            payload["outer_fold_partition_seed"] = partition_seed
         spec_id = stable_id(
             "subject_crossfit_spec", payload, schema_version=self.schema_version
         )
@@ -359,6 +373,7 @@ class CrossFitSpec:
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
         object.__setattr__(self, "penalty_tuning_spec", tuning_spec)
+        object.__setattr__(self, "outer_fold_partition_seed", partition_seed)
         object.__setattr__(self, "spec_id", spec_id)
         object.__setattr__(
             self,
@@ -373,7 +388,7 @@ class CrossFitSpec:
         """Return the pre-registered cross-fit policy manifest."""
 
         self._require_intact()
-        return {
+        result: dict[str, object] = {
             "spec_id": self.spec_id,
             "repeat_id": self.repeat_id,
             "repeat_index": self.repeat_index,
@@ -398,6 +413,9 @@ class CrossFitSpec:
                 else self.penalty_tuning_spec.to_dict()
             ),
         }
+        if self.outer_fold_partition_seed is not None:
+            result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
+        return result
 
     def _require_intact(self) -> None:
         """Reject forced mutation of the frozen cross-fit policy."""
@@ -406,6 +424,7 @@ class CrossFitSpec:
             repeated = CrossFitSpec(
                 contrasts=self.contrasts,
                 repeat_index=self.repeat_index,
+                outer_fold_partition_seed=self.outer_fold_partition_seed,
                 training_spec=self.training_spec,
                 strata_keys=self.strata_keys,
                 allowed_n_splits=self.allowed_n_splits,
@@ -426,6 +445,8 @@ class CrossFitSpec:
                 and isinstance(self.allowed_n_splits, tuple)
                 and self.contrasts == repeated.contrasts
                 and self.repeat_index == repeated.repeat_index
+                and self.outer_fold_partition_seed
+                == repeated.outer_fold_partition_seed
                 and self.training_spec.spec_id == repeated.training_spec.spec_id
                 and self.strata_keys == repeated.strata_keys
                 and self.allowed_n_splits == repeated.allowed_n_splits
@@ -446,6 +467,18 @@ class CrossFitSpec:
                 field="spec_id",
                 remediation="Rebuild CrossFitSpec from the declared policy",
             )
+
+
+def _outer_fold_partition_lineage(
+    spec: CrossFitSpec,
+) -> SeedLineage | None:
+    seed = spec.outer_fold_partition_seed
+    if seed is None:
+        return None
+    return SeedLineage(seed).derive(
+        "subject_crossfit_outer_partition_v1",
+        f"repeat={spec.repeat_index}",
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -1304,6 +1337,20 @@ class CrossFitArtifacts:
         self.fold_plan._require_intact()
         if self.fold_plan.repeat_id != self.spec.repeat_id:
             raise ValueError("fold plan repeat_id does not match the cross-fit spec")
+        expected_partition_lineage = _outer_fold_partition_lineage(self.spec)
+        observed_partition_lineage = self.fold_plan.partition_seed_lineage
+        if (
+            None
+            if observed_partition_lineage is None
+            else observed_partition_lineage.to_dict()
+        ) != (
+            None
+            if expected_partition_lineage is None
+            else expected_partition_lineage.to_dict()
+        ):
+            raise ValueError(
+                "fold plan partition seed lineage does not match the cross-fit spec"
+            )
         if self.root_input_identity.subject_ids != self.fold_plan.subject_ids:
             raise ValueError("root input subjects do not match the fold plan")
         if self.fold_plan.allowed_n_splits != self.spec.allowed_n_splits:
@@ -3394,6 +3441,7 @@ def _run_subject_crossfit(
         seed_lineage=SeedLineage(config.random_seed).derive(
             "subject_crossfit", spec.spec_id
         ),
+        partition_seed_lineage=_outer_fold_partition_lineage(spec),
     )
     if root_input_identity.config_digest != config.digest:
         raise ValueError("snapshot root identity does not match the cross-fit config")

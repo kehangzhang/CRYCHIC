@@ -286,6 +286,7 @@ def _candidate_folds(
     requested_n_splits: int,
     repeat_id: str,
     seed_lineage: SeedLineage,
+    partition_seed_lineage: SeedLineage | None,
     min_train_subjects_per_context: int,
     min_test_subjects_per_context: int,
     checker: FoldEstimabilityChecker,
@@ -296,10 +297,15 @@ def _candidate_folds(
             _context_support(table, subject_key=subject_key, context_keys=context_keys)
         )
     )
+    assignment_lineage = (
+        seed_lineage.derive("crossfit", repeat_id, f"k={n_splits}")
+        if partition_seed_lineage is None
+        else partition_seed_lineage.derive("partition", f"k={n_splits}")
+    )
     test_sets = _assign_subjects(
         subject_strata,
         n_splits=n_splits,
-        lineage=seed_lineage.derive("crossfit", repeat_id, f"k={n_splits}"),
+        lineage=assignment_lineage,
     )
     manifests: list[FoldManifest] = []
     for fold_index, test_subjects in enumerate(test_sets):
@@ -388,6 +394,7 @@ def plan_subject_folds(
     min_test_subjects_per_context: int = 1,
     repeat_id: str = "repeat-0",
     seed_lineage: SeedLineage | None = None,
+    partition_seed_lineage: SeedLineage | None = None,
 ) -> SubjectFoldPlan:
     """Select the first predeclared K whose every subject fold is estimable."""
 
@@ -418,6 +425,10 @@ def plan_subject_folds(
     if len(set((*contexts, *strata))) != len((*contexts, *strata)):
         raise ValueError("context_keys and strata_keys must be unique and disjoint")
     lineage = seed_lineage or SeedLineage(0)
+    if partition_seed_lineage is not None and not isinstance(
+        partition_seed_lineage, SeedLineage
+    ):
+        raise TypeError("partition_seed_lineage must be a SeedLineage or None")
     table = _sample_table(
         sample_metadata,
         sample_key=sample_key,
@@ -455,6 +466,7 @@ def plan_subject_folds(
             requested_n_splits=requested,
             repeat_id=repeat_id.strip(),
             seed_lineage=lineage,
+            partition_seed_lineage=partition_seed_lineage,
             min_train_subjects_per_context=min_train_subjects_per_context,
             min_test_subjects_per_context=min_test_subjects_per_context,
             checker=design_checker,
@@ -480,6 +492,7 @@ def plan_subject_folds(
             subject_ids=tuple(subject_strata),
             folds=folds,
             seed_lineage=lineage,
+            partition_seed_lineage=partition_seed_lineage,
             reduction_reason_code=reduction_reason,
             rejected_candidate_reasons=tuple(rejected),
         )

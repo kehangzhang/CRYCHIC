@@ -87,6 +87,40 @@ def test_fold_plan_is_deterministic_and_input_order_invariant() -> None:
     assert shuffled.to_dict() == first.to_dict()
 
 
+def test_explicit_partition_lineage_is_independent_of_repeat_identity() -> None:
+    metadata = _paired_metadata()
+    shared_partition = SeedLineage(991).derive("outer-partition", "repeat=0")
+    common = {
+        "sample_metadata": metadata,
+        "design_checker": _checker(),
+        "context_keys": ("condition",),
+        "allowed_n_splits": (4, 3, 2),
+        "partition_seed_lineage": shared_partition,
+    }
+
+    first = plan_subject_folds(
+        repeat_id="repeat-a",
+        seed_lineage=SeedLineage(1),
+        **common,
+    )
+    second = plan_subject_folds(
+        repeat_id="repeat-b",
+        seed_lineage=SeedLineage(2),
+        **common,
+    )
+
+    first_partitions = [
+        (fold.train_subject_ids, fold.test_subject_ids) for fold in first.folds
+    ]
+    second_partitions = [
+        (fold.train_subject_ids, fold.test_subject_ids) for fold in second.folds
+    ]
+    assert first_partitions == second_partitions
+    assert first.plan_id != second.plan_id
+    assert first.partition_seed_lineage == shared_partition
+    assert first.to_dict()["partition_seed_lineage"] == shared_partition.to_dict()
+
+
 def test_fold_plan_is_invariant_to_categorical_sample_storage() -> None:
     metadata = pd.DataFrame(
         [
@@ -138,6 +172,7 @@ def test_fold_manifest_rejects_forced_semantic_mutation() -> None:
     [
         ("repeat_id", "poisoned-repeat"),
         ("allowed_n_splits", (5, 4, 3, 2)),
+        ("partition_seed_lineage", SeedLineage(999)),
     ],
 )
 def test_subject_fold_plan_rejects_forced_policy_mutation(

@@ -5,6 +5,7 @@ import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -19,8 +20,9 @@ import crychic.workflow.crossfit as crossfit_module
 import crychic.workflow.repeated_crossfit as repeated_crossfit_module
 import crychic.workflow.training as training_module
 from crychic.attribution import PenaltyTuningSpec
-from crychic.core import ContractError, CrychicConfig
+from crychic.core import ContractError, CrychicConfig, SeedLineage
 from crychic.design import balanced_contrast
+from crychic.resampling import SubjectFoldPlan
 from crychic.resources import (
     GeneNamespace,
     Interaction,
@@ -344,6 +346,140 @@ def test_repeat_index_changes_repeat_identity_not_algorithm_policy() -> None:
     assert repeated.to_dict()["repeat_index"] == 1
     with pytest.raises(ValueError, match="repeat_index"):
         replace(base, repeat_index=-1)
+
+
+def test_default_outer_partition_policy_preserves_legacy_identity() -> None:
+    spec = _spec()
+    result = _run(_adata())
+
+    assert spec.spec_id == "subject_crossfit_spec_a7f64b4101e21229987413e0f5aa9bb0"
+    assert spec.repeat_id == "subject_crossfit_repeat_18475ebb4574c64abf8a8fdd91bb90ce"
+    assert "outer_fold_partition_seed" not in spec.to_dict()
+    assert result.fold_plan.partition_seed_lineage is None
+    assert "partition_seed_lineage" not in result.fold_plan.to_dict()
+    assert result.fold_plan.plan_id == (
+        "subject_fold_plan_bcea0ce54a9d69b0bdba3a22ffe3aa7c"
+    )
+    assert [fold.fold_id for fold in result.fold_plan.folds] == [
+        "subject_fold_218f1768ece07284cde48fa7e33efa6a",
+        "subject_fold_e713d5365a1199325444c995b43a997c",
+    ]
+    assert result.crossfit_id == (
+        "subject_crossfit_40f4dfc5da61c3324f6550358db4e6a3"
+    )
+
+
+@pytest.mark.parametrize("invalid", [True, -1, 2**63, 1.5])
+def test_outer_fold_partition_seed_validation(invalid: object) -> None:
+    with pytest.raises(ValueError, match="outer_fold_partition_seed"):
+        replace(_spec(), outer_fold_partition_seed=invalid)
+
+
+def test_outer_partition_seed_is_repeat_specific_and_deterministic() -> None:
+    base = replace(_spec(), outer_fold_partition_seed=881902)
+    repeated = replace(base, repeat_index=1)
+    adata = _adata(("p1", "p2", "p3", "p4"))
+
+    first = run_subject_crossfit(adata, _config(), _bundle(), _prior(), spec=base)
+    rerun = run_subject_crossfit(adata, _config(), _bundle(), _prior(), spec=base)
+    second_repeat = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=repeated,
+    )
+
+    assert first.fold_plan.to_dict() == rerun.fold_plan.to_dict()
+    assert first.fold_plan.partition_seed_lineage is not None
+    assert second_repeat.fold_plan.partition_seed_lineage is not None
+    assert (
+        first.fold_plan.partition_seed_lineage.to_dict()
+        != second_repeat.fold_plan.partition_seed_lineage.to_dict()
+    )
+
+
+def test_explicit_outer_partition_seed_pairs_parameter_sensitivity() -> None:
+    base = replace(_spec(), outer_fold_partition_seed=881902)
+    changed_sender = replace(
+        base.training_spec.sender_parameters,
+        ligand_contrast_minimum_effect=0.02,
+    )
+    changed = replace(
+        base,
+        training_spec=replace(
+            base.training_spec,
+            sender_parameters=changed_sender,
+        ),
+    )
+    adata = _adata(("p1", "p2", "p3", "p4"))
+    first = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=base,
+    )
+    second = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=changed,
+    )
+
+    first_partitions = [
+        (fold.train_subject_ids, fold.test_subject_ids)
+        for fold in first.fold_plan.folds
+    ]
+    second_partitions = [
+        (fold.train_subject_ids, fold.test_subject_ids)
+        for fold in second.fold_plan.folds
+    ]
+    assert first_partitions == second_partitions
+    assert first.spec.spec_id != second.spec.spec_id
+    assert first.spec.repeat_id != second.spec.repeat_id
+    assert first.fold_plan.plan_id != second.fold_plan.plan_id
+    assert first.fold_plan.partition_seed_lineage is not None
+    assert (
+        first.fold_plan.partition_seed_lineage.to_dict()
+        == second.fold_plan.partition_seed_lineage.to_dict()
+    )
+
+    def support_effects(result: CrossFitArtifacts) -> list[tuple[str, str, float]]:
+        return [
+            (support.receiver, support.interaction_id, cast(float, support.mean_effect))
+            for fold in result.folds
+            for functional in fold.training.sender_functionals
+            for support in functional.contrast_supports
+        ]
+
+    assert support_effects(first) == support_effects(second)
+
+    plan = first.fold_plan
+    poisoned_plan = SubjectFoldPlan(
+        repeat_id=plan.repeat_id,
+        requested_n_splits=plan.requested_n_splits,
+        effective_n_splits=plan.effective_n_splits,
+        allowed_n_splits=plan.allowed_n_splits,
+        subject_ids=plan.subject_ids,
+        folds=plan.folds,
+        seed_lineage=plan.seed_lineage,
+        partition_seed_lineage=SeedLineage(123).derive("wrong-partition"),
+        reduction_reason_code=plan.reduction_reason_code,
+        rejected_candidate_reasons=plan.rejected_candidate_reasons,
+    )
+    with pytest.raises(ValueError, match="partition seed lineage"):
+        CrossFitArtifacts._from_workflow(
+            spec=first.spec,
+            root_input_identity=first.root_input_identity,
+            fold_plan=poisoned_plan,
+            folds=first.folds,
+            oof_coverage=first.oof_coverage,
+            oof_receiver_coverage=first.oof_receiver_coverage,
+            oof_sender_assignments=first.oof_sender_assignments,
+            coverage_audit=first.coverage_audit,
+        )
 
 
 def test_repeated_crossfit_rejects_valid_children_from_different_root_inputs() -> None:
