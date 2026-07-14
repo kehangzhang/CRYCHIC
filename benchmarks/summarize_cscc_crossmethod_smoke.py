@@ -492,7 +492,7 @@ def _plot_summary(
         )
         ax_a.invert_yaxis()
         ax_a.set_xlim(0, 100)
-        ax_a.set_xlabel("Native returned/non-structural rows (%)")
+        ax_a.set_xlabel("Native result density (%; not accuracy)")
         ax_a.set_title("A  Sample-edge result density", loc="left")
         for position, value in zip(positions, values, strict=True):
             ax_a.text(min(value + 1.5, 96), position, f"{value:.1f}", va="center")
@@ -605,7 +605,8 @@ def _plot_summary(
             0.01,
             0.003,
             "* CRYCHIC scores are exploratory and non-certified in this smoke run. "
-            "Track B is source-agnostic and is not an LR-edge or sender comparison.",
+            "Panel A is output sparsity, not accuracy. Track B is source-agnostic "
+            "and is not an LR-edge or sender comparison.",
             fontsize=7,
         )
         for suffix in ("png", "pdf", "svg"):
@@ -768,6 +769,7 @@ def summarize_crossmethod_smoke(
                 "nichenet_sender_or_lr_edge_claimed": False,
                 "nichenet_proxy_semantics": PROXY_SEMANTICS,
                 "method_superiority_claimed": False,
+                "native_result_density_used_as_accuracy": False,
             },
             "interpretation_scope": (
                 "bounded_algorithm_smoke; descriptive paired effects only; "
