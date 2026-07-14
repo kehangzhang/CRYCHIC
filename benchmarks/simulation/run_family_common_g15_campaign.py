@@ -1899,15 +1899,50 @@ def _resource_provenance(
     }
 
 
+def _select_seed_records(
+    registry: Mapping[str, object],
+    *,
+    seed_count: int | None,
+    seed_ids: tuple[str, ...] | None,
+) -> tuple[Mapping[str, object], ...]:
+    raw_seed_records = tuple(
+        _mapping(item, field="seed_sets[]")
+        for item in cast(Sequence[object], registry["seed_sets"])
+    )
+    if seed_count is not None and seed_ids is not None:
+        raise ValueError("seed_count and seed_ids are mutually exclusive")
+    if seed_ids is None:
+        selected_count = 2 if seed_count is None else seed_count
+        if not 1 <= selected_count <= len(raw_seed_records):
+            raise ValueError(
+                f"seed_count must lie in [1, {len(raw_seed_records)}]"
+            )
+        return raw_seed_records[:selected_count]
+
+    requested_ids = tuple(seed_id.strip() for seed_id in seed_ids)
+    if not requested_ids or any(not seed_id for seed_id in requested_ids):
+        raise ValueError("seed_ids must be a non-empty sequence")
+    if len(set(requested_ids)) != len(requested_ids):
+        raise ValueError("seed_ids must be unique")
+    records_by_id = {
+        str(record["seed_id"]): record for record in raw_seed_records
+    }
+    unknown_ids = sorted(set(requested_ids).difference(records_by_id))
+    if unknown_ids:
+        raise ValueError(f"unknown campaign seed_ids: {unknown_ids}")
+    return tuple(records_by_id[seed_id] for seed_id in requested_ids)
+
+
 def run_campaign(
     *,
     workspace_root: Path,
     registry_path: Path = DEFAULT_INPUT_REGISTRY,
     profile_name: str = "quick",
-    seed_count: int = 2,
+    seed_count: int | None = None,
+    seed_ids: tuple[str, ...] | None = None,
     scenarios: tuple[str, ...] = DEFAULT_DEVELOPMENT_SCENARIOS,
 ) -> dict[str, object]:
-    """Execute a configurable preregistered prefix through the public workflow."""
+    """Execute selected preregistered seeds through the public workflow."""
 
     registry_file = registry_path.expanduser().resolve()
     registry = load_campaign_registry(registry_file)
@@ -1927,12 +1962,13 @@ def run_campaign(
         _mapping(item, field="seed_sets[]")
         for item in cast(Sequence[object], registry["seed_sets"])
     )
-    if not 1 <= seed_count <= len(raw_seed_records):
-        raise ValueError(
-            f"seed_count must lie in [1, {len(raw_seed_records)}]"
-        )
-    seed_records = raw_seed_records[:seed_count]
-    seed_ids = [str(record["seed_id"]) for record in seed_records]
+    seed_records = _select_seed_records(
+        registry,
+        seed_count=seed_count,
+        seed_ids=seed_ids,
+    )
+    executed_seed_ids = [str(record["seed_id"]) for record in seed_records]
+    selected_seed_count = len(seed_records)
 
     repository_root = Path(__file__).resolve().parents[2]
     fixture_root = (
@@ -2023,7 +2059,7 @@ def run_campaign(
         records,
         registry=registry,
         edge_catalog=edge_catalog,
-        seed_ids=seed_ids,
+        seed_ids=executed_seed_ids,
         scenarios=scenarios,
     )
     full_scenario_execution = set(scenarios) == set(registered_scenarios)
@@ -2035,7 +2071,7 @@ def run_campaign(
         "campaign_id": registry["campaign_id"],
         "scope": (
             "single_seed_public_workflow_debug_excluded_from_campaign"
-            if seed_count < 2
+            if selected_seed_count < 2
             else (
                 "development_full_seven_scenario_diagnostic"
                 if full_scenario_execution
@@ -2059,7 +2095,7 @@ def run_campaign(
             "all_preregistered_seed_ids": [
                 str(record["seed_id"]) for record in raw_seed_records
             ],
-            "executed_seed_ids": seed_ids,
+            "executed_seed_ids": executed_seed_ids,
             "profile": profile_name,
             "profile_parameters": dict(
                 _mapping(profiles[profile_name], field=f"profiles.{profile_name}")
@@ -2081,8 +2117,10 @@ def run_campaign(
             ),
             "frozen_contract_contains_multiple_known_edges": len(edge_catalog) >= 2,
             "frozen_contract_contains_multiple_seeds": len(raw_seed_records) >= 2,
-            "executed_multiple_seeds": seed_count >= 2,
-            "eligible_for_campaign_metric_interpretation": seed_count >= 2,
+            "executed_multiple_seeds": selected_seed_count >= 2,
+            "eligible_for_campaign_metric_interpretation": (
+                selected_seed_count >= 2
+            ),
             "executed_full_seven_scenario_contract": full_scenario_execution,
             "active_and_paired_ligand_only_executed": (
                 "active" in scenarios and "ligand_only" in scenarios
@@ -2185,7 +2223,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-root", type=Path, default=default_workspace)
     parser.add_argument("--registry", type=Path, default=DEFAULT_INPUT_REGISTRY)
     parser.add_argument("--profile", choices=("tiny", "quick"), default="quick")
-    parser.add_argument("--seed-count", type=int, default=2)
+    seed_selection = parser.add_mutually_exclusive_group()
+    seed_selection.add_argument("--seed-count", type=int, default=2)
+    seed_selection.add_argument("--seed-ids", nargs="+")
     parser.add_argument(
         "--scenarios",
         nargs="+",
@@ -2208,11 +2248,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     workspace_root = args.workspace_root.expanduser().resolve()
+    selected_seed_ids = (
+        None if args.seed_ids is None else tuple(args.seed_ids)
+    )
     payload = run_campaign(
         workspace_root=workspace_root,
         registry_path=args.registry,
         profile_name=args.profile,
-        seed_count=args.seed_count,
+        seed_count=(args.seed_count if selected_seed_ids is None else None),
+        seed_ids=selected_seed_ids,
         scenarios=tuple(args.scenarios),
     )
     output = args.output.expanduser()
@@ -2233,7 +2277,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if args.summary_output is None
                     else str(summary_output.resolve())
                 ),
-                "executed_seed_count": args.seed_count,
+                "executed_seed_count": len(
+                    cast(
+                        Sequence[object],
+                        cast(Mapping[str, object], payload["registry"])[
+                            "executed_seed_ids"
+                        ],
+                    )
+                ),
                 "executed_scenarios": list(args.scenarios),
                 "scope": payload["scope"],
                 "claims": payload["claims"],

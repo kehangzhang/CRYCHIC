@@ -9,6 +9,7 @@ from typing import cast
 import anndata as ad
 import numpy as np
 import pandas as pd
+import pytest
 from benchmarks.simulation.run_family_common_g15_campaign import (
     ALL_SCENARIOS,
     AUDIT_CLAIMS,
@@ -23,6 +24,7 @@ from benchmarks.simulation.run_family_common_g15_campaign import (
     _aggregate_score_campaign,
     _component_summaries,
     _paired_effect_summary,
+    _select_seed_records,
     build_campaign_spec,
     build_parser,
     campaign_source_sha256,
@@ -499,6 +501,7 @@ def test_cli_defaults_are_a_multiseed_development_subset_not_full_g15() -> None:
     args = build_parser().parse_args([])
 
     assert args.seed_count == 2
+    assert args.seed_ids is None
     assert tuple(args.scenarios) == DEFAULT_DEVELOPMENT_SCENARIOS
     assert tuple(args.scenarios) != ALL_SCENARIOS
     assert args.profile == "quick"
@@ -506,19 +509,98 @@ def test_cli_defaults_are_a_multiseed_development_subset_not_full_g15() -> None:
     assert AUDIT_CLAIMS["complete_pipeline_oof_certification"] is False
 
 
+def test_seed_id_selection_can_run_only_the_frozen_unseen_seed() -> None:
+    registry_path = REGISTRY_PATH
+    registry_sha256 = hashlib.sha256(registry_path.read_bytes()).hexdigest()
+    selected = _select_seed_records(
+        _registry(),
+        seed_count=None,
+        seed_ids=("public-g15-003",),
+    )
+
+    assert [record["seed_id"] for record in selected] == ["public-g15-003"]
+    assert selected[0]["input_seed"] == 3364261018
+    assert selected[0]["crossfit_seed"] == 4109871368
+    assert hashlib.sha256(registry_path.read_bytes()).hexdigest() == registry_sha256
+
+
+@pytest.mark.parametrize(
+    ("seed_ids", "message"),
+    [
+        (("public-g15-004",), "unknown campaign seed_ids"),
+        (
+            ("public-g15-003", "public-g15-003"),
+            "seed_ids must be unique",
+        ),
+    ],
+)
+def test_seed_id_selection_rejects_unknown_or_duplicate_ids(
+    seed_ids: tuple[str, ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _select_seed_records(
+            _registry(),
+            seed_count=None,
+            seed_ids=seed_ids,
+        )
+
+
+def test_seed_count_and_seed_ids_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _select_seed_records(
+            _registry(),
+            seed_count=1,
+            seed_ids=("public-g15-003",),
+        )
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "--seed-count",
+                "1",
+                "--seed-ids",
+                "public-g15-003",
+            ]
+        )
+
+
+def test_seed_count_selection_retains_the_frozen_prefix_behavior() -> None:
+    default_selected = _select_seed_records(
+        _registry(),
+        seed_count=None,
+        seed_ids=None,
+    )
+    explicit_selected = _select_seed_records(
+        _registry(),
+        seed_count=2,
+        seed_ids=None,
+    )
+
+    expected = ["public-g15-001", "public-g15-002"]
+    assert [record["seed_id"] for record in default_selected] == expected
+    assert [record["seed_id"] for record in explicit_selected] == expected
+
+
+def test_cli_accepts_seed_ids_without_changing_the_seed_count_default() -> None:
+    args = build_parser().parse_args(["--seed-ids", "public-g15-003"])
+
+    assert args.seed_count == 2
+    assert args.seed_ids == ["public-g15-003"]
+
+
 def test_tracked_multiseed_summary_is_current_and_semantically_pinned() -> None:
     summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
 
     assert summary["source_sha256"] == campaign_source_sha256()
-    assert summary["scope"] == (
-        "development_preregistered_scenario_subset_diagnostic"
-    )
+    assert summary["scope"] == "development_full_seven_scenario_diagnostic"
     assert summary["checks"]["eligible_for_campaign_metric_interpretation"]
     assert summary["checks"]["executed_multiple_seeds"]
+    assert summary["checks"]["executed_full_seven_scenario_contract"]
     assert summary["registry"]["executed_seed_ids"] == [
         "public-g15-001",
         "public-g15-002",
     ]
+    assert tuple(summary["registry"]["executed_scenarios"]) == ALL_SCENARIOS
     macro = summary["aggregate_metrics"]["active_vs_ligand_only"][
         "macro_summaries"
     ]
@@ -529,17 +611,15 @@ def test_tracked_multiseed_summary_is_current_and_semantically_pinned() -> None:
     controls = summary["aggregate_metrics"][
         "control_family_false_positive_and_selection"
     ]
-    assert {record["scenario"] for record in controls} == {
-        "ligand_only",
-        "receiver_autonomous",
-        "global_null",
-    }
+    assert {record["scenario"] for record in controls} == set(
+        ALL_SCENARIOS
+    ).difference({"active"})
     assert all(
-        record["any_training_family_selection_rate"] == 0.0
+        record["any_positive_integrated_family_rate"] == 0.0
         for record in controls
     )
     assert all(
-        record["any_positive_raw_integrated_family_rate"] == 0.0
+        record["mean_positive_integrated_families"] == 0.0
         for record in controls
     )
 
