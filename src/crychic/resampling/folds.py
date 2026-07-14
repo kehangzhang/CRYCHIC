@@ -92,7 +92,9 @@ def _sample_table(
                     f"sample {sample_id!r} maps to multiple {field_name!r} values"
                 )
     table = table.drop_duplicates(sample_key, keep="first")
-    table["__sample_sort_key"] = table[sample_key].map(_typed_key)
+    table["__sample_sort_key"] = [
+        _typed_key(value) for value in table[sample_key].tolist()
+    ]
     table = table.sort_values("__sample_sort_key", kind="stable").drop(
         columns="__sample_sort_key"
     )

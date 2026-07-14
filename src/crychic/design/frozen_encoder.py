@@ -471,6 +471,8 @@ class FrozenDesignEncoder:
                     )
                 )
             )
+            if samples != tuple(sorted(samples, key=_typed_key)):
+                raise ValueError("training sample rows are not canonical")
             if subjects != tuple(sorted(set(sample_subjects))):
                 raise ValueError("training sample subjects are inconsistent")
             n_samples = len(samples)
@@ -810,6 +812,8 @@ class FrozenDesignApplication:
                 raise ValueError("design application lineage IDs are invalid")
             if self.subject_ids != tuple(sorted(set(sample_subjects))):
                 raise ValueError("design application subject identity is inconsistent")
+            if samples != tuple(sorted(samples, key=_typed_key)):
+                raise ValueError("design application sample rows are not canonical")
             if self.application_scope not in {"training", "heldout"}:
                 raise ValueError("design application scope is inconsistent")
             if self.status not in {"observed", "not_estimable"} or (
@@ -937,7 +941,9 @@ def _sample_table(
                     f"sample {sample_id!r} maps to multiple {column!r} values"
                 )
     table = table.drop_duplicates(sample_key, keep="first")
-    table["__sample_order"] = table[sample_key].map(_typed_key)
+    table["__sample_order"] = [
+        _typed_key(value) for value in table[sample_key].tolist()
+    ]
     return (
         table.sort_values("__sample_order", kind="stable")
         .drop(columns="__sample_order")

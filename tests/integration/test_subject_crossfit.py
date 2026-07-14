@@ -409,6 +409,21 @@ def test_root_input_identity_is_cell_row_order_invariant() -> None:
     assert original.subject_content_digests == reordered.subject_content_digests
 
 
+def test_subject_crossfit_accepts_categorical_numeric_sample_ids() -> None:
+    adata = _adata(("107", "1015", "1016", "1256"))
+    for column in ("sample_id", "subject_id", "cell_type", "condition"):
+        adata.obs[column] = pd.Categorical(
+            adata.obs[column],
+            categories=tuple(dict.fromkeys(adata.obs[column])),
+        )
+
+    result = _run(adata)
+
+    assert result.completed_stage_oof_verified
+    assert set(result.fold_plan.subject_ids) == {"107", "1015", "1016", "1256"}
+    assert len(result.folds) == 2
+
+
 def test_sanitized_snapshot_rejects_expression_or_metadata_mutation() -> None:
     snapshot = training_module._sanitized_raw_input_snapshot(_adata(), _config())
     counts = snapshot.adata.layers["counts"]

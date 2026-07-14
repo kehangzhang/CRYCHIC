@@ -258,6 +258,27 @@ def test_non_ascii_sample_ids_keep_the_frozen_canonical_order() -> None:
     assert artifact.to_dict()["artifact_id"] == artifact.artifact_id
 
 
+def test_categorical_numeric_sample_ids_keep_the_frozen_canonical_order() -> None:
+    metadata = _sample_metadata(("107", "1015", "1016", "1256"))
+    metadata["sample_id"] = pd.Categorical(
+        metadata["sample_id"],
+        categories=tuple(metadata["sample_id"]),
+    )
+    encoder = _encoder(metadata)
+
+    artifact = fit_fold_gene_response(
+        _aggregate(metadata, _counts(metadata), reverse_metadata=True),
+        encoder,
+        receiver="R",
+        fold_id="fold-categorical-samples",
+        training_input_digest="input-categorical-samples",
+    )
+
+    assert artifact.sample_ids == tuple(sorted(map(str, metadata["sample_id"])))
+    assert artifact.sample_ids == encoder.training_sample_ids
+    assert artifact.to_dict()["artifact_id"] == artifact.artifact_id
+
+
 def test_training_lineage_and_numeric_poison_change_artifact_identity() -> None:
     metadata = _sample_metadata(("p1", "p2", "p3", "p4"))
     encoder = _encoder(metadata)

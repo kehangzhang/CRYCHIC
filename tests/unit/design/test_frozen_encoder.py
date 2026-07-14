@@ -530,6 +530,37 @@ def test_encoder_identity_hashes_assignments_but_not_row_order() -> None:
     assert changed_covariate.encoder_id != original.encoder_id
 
 
+def test_categorical_sample_ids_use_typed_canonical_order() -> None:
+    training = _metadata(("107", "1015", "1016"), site=("a", "b", "a"))
+    categorical = training.copy(deep=True)
+    categorical["sample_id"] = pd.Categorical(
+        categorical["sample_id"],
+        categories=tuple(categorical["sample_id"]),
+    )
+
+    expected = fit_frozen_design_encoder(
+        training,
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+    observed = fit_frozen_design_encoder(
+        categorical,
+        contrast=_contrast(),
+        context_keys=("condition",),
+        covariates=("site", "age"),
+    )
+
+    assert observed.training_sample_ids == tuple(sorted(training["sample_id"]))
+    assert observed.training_sample_ids == expected.training_sample_ids
+    assert observed.encoder_id == expected.encoder_id
+    assert observed.to_dict()["encoder_id"] == observed.encoder_id
+    assert (
+        observed.training_application().to_dict()["encoder_id"]
+        == observed.encoder_id
+    )
+
+
 def test_encoder_identity_hashes_input_key_schema() -> None:
     training = _metadata(("p1", "p2", "p3"), site=("a", "b", "a"))
     renamed = training.assign(

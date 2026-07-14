@@ -117,12 +117,15 @@ def _validate_sample_mapping(obs: pd.DataFrame, schema: InputSchema) -> pd.DataF
     sample_metadata = (
         obs.loc[:, columns].drop_duplicates(subset=[schema.sample_key]).copy()
     )
-    order = (
-        sample_metadata[schema.sample_key]
-        .map(_stable_value)
-        .sort_values(kind="stable")
-        .index
+    stable_sample_ids = pd.Series(
+        [
+            _stable_value(value)
+            for value in sample_metadata[schema.sample_key].tolist()
+        ],
+        index=sample_metadata.index,
+        dtype=object,
     )
+    order = stable_sample_ids.sort_values(kind="stable").index
     return sample_metadata.loc[order].reset_index(drop=True)
 
 

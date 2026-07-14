@@ -259,3 +259,28 @@ def test_sample_report_order_does_not_depend_on_cell_order() -> None:
 
     pd.testing.assert_frame_equal(first.sample_metadata, second.sample_metadata)
     pd.testing.assert_frame_equal(first.cell_type_support, second.cell_type_support)
+
+
+def test_sample_report_order_does_not_depend_on_categorical_storage() -> None:
+    adata = _adata(np.ones((4, 3), dtype=np.int64))
+    adata.obs["sample_id"] = ["107", "107", "1015", "1015"]
+    adata.obs["subject_id"] = ["subject-107"] * 2 + ["subject-1015"] * 2
+    categorical = adata.copy()
+    for column in ("sample_id", "subject_id", "cell_type", "condition", "batch"):
+        categorical.obs[column] = pd.Categorical(
+            categorical.obs[column],
+            categories=tuple(dict.fromkeys(categorical.obs[column])),
+        )
+
+    expected = validate_anndata(adata, _schema()).report
+    observed = validate_anndata(categorical, _schema()).report
+
+    assert tuple(expected.sample_metadata["sample_id"]) == ("1015", "107")
+    pd.testing.assert_frame_equal(
+        observed.sample_metadata.astype(object),
+        expected.sample_metadata.astype(object),
+    )
+    pd.testing.assert_frame_equal(
+        observed.cell_type_support.astype(object),
+        expected.cell_type_support.astype(object),
+    )

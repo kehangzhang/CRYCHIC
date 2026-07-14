@@ -87,6 +87,36 @@ def test_fold_plan_is_deterministic_and_input_order_invariant() -> None:
     assert shuffled.to_dict() == first.to_dict()
 
 
+def test_fold_plan_is_invariant_to_categorical_sample_storage() -> None:
+    metadata = pd.DataFrame(
+        [
+            {
+                "sample_id": f"{subject}-{condition}",
+                "subject_id": subject,
+                "condition": condition,
+            }
+            for subject in ("107", "1015", "1016", "1256")
+            for condition in ("ctrl", "stim")
+        ]
+    )
+    categorical = metadata.copy(deep=True)
+    categorical["sample_id"] = pd.Categorical(
+        categorical["sample_id"],
+        categories=tuple(categorical["sample_id"]),
+    )
+    kwargs = {
+        "design_checker": _checker(),
+        "context_keys": ("condition",),
+        "allowed_n_splits": (2,),
+        "seed_lineage": SeedLineage(91),
+    }
+
+    expected = plan_subject_folds(metadata, **kwargs)
+    observed = plan_subject_folds(categorical, **kwargs)
+
+    assert observed.to_dict() == expected.to_dict()
+
+
 def test_fold_manifest_rejects_forced_semantic_mutation() -> None:
     plan = plan_subject_folds(
         _paired_metadata(),
