@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -11,7 +12,7 @@ import numpy as np
 import pandas as pd
 from anndata import AnnData
 
-from crychic.core import ContractError, CrychicConfig, stable_id
+from crychic.core import ContractError, CrychicConfig, canonical_json, stable_id
 from crychic.resources import ResourceBundle, TargetPrior
 from crychic.scoring import (
     FamilyCommonScoringApplication,
@@ -34,6 +35,8 @@ _PARTIAL_STATUS = "partially_observed_descriptive_repeat_stability"
 _NO_PARTITION_STATUS = "not_estimable_insufficient_distinct_repeat_partitions"
 _NO_FAMILY_STATUS = "not_estimable_family_common_stage_not_connected"
 _NO_ESTIMABLE_STATUS = "not_estimable_no_complete_family_repeat_stability"
+_TABLE_DIGEST_SCHEMA_VERSION = "1"
+_TABLE_DIGEST_LENGTH = 64
 
 _REPEAT_REGISTRY_COLUMNS = (
     "repeat_index",
@@ -166,17 +169,39 @@ def _canonical_cell(value: object) -> object:
 def _table_digest(name: str, table: pd.DataFrame, columns: tuple[str, ...]) -> str:
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the released contract")
-    rows = [
-        [_canonical_cell(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    result: str = stable_id(
+
+    # Retain stable_id's validation contract while streaming the exact canonical
+    # payload that stable_id would otherwise materialize in full.
+    validation_id: str = stable_id(
         name,
-        {"columns": list(columns), "rows": rows},
-        schema_version="1",
-        digest_length=64,
+        {},
+        schema_version=_TABLE_DIGEST_SCHEMA_VERSION,
+        digest_length=_TABLE_DIGEST_LENGTH,
     )
-    return result
+    id_prefix = validation_id[: -(_TABLE_DIGEST_LENGTH + 1)]
+    template = canonical_json(
+        {
+            "components": {"columns": list(columns), "rows": []},
+            "kind": name,
+            "schema_version": _TABLE_DIGEST_SCHEMA_VERSION,
+        }
+    )
+    rows_marker = '"rows":[]'
+    if template.count(rows_marker) != 1:  # pragma: no cover - canonical contract
+        raise RuntimeError("canonical stable-ID template lacks one rows marker")
+    prefix, suffix = template.split(rows_marker, maxsplit=1)
+
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(b'"rows":[')
+    for row_index, row in enumerate(table.itertuples(index=False, name=None)):
+        if row_index:
+            digest.update(b",")
+        canonical_row = [_canonical_cell(value) for value in row]
+        digest.update(canonical_json(canonical_row).encode("ascii"))
+    digest.update(b"]")
+    digest.update(suffix.encode("ascii"))
+    return f"{id_prefix}_{digest.hexdigest()[:_TABLE_DIGEST_LENGTH]}"
 
 
 def _nullable_float(value: object) -> float | None:
