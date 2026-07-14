@@ -1,0 +1,210 @@
+{
+  "schema_version": "crychic-cscc-paired-gate-smoke-config-v1",
+  "dataset": {
+    "dataset_id": "GSE144236_Ji_cSCC",
+    "relative_path": "benchmark_work/multicondition_v01/prepared/GSE144236_cscc_paired.h5ad",
+    "expected_h5ad": {
+      "bytes": 579531847,
+      "sha256": "b15759def47df2c2aa5e1936398c9e57fab92dac6814b77d31839ae50b675b81",
+      "shape": [
+        47068,
+        32738
+      ]
+    },
+    "cell_types": [
+      "CD1C",
+      "Epithelial"
+    ],
+    "conditions": {
+      "positive": "Tumor",
+      "negative": "Normal"
+    },
+    "minimum_cells_per_stratum": 10,
+    "cell_cap_per_stratum": 200,
+    "cell_cap_policy": "sha256_utf8_cell_id_then_cell_id",
+    "selected_cell_id_digest_policy": "canonical_digest_sorted_cell_ids",
+    "expected_subject_count": 8,
+    "expected_condition_count": 2,
+    "expected_cell_type_count": 2,
+    "expected_stratum_count": 32,
+    "expected_selected_cell_count": 5297,
+    "expected_selected_cell_id_digest": "e9d4a487cff6227e1af94f5e6967e181048b7bb86759e158d527153b12d13e6d"
+  },
+  "harmonized_resource": {
+    "table_relative_path": "benchmark_work/multicondition_v01/resources/harmonized_simple_lr/harmonized_lr.tsv",
+    "manifest_relative_path": "benchmark_work/multicondition_v01/resources/harmonized_simple_lr/manifest.json",
+    "table_bytes": 57271,
+    "table_sha256": "e24148ad3d6ee0be0d1a71503c98934085072e22fcb46bf3f9a8f315d3424988",
+    "manifest_bytes": 1834,
+    "manifest_sha256": "15f5fb2711616282d95059319d8cdcbe05078c12df22b65bac953aebfae59e98",
+    "resource_id": "crychic_harmonized_cellchat_cellphonedb_simple_lr",
+    "version": "2026-07-12",
+    "manifest_digest": "7b8d445139792e16e21810ff8fa462f80af195e3340040755e0fb1d1988d24d4",
+    "expected_source_interaction_count": 638,
+    "expected_selected_interaction_count": 14,
+    "expected_selected_gene_count": 17,
+    "expected_selected_id_digest": "af50febfb9fe78358084ade42e97ef25a7c591bcfadb5855eecde1516bd4d01f",
+    "expected_selected_full_fields_digest": "981b73475435dd6ddfb20c9635003e799dddd9da8959bd3bb1ee0a51bfe4ed7b"
+  },
+  "nichenet_resource": {
+    "database_root_relative_path": "databases",
+    "manifest_relative_path": "databases/nichenet/v2_2021/manifest.json",
+    "payload_relative_path": "databases/nichenet/v2_2021/ligand_target_top250.parquet",
+    "manifest_bytes": 1732,
+    "manifest_sha256": "4e2a107768e5dee7457fdb5b73ff3659d1f5dbb0a1f82f09dd5ddfc12749f146",
+    "payload_bytes": 2202509,
+    "payload_sha256": "42a6fa3746ad3ab4ba3f03c35fe693d7d2ef0a9b28677295ec838cfc2e0f0293",
+    "resource_id": "nichenet_v2_ligand_target_human",
+    "version": "21122021",
+    "manifest_digest": "87cc10d544e7d02025b99eab65bd292ee03c195c50daba5f9077c4d5ec7460cc",
+    "top_h5ad_observable_targets_per_ligand": 20,
+    "expected_driver_count": 14,
+    "expected_link_count": 280,
+    "expected_target_count": 171,
+    "expected_selected_link_digest": "f716190c833b367d97a96162767c87eaee2a27a5e1a66277495d4154fbde2f2f"
+  },
+  "diagnostic_interactions": [
+    {
+      "diagnostic_id": "CCL3_CCR5",
+      "interaction_id": "harmonized_lr_c69ae6ead70e8aca1ca512f0bc9904f3",
+      "ligand": "CCL3",
+      "receptor": "CCR5",
+      "cellchat_source_interaction_id": "CCL3_CCR5",
+      "cellphonedb_source_interaction_id": "CPI-SS0C090A257"
+    },
+    {
+      "diagnostic_id": "CCL4_CCR5",
+      "interaction_id": "harmonized_lr_fe27a15679180303947923d351aba345",
+      "ligand": "CCL4",
+      "receptor": "CCR5",
+      "cellchat_source_interaction_id": "CCL4_CCR5",
+      "cellphonedb_source_interaction_id": "CPI-SS0D1D95883"
+    },
+    {
+      "diagnostic_id": "CCL5_CCR5",
+      "interaction_id": "harmonized_lr_fbcd47d0ac8660f91f05a0d55a8999b5",
+      "ligand": "CCL5",
+      "receptor": "CCR5",
+      "cellchat_source_interaction_id": "CCL5_CCR5",
+      "cellphonedb_source_interaction_id": "CPI-SS0B01D306C"
+    },
+    {
+      "diagnostic_id": "CXCL10_CXCR3",
+      "interaction_id": "harmonized_lr_7bbc87ba05fdbbd5fe9aefc993426648",
+      "ligand": "CXCL10",
+      "receptor": "CXCR3",
+      "cellchat_source_interaction_id": "CXCL10_CXCR3",
+      "cellphonedb_source_interaction_id": "CPI-SS080683E15"
+    },
+    {
+      "diagnostic_id": "CXCL11_CXCR3",
+      "interaction_id": "harmonized_lr_d85d820f20468879febd6fbadede699b",
+      "ligand": "CXCL11",
+      "receptor": "CXCR3",
+      "cellchat_source_interaction_id": "CXCL11_CXCR3",
+      "cellphonedb_source_interaction_id": "CPI-SS09FAC4977"
+    },
+    {
+      "diagnostic_id": "CXCL9_CXCR3",
+      "interaction_id": "harmonized_lr_ff26da7aceb060f6925eff4857637f72",
+      "ligand": "CXCL9",
+      "receptor": "CXCR3",
+      "cellchat_source_interaction_id": "CXCL9_CXCR3",
+      "cellphonedb_source_interaction_id": "CPI-SS09A1EB4B3"
+    },
+    {
+      "diagnostic_id": "PF4_CXCR3",
+      "interaction_id": "harmonized_lr_4f5ce67b445cbf4f4637f22affde6474",
+      "ligand": "PF4",
+      "receptor": "CXCR3",
+      "cellchat_source_interaction_id": "PF4_CXCR3",
+      "cellphonedb_source_interaction_id": "CPI-SS01A6823FA"
+    },
+    {
+      "diagnostic_id": "AREG_EGFR",
+      "interaction_id": "harmonized_lr_85147308b5aaaf6d2e7a1c57f9f4f5a0",
+      "ligand": "AREG",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "AREG_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS052119104"
+    },
+    {
+      "diagnostic_id": "BTC_EGFR",
+      "interaction_id": "harmonized_lr_c138c709ee403ad9c4d262252cd9861c",
+      "ligand": "BTC",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "BTC_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS0CC966B71"
+    },
+    {
+      "diagnostic_id": "EGF_EGFR",
+      "interaction_id": "harmonized_lr_2982110f7b8f276f049bff5c8f5ed5dd",
+      "ligand": "EGF",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "EGF_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS09947DDD9"
+    },
+    {
+      "diagnostic_id": "EPGN_EGFR",
+      "interaction_id": "harmonized_lr_649424cf5da8586f8cec0609ed0e16eb",
+      "ligand": "EPGN",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "EPGN_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS060790CF0"
+    },
+    {
+      "diagnostic_id": "EREG_EGFR",
+      "interaction_id": "harmonized_lr_37e3865fe1a66e493ae3f427e2e0115b",
+      "ligand": "EREG",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "EREG_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS004C23DCE"
+    },
+    {
+      "diagnostic_id": "HBEGF_EGFR",
+      "interaction_id": "harmonized_lr_d30ae3e4b2cfd28646186cc5f3df8330",
+      "ligand": "HBEGF",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "HBEGF_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS09B2ACA25"
+    },
+    {
+      "diagnostic_id": "TGFA_EGFR",
+      "interaction_id": "harmonized_lr_6677769838f8d55fb4dd8ac997f868f1",
+      "ligand": "TGFA",
+      "receptor": "EGFR",
+      "cellchat_source_interaction_id": "TGFA_EGFR",
+      "cellphonedb_source_interaction_id": "CPI-SS07E5C3060"
+    }
+  ],
+  "crossfit": {
+    "outer_allowed_n_splits": [
+      2
+    ],
+    "minimum_train_subjects_per_context": 4,
+    "minimum_test_subjects_per_context": 4,
+    "minimum_cells_per_sample_cell_type": 10,
+    "minimum_pooled_availability": 0.0,
+    "sender_minimum_subjects": 4,
+    "sender_prevalence_threshold": 0.0,
+    "sender_softmax_temperature": 1.0,
+    "ligand_contrast_confidence_level": 0.95,
+    "ligand_contrast_minimum_effect": 0.0,
+    "receptor_gate_threshold": 0.1,
+    "penalty_lambda1_fractions": [
+      1.0
+    ],
+    "penalty_lambda2_fractions": [
+      0.0
+    ],
+    "inner_allowed_n_splits": [
+      2
+    ],
+    "minimum_inner_train_subjects_per_context": 2,
+    "minimum_inner_validation_subjects_per_context": 1,
+    "family_cosine_threshold": 0.95,
+    "downstream_minimum_scale": 0.25,
+    "outer_fold_partition_seed": 1442362020,
+    "random_seed": 20260715
+  }
+}
