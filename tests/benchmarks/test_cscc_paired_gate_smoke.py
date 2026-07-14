@@ -389,7 +389,11 @@ def test_diagnostic_score_summary_is_paired_deidentified_and_noncertifying() -> 
                         {
                             "sample_id": f"{subject}_{context}",
                             "subject_id": subject,
-                            "context_id": context,
+                            "context_id": str(
+                                cscc.context_id(
+                                    {"condition": context}, ("condition",)
+                                )
+                            ),
                             "sender": "Sender",
                             "receiver": "Receiver",
                             "interaction_id": interaction_id,

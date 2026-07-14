@@ -25,7 +25,7 @@ from crychic import __version__ as crychic_version
 from crychic import load_nichenet_target_prior
 from crychic.attribution import PenaltyTuningSpec
 from crychic.core import CrychicConfig, canonical_digest
-from crychic.design import balanced_contrast
+from crychic.design import balanced_contrast, context_id
 from crychic.resources import (
     Interaction,
     MappingReport,
@@ -1148,6 +1148,7 @@ def _diagnostic_sender_score_table(
     resource_id: str,
     resource_version: str,
     mode: str,
+    context_label_by_id: Mapping[str, str],
 ) -> pd.DataFrame:
     """Map one CRYCHIC diagnostic mode to the shared paired-metric contract."""
 
@@ -1222,6 +1223,10 @@ def _diagnostic_sender_score_table(
             "resource_version": resource_version,
         }
     )
+    raw_context = selected["context_id"].astype(str)
+    context = raw_context.map(
+        lambda value: context_label_by_id.get(str(value), str(value))
+    )
     result = pd.DataFrame(
         {
             "dataset": "GSE144236_Ji_cSCC",
@@ -1236,7 +1241,7 @@ def _diagnostic_sender_score_table(
             "contrast": "tumor_vs_normal",
             "sample_id": selected["sample_id"].astype(str),
             "subject_id": selected["subject_id"].astype(str),
-            "context": selected["context_id"].astype(str),
+            "context": context,
             "sender": selected["sender"].astype(str),
             "receiver": selected["receiver"].astype(str),
             "interaction_id": selected["interaction_id"],
@@ -1275,6 +1280,10 @@ def compact_diagnostic_score_summary(
     if not frames:
         raise ValueError("CRYCHIC cSCC smoke has no family-common sender score tables")
     sender_scores = pd.concat(frames, ignore_index=True)
+    context_label_by_id = {
+        str(context_id({"condition": label}, ("condition",))): label
+        for label in ("Normal", "Tumor")
+    }
     mode_summaries: list[dict[str, object]] = []
     effect_records: list[dict[str, object]] = []
     for mode in ("state", "ecosystem"):
@@ -1284,6 +1293,7 @@ def compact_diagnostic_score_summary(
             resource_id=resource_id,
             resource_version=resource_version,
             mode=mode,
+            context_label_by_id=context_label_by_id,
         )
         effects = paired_edge_effects(
             scores,
