@@ -1,0 +1,350 @@
+{
+  "claims": {
+    "biological_validation": false,
+    "certifying": false,
+    "default_switch_allowed": false,
+    "exploratory": true,
+    "literature_informed": true,
+    "method_superiority": false
+  },
+  "comparison_contract": {
+    "alignment_key": "fold_partition_id",
+    "allowed": "contrast_support_and_receptor_eligibility_only",
+    "family_member_sender_score_comparison_allowed": false,
+    "raw_and_holm_p_value_semantics": "training_gate_diagnostic_only",
+    "receiver_duplicated_ligand_rows_are_independent": false,
+    "result_layer_inferential_p_or_q": false
+  },
+  "fold_deduplicated_ligand_support": [
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        0.9530181335831878,
+        0.9201290269545066
+      ],
+      "minimum_effect": 0.0,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 2
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        0.006352791965902883,
+        0.004229901129687064
+      ],
+      "minimum_effect": 0.0,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 0
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CCL5_CCR5",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        -0.038364934106442816,
+        0.061296257013639444
+      ],
+      "minimum_effect": 0.0,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 0
+    },
+    {
+      "artifact_role": "minimum_effect_0p02",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        0.9530181335831878,
+        0.9201290269545066
+      ],
+      "minimum_effect": 0.02,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 2
+    },
+    {
+      "artifact_role": "minimum_effect_0p02",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        0.006352791965902883,
+        0.004229901129687064
+      ],
+      "minimum_effect": 0.02,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 0
+    },
+    {
+      "artifact_role": "minimum_effect_0p02",
+      "diagnostic_id": "CCL5_CCR5",
+      "evidence_unit": "fold_partition_id",
+      "fold_mean_effects": [
+        -0.038364934106442816,
+        0.061296257013639444
+      ],
+      "minimum_effect": 0.02,
+      "n_fold_partitions": 2,
+      "supported_fold_partitions": 0
+    }
+  ],
+  "frozen_identities": {
+    "config_sha256": "2b10b670ccbb9e7034e94fe5a7a8a7fa590b4c97ee1d99e100748f83003ebdfc",
+    "fold_partition_ids": [
+      "4b00e98c92ca10b29a08a2f2b34877533f8dcaee214bbd455e2f7cc51eb2cfe4",
+      "fa2ce0063d1dbde58046287595f7b116ec74357f755a01223701fbeafc38d266"
+    ],
+    "input_h5ad_sha256": "5ee14c9df0a58e385828f9339dc93eff52fae7614218e82ed9c9a022804b30ac",
+    "resources": {
+      "cellchat_manifest_digest": "8207af7818c6616c24ebaa84f746a32424291f1f586d181138a67167455f79f7",
+      "cellchat_selected_digest": "ba64b59f9901c816ca1711d1e50ee5faf023a4192a707762be6b5b735a4e8ff8",
+      "cellchat_selected_interactions": 3,
+      "nichenet_diagnostic_drivers": 3,
+      "nichenet_diagnostic_links": 60,
+      "nichenet_diagnostic_targets": 57,
+      "nichenet_manifest_digest": "87cc10d544e7d02025b99eab65bd292ee03c195c50daba5f9077c4d5ec7460cc",
+      "nichenet_selected_digest": "399608a30dac12c62171c7cf275d1272c3c4dfc7d19ac67e37ff4dd3f129a097"
+    },
+    "subject_partition_manifest_id": "7634429d1fa9f6a617cf695b4e4654e71064ed6576da41596fb3a38bab41626f"
+  },
+  "generated_on": "2026-07-15T00:00:00+00:00",
+  "input_artifacts": [
+    {
+      "minimum_effect": 0.0,
+      "receptor_threshold": 0.1,
+      "relative_path": "benchmark_work/kang2018_ligand_gate_v3_default.json",
+      "role": "default",
+      "sha256": "2923f2658e662373005c463d06810f0afe458004bc41a5fd12875dfa6739698b"
+    },
+    {
+      "minimum_effect": 0.02,
+      "receptor_threshold": 0.1,
+      "relative_path": "benchmark_work/kang2018_ligand_gate_v3_min_effect_0p02.json",
+      "role": "minimum_effect_0p02",
+      "sha256": "6f2c6a2b0d4554f56f969cb0273680e2d0bb7b7beef6b3f7f08ffffcb59c610e"
+    },
+    {
+      "minimum_effect": 0.0,
+      "receptor_threshold": 0.01,
+      "relative_path": "benchmark_work/kang2018_ligand_gate_v3_receptor_0p01.json",
+      "role": "receptor_threshold_0p01",
+      "sha256": "5a0cf5daf05b04ac5a6e462082023fe5d1e6f0405d0fc4d307208a60a3b12742"
+    }
+  ],
+  "receptor_sensitivity": [
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "interaction_label": "CXCL10-CXCR3",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 2,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 0,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "interaction_label": "CXCL10-CXCR3",
+      "joint_gate_eligible_folds": 2,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 2,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "interaction_label": "IFNB1-IFNAR1/2",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 0,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "interaction_label": "IFNB1-IFNAR1/2",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 0,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CCL5_CCR5",
+      "interaction_label": "CCL5-CCR5",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "default",
+      "diagnostic_id": "CCL5_CCR5",
+      "interaction_label": "CCL5-CCR5",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 0,
+      "receptor_threshold": 0.1
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "interaction_label": "CXCL10-CXCR3",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 2,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 0,
+      "receptor_threshold": 0.01
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "CXCL10_CXCR3",
+      "interaction_label": "CXCL10-CXCR3",
+      "joint_gate_eligible_folds": 2,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 2,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.01
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "interaction_label": "IFNB1-IFNAR1/2",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.01
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "interaction_label": "IFNB1-IFNAR1/2",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.01
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "CCL5_CCR5",
+      "interaction_label": "CCL5-CCR5",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD14+ Monocytes",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.01
+    },
+    {
+      "artifact_role": "receptor_threshold_0p01",
+      "diagnostic_id": "CCL5_CCR5",
+      "interaction_label": "CCL5-CCR5",
+      "joint_gate_eligible_folds": 0,
+      "ligand_support_unit": "fold_partition_not_receiver_row",
+      "ligand_supported_folds": 0,
+      "n_fold_partitions": 2,
+      "receiver": "CD8 T cells",
+      "receptor_eligible_folds": 2,
+      "receptor_threshold": 0.01
+    }
+  ],
+  "report_artifacts": [
+    {
+      "bytes": 4501,
+      "path": "REPORT.md",
+      "sha256": "a5532e6a0925bfd7b7e16076bf067c1a0a064f374e3c2d064ffcde332529372c"
+    },
+    {
+      "bytes": 66776,
+      "path": "figures/figure01_fold_ligand_contrast.pdf",
+      "sha256": "1a5a12d92184b46bad10fdbce7dd5fd9d7ebe2aa0b795505d038b7c1d5e3adb5"
+    },
+    {
+      "bytes": 157288,
+      "path": "figures/figure01_fold_ligand_contrast.png",
+      "sha256": "1da0353bd12d5b1e75a2b84a80e8a96001753286f28c5b9e8faabc8749d93df0"
+    },
+    {
+      "bytes": 19827,
+      "path": "figures/figure01_fold_ligand_contrast.svg",
+      "sha256": "36e773d9c7859e94f9d193f6b68c25aef4fe56c9aef21e2b5f4da759858a5808"
+    },
+    {
+      "bytes": 65783,
+      "path": "figures/figure02_support_receptor_matrix.pdf",
+      "sha256": "caaccbd5db2b3c0f6702e9667bd9b137289c41f8d8376ca5c99a7d1b31bd2470"
+    },
+    {
+      "bytes": 180642,
+      "path": "figures/figure02_support_receptor_matrix.png",
+      "sha256": "93f73ba859daec463bc675f4fbc12038db0d370ef3275f98c28d811e29622b43"
+    },
+    {
+      "bytes": 16206,
+      "path": "figures/figure02_support_receptor_matrix.svg",
+      "sha256": "40fc7559cf65a109ac89184ae823a3ea134cf43c7159a047d8950e5c4e2826ff"
+    },
+    {
+      "bytes": 8806,
+      "path": "metrics_summary.json",
+      "sha256": "221942b5cac9e1bd4443a25e13daf5d0035f2a8116fe86f5294534adeb782c6e"
+    },
+    {
+      "bytes": 3509,
+      "path": "source_data/figure01_fold_ligand_contrast.csv",
+      "sha256": "9898565e04cdc71cf4834cc6bd11967f279e40d83627a0b94411f2c433319eb6"
+    },
+    {
+      "bytes": 1499,
+      "path": "source_data/figure02_support_receptor_matrix.csv",
+      "sha256": "b3bf4ac064f2005f796f4fde8821a141c8f1a028f871a4491a4da3248b5b7519"
+    },
+    {
+      "bytes": 5919,
+      "path": "source_data/receptor_gate_audit_rows.csv",
+      "sha256": "bb45ae6b3de93b9678c7553664361adbf3e19075b890e34474f4c726f5578bab"
+    },
+    {
+      "bytes": 10555,
+      "path": "source_data/support_audit_rows.csv",
+      "sha256": "2ceef6160745e10f4f213e1cd058130d436fd8d9867ef56e5654c2f08c2eea90"
+    },
+    {
+      "bytes": 4544,
+      "path": "report_manifest.json",
+      "sha256": "6ac1b225cccd62547ca7ee5634d322b327b7087b2cc9f95d7922e4f1c871c1b6"
+    }
+  ],
+  "schema_version": "crychic-kang2018-ligand-gate-v3-summary-v1",
+  "source_commit": "b234c72c5f926c3e32d73480046024fa546b5ba2"
+}
