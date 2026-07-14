@@ -20,6 +20,8 @@ import pandas as pd
 
 from benchmarks.adapters.common import validate_prepared_input
 from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
+from benchmarks.metrics.multicondition import paired_edge_effects, validate_score_table
+from crychic import __version__ as crychic_version
 from crychic import load_nichenet_target_prior
 from crychic.attribution import PenaltyTuningSpec
 from crychic.core import CrychicConfig, canonical_digest
@@ -43,7 +45,7 @@ from crychic.workflow import (
     run_subject_crossfit,
 )
 
-SCHEMA_VERSION = "crychic-cscc-paired-gate-smoke-v1"
+SCHEMA_VERSION = "crychic-cscc-paired-gate-smoke-v2"
 CONFIG_SCHEMA_VERSION = "crychic-cscc-paired-gate-smoke-config-v1"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKSPACE_ROOT = REPOSITORY_ROOT.parent
@@ -1139,6 +1141,235 @@ def compact_not_estimable_metrics(
     }
 
 
+def _diagnostic_sender_score_table(
+    sender_scores: pd.DataFrame,
+    *,
+    interaction_manifest: Sequence[Mapping[str, object]],
+    resource_id: str,
+    resource_version: str,
+    mode: str,
+) -> pd.DataFrame:
+    """Map one CRYCHIC diagnostic mode to the shared paired-metric contract."""
+
+    required = {
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+        "mode",
+        "sender_resolved_strength",
+        "status",
+    }
+    missing = required.difference(sender_scores.columns)
+    if missing:
+        raise ValueError(
+            f"CRYCHIC sender diagnostic scores lack columns: {sorted(missing)}"
+        )
+    definitions = {
+        str(item["interaction_id"]): (str(item["ligand"]), str(item["receptor"]))
+        for item in interaction_manifest
+    }
+    selected = sender_scores.loc[
+        sender_scores["mode"].astype(str).eq(mode), list(required)
+    ].copy()
+    if selected.empty:
+        raise ValueError(f"CRYCHIC sender diagnostic mode {mode!r} is empty")
+    selected["interaction_id"] = selected["interaction_id"].astype(str)
+    unknown = set(selected["interaction_id"]).difference(definitions)
+    if unknown:
+        raise ValueError(
+            "CRYCHIC sender scores contain interactions outside anchors: "
+            f"{sorted(unknown)}"
+        )
+    duplicate_key = ["sample_id", "sender", "receiver", "interaction_id"]
+    if selected.duplicated(duplicate_key).any():
+        raise ValueError("CRYCHIC sender diagnostic scores contain duplicate edge rows")
+    status_map = {
+        "ok": "observed",
+        "structural_zero": "observed",
+        "not_estimable": "not_estimable",
+    }
+    statuses = selected["status"].astype(str)
+    invalid_statuses = set(statuses).difference(status_map)
+    if invalid_statuses:
+        raise ValueError(
+            "CRYCHIC sender scores contain unsupported statuses: "
+            f"{sorted(invalid_statuses)}"
+        )
+    metric_status = statuses.map(status_map)
+    score = pd.to_numeric(selected["sender_resolved_strength"], errors="coerce")
+    score = score.where(metric_status.eq("observed"))
+    edge_records = sorted(
+        {
+            (
+                str(row.sender),
+                str(row.receiver),
+                str(row.interaction_id),
+                *definitions[str(row.interaction_id)],
+            )
+            for row in selected.itertuples(index=False)
+        }
+    )
+    universe_id = canonical_digest(
+        {
+            "analysis_track": "lr_stlr",
+            "dataset": "GSE144236_Ji_cSCC",
+            "edges": edge_records,
+            "mode": mode,
+            "resource_id": resource_id,
+            "resource_version": resource_version,
+        }
+    )
+    result = pd.DataFrame(
+        {
+            "dataset": "GSE144236_Ji_cSCC",
+            "method": "crychic",
+            "method_version": crychic_version,
+            "analysis_track": "lr_stlr",
+            "resource": resource_id,
+            "resource_version": resource_version,
+            "resource_mode": "H-common",
+            "score_semantics": f"{mode}_sender_resolved_strength_diagnostic",
+            "universe_id": universe_id,
+            "contrast": "tumor_vs_normal",
+            "sample_id": selected["sample_id"].astype(str),
+            "subject_id": selected["subject_id"].astype(str),
+            "context": selected["context_id"].astype(str),
+            "sender": selected["sender"].astype(str),
+            "receiver": selected["receiver"].astype(str),
+            "interaction_id": selected["interaction_id"],
+            "ligand": selected["interaction_id"].map(
+                lambda value: definitions[str(value)][0]
+            ),
+            "receptor": selected["interaction_id"].map(
+                lambda value: definitions[str(value)][1]
+            ),
+            "score": score,
+            "score_direction": "higher",
+            "status": metric_status,
+            "universe_member": True,
+            "universe_size": len(edge_records),
+        }
+    )
+    if set(result["context"]) != {"Normal", "Tumor"}:
+        raise ValueError("CRYCHIC sender score contexts must be Normal and Tumor")
+    return cast(pd.DataFrame, validate_score_table(result))
+
+
+def compact_diagnostic_score_summary(
+    artifacts: CrossFitArtifacts,
+    *,
+    interaction_manifest: Sequence[Mapping[str, object]],
+    resource_id: str,
+    resource_version: str,
+) -> dict[str, object]:
+    """Return deidentified paired effects from noncertified held-out scores."""
+
+    frames = [
+        application.sender_scores
+        for fold in artifacts.folds
+        for application in fold.family_common_applications
+    ]
+    if not frames:
+        raise ValueError("CRYCHIC cSCC smoke has no family-common sender score tables")
+    sender_scores = pd.concat(frames, ignore_index=True)
+    mode_summaries: list[dict[str, object]] = []
+    effect_records: list[dict[str, object]] = []
+    for mode in ("state", "ecosystem"):
+        scores = _diagnostic_sender_score_table(
+            sender_scores,
+            interaction_manifest=interaction_manifest,
+            resource_id=resource_id,
+            resource_version=resource_version,
+            mode=mode,
+        )
+        effects = paired_edge_effects(
+            scores,
+            reference="Normal",
+            target="Tumor",
+            min_pairs=3,
+            contrast="tumor_vs_normal",
+            validated=True,
+        )
+        for row in effects.itertuples(index=False):
+            effect_records.append(
+                {
+                    "mode": mode,
+                    "sender": str(row.sender),
+                    "receiver": str(row.receiver),
+                    "interaction_id": str(row.interaction_id),
+                    "ligand": str(row.ligand),
+                    "receptor": str(row.receptor),
+                    "effect": _finite_float(row.effect),
+                    "median_effect": _finite_float(row.median_effect),
+                    "direction_consistency": _finite_float(
+                        row.direction_consistency
+                    ),
+                    "direction_comparable_pairs": int(
+                        row.direction_comparable_pairs
+                    ),
+                    "n_pairs": int(row.n_pairs),
+                    "status": str(row.status),
+                    "reason_code": (
+                        None if _missing(row.reason_code) else str(row.reason_code)
+                    ),
+                }
+            )
+        mode_summaries.append(
+            {
+                "mode": mode,
+                "n_samples": int(scores["sample_id"].nunique()),
+                "n_subjects": int(scores["subject_id"].nunique()),
+                "universe_id": str(scores["universe_id"].iloc[0]),
+                "universe_size": int(scores["universe_size"].iloc[0]),
+                "input_status_counts": _count_values(
+                    sender_scores.loc[
+                        sender_scores["mode"].astype(str).eq(mode), "status"
+                    ].tolist()
+                ),
+                "effect_status_counts": _count_values(effects["status"].tolist()),
+            }
+        )
+    penalties = []
+    for fold in artifacts.folds:
+        for model in fold.receiver_incremental_models:
+            tuning = model.penalty_tuning_artifact
+            selected = None if tuning is None else tuning.selected_candidate
+            penalties.append(
+                {
+                    "fold_id": fold.fold_id,
+                    "receiver": model.receiver,
+                    "diagnostic_status": model.diagnostic_status,
+                    "official_status": model.official_incremental_status,
+                    "selected_lambda1_fraction": (
+                        None if selected is None else selected.lambda1_fraction
+                    ),
+                    "selected_lambda2_fraction": (
+                        None if selected is None else selected.lambda2_fraction
+                    ),
+                }
+            )
+    return {
+        "scope": "exploratory_unadjusted_noncertified_paired_rank_effects",
+        "effect_semantics": "tumor_minus_normal_comparison_strength",
+        "inferential_fields_available": [],
+        "raw_sample_and_subject_rows_exported": False,
+        "modes": mode_summaries,
+        "selected_penalties": penalties,
+        "paired_effects": sorted(
+            effect_records,
+            key=lambda row: (
+                str(row["mode"]),
+                str(row["sender"]),
+                str(row["receiver"]),
+                str(row["interaction_id"]),
+            ),
+        ),
+    }
+
+
 def _definitions(config: Mapping[str, object]) -> list[Mapping[str, object]]:
     return [
         _mapping(item, field="diagnostic_interactions[]")
@@ -1328,6 +1559,12 @@ def run_smoke(
         interaction_manifest=interaction_manifest,
     )
     not_estimable_metrics = compact_not_estimable_metrics(artifacts)
+    diagnostic_score_summary = compact_diagnostic_score_summary(
+        artifacts,
+        interaction_manifest=interaction_manifest,
+        resource_id=bundle.resource_id,
+        resource_version=bundle.version,
+    )
     if (
         not_estimable_metrics["n_receiver_models"] != 4
         or not_estimable_metrics["n_oof_receiver_coverage_rows"] != 32
@@ -1374,6 +1611,7 @@ def run_smoke(
         "fold_deduplicated_support_summary": summarize_fold_supports(fold_supports),
         "fold_receiver_receptor_gates": receptor_gates,
         "not_estimable_metrics": not_estimable_metrics,
+        "diagnostic_score_summary": diagnostic_score_summary,
         "runtime": {
             "crossfit_elapsed_seconds": crossfit_elapsed,
             "total_elapsed_seconds": time.perf_counter() - total_started,

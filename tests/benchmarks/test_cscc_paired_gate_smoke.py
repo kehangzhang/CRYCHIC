@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import anndata as ad
@@ -361,3 +362,81 @@ def test_fold_support_summary_deduplicates_exact_rows_and_rejects_conflicts() ->
     conflicting["status"] = "not_estimable"
     with pytest.raises(ValueError, match="conflicting duplicate"):
         cscc.summarize_fold_supports((fold_1, conflicting))
+
+
+def test_diagnostic_score_summary_is_paired_deidentified_and_noncertifying() -> None:
+    interactions = [
+        {"interaction_id": "i1", "ligand": "L1", "receptor": "R1"},
+        {"interaction_id": "i2", "ligand": "L2", "receptor": "R2"},
+    ]
+    rows = []
+    for subject_index in range(1, 4):
+        subject = f"p{subject_index}"
+        for context in ("Normal", "Tumor"):
+            for mode in ("state", "ecosystem"):
+                for interaction_id in ("i1", "i2"):
+                    positive = interaction_id == "i1"
+                    score = (
+                        0.9
+                        if positive and context == "Tumor"
+                        else 0.1
+                        if positive
+                        else 0.2
+                        if context == "Tumor"
+                        else 0.8
+                    )
+                    rows.append(
+                        {
+                            "sample_id": f"{subject}_{context}",
+                            "subject_id": subject,
+                            "context_id": context,
+                            "sender": "Sender",
+                            "receiver": "Receiver",
+                            "interaction_id": interaction_id,
+                            "mode": mode,
+                            "sender_resolved_strength": score,
+                            "status": "ok",
+                        }
+                    )
+    application = SimpleNamespace(sender_scores=pd.DataFrame(rows))
+    selected = SimpleNamespace(lambda1_fraction=0.1, lambda2_fraction=0.0)
+    tuning = SimpleNamespace(selected_candidate=selected)
+    model = SimpleNamespace(
+        penalty_tuning_artifact=tuning,
+        receiver="Receiver",
+        diagnostic_status="observed",
+        official_incremental_status="not_estimable",
+    )
+    fold = SimpleNamespace(
+        fold_id="fold-1",
+        family_common_applications=(application,),
+        receiver_incremental_models=(model,),
+    )
+    artifacts = cast(cscc.CrossFitArtifacts, SimpleNamespace(folds=(fold,)))
+
+    summary = cscc.compact_diagnostic_score_summary(
+        artifacts,
+        interaction_manifest=interactions,
+        resource_id="resource",
+        resource_version="1",
+    )
+
+    assert summary["scope"] == (
+        "exploratory_unadjusted_noncertified_paired_rank_effects"
+    )
+    assert summary["inferential_fields_available"] == []
+    assert summary["raw_sample_and_subject_rows_exported"] is False
+    assert len(cast(list[object], summary["paired_effects"])) == 4
+    assert {row["n_pairs"] for row in summary["paired_effects"]} == {3}
+    assert {row["status"] for row in summary["paired_effects"]} == {"exploratory"}
+    assert all("subject_id" not in row for row in summary["paired_effects"])
+    assert summary["selected_penalties"] == [
+        {
+            "fold_id": "fold-1",
+            "receiver": "Receiver",
+            "diagnostic_status": "observed",
+            "official_status": "not_estimable",
+            "selected_lambda1_fraction": 0.1,
+            "selected_lambda2_fraction": 0.0,
+        }
+    ]
