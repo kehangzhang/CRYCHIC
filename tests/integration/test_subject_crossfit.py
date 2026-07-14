@@ -16,6 +16,7 @@ import crychic.response.autonomous as autonomous_module
 import crychic.scoring.receiver_family as receiver_scoring_module
 import crychic.sender.common as common_sender_module
 import crychic.workflow.crossfit as crossfit_module
+import crychic.workflow.repeated_crossfit as repeated_crossfit_module
 import crychic.workflow.training as training_module
 from crychic.attribution import PenaltyTuningSpec
 from crychic.core import ContractError, CrychicConfig
@@ -46,6 +47,9 @@ from crychic.workflow import (
     CrossFitArtifacts,
     CrossFitSpec,
     FoldTrainingSpec,
+    RepeatedCrossFitDiagnostics,
+    RepeatedCrossFitSpec,
+    run_repeated_subject_crossfit,
     run_subject_crossfit,
 )
 
@@ -103,6 +107,26 @@ def _prior() -> TargetPrior:
         evidence="synthetic",
         mapping_report=MappingReport(2, 2, 4),
         manifest_digest="d" * 64,
+    )
+
+
+def _ligand_prior_with_unmapped_driver() -> TargetPrior:
+    return TargetPrior(
+        resource_id="crossfit_ligand_prior",
+        version="1",
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+        driver_kind="ligand",
+        target_ids=("T1", "T2"),
+        driver_ids=("L1", "L2", "UNMAPPED"),
+        indptr=(0, 1, 2, 3),
+        target_indices=(0, 1, 0),
+        weights=(1.0, 1.0, 1.0),
+        ranks=None,
+        direction=1,
+        evidence="synthetic-unmapped-driver-regression",
+        mapping_report=MappingReport(3, 3, 5),
+        manifest_digest="e" * 64,
     )
 
 
@@ -308,6 +332,174 @@ def test_public_entry_accepts_no_caller_folds_or_fitted_artifacts() -> None:
     assert forbidden.isdisjoint(inspect.signature(CrossFitSpec).parameters)
     with pytest.raises(TypeError, match="producer-owned"):
         CrossFitArtifacts()
+
+
+def test_repeat_index_changes_repeat_identity_not_algorithm_policy() -> None:
+    base = _spec()
+    repeated = replace(base, repeat_index=1)
+
+    assert repeated.spec_id == base.spec_id
+    assert repeated.repeat_id != base.repeat_id
+    assert base.to_dict()["repeat_index"] == 0
+    assert repeated.to_dict()["repeat_index"] == 1
+    with pytest.raises(ValueError, match="repeat_index"):
+        replace(base, repeat_index=-1)
+
+
+def test_repeated_crossfit_rejects_valid_children_from_different_root_inputs() -> None:
+    base = _spec()
+    config = _config()
+    bundle = _bundle()
+    prior = _prior()
+    first_input = _adata()
+    second_input = _adata()
+    second_counts = second_input.layers["counts"].copy()
+    second_counts.data[0] += 1
+    second_input.layers["counts"] = second_counts
+    first = run_subject_crossfit(
+        first_input,
+        config,
+        bundle,
+        prior,
+        spec=base,
+    )
+    second = run_subject_crossfit(
+        second_input,
+        config,
+        bundle,
+        prior,
+        spec=replace(base, repeat_index=1),
+    )
+
+    with pytest.raises(ValueError, match="does not derive from the root identity"):
+        CrossFitArtifacts._from_workflow(
+            spec=first.spec,
+            root_input_identity=second.root_input_identity,
+            fold_plan=first.fold_plan,
+            folds=first.folds,
+            oof_coverage=first.oof_coverage,
+            oof_receiver_coverage=first.oof_receiver_coverage,
+            oof_sender_assignments=first.oof_sender_assignments,
+            coverage_audit=first.coverage_audit,
+        )
+    with pytest.raises(ValueError, match="bound root input"):
+        RepeatedCrossFitDiagnostics._from_workflow(
+            spec=RepeatedCrossFitSpec(crossfit_spec=base, n_repeats=2),
+            repeats=(first, second),
+            root_input_identity=first.root_input_identity,
+            resource_bundle_content_id=(
+                training_module._resource_bundle_content_id(bundle)
+            ),
+            target_prior_content_id=training_module._target_prior_content_id(prior),
+        )
+
+
+def test_root_input_identity_is_cell_row_order_invariant() -> None:
+    adata = _adata()
+    reversed_adata = adata[::-1].copy()
+
+    original = training_module._sanitized_raw_input_identity(adata, _config())
+    reordered = training_module._sanitized_raw_input_identity(
+        reversed_adata,
+        _config(),
+    )
+
+    assert original.identity_id == reordered.identity_id
+    assert original.input_digest == reordered.input_digest
+    assert original.subject_content_digests == reordered.subject_content_digests
+
+
+def test_sanitized_snapshot_rejects_expression_or_metadata_mutation() -> None:
+    snapshot = training_module._sanitized_raw_input_snapshot(_adata(), _config())
+    counts = snapshot.adata.layers["counts"]
+
+    with pytest.raises(ValueError, match="read-only"):
+        counts.data[0] += 1
+
+    replacement = counts.copy()
+    snapshot.adata.layers["counts"] = replacement
+    with pytest.raises(ContractError) as expression_error:
+        snapshot._require_intact()
+    assert expression_error.value.details.code == (
+        "root_input_snapshot_integrity_violation"
+    )
+
+    bypass_snapshot = training_module._sanitized_raw_input_snapshot(
+        _adata(),
+        _config(),
+    )
+    bypass_counts = bypass_snapshot.adata.layers["counts"]
+    bypass_counts.data.setflags(write=True)
+    bypass_counts.data[0] += 1
+    bypass_counts.data.setflags(write=False)
+    with pytest.raises(ContractError) as bypass_error:
+        bypass_snapshot._require_intact()
+    assert bypass_error.value.details.code == (
+        "root_input_snapshot_integrity_violation"
+    )
+
+    foreign_input = _adata()
+    foreign_input.layers["counts"].data[0] += 1
+    foreign_snapshot = training_module._sanitized_raw_input_snapshot(
+        foreign_input,
+        _config(),
+    )
+    object.__setattr__(foreign_snapshot, "identity", snapshot.identity)
+    with pytest.raises(ContractError) as swapped_identity_error:
+        foreign_snapshot._require_intact()
+    assert swapped_identity_error.value.details.code == (
+        "root_input_snapshot_integrity_violation"
+    )
+
+    metadata_snapshot = training_module._sanitized_raw_input_snapshot(
+        _adata(),
+        _config(),
+    )
+    metadata_snapshot.adata.obs.loc[
+        metadata_snapshot.adata.obs.index[0], "condition"
+    ] = "poisoned"
+    with pytest.raises(ContractError) as metadata_error:
+        metadata_snapshot._require_intact()
+    assert metadata_error.value.details.code == (
+        "root_input_snapshot_integrity_violation"
+    )
+
+
+def test_prepared_fold_derives_scope_digest_without_rehashing_cells(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adata = _adata()
+    identity = training_module._sanitized_raw_input_identity(adata, _config())
+    selected_subjects = ("p1", "p2")
+    scope = adata[
+        adata.obs["subject_id"].astype(str).isin(selected_subjects)
+    ].copy()
+
+    def fail_rehash(*args: object, **kwargs: object) -> None:
+        raise AssertionError("fold fast path must not rehash cell rows")
+
+    monkeypatch.setattr(training_module, "_subject_content_digests", fail_rehash)
+    prepared = training_module._prepare_raw_fold(
+        scope,
+        _config(),
+        min_cells=1,
+        root_input_identity=identity,
+    )
+
+    assert prepared.input_digest == identity.scope_digest(selected_subjects)
+    with pytest.raises(ContractError) as error:
+        training_module._fit_training_artifacts_from_prepared(
+            prepared,
+            _config(),
+            _bundle(),
+            _prior(),
+            spec=FoldTrainingSpec(
+                min_cells=999,
+                max_interactions=1,
+                sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+            ),
+        )
+    assert error.value.details.code == "prepared_raw_fold_policy_mismatch"
 
 
 def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
@@ -1055,6 +1247,238 @@ def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
     assert coverage["reason_code"].isna().all()
 
 
+def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _spec()
+    resource = _trusted_target_resource(tmp_path, monkeypatch)
+    crossfit_spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0, 0.1),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+        ),
+    )
+    repeat_spec = RepeatedCrossFitSpec(
+        crossfit_spec=crossfit_spec,
+        n_repeats=2,
+    )
+    caller_input = _adata(tuple(f"p{index}" for index in range(1, 9)))
+    original_run = repeated_crossfit_module._run_subject_crossfit
+    observed_snapshots: list[training_module.SanitizedRawInputSnapshot] = []
+
+    def run_and_mutate_caller(
+        snapshot: training_module.SanitizedRawInputSnapshot,
+        *args: object,
+        **kwargs: object,
+    ):
+        observed_snapshots.append(snapshot)
+        if len(observed_snapshots) == 1:
+            caller_input.layers["counts"].data[0] += 999
+        return original_run(snapshot, *args, **kwargs)
+
+    monkeypatch.setattr(
+        repeated_crossfit_module,
+        "_run_subject_crossfit",
+        run_and_mutate_caller,
+    )
+
+    result = run_repeated_subject_crossfit(
+        caller_input,
+        _config(),
+        _bundle(),
+        _ligand_prior_with_unmapped_driver(),
+        spec=repeat_spec,
+    )
+
+    assert isinstance(result, RepeatedCrossFitDiagnostics)
+    assert len(observed_snapshots) == 2
+    assert observed_snapshots[0] is observed_snapshots[1]
+    assert observed_snapshots[0].adata is not caller_input
+    assert result.formal_inference_status == (
+        "not_computed_repeated_crossfit_diagnostic_only"
+    )
+    assert result.is_inference_eligible is False
+    assert [item.spec.repeat_index for item in result.repeats] == [0, 1]
+    assert len({item.spec.repeat_id for item in result.repeats}) == 2
+    assert len({item.crossfit_id for item in result.repeats}) == 2
+    registry = result.repeat_registry
+    assert len(registry) == 2
+    assert registry["partition_id"].nunique() == 2
+    assert registry["oof_coverage_complete"].all()
+    assert registry["family_common_stage_connected"].all()
+    assert result.diagnostic_status == (
+        "partially_observed_descriptive_repeat_stability"
+    )
+
+    events = result.family_fold_events
+    values = result.subject_family_repeat_values
+    stability = result.family_repeat_stability
+    assert not events.empty and not values.empty and not stability.empty
+    assert any("UNMAPPED" in driver_ids for driver_ids in stability["driver_ids"])
+    assert not events.duplicated(
+        [
+            "repeat_index",
+            "fold_id",
+            "contrast_name",
+            "receiver",
+            "family_id",
+        ]
+    ).any()
+    assert not values.duplicated(
+        [
+            "repeat_index",
+            "subject_id",
+            "contrast_name",
+            "receiver",
+            "family_id",
+        ]
+    ).any()
+    assert set(stability["n_subject_repeat_opportunities"]) == {16}
+    assert set(stability["n_distinct_partitions_overall"]) == {2}
+    fit_estimable = stability.loc[stability["fit_estimable_fraction"].gt(0.0)]
+    assert not fit_estimable.empty
+    assert set(
+        fit_estimable["n_distinct_complete_selection_partitions"]
+    ) == {2}
+    assert fit_estimable[
+        "diagnostic_conditional_fit_selection_fraction"
+    ].notna().all()
+    structural = stability.loc[stability["family_estimable_fraction"].eq(0.0)]
+    assert not structural.empty
+    assert set(structural["status"]) == {"not_estimable"}
+    assert structural["structurally_determined_fraction"].eq(1.0).all()
+    assert set(structural["effect_stability_status"]) == {"not_estimable"}
+    unequal_target = fit_estimable.iloc[0]
+    unequal = values.loc[
+        values["contrast_name"].eq(unequal_target["contrast_name"])
+        & values["receiver"].eq(unequal_target["receiver"])
+        & values["family_id"].eq(unequal_target["family_id"])
+    ].copy()
+    for repeat_index, repeat_rows in unequal.groupby("repeat_index", sort=True):
+        ordered_subjects = sorted(repeat_rows["subject_id"].astype(str).unique())
+        selected_subjects = set(ordered_subjects[:5])
+        selected_rows = unequal["repeat_index"].eq(repeat_index) & unequal[
+            "subject_id"
+        ].isin(selected_subjects)
+        other_rows = unequal["repeat_index"].eq(repeat_index) & ~unequal[
+            "subject_id"
+        ].isin(selected_subjects)
+        unequal.loc[selected_rows, "fold_id"] = f"unequal-a-{repeat_index}"
+        unequal.loc[other_rows, "fold_id"] = f"unequal-b-{repeat_index}"
+        unequal.loc[selected_rows, "family_selected"] = True
+        unequal.loc[other_rows, "family_selected"] = False
+    unequal["family_available"] = True
+    unequal["family_estimable"] = True
+    unequal["effect_status"] = "observed"
+    unequal["bounded_incremental_gain"] = 0.1
+    unequal_stability = repeated_crossfit_module._build_family_stability(
+        unequal,
+        repeats=result.repeats,
+        partition_by_repeat={
+            int(row.repeat_index): str(row.partition_id)
+            for row in registry.itertuples(index=False)
+        },
+    ).iloc[0]
+    assert unequal_stability[
+        "repeat_subject_exposure_selection_fraction_median"
+    ] == pytest.approx(5 / 8)
+    assert unequal_stability["repeat_fit_selection_fraction_median"] == 0.5
+    assert set(stability["formal_inference_status"]) == {
+        "not_computed_repeated_crossfit_diagnostic_only"
+    }
+    assert {
+        "p_value",
+        "q_value",
+        "comm_probability",
+        "specificity_support",
+        "confidence_interval",
+    }.isdisjoint(stability.columns)
+    incomplete = values.copy(deep=True)
+    target = stability.iloc[0]
+    target_family_rows = (
+        incomplete["contrast_name"].eq(target["contrast_name"])
+        & incomplete["receiver"].eq(target["receiver"])
+        & incomplete["family_id"].eq(target["family_id"])
+    )
+    target_pairs = set(
+        incomplete.loc[
+            target_family_rows & incomplete["subject_id"].eq("p1"),
+            ["repeat_index", "fold_id"],
+        ].itertuples(index=False, name=None)
+    )
+    target_rows = target_family_rows & pd.Series(
+        list(
+            zip(
+                incomplete["repeat_index"],
+                incomplete["fold_id"],
+                strict=True,
+            )
+        ),
+        index=incomplete.index,
+    ).isin(target_pairs)
+    incomplete.loc[target_rows, "family_available"] = False
+    incomplete.loc[target_rows, "family_estimable"] = False
+    incomplete["family_selected"] = incomplete["family_selected"].astype(object)
+    incomplete.loc[target_rows, "family_selected"] = None
+    incomplete.loc[target_rows, "bounded_incremental_gain"] = None
+    incomplete_stability = repeated_crossfit_module._build_family_stability(
+        incomplete,
+        repeats=result.repeats,
+        partition_by_repeat={
+            int(row.repeat_index): str(row.partition_id)
+            for row in registry.itertuples(index=False)
+        },
+    )
+    incomplete_row = incomplete_stability.loc[
+        incomplete_stability["contrast_name"].eq(target["contrast_name"])
+        & incomplete_stability["receiver"].eq(target["receiver"])
+        & incomplete_stability["family_id"].eq(target["family_id"])
+    ].iloc[0]
+    assert incomplete_row["status"] == "not_estimable"
+    assert incomplete_row["reason_code"] == (
+        "insufficient_complete_estimable_family_coverage"
+    )
+    assert incomplete_row["n_repeats_with_observed_selection"] == 0
+    assert pd.isna(
+        incomplete_row["repeat_subject_exposure_selection_fraction_maximum"]
+    )
+    assert pd.isna(incomplete_row["repeat_fit_selection_fraction_maximum"])
+    assert incomplete_row["effect_stability_status"] == "not_estimable"
+    assert incomplete_row["effect_stability_reason_code"] == (
+        "insufficient_complete_repeat_effect_coverage"
+    )
+    assert incomplete_row["n_repeats_with_observed_effect"] == 0
+    manifest = result.to_manifest()
+    assert manifest["inferential_fields_available"] == []
+    assert manifest["is_inference_eligible"] is False
+    assert manifest["family_universe_policy"] == (
+        "union_of_observed_fold_family_ids_v1"
+    )
+    assert manifest["selection_stability_status_counts"]["not_estimable"] > 0
+    assert manifest["effect_stability_status_counts"] == {
+        "not_estimable": len(stability)
+    }
+    with pytest.raises(TypeError, match="producer-owned"):
+        RepeatedCrossFitDiagnostics()
+
+    private = object.__getattribute__(result, "_family_repeat_stability")
+    private.loc[
+        private.index[0],
+        "diagnostic_conditional_fit_selection_fraction",
+    ] = 0.123456789
+    with pytest.raises(ContractError) as error:
+        result.to_manifest()
+    assert error.value.details.code == (
+        "repeated_crossfit_diagnostics_integrity_violation"
+    )
+
+
 def test_untrusted_tuned_diagnostic_cannot_cross_family_common_official_gate() -> None:
     base = _spec()
     resource = build_receiver_autonomous_program_resource(
@@ -1132,6 +1556,7 @@ def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() ->
     with pytest.raises(ValueError, match="parent lineage"):
         CrossFitArtifacts._from_workflow(
             spec=result.spec,
+            root_input_identity=result.root_input_identity,
             fold_plan=result.fold_plan,
             folds=result.folds,
             oof_coverage=result.oof_coverage,
@@ -1204,6 +1629,19 @@ def test_crossfit_spec_rejects_forced_nested_sender_policy_mutation() -> None:
     with pytest.raises(ContractError) as error:
         spec.to_dict()
     assert error.value.details.code == "crossfit_spec_integrity_violation"
+
+
+def test_crossfit_manifest_rejects_forced_root_input_digest_mutation() -> None:
+    result = _run(_adata())
+    object.__setattr__(
+        result.root_input_identity,
+        "input_digest",
+        "poisoned-root-input",
+    )
+
+    with pytest.raises(ContractError) as error:
+        result.to_manifest()
+    assert error.value.details.code == "crossfit_artifact_integrity_violation"
 
 
 @pytest.mark.parametrize(
@@ -1284,18 +1722,20 @@ def test_crossfit_fold_rejects_forced_receiver_program_child_replacement() -> No
 def test_orchestrator_passes_only_disjoint_sanitized_scopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_fit = crossfit_module.fit_training_artifacts
-    original_apply = crossfit_module.apply_training_artifacts
+    original_fit = crossfit_module._fit_training_artifacts_from_prepared
+    original_apply = crossfit_module._apply_training_artifacts_from_prepared
     calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def inspected_fit(adata: AnnData, *args: object, **kwargs: object):
+    def inspected_fit(prepared, *args: object, **kwargs: object):
+        adata = prepared.validated.adata
         assert not adata.uns
         assert not adata.obsm
         subjects = tuple(sorted(adata.obs["subject_id"].astype(str).unique()))
         calls.append(("fit", subjects))
-        return original_fit(adata, *args, **kwargs)
+        return original_fit(prepared, *args, **kwargs)
 
-    def inspected_apply(artifacts, adata: AnnData):
+    def inspected_apply(artifacts, prepared):
+        adata = prepared.validated.adata
         assert not adata.uns
         assert not adata.obsm
         subjects = tuple(sorted(adata.obs["subject_id"].astype(str).unique()))
@@ -1316,10 +1756,18 @@ def test_orchestrator_passes_only_disjoint_sanitized_scopes(
                 "fit_contrast_common_sender_functional",
                 forbidden_fit,
             )
-            return original_apply(artifacts, adata)
+            return original_apply(artifacts, prepared)
 
-    monkeypatch.setattr(crossfit_module, "fit_training_artifacts", inspected_fit)
-    monkeypatch.setattr(crossfit_module, "apply_training_artifacts", inspected_apply)
+    monkeypatch.setattr(
+        crossfit_module,
+        "_fit_training_artifacts_from_prepared",
+        inspected_fit,
+    )
+    monkeypatch.setattr(
+        crossfit_module,
+        "_apply_training_artifacts_from_prepared",
+        inspected_apply,
+    )
 
     result = _run(_adata())
 
@@ -1328,6 +1776,63 @@ def test_orchestrator_passes_only_disjoint_sanitized_scopes(
         assert not set(fold_result.training.training_subject_ids).intersection(
             fold_result.application.heldout_subject_ids
         )
+
+
+def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> None:
+    adata = _adata()
+    heldout_only = adata.obs["subject_id"].eq("p1") & adata.obs["cell_type"].eq(
+        "Sender"
+    )
+    adata.obs.loc[heldout_only, "cell_type"] = "Novel"
+
+    result = _run(adata)
+
+    excluded_folds = [
+        fold
+        for fold in result.folds
+        if "Novel" in fold.application.excluded_cell_type_ids
+    ]
+    assert excluded_folds
+    assert all("Novel" not in fold.training.cell_type_ids for fold in excluded_folds)
+    assert any(
+        "Novel" in fold["heldout_excluded_cell_type_ids"]
+        for fold in result.to_manifest()["fold_artifacts"]
+    )
+
+    all_novel = _adata()
+    all_novel.obs.loc[all_novel.obs["subject_id"].eq("p1"), "cell_type"] = "Novel"
+    complete = _run(all_novel)
+    p1_rows = complete.oof_coverage.loc[
+        complete.oof_coverage["subject_id"].eq("p1")
+    ]
+    assert not p1_rows.empty
+    assert set(p1_rows["functional_status"]) == {"out_of_fold"}
+    assert any(
+        "Novel" in fold.application.excluded_cell_type_ids
+        for fold in complete.folds
+    )
+
+    planned = _run(_adata())
+    disjoint_subjects = planned.fold_plan.folds[0].test_subject_ids
+    disjoint = _adata()
+    disjoint.obs.loc[
+        disjoint.obs["subject_id"].astype(str).isin(disjoint_subjects),
+        "cell_type",
+    ] = "Novel"
+    disjoint_result = _run(disjoint)
+    assert set(disjoint_result.oof_coverage["subject_id"]) == {
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+    }
+    target_fold = next(
+        fold
+        for fold in disjoint_result.folds
+        if set(fold.application.heldout_subject_ids) == set(disjoint_subjects)
+    )
+    assert target_fold.application.excluded_cell_type_ids == ("Novel",)
+    assert target_fold.application.availability.sample_interactions.empty
 
 
 def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() -> None:

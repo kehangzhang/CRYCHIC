@@ -30,6 +30,11 @@ from .receiver_incremental import (
     apply_receiver_incremental_training_artifact,
     fit_receiver_incremental_training_artifact,
 )
+from .repeated_crossfit import (
+    RepeatedCrossFitDiagnostics,
+    RepeatedCrossFitSpec,
+    run_repeated_subject_crossfit,
+)
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
 
 __all__ = [
@@ -46,6 +51,8 @@ __all__ = [
     "PlanStatus",
     "ReceiverIncrementalApplication",
     "ReceiverIncrementalTrainingArtifact",
+    "RepeatedCrossFitDiagnostics",
+    "RepeatedCrossFitSpec",
     "RunStatus",
     "StagePlan",
     "TrainingArtifactApplication",
@@ -58,6 +65,7 @@ __all__ = [
     "fit_baseline",
     "fit_receiver_incremental_training_artifact",
     "fit_training_artifacts",
+    "run_repeated_subject_crossfit",
     "run_subject_crossfit",
     "write_baseline_result",
 ]

@@ -20,7 +20,7 @@ from crychic.sender import (
     apply_contrast_common_sender_functional,
 )
 
-from .training import TrainingArtifacts, _prepare_raw_fold
+from .training import TrainingArtifacts, _prepare_raw_fold, _PreparedRawFold
 
 _APPLICATION_STATUS = "frozen_application_partial_not_oof"
 
@@ -54,7 +54,7 @@ def _table_digest(table_name: str, table: pd.DataFrame) -> str:
         for row in table.itertuples(index=False, name=None)
     ]
     rows.sort(key=canonical_json)
-    return stable_id(
+    result: str = stable_id(
         "training_application_table",
         {
             "columns": [str(column) for column in table.columns],
@@ -64,6 +64,7 @@ def _table_digest(table_name: str, table: pd.DataFrame) -> str:
         schema_version="1",
         digest_length=64,
     )
+    return result
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -76,6 +77,7 @@ class TrainingArtifactApplication:
     heldout_input_digest: str
     availability: BatchAvailability
     sender_assignments: tuple[CommonSenderApplication, ...]
+    excluded_cell_type_ids: tuple[str, ...] = ()
     application_status: str = _APPLICATION_STATUS
     application_id: str = field(init=False)
 
@@ -121,6 +123,9 @@ class TrainingArtifactApplication:
             raise ValueError("availability rows contain unknown held-out samples")
         if self.application_status != _APPLICATION_STATUS:
             raise ValueError("partial application must not claim OOF certification")
+        excluded_cell_types = tuple(sorted(self.excluded_cell_type_ids))
+        if len(excluded_cell_types) != len(set(excluded_cell_types)):
+            raise ValueError("excluded_cell_type_ids must be unique")
         assignments: list[CommonSenderApplication] = []
         for item in self.sender_assignments:
             if not isinstance(item, CommonSenderApplication):
@@ -154,6 +159,7 @@ class TrainingArtifactApplication:
         object.__setattr__(self, "heldout_sample_ids", samples)
         object.__setattr__(self, "availability", availability)
         object.__setattr__(self, "sender_assignments", frozen_assignments)
+        object.__setattr__(self, "excluded_cell_type_ids", excluded_cell_types)
         object.__setattr__(
             self,
             "application_id",
@@ -182,6 +188,7 @@ class TrainingArtifactApplication:
                 ),
             },
             "heldout_input_digest": self.heldout_input_digest,
+            "excluded_cell_type_ids": list(self.excluded_cell_type_ids),
             "heldout_sample_ids": list(self.heldout_sample_ids),
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "sender_assignments": [
@@ -208,14 +215,18 @@ class TrainingArtifactApplication:
                 heldout_input_digest=self.heldout_input_digest,
                 availability=self.availability,
                 sender_assignments=self.sender_assignments,
+                excluded_cell_type_ids=self.excluded_cell_type_ids,
                 application_status=self.application_status,
             )
             valid = (
                 isinstance(self.heldout_subject_ids, tuple)
                 and isinstance(self.heldout_sample_ids, tuple)
                 and isinstance(self.sender_assignments, tuple)
+                and isinstance(self.excluded_cell_type_ids, tuple)
                 and self.heldout_subject_ids == repeated.heldout_subject_ids
                 and self.heldout_sample_ids == repeated.heldout_sample_ids
+                and self.excluded_cell_type_ids
+                == repeated.excluded_cell_type_ids
                 and self.application_status == repeated.application_status
                 and self.application_id == repeated.application_id
                 and not self.is_oof_certified
@@ -248,6 +259,62 @@ class TrainingArtifactApplication:
         return False
 
 
+def _apply_training_artifacts_from_prepared(
+    artifacts: TrainingArtifacts,
+    prepared: _PreparedRawFold,
+) -> TrainingArtifactApplication:
+    if not isinstance(artifacts, TrainingArtifacts):
+        raise TypeError("artifacts must be TrainingArtifacts")
+    artifacts._require_producer_owned()
+    if not isinstance(prepared, _PreparedRawFold):
+        raise TypeError("prepared must be a _PreparedRawFold")
+    prepared.require_compatible(
+        artifacts.config,
+        min_cells=artifacts.spec.min_cells,
+        cell_types=artifacts.cell_type_ids,
+    )
+    overlap = set(prepared.subject_ids).intersection(artifacts.training_subject_ids)
+    if overlap:
+        raise ValueError(
+            "held-out AnnData overlaps training subjects: " + ", ".join(sorted(overlap))
+        )
+    availability = estimate_bundle_availability(
+        prepared.aggregate,
+        artifacts.resource_bundle,
+        context_keys=artifacts.config.context_keys,
+        parameters=artifacts.spec.availability_parameters,
+        min_pooled_availability=artifacts.spec.min_pooled_availability,
+        frozen_interaction_universe=artifacts.frozen_interaction_universe,
+    )
+    if availability.application_subject_ids != prepared.subject_ids:
+        availability = BatchAvailability(
+            sample_interactions=availability.sample_interactions,
+            mapping_summary=availability.mapping_summary,
+            resource_id=availability.resource_id,
+            resource_version=availability.resource_version,
+            detection_available=availability.detection_available,
+            frozen_interaction_universe=availability.frozen_interaction_universe,
+            filter_application=availability.filter_application,
+            application_subject_ids=prepared.subject_ids,
+        )
+    sender_assignments = tuple(
+        apply_contrast_common_sender_functional(
+            functional,
+            availability.sample_interactions,
+        )
+        for functional in artifacts.sender_functionals
+    )
+    return TrainingArtifactApplication(
+        training_artifact_id=artifacts.training_artifact_id,
+        heldout_subject_ids=prepared.subject_ids,
+        heldout_sample_ids=prepared.sample_ids,
+        heldout_input_digest=prepared.input_digest,
+        availability=availability,
+        sender_assignments=sender_assignments,
+        excluded_cell_type_ids=prepared.excluded_cell_type_ids,
+    )
+
+
 def apply_training_artifacts(
     artifacts: TrainingArtifacts,
     heldout_adata: AnnData,
@@ -267,34 +334,7 @@ def apply_training_artifacts(
         min_cells=artifacts.spec.min_cells,
         cell_types=artifacts.cell_type_ids,
     )
-    overlap = set(prepared.subject_ids).intersection(artifacts.training_subject_ids)
-    if overlap:
-        raise ValueError(
-            "held-out AnnData overlaps training subjects: " + ", ".join(sorted(overlap))
-        )
-    availability = estimate_bundle_availability(
-        prepared.aggregate,
-        artifacts.resource_bundle,
-        context_keys=artifacts.config.context_keys,
-        parameters=artifacts.spec.availability_parameters,
-        min_pooled_availability=artifacts.spec.min_pooled_availability,
-        frozen_interaction_universe=artifacts.frozen_interaction_universe,
-    )
-    sender_assignments = tuple(
-        apply_contrast_common_sender_functional(
-            functional,
-            availability.sample_interactions,
-        )
-        for functional in artifacts.sender_functionals
-    )
-    return TrainingArtifactApplication(
-        training_artifact_id=artifacts.training_artifact_id,
-        heldout_subject_ids=prepared.subject_ids,
-        heldout_sample_ids=prepared.sample_ids,
-        heldout_input_digest=prepared.input_digest,
-        availability=availability,
-        sender_assignments=sender_assignments,
-    )
+    return _apply_training_artifacts_from_prepared(artifacts, prepared)
 
 
 __all__ = ["TrainingArtifactApplication", "apply_training_artifacts"]

@@ -1360,13 +1360,24 @@ def _fit_subject_blocked_penalty_tuning(
                 "signed_residual_inner_tuning_requires_autonomous_program_resource"
             ),
         )
+    split_scope_id = stable_id(
+        "receiver_incremental_inner_split_scope",
+        {
+            "contrast_name": inputs.contrast_name,
+            "outer_fold_id": outer_fold_id,
+            "penalty_tuning_spec_id": spec.spec_id,
+            "receiver": inputs.receiver,
+            "training_subject_ids": list(outer_subjects),
+        },
+        schema_version="1",
+    )
     contrast_id = stable_id(
         "receiver_incremental_inner_contrast",
         {
             "contrast_name": inputs.contrast_name,
             "outer_fold_id": outer_fold_id,
             "receiver": inputs.receiver,
-            "tuning_scope_id": tuning_scope_id,
+            "split_scope_id": split_scope_id,
         },
         schema_version="1",
     )
@@ -1379,7 +1390,7 @@ def _fit_subject_blocked_penalty_tuning(
     )
     repeat_id = stable_id(
         "receiver_incremental_inner_repeat",
-        {"outer_fold_id": outer_fold_id, "tuning_scope_id": tuning_scope_id},
+        {"split_scope_id": split_scope_id},
         schema_version="1",
     )
     try:
@@ -1403,7 +1414,7 @@ def _fit_subject_blocked_penalty_tuning(
             ),
             repeat_id=repeat_id,
             seed_lineage=SeedLineage(spec.root_seed).derive(
-                "receiver_incremental_inner_tuning", tuning_scope_id
+                "receiver_incremental_inner_tuning", split_scope_id
             ),
         )
     except FoldPlanningError as error:

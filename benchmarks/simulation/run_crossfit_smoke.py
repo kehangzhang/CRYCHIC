@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import resource
 import time
 from collections import Counter
+from datetime import date
 from pathlib import Path
+from typing import cast
 
 import anndata as ad
 import numpy as np
@@ -26,6 +29,24 @@ from crychic.workflow import (
 )
 
 _SCHEMA_VERSION = "crychic-crossfit-smoke-v5"
+_SUMMARY_SCHEMA_VERSION = "crychic-algorithm-crossfit-smoke-summary-v3"
+DEFAULT_SCENARIOS = ("active", "ligand_only")
+_COMPACT_RECORD_FIELDS = (
+    "crossfit_id",
+    "dataset",
+    "elapsed_seconds",
+    "gain_denominator_status_counts",
+    "incremental_loss_design_counts",
+    "mean_bounded_incremental_diagnostic_gain",
+    "mean_raw_incremental_diagnostic_gain",
+    "n_cells",
+    "n_folds",
+    "n_genes",
+    "n_subjects",
+    "observed_incremental_diagnostic_count",
+    "official_incremental_status_counts",
+    "receiver_coverage_audit_id",
+)
 CROSSFIT_SMOKE_SOURCE_PATHS = (
     "benchmarks/adapters/common.py",
     "benchmarks/adapters/crychic/resource.py",
@@ -94,6 +115,7 @@ CROSSFIT_SMOKE_SOURCE_PATHS = (
     "src/crychic/workflow/contracts.py",
     "src/crychic/workflow/crossfit.py",
     "src/crychic/workflow/receiver_incremental.py",
+    "src/crychic/workflow/repeated_crossfit.py",
     "src/crychic/workflow/training.py",
 )
 
@@ -258,7 +280,7 @@ def _stage_summary(artifacts: CrossFitArtifacts) -> dict[str, object]:
 def run_smoke(
     *,
     workspace_root: Path,
-    scenarios: tuple[str, ...] = ("active", "ligand_only"),
+    scenarios: tuple[str, ...] = DEFAULT_SCENARIOS,
     include_kang_subset: bool = False,
 ) -> dict[str, object]:
     """Run public partial cross-fit stages without an integrated-score claim."""
@@ -449,7 +471,172 @@ def run_smoke(
     }
 
 
-def main() -> None:
+def compact_crossfit_record(record: dict[str, object]) -> dict[str, object]:
+    """Reduce one complete dataset audit to the tracked v5 summary surface."""
+
+    return {field: record[field] for field in _COMPACT_RECORD_FIELDS}
+
+
+def build_artifact_metadata(
+    payload: dict[str, object],
+    *,
+    serialized: bytes,
+    relative_workspace_path: str,
+) -> dict[str, object]:
+    """Build content identities for the complete JSON artifact and its bytes."""
+
+    if not isinstance(relative_workspace_path, str) or not relative_workspace_path:
+        raise ValueError("relative_workspace_path must be a non-empty string")
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return {
+        "canonical_sha256": hashlib.sha256(canonical).hexdigest(),
+        "file_sha256": hashlib.sha256(serialized).hexdigest(),
+        "relative_workspace_path": relative_workspace_path,
+        "size_bytes": len(serialized),
+    }
+
+
+def _common_remaining_stages(records: list[dict[str, object]]) -> list[str]:
+    remaining = [
+        tuple(cast(list[str], record["remaining_stages"])) for record in records
+    ]
+    if not remaining or any(value != remaining[0] for value in remaining[1:]):
+        raise ValueError("all compact-summary records must share remaining_stages")
+    return list(remaining[0])
+
+
+def _gain_interpretation(
+    active: dict[str, object], ligand_only: dict[str, object]
+) -> str:
+    def direction(value: float) -> str:
+        if value > 0.0:
+            return "positive"
+        if value < 0.0:
+            return "negative"
+        return "zero"
+
+    active_bounded = float(
+        cast(float, active["mean_bounded_incremental_diagnostic_gain"])
+    )
+    active_raw = float(cast(float, active["mean_raw_incremental_diagnostic_gain"]))
+    ligand_bounded = float(
+        cast(float, ligand_only["mean_bounded_incremental_diagnostic_gain"])
+    )
+    ligand_raw = float(cast(float, ligand_only["mean_raw_incremental_diagnostic_gain"]))
+    if math.isclose(active_bounded, active_raw, rel_tol=0.0, abs_tol=1e-15):
+        active_text = (
+            f"{direction(active_bounded)} bounded and raw diagnostic gain "
+            f"({active_bounded:.7f})"
+        )
+    else:
+        active_text = (
+            f"{direction(active_bounded)} bounded diagnostic gain "
+            f"({active_bounded:.7f}) and {direction(active_raw)} raw diagnostic "
+            f"gain ({active_raw:.7f})"
+        )
+    if ligand_bounded == 0.0 and ligand_raw < 0.0:
+        ligand_text = f"zero bounded gain and negative raw gain ({ligand_raw:.7f})"
+    else:
+        ligand_text = (
+            f"{direction(ligand_bounded)} bounded diagnostic gain "
+            f"({ligand_bounded:.7f}) and {direction(ligand_raw)} raw diagnostic "
+            f"gain ({ligand_raw:.7f})"
+        )
+    return f"Active has {active_text}, while ligand-only has {ligand_text}."
+
+
+def _official_status_interpretation(records: list[dict[str, object]]) -> str:
+    status_counts = [
+        cast(dict[str, int], record["official_incremental_status_counts"])
+        for record in records
+    ]
+    if status_counts and all(value == status_counts[0] for value in status_counts[1:]):
+        common = status_counts[0]
+        if set(common) == {"not_estimable"}:
+            return (
+                f"all {int(common['not_estimable'])} official rows per dataset "
+                "remain not_estimable"
+            )
+    raise ValueError(
+        "canonical compact summary requires common not-estimable official rows"
+    )
+
+
+def build_compact_summary(
+    payload: dict[str, object],
+    artifact_metadata: dict[str, object],
+    *,
+    base_revision: str,
+    generated_on: str,
+) -> dict[str, object]:
+    """Derive the tracked v5 compact summary from one complete smoke payload."""
+
+    if payload.get("schema_version") != _SCHEMA_VERSION:
+        raise ValueError(f"compact summary requires {_SCHEMA_VERSION!r}")
+    if not isinstance(base_revision, str) or not base_revision:
+        raise ValueError("base_revision must be a non-empty string")
+    if not isinstance(generated_on, str) or not generated_on:
+        raise ValueError("generated_on must be a non-empty string")
+    source_records = cast(list[dict[str, object]], payload["records"])
+    by_scenario = {str(record["scenario"]): record for record in source_records}
+    if len(by_scenario) != len(source_records) or set(by_scenario) != set(
+        DEFAULT_SCENARIOS
+    ):
+        raise ValueError(
+            "compact summary requires exactly the canonical active and ligand_only "
+            "records"
+        )
+    ordered_source = [by_scenario[scenario] for scenario in DEFAULT_SCENARIOS]
+    records = [compact_crossfit_record(record) for record in ordered_source]
+    remaining_stages = _common_remaining_stages(ordered_source)
+    wall_clock_seconds = float(
+        sum(float(cast(float, record["elapsed_seconds"])) for record in records)
+    )
+    official_status = _official_status_interpretation(records)
+    interpretation = (
+        "The v5 fixed-penalty public path preserves exact receiver coverage under "
+        "the paired loss contract after the v7 coordinate, lineage, and "
+        "factorized-nuisance updates. "
+        f"{_gain_interpretation(records[0], records[1])} "
+        "This smoke does not supply the trusted autonomous resource or "
+        f"PenaltyTuningSpec, so {official_status}. It is a fixed-penalty "
+        "diagnostic comparison, not an official incremental, integrated-edge, "
+        "biological, or superiority claim."
+    )
+    return {
+        "base_revision": base_revision,
+        "full_artifact": dict(artifact_metadata),
+        "generated_on": generated_on,
+        "guardrails": {
+            "active_vs_ligand_only_mechanism_claim_allowed": False,
+            "biological_claim_allowed": False,
+            "complete_pipeline_oof_claim_allowed": False,
+            "method_superiority_claim_allowed": False,
+            "official_incremental_gain_claim_allowed": False,
+            "p_or_q_reported": False,
+        },
+        "interpretation": interpretation,
+        "process_performance": {
+            "peak_rss_kib": int(cast(int, payload["process_peak_rss_kib"])),
+            "wall_clock_seconds": wall_clock_seconds,
+        },
+        "records": records,
+        "remaining_stages": remaining_stages,
+        "schema_version": _SUMMARY_SCHEMA_VERSION,
+        "scope": payload["scope"],
+        "source_sha256": payload["source_sha256"],
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser without running the expensive smoke."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     default_workspace = Path(__file__).resolve().parents[3]
     parser.add_argument("--workspace-root", type=Path, default=default_workspace)
@@ -458,9 +645,28 @@ def main() -> None:
         type=Path,
         default=Path("benchmark_work/algorithm_smoke/crossfit_summary.json"),
     )
-    parser.add_argument("--scenarios", nargs="+", default=["active", "ligand_only"])
+    parser.add_argument("--scenarios", nargs="+", default=list(DEFAULT_SCENARIOS))
     parser.add_argument("--include-kang-subset", action="store_true")
+    parser.add_argument("--summary-output", type=Path)
+    parser.add_argument("--base-revision")
+    parser.add_argument("--generated-on", default=date.today().isoformat())
+    parser.add_argument(
+        "--artifact-relative-workspace-path",
+        default="benchmark_work/algorithm_smoke/crossfit_summary.json",
+    )
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+    if args.summary_output is not None:
+        if not args.base_revision:
+            parser.error("--summary-output requires --base-revision")
+        if tuple(args.scenarios) != DEFAULT_SCENARIOS:
+            parser.error("--summary-output requires the canonical default scenarios")
+        if args.include_kang_subset:
+            parser.error("--summary-output does not allow --include-kang-subset")
     payload = run_smoke(
         workspace_root=args.workspace_root.resolve(),
         scenarios=tuple(args.scenarios),
@@ -468,8 +674,29 @@ def main() -> None:
     )
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    serialized = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    output.write_text(serialized, encoding="utf-8")
+    if args.summary_output is not None:
+        summary = build_compact_summary(
+            payload,
+            build_artifact_metadata(
+                payload,
+                serialized=serialized.encode("utf-8"),
+                relative_workspace_path=args.artifact_relative_workspace_path,
+            ),
+            base_revision=args.base_revision,
+            generated_on=args.generated_on,
+        )
+        summary_output = args.summary_output.expanduser()
+        if not summary_output.is_absolute():
+            summary_output = Path(__file__).resolve().parents[2] / summary_output
+        summary_output = summary_output.resolve()
+        summary_output.parent.mkdir(parents=True, exist_ok=True)
+        summary_output.write_text(
+            json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+    print(serialized, end="")
 
 
 if __name__ == "__main__":

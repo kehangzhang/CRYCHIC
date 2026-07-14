@@ -89,7 +89,10 @@ from crychic.sender import (
     apply_contrast_common_sender_functional,
 )
 
-from .application import TrainingArtifactApplication, apply_training_artifacts
+from .application import (
+    TrainingArtifactApplication,
+    _apply_training_artifacts_from_prepared,
+)
 from .receiver_incremental import (
     ReceiverIncrementalApplication,
     ReceiverIncrementalTrainingArtifact,
@@ -99,13 +102,15 @@ from .receiver_incremental import (
 )
 from .training import (
     FoldTrainingSpec,
+    SanitizedRawInputIdentity,
+    SanitizedRawInputSnapshot,
     TrainingArtifacts,
     _fit_interaction_universe,
+    _fit_training_artifacts_from_prepared,
     _input_schema,
     _prepare_raw_fold,
     _PreparedRawFold,
-    _sanitize_validated_input,
-    fit_training_artifacts,
+    _sanitized_raw_input_snapshot,
 )
 
 _STAGE_NAME = "contrast_common_sender_application"
@@ -217,6 +222,7 @@ class CrossFitSpec:
     """Pre-registered policy for one subject-blocked cross-fit run."""
 
     contrasts: tuple[ContrastSpec, ...]
+    repeat_index: int = 0
     training_spec: FoldTrainingSpec = field(default_factory=FoldTrainingSpec)
     strata_keys: tuple[str, ...] = ()
     allowed_n_splits: tuple[int, ...] = (5, 4, 3, 2)
@@ -232,6 +238,12 @@ class CrossFitSpec:
     repeat_id: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.repeat_index, bool)
+            or not isinstance(self.repeat_index, int)
+            or self.repeat_index < 0
+        ):
+            raise ValueError("repeat_index must be a non-negative integer")
         contrasts = tuple(self.contrasts)
         if not contrasts or any(
             not isinstance(contrast, ContrastSpec) for contrast in contrasts
@@ -348,7 +360,10 @@ class CrossFitSpec:
         object.__setattr__(
             self,
             "repeat_id",
-            stable_id("subject_crossfit_repeat", {"spec_id": spec_id, "repeat": 0}),
+            stable_id(
+                "subject_crossfit_repeat",
+                {"spec_id": spec_id, "repeat": self.repeat_index},
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -358,6 +373,7 @@ class CrossFitSpec:
         return {
             "spec_id": self.spec_id,
             "repeat_id": self.repeat_id,
+            "repeat_index": self.repeat_index,
             "schema_version": self.schema_version,
             "contrasts": [contrast.to_dict() for contrast in self.contrasts],
             "training_spec_id": self.training_spec.spec_id,
@@ -386,6 +402,7 @@ class CrossFitSpec:
         try:
             repeated = CrossFitSpec(
                 contrasts=self.contrasts,
+                repeat_index=self.repeat_index,
                 training_spec=self.training_spec,
                 strata_keys=self.strata_keys,
                 allowed_n_splits=self.allowed_n_splits,
@@ -405,6 +422,7 @@ class CrossFitSpec:
                 and isinstance(self.strata_keys, tuple)
                 and isinstance(self.allowed_n_splits, tuple)
                 and self.contrasts == repeated.contrasts
+                and self.repeat_index == repeated.repeat_index
                 and self.training_spec.spec_id == repeated.training_spec.spec_id
                 and self.strata_keys == repeated.strata_keys
                 and self.allowed_n_splits == repeated.allowed_n_splits
@@ -1215,6 +1233,7 @@ class CrossFitArtifacts:
     """Partial artifacts with exact sender-stage OOF coverage verification."""
 
     spec: CrossFitSpec
+    root_input_identity: SanitizedRawInputIdentity
     fold_plan: SubjectFoldPlan
     folds: tuple[CrossFitFoldArtifacts, ...]
     _oof_coverage: pd.DataFrame = field(repr=False)
@@ -1239,6 +1258,7 @@ class CrossFitArtifacts:
         cls,
         *,
         spec: CrossFitSpec,
+        root_input_identity: SanitizedRawInputIdentity,
         fold_plan: SubjectFoldPlan,
         folds: tuple[CrossFitFoldArtifacts, ...],
         oof_coverage: pd.DataFrame,
@@ -1249,6 +1269,7 @@ class CrossFitArtifacts:
         self = object.__new__(cls)
         values: dict[str, object] = {
             "spec": spec,
+            "root_input_identity": root_input_identity,
             "fold_plan": fold_plan,
             "folds": folds,
             "_oof_coverage": oof_coverage,
@@ -1271,11 +1292,18 @@ class CrossFitArtifacts:
         if not isinstance(self.spec, CrossFitSpec):
             raise TypeError("spec must be a CrossFitSpec")
         self.spec._require_intact()
+        if not isinstance(self.root_input_identity, SanitizedRawInputIdentity):
+            raise TypeError(
+                "root_input_identity must be a SanitizedRawInputIdentity"
+            )
+        self.root_input_identity._require_intact()
         if not isinstance(self.fold_plan, SubjectFoldPlan):
             raise TypeError("fold_plan must be a SubjectFoldPlan")
         self.fold_plan._require_intact()
         if self.fold_plan.repeat_id != self.spec.repeat_id:
             raise ValueError("fold plan repeat_id does not match the cross-fit spec")
+        if self.root_input_identity.subject_ids != self.fold_plan.subject_ids:
+            raise ValueError("root input subjects do not match the fold plan")
         if self.fold_plan.allowed_n_splits != self.spec.allowed_n_splits:
             raise ValueError(
                 "fold plan allowed_n_splits do not match the cross-fit spec"
@@ -1292,6 +1320,20 @@ class CrossFitArtifacts:
             )
         for item in folds:
             manifest = by_id[item.fold_id]
+            if item.training.config.digest != self.root_input_identity.config_digest:
+                raise ValueError("fold config does not match the root input identity")
+            if item.training.training_input_digest != (
+                self.root_input_identity.scope_digest(manifest.train_subject_ids)
+            ):
+                raise ValueError(
+                    "fold training input does not derive from the root identity"
+                )
+            if item.application.heldout_input_digest != (
+                self.root_input_identity.scope_digest(manifest.test_subject_ids)
+            ):
+                raise ValueError(
+                    "fold heldout input does not derive from the root identity"
+                )
             if item.training.training_subject_ids != manifest.train_subject_ids:
                 raise ValueError(
                     "training artifact subjects do not match the fold plan"
@@ -1573,6 +1615,9 @@ class CrossFitArtifacts:
                 {
                     "fold_id": item.fold_id,
                     "heldout_input_digest": item.application.heldout_input_digest,
+                    "heldout_excluded_cell_type_ids": list(
+                        item.application.excluded_cell_type_ids
+                    ),
                     "training_application_id": item.application.application_id,
                     "training_artifact_id": item.training.training_artifact_id,
                     "design_encoder_ids": [
@@ -1640,6 +1685,8 @@ class CrossFitArtifacts:
                 for item in sorted(folds, key=lambda value: value.fold_id)
             ],
             "fold_plan_id": self.fold_plan.plan_id,
+            "root_input_identity_id": self.root_input_identity.identity_id,
+            "root_input_digest": self.root_input_identity.input_digest,
             "sender_application_ids": sorted(
                 assignments["sender_application_id"].astype(str).tolist()
             ),
@@ -1668,6 +1715,13 @@ class CrossFitArtifacts:
         return self._oof_coverage.copy(deep=True)
 
     @property
+    def root_input_digest(self) -> str:
+        """Return the producer-owned complete sanitized input digest."""
+
+        self.root_input_identity._require_intact()
+        return self.root_input_identity.input_digest
+
+    @property
     def oof_receiver_coverage(self) -> pd.DataFrame:
         """Return a defensive copy of the exact receiver-stage coverage table."""
 
@@ -1683,6 +1737,7 @@ class CrossFitArtifacts:
         try:
             repeated = CrossFitArtifacts._from_workflow(
                 spec=self.spec,
+                root_input_identity=self.root_input_identity,
                 fold_plan=self.fold_plan,
                 folds=self.folds,
                 oof_coverage=self._oof_coverage,
@@ -1693,6 +1748,8 @@ class CrossFitArtifacts:
             valid = (
                 self._producer_marker == _PRODUCER_MARKER
                 and self.certification_status == _STAGE_STATUS
+                and repeated.root_input_identity.identity_id
+                == self.root_input_identity.identity_id
                 and repeated.crossfit_id == self.crossfit_id
                 and repeated.receiver_coverage_audit_id
                 == self.receiver_coverage_audit_id
@@ -1832,6 +1889,7 @@ class CrossFitArtifacts:
             "family_edge_evidence_policy": _FAMILY_EDGE_EVIDENCE_POLICY,
             "oof_audit_scope": _STAGE_NAME,
             "spec": self.spec.to_dict(),
+            "root_input_identity": self.root_input_identity.to_dict(),
             "fold_plan": self.fold_plan.to_dict(),
             "coverage_audit": self.coverage_audit.to_dict(),
             "coverage_table_digest": self.coverage_table_digest,
@@ -1843,6 +1901,9 @@ class CrossFitArtifacts:
                     "fold_id": item.fold_id,
                     "training_artifact_id": item.training.training_artifact_id,
                     "heldout_input_digest": item.application.heldout_input_digest,
+                    "heldout_excluded_cell_type_ids": list(
+                        item.application.excluded_cell_type_ids
+                    ),
                     "training_subject_ids": list(item.training.training_subject_ids),
                     "heldout_subject_ids": list(item.application.heldout_subject_ids),
                     "receiver_family_artifacts": [
@@ -3232,8 +3293,8 @@ def _fold_sender_rows(
     return rows
 
 
-def run_subject_crossfit(
-    adata: AnnData,
+def _run_subject_crossfit(
+    snapshot: SanitizedRawInputSnapshot,
     config: CrychicConfig,
     resource_bundle: ResourceBundle,
     target_prior: TargetPrior,
@@ -3247,8 +3308,11 @@ def run_subject_crossfit(
     input cannot establish a certified train-only transform boundary.
     """
 
-    if not isinstance(adata, AnnData):
-        raise TypeError("adata must be an AnnData instance")
+    if not isinstance(snapshot, SanitizedRawInputSnapshot):
+        raise TypeError("snapshot must be a SanitizedRawInputSnapshot")
+    snapshot._require_intact()
+    adata = snapshot.adata
+    root_input_identity = snapshot.identity
     if not isinstance(config, CrychicConfig):
         raise TypeError("config must be a CrychicConfig")
     if not isinstance(resource_bundle, ResourceBundle):
@@ -3273,6 +3337,7 @@ def run_subject_crossfit(
             "subject cross-fitting requires raw counts; normalized-only input "
             "cannot certify train-only preprocessing"
         )
+    sanitized = adata
     invalid_strata = set(spec.strata_keys).difference(config.covariates)
     if invalid_strata:
         raise ValueError(
@@ -3309,7 +3374,8 @@ def run_subject_crossfit(
             "subject_crossfit", spec.spec_id
         ),
     )
-    sanitized = _sanitize_validated_input(validated)
+    if root_input_identity.config_digest != config.digest:
+        raise ValueError("snapshot root identity does not match the cross-fit config")
     fold_artifacts: list[CrossFitFoldArtifacts] = []
     coverage_rows: list[dict[str, object]] = []
     receiver_coverage_rows: list[dict[str, object]] = []
@@ -3325,14 +3391,30 @@ def run_subject_crossfit(
             subject_key=config.subject_key,
             subject_ids=fold.test_subject_ids,
         )
-        training = fit_training_artifacts(
+        prepared_training = _prepare_raw_fold(
             training_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            root_input_identity=root_input_identity,
+        )
+        training = _fit_training_artifacts_from_prepared(
+            prepared_training,
             config,
             resource_bundle,
             target_prior,
             spec=spec.training_spec,
         )
-        application = apply_training_artifacts(training, heldout_scope)
+        prepared_heldout = _prepare_raw_fold(
+            heldout_scope,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            cell_types=training.cell_type_ids,
+            root_input_identity=root_input_identity,
+        )
+        application = _apply_training_artifacts_from_prepared(
+            training,
+            prepared_heldout,
+        )
         sample_metadata = validated.report.sample_metadata
         training_metadata = sample_metadata.loc[
             sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
@@ -3357,18 +3439,6 @@ def run_subject_crossfit(
         design_applications = tuple(
             apply_frozen_design_encoder(encoder, heldout_metadata)
             for encoder in design_encoders
-        )
-        prepared_training = _prepare_raw_fold(
-            training_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            cell_types=training.cell_type_ids,
-        )
-        prepared_heldout = _prepare_raw_fold(
-            heldout_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            cell_types=training.cell_type_ids,
         )
         training_aggregate = prepared_training.aggregate
         heldout_aggregate = prepared_heldout.aggregate
@@ -3537,12 +3607,32 @@ def run_subject_crossfit(
     )
     return CrossFitArtifacts._from_workflow(
         spec=spec,
+        root_input_identity=root_input_identity,
         fold_plan=fold_plan,
         folds=tuple(fold_artifacts),
         oof_coverage=coverage,
         oof_receiver_coverage=receiver_coverage,
         oof_sender_assignments=assignments,
         coverage_audit=audit,
+    )
+
+
+def run_subject_crossfit(
+    adata: AnnData,
+    config: CrychicConfig,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    *,
+    spec: CrossFitSpec,
+) -> CrossFitArtifacts:
+    """Run one public subject-blocked cross-fit from complete raw counts."""
+
+    return _run_subject_crossfit(
+        _sanitized_raw_input_snapshot(adata, config),
+        config,
+        resource_bundle,
+        target_prior,
+        spec=spec,
     )
 
 

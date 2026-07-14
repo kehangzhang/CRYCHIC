@@ -113,6 +113,35 @@ preserving the exploratory v0.1 behavior:
   otherwise inestimable chains stay `not_estimable`. The receiver program does
   not enter the integrated score, and full repeated-pipeline inference is still
   absent, so the aggregate `is_oof_certified` remains false;
+- `CrossFitSpec.repeat_index` now defaults to `0`, preserving the existing
+  cross-fit policy identity while deriving a distinct repeat identity for each
+  nonzero repeat. `RepeatedCrossFitSpec` and
+  `run_repeated_subject_crossfit()` rerun the complete public train/apply chain
+  for every declared repeat and return producer-owned
+  `RepeatedCrossFitDiagnostics`. Its four immutable-digest tables are
+  `repeat_registry`, `family_fold_events`,
+  `subject_family_repeat_values`, and `family_repeat_stability`. The contract
+  enforces exact subject x repeat coverage; a family absent from an observed
+  training-fold universe is `not_estimable`, never zero or unselected, and the
+  table declares its union-of-observed family universe. A row-order-invariant
+  subject-content manifest derives every fold scope digest, while a defensive
+  snapshot binds expression, metadata, configuration, in-memory resource
+  content, and target-prior content. Complete-repeat fit-level and
+  subject-exposure selection denominators remain separate, and structural zeros
+  do not count as estimable observations. This is descriptive split-stability
+  diagnostics only: formal
+  inference is always disabled, and bootstrap, permutation, confidence
+  intervals, p/q values, and communication probabilities remain unavailable;
+- a tiny active two-repeat development smoke reran the full chain for 8
+  subjects and 1,260 cells, producing two distinct subject partitions. Receiver
+  known-family fit-level conditional selection frequencies were `0.75` for
+  `CXCL10-CXCR3`, `0.50` for `CCL5-CCR5`, and `0.75` for `EGF-EGFR`; equal fold
+  sizes made the subject-exposure frequencies identical. Its status was
+  `partially_observed`: 5/1,512 family rows had observed selection and effect
+  stability, while 1,507 were explicitly not estimable. Reusing each prepared
+  fold across training/application and receiver stages reduced observed elapsed
+  time from `225.97` to `172.13` seconds. This is an implementation observation,
+  not a performance guarantee, G3 result, biological claim, or formal inference;
 - frozen design encoding now uses the complete declared Patsy formula and an
   exact EMM-contrast reparameterization. Numeric-coded categorical covariates
   can be declared with `categorical_covariates`; held-out levels are checked

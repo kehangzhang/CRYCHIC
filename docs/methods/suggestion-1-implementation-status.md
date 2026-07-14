@@ -25,6 +25,7 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | All-missing sender evidence | Implemented | Returns missing values rather than fabricated uniform weights. |
 | Common sender functional | Partial | Public subject-cross-fit freezes the sender universe, cross-context training prevalence prior, minimum support and temperature in each training fold, applies only sample-local held-out ligand evidence, and verifies exact stage-level OOF coverage. The opt-in family-common application uses that functional only to conserve and allocate an already-established member score. The receiver program is now connected separately as a diagnostic parent and does not enter sender allocation or the integrated score. The family-common path remains separate from the legacy default and noncertifying. |
 | Subject fold planning and OOF audit | Implemented | Subject blocks, K fallback, design re-audit, and exact coverage are tested. |
+| Repeated full train/apply split stability | Partial | `CrossFitSpec.repeat_index` defaults to `0`, preserving the base cross-fit policy identity while deriving a distinct repeat identity. `RepeatedCrossFitSpec` reruns the complete public train/apply workflow for every repeat and returns producer-owned `RepeatedCrossFitDiagnostics` with four immutable-digest tables: `repeat_registry`, `family_fold_events`, `subject_family_repeat_values`, and `family_repeat_stability`. Exact subject x repeat opportunities are enforced. A family absent from an observed training-fold universe is explicitly `not_estimable`, never a zero or nonselection event; the released universe is declared as the union of observed fold-family IDs. A row-order-invariant subject-content manifest derives every fold scope digest, and a defensive snapshot binds expression, metadata, configuration, resource-bundle content, and target-prior content. Selection and effect distributions require complete repeats and distinct family-specific partitions; fit-level and subject-exposure selection denominators are separate, and structural zeros do not count as estimable observations. It is descriptive split-stability only: inference eligibility is always false, full children are still retained in memory, and streaming bootstrap, permutation, confidence intervals, p/q values, communication probabilities, and G3 calibration remain absent. |
 | Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives folds from raw metadata, creates physical sanitized scopes, and freezes interaction/sender, complete-formula EMM design, receptor, family, receiver-program, response and precision artifacts. An opt-in `PenaltyTuningSpec` connects paired subject-blocked inner evaluation, selected incremental parents and family-common held-out applications. Training receiver reference expression must cover every expected sample exactly with authoritative subject/context lineage; held-out program applications bind the exact sample/subject/context manifest and expression digest. Producer-owned target-profile and input identities, tuning, selected penalties, trusted autonomous resources, edge evidence and receiver-specific sender inputs reject forged or stale parents. Independent/mixed inner one-SE tuning, repeated full-pipeline inference and default-method integration remain. |
 | Exact-zero complex soft-min | Implemented | Zero and missingness behavior are covered by tests. |
 | Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, and cap conflicts are tested. |
@@ -186,6 +187,22 @@ scope remains `development_preregistered_scenario_subset_diagnostic`; it covers
 only 4/7 scenarios and supports neither biology, method superiority, full OOF
 certification nor a default switch.
 
+The tiny active repeat-aware development smoke reran the complete public
+train/apply chain twice for 8 subjects and 1,260 cells. It produced two distinct
+subject partitions and exact coverage of all 16 subject-repeat opportunities.
+Receiver known-family fit-level conditional selection frequencies were `0.75`
+for `CXCL10-CXCR3`, `0.50` for `CCL5-CCR5`, and `0.75` for `EGF-EGFR`; equal
+fold sizes made the subject-exposure frequencies identical. The aggregate was
+`partially_observed`: 5/1,512 family rows had observed selection and effect
+stability, while 1,507 were explicitly not estimable. Reusing each prepared
+fold across training/application and receiver stages reduced observed elapsed
+time from `225.97` to `172.13` seconds and peak RSS was `529,372` KiB. These are
+implementation observations rather than a performance baseline or guarantee.
+The four released diagnostics remain
+descriptive split-stability tables, not stability probabilities, confidence
+intervals, p/q values, biology evidence, or G3. Subject bootstrap, context
+permutation, and formal repeated-pipeline inference have not been implemented.
+
 ## Execution order
 
 1. Extend the registered public G1.5 execution to multiple seeds across all
@@ -195,9 +212,10 @@ certification nor a default switch.
 2. Run the separately frozen competitive-sparsity sensitivity only if expanded
    seeds reproduce unstable known-family recovery or active decoy selection;
    do not tune the registered campaign post hoc.
-3. Implement the repeated full-pipeline resampling/inference contract. Add
-   independent and mixed-subject inner tuning only after their statistical
-   estimands are frozen.
+3. Extend the implemented repeated full train/apply split-stability diagnostic
+   with legal full-pipeline subject bootstrap, context permutation, effect-model
+   refitting, and G3 calibration. Add independent and mixed-subject inner tuning
+   only after their statistical estimands are frozen.
 4. Reuse prepared fold aggregates across stages and continue exact-equivalence
    sparse/block performance work beyond the completed v7 nuisance
    factorization.

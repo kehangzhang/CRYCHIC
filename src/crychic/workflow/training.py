@@ -12,6 +12,7 @@ import hashlib
 import math
 from collections.abc import Hashable
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from typing import Any, TypeAlias, cast
 
 import numpy as np
@@ -35,9 +36,11 @@ from crychic.data import (
 from crychic.design import ContrastSpec, balanced_contrast
 from crychic.pseudobulk import (
     ExploratoryAggregate,
+    MissingnessReason,
     PseudobulkDataset,
     aggregate_pseudobulk,
 )
+from crychic.pseudobulk.aggregation import _unit_id
 from crychic.resources import ResourceBundle, TargetPrior
 from crychic.sender import (
     ContrastCommonSenderFunctional,
@@ -47,6 +50,8 @@ from crychic.sender import (
 
 _PRODUCER_MARKER = "crychic.workflow.training.v1"
 _PARTIAL_STATUS = "training_only_partial_not_oof"
+_ROOT_INPUT_PRODUCER = "crychic.workflow.sanitized_raw_input_identity.v1"
+_ROOT_SNAPSHOT_PRODUCER = "crychic.workflow.sanitized_raw_input_snapshot.v1"
 
 
 def _availability_parameter_payload(
@@ -63,16 +68,20 @@ def _availability_parameter_payload(
     }
 
 
+@lru_cache(maxsize=8)
 def _resource_bundle_content_id(resource_bundle: ResourceBundle) -> str:
     """Bind the in-memory interaction content used during held-out application."""
 
-    return stable_id("resource_bundle_content", asdict(resource_bundle))
+    result: str = stable_id("resource_bundle_content", asdict(resource_bundle))
+    return result
 
 
+@lru_cache(maxsize=8)
 def _target_prior_content_id(target_prior: TargetPrior) -> str:
     """Bind the complete in-memory target prior used by training children."""
 
-    return stable_id("target_prior_content", asdict(target_prior))
+    result: str = stable_id("target_prior_content", asdict(target_prior))
+    return result
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -227,6 +236,8 @@ class TrainingArtifacts:
     training_sample_ids: tuple[str, ...]
     cell_type_ids: tuple[str, ...]
     training_input_digest: str
+    resource_bundle_content_id: str
+    target_prior_content_id: str
     frozen_interaction_universe: FrozenInteractionUniverse
     sender_functionals: tuple[ContrastCommonSenderFunctional, ...]
     completed_stages: tuple[str, ...]
@@ -343,22 +354,22 @@ class TrainingArtifacts:
         )
         if not functionals:
             remaining = (*remaining[:-1], "common_sender_functional", remaining[-1])
+        resource_bundle_content_id = _resource_bundle_content_id(resource_bundle)
+        target_prior_content_id = _target_prior_content_id(target_prior)
         payload = {
             "cell_type_ids": list(cell_types),
             "completed_stages": list(completed),
             "config_digest": config.digest,
             "filter_universe_id": (frozen_interaction_universe.filter_universe_id),
             "remaining_stages": list(remaining),
-            "resource_bundle_content_id": _resource_bundle_content_id(
-                resource_bundle
-            ),
+            "resource_bundle_content_id": resource_bundle_content_id,
             "resource_manifest_digest": resource_bundle.manifest_digest,
             "sender_functional_ids": [
                 functional.sender_functional_id for functional in functionals
             ],
             "spec_id": spec.spec_id,
             "target_prior_manifest_digest": target_prior.manifest_digest,
-            "target_prior_content_id": _target_prior_content_id(target_prior),
+            "target_prior_content_id": target_prior_content_id,
             "training_input_digest": training_input_digest,
             "training_sample_ids": list(samples),
             "training_subject_ids": list(subjects),
@@ -375,6 +386,8 @@ class TrainingArtifacts:
             "training_sample_ids": samples,
             "cell_type_ids": cell_types,
             "training_input_digest": training_input_digest,
+            "resource_bundle_content_id": resource_bundle_content_id,
+            "target_prior_content_id": target_prior_content_id,
             "frozen_interaction_universe": frozen_interaction_universe,
             "sender_functionals": functionals,
             "completed_stages": completed,
@@ -426,6 +439,9 @@ class TrainingArtifacts:
                 and self.training_sample_ids == repeated.training_sample_ids
                 and self.cell_type_ids == repeated.cell_type_ids
                 and self.training_input_digest == repeated.training_input_digest
+                and self.resource_bundle_content_id
+                == repeated.resource_bundle_content_id
+                and self.target_prior_content_id == repeated.target_prior_content_id
                 and self.sender_functionals == repeated.sender_functionals
                 and self.completed_stages == repeated.completed_stages
                 and self.remaining_stages == repeated.remaining_stages
@@ -465,6 +481,31 @@ class _PreparedRawFold:
     sample_ids: tuple[str, ...]
     cell_type_ids: tuple[str, ...]
     input_digest: str
+    config_digest: str
+    min_cells: int
+    requested_cell_type_ids: tuple[str, ...] | None
+    excluded_cell_type_ids: tuple[str, ...]
+    root_input_identity_id: str | None
+
+    def require_compatible(
+        self,
+        config: CrychicConfig,
+        *,
+        min_cells: int,
+        cell_types: tuple[str, ...] | None,
+    ) -> None:
+        requested = None if cell_types is None else tuple(sorted(cell_types))
+        if (
+            self.config_digest != config.digest
+            or self.min_cells != min_cells
+            or self.requested_cell_type_ids != requested
+        ):
+            raise ContractError(
+                "Prepared raw fold does not match the requested execution policy",
+                code="prepared_raw_fold_policy_mismatch",
+                field="prepared_fold",
+                remediation="Reprepare the physical fold with the exact policy",
+            )
 
 
 def _input_schema(config: CrychicConfig) -> InputSchema:
@@ -523,7 +564,55 @@ def _sanitize_validated_input(validated: ValidatedInput) -> AnnData:
     return sanitized
 
 
-def _matrix_digest(matrix: Any) -> str:
+def _plain_metadata_value(value: object) -> object:
+    return value.item() if isinstance(value, np.generic) else value
+
+
+def _update_canonical_digest(digest: Any, value: object) -> None:
+    encoded = canonical_json(value).encode("ascii")
+    digest.update(len(encoded).to_bytes(8, byteorder="big", signed=False))
+    digest.update(encoded)
+
+
+def _feature_id_digest(feature_ids: tuple[str, ...]) -> str:
+    digest = hashlib.sha256()
+    for position, feature_id in enumerate(feature_ids):
+        _update_canonical_digest(
+            digest,
+            {"feature_id": feature_id, "position": position},
+        )
+    return digest.hexdigest()
+
+
+def _row_expression_digests(matrix: Any) -> tuple[str, ...]:
+    result: list[str] = []
+    if sparse.issparse(matrix):
+        canonical = sparse.csr_matrix(matrix, dtype=np.float64).copy()
+        canonical.sum_duplicates()
+        canonical.sort_indices()
+        for row_index in range(canonical.shape[0]):
+            start = int(canonical.indptr[row_index])
+            stop = int(canonical.indptr[row_index + 1])
+            digest = hashlib.sha256()
+            digest.update(np.asarray([canonical.shape[1]], dtype="<i8").tobytes())
+            digest.update(
+                np.asarray(canonical.indices[start:stop], dtype="<i8").tobytes()
+            )
+            digest.update(
+                np.asarray(canonical.data[start:stop], dtype="<f8").tobytes()
+            )
+            result.append(digest.hexdigest())
+    else:
+        canonical = np.asarray(matrix, dtype="<f8", order="C")
+        for row in canonical:
+            digest = hashlib.sha256()
+            digest.update(np.asarray([canonical.shape[1]], dtype="<i8").tobytes())
+            digest.update(np.asarray(row, dtype="<f8").tobytes())
+            result.append(digest.hexdigest())
+    return tuple(result)
+
+
+def _matrix_content_digest(matrix: Any) -> str:
     digest = hashlib.sha256()
     shape = tuple(int(value) for value in matrix.shape)
     digest.update(np.asarray(shape, dtype="<i8").tobytes())
@@ -540,17 +629,10 @@ def _matrix_digest(matrix: Any) -> str:
     return digest.hexdigest()
 
 
-def _plain_metadata_value(value: object) -> object:
-    return value.item() if isinstance(value, np.generic) else value
-
-
-def _update_canonical_digest(digest: Any, value: object) -> None:
-    encoded = canonical_json(value).encode("ascii")
-    digest.update(len(encoded).to_bytes(8, byteorder="big", signed=False))
-    digest.update(encoded)
-
-
-def _declared_obs_digest(validated: ValidatedInput) -> str:
+def _subject_content_digests(
+    validated: ValidatedInput,
+    config: CrychicConfig,
+) -> tuple[tuple[str, str], ...]:
     schema = validated.schema
     columns = (
         schema.sample_key,
@@ -559,31 +641,466 @@ def _declared_obs_digest(validated: ValidatedInput) -> str:
         *schema.context_keys,
         *schema.covariates,
     )
-    digest = hashlib.sha256()
-    _update_canonical_digest(digest, {"columns": list(columns)})
     table = validated.adata.obs.loc[:, list(columns)]
+    expression_digests = _row_expression_digests(validated.matrix)
+    if len(expression_digests) != len(table):
+        raise RuntimeError("expression and observation rows do not align")
+    rows_by_subject: dict[str, list[str]] = {}
+    samples_by_subject: dict[str, set[str]] = {}
     for position, (obs_name, row) in enumerate(table.iterrows()):
+        subject_id = str(row[schema.subject_key])
+        sample_id = str(row[schema.sample_key])
+        row_digest = hashlib.sha256()
         _update_canonical_digest(
-            digest,
+            row_digest,
             {
+                "expression_digest": expression_digests[position],
                 "obs_name": str(obs_name),
-                "position": position,
                 "values": [
                     [column, _plain_metadata_value(row[column])] for column in columns
                 ],
             },
         )
-    return digest.hexdigest()
-
-
-def _feature_id_digest(feature_ids: tuple[str, ...]) -> str:
-    digest = hashlib.sha256()
-    for position, feature_id in enumerate(feature_ids):
-        _update_canonical_digest(
-            digest,
-            {"feature_id": feature_id, "position": position},
+        rows_by_subject.setdefault(subject_id, []).append(row_digest.hexdigest())
+        samples_by_subject.setdefault(subject_id, set()).add(sample_id)
+    feature_digest = _feature_id_digest(validated.feature_ids)
+    result: list[tuple[str, str]] = []
+    for subject_id in sorted(rows_by_subject):
+        subject_digest: str = stable_id(
+            "sanitized_raw_subject_content",
+            {
+                "config_digest": config.digest,
+                "feature_id_digest": feature_digest,
+                "row_digests": sorted(rows_by_subject[subject_id]),
+                "sample_ids": sorted(samples_by_subject[subject_id]),
+                "subject_id": subject_id,
+            },
+            schema_version="1",
         )
+        result.append((subject_id, subject_digest))
+    if not result:
+        raise ValueError("sanitized raw input must contain at least one subject")
+    return tuple(result)
+
+
+def _scope_input_digest(
+    config_digest: str,
+    subject_content_digests: tuple[tuple[str, str], ...],
+) -> str:
+    result: str = stable_id(
+        "sanitized_raw_fold_input",
+        {
+            "config_digest": config_digest,
+            "subject_content_digests": [
+                [subject_id, digest]
+                for subject_id, digest in subject_content_digests
+            ],
+        },
+        schema_version="2",
+    )
+    return result
+
+
+def _validated_raw_input_digest(
+    validated: ValidatedInput,
+    config: CrychicConfig,
+) -> str:
+    return _scope_input_digest(
+        config.digest,
+        _subject_content_digests(validated, config),
+    )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class SanitizedRawInputIdentity:
+    """Producer-owned identity of the complete sanitized raw-count input."""
+
+    config_digest: str
+    input_digest: str
+    subject_ids: tuple[str, ...]
+    sample_ids: tuple[str, ...]
+    subject_content_digests: tuple[tuple[str, str], ...]
+    identity_id: str
+    _producer_marker: str
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "SanitizedRawInputIdentity is producer-owned; use the raw-input "
+            "workflow"
+        )
+
+    def _require_intact(self) -> None:
+        try:
+            payload = {
+                "config_digest": self.config_digest,
+                "input_digest": self.input_digest,
+                "sample_ids": list(self.sample_ids),
+                "subject_content_digests": [
+                    list(value) for value in self.subject_content_digests
+                ],
+                "subject_ids": list(self.subject_ids),
+            }
+            valid = (
+                self._producer_marker == _ROOT_INPUT_PRODUCER
+                and isinstance(self.config_digest, str)
+                and bool(self.config_digest)
+                and isinstance(self.input_digest, str)
+                and bool(self.input_digest)
+                and isinstance(self.subject_ids, tuple)
+                and bool(self.subject_ids)
+                and len(self.subject_ids) == len(set(self.subject_ids))
+                and isinstance(self.sample_ids, tuple)
+                and bool(self.sample_ids)
+                and len(self.sample_ids) == len(set(self.sample_ids))
+                and isinstance(self.subject_content_digests, tuple)
+                and tuple(
+                    subject_id for subject_id, _ in self.subject_content_digests
+                )
+                == self.subject_ids
+                and self.input_digest
+                == _scope_input_digest(
+                    self.config_digest,
+                    self.subject_content_digests,
+                )
+                and self.identity_id
+                == stable_id(
+                    "sanitized_raw_input_identity",
+                    payload,
+                    schema_version="1",
+                )
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Sanitized raw-input identity failed integrity validation",
+                code="root_input_identity_integrity_violation",
+                field="identity_id",
+                remediation="Rebuild the identity from the complete raw input",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Sanitized raw-input identity failed integrity validation",
+                code="root_input_identity_integrity_violation",
+                field="identity_id",
+                remediation="Rebuild the identity from the complete raw input",
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        self._require_intact()
+        return {
+            "identity_id": self.identity_id,
+            "config_digest": self.config_digest,
+            "input_digest": self.input_digest,
+            "subject_ids": list(self.subject_ids),
+            "sample_ids": list(self.sample_ids),
+            "subject_content_digests": [
+                {"subject_id": subject_id, "digest": digest}
+                for subject_id, digest in self.subject_content_digests
+            ],
+        }
+
+    def scope_digest(self, subject_ids: tuple[str, ...]) -> str:
+        """Derive one fold scope digest from the root subject manifest."""
+
+        self._require_intact()
+        requested = tuple(sorted(subject_ids))
+        if not requested or len(requested) != len(set(requested)):
+            raise ValueError("scope subject_ids must be non-empty and unique")
+        by_subject = dict(self.subject_content_digests)
+        unknown = set(requested).difference(by_subject)
+        if unknown:
+            raise ValueError(f"scope contains unknown subjects: {sorted(unknown)}")
+        return _scope_input_digest(
+            self.config_digest,
+            tuple((subject_id, by_subject[subject_id]) for subject_id in requested),
+        )
+
+
+def _validated_raw_input_identity(
+    validated: ValidatedInput,
+    config: CrychicConfig,
+) -> SanitizedRawInputIdentity:
+    metadata = validated.report.sample_metadata
+    subjects = tuple(sorted(metadata[config.subject_key].astype(str).unique()))
+    samples = tuple(sorted(metadata[config.sample_key].astype(str).unique()))
+    subject_content_digests = _subject_content_digests(validated, config)
+    input_digest = _scope_input_digest(config.digest, subject_content_digests)
+    payload = {
+        "config_digest": config.digest,
+        "input_digest": input_digest,
+        "sample_ids": list(samples),
+        "subject_content_digests": [list(value) for value in subject_content_digests],
+        "subject_ids": list(subjects),
+    }
+    self = object.__new__(SanitizedRawInputIdentity)
+    object.__setattr__(self, "config_digest", config.digest)
+    object.__setattr__(self, "input_digest", input_digest)
+    object.__setattr__(self, "subject_ids", subjects)
+    object.__setattr__(self, "sample_ids", samples)
+    object.__setattr__(self, "subject_content_digests", subject_content_digests)
+    object.__setattr__(
+        self,
+        "identity_id",
+        stable_id("sanitized_raw_input_identity", payload, schema_version="1"),
+    )
+    object.__setattr__(self, "_producer_marker", _ROOT_INPUT_PRODUCER)
+    self._require_intact()
+    return self
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class SanitizedRawInputSnapshot:
+    """Producer-owned defensive raw-count snapshot plus its subject manifest."""
+
+    adata: AnnData = field(repr=False)
+    identity: SanitizedRawInputIdentity
+    subject_key: str
+    sample_key: str
+    counts_layer: str
+    metadata_digest: str
+    expression_digest: str
+    expression_shape: tuple[int, int]
+    snapshot_id: str
+    _expression_matrix: Any = field(repr=False)
+    _producer_marker: str = field(repr=False)
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "SanitizedRawInputSnapshot is producer-owned; use the raw-input "
+            "workflow"
+        )
+
+    def _require_intact(self) -> None:
+        try:
+            self.identity._require_intact()
+            subjects = tuple(
+                sorted(self.adata.obs[self.subject_key].astype(str).unique())
+            )
+            samples = tuple(
+                sorted(self.adata.obs[self.sample_key].astype(str).unique())
+            )
+            selected = self.adata.layers[self.counts_layer]
+            snapshot_payload = {
+                "counts_layer": self.counts_layer,
+                "expression_digest": self.expression_digest,
+                "expression_shape": list(self.expression_shape),
+                "identity_id": self.identity.identity_id,
+                "metadata_digest": self.metadata_digest,
+                "sample_key": self.sample_key,
+                "subject_key": self.subject_key,
+            }
+            valid = (
+                self._producer_marker == _ROOT_SNAPSHOT_PRODUCER
+                and isinstance(self.adata, AnnData)
+                and not self.adata.uns
+                and not self.adata.obsm
+                and isinstance(self.subject_key, str)
+                and bool(self.subject_key)
+                and isinstance(self.sample_key, str)
+                and bool(self.sample_key)
+                and isinstance(self.counts_layer, str)
+                and bool(self.counts_layer)
+                and selected is self._expression_matrix
+                and tuple(int(value) for value in selected.shape)
+                == self.expression_shape
+                and _matrix_is_read_only(selected)
+                and _matrix_content_digest(selected) == self.expression_digest
+                and _snapshot_metadata_digest(self.adata) == self.metadata_digest
+                and subjects == self.identity.subject_ids
+                and samples == self.identity.sample_ids
+                and self.snapshot_id
+                == stable_id(
+                    "sanitized_raw_input_snapshot",
+                    snapshot_payload,
+                    schema_version="1",
+                )
+            )
+        except (
+            AttributeError,
+            ContractError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise ContractError(
+                "Sanitized raw-input snapshot failed integrity validation",
+                code="root_input_snapshot_integrity_violation",
+                field="snapshot",
+                remediation="Rebuild the defensive snapshot from raw input",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Sanitized raw-input snapshot failed integrity validation",
+                code="root_input_snapshot_integrity_violation",
+                field="snapshot",
+                remediation="Rebuild the defensive snapshot from raw input",
+            )
+
+
+def _snapshot_metadata_digest(adata: AnnData) -> str:
+    digest = hashlib.sha256()
+    _update_canonical_digest(
+        digest,
+        {
+            "obs_columns": [str(column) for column in adata.obs.columns],
+            "obs_dtypes": [str(dtype) for dtype in adata.obs.dtypes],
+            "var_index_name": str(adata.var_names.name),
+        },
+    )
+    obs_hash = pd.util.hash_pandas_object(
+        adata.obs,
+        index=True,
+        categorize=True,
+    ).to_numpy(dtype="<u8")
+    var_hash = pd.util.hash_pandas_object(
+        adata.var_names,
+        index=True,
+        categorize=True,
+    ).to_numpy(dtype="<u8")
+    digest.update(obs_hash.tobytes())
+    digest.update(var_hash.tobytes())
     return digest.hexdigest()
+
+
+def _freeze_matrix(matrix: Any) -> None:
+    if sparse.issparse(matrix):
+        matrix.data.setflags(write=False)
+        matrix.indices.setflags(write=False)
+        matrix.indptr.setflags(write=False)
+    else:
+        np.asarray(matrix).setflags(write=False)
+
+
+def _matrix_is_read_only(matrix: Any) -> bool:
+    if sparse.issparse(matrix):
+        return not (
+            matrix.data.flags.writeable
+            or matrix.indices.flags.writeable
+            or matrix.indptr.flags.writeable
+        )
+    return not np.asarray(matrix).flags.writeable
+
+
+def _sanitized_raw_input_snapshot(
+    adata: AnnData,
+    config: CrychicConfig,
+) -> SanitizedRawInputSnapshot:
+    """Copy declared raw input and bind its producer-owned subject manifest."""
+
+    caller_view = validate_anndata(adata, _input_schema(config))
+    if not caller_view.is_counts:
+        raise ValueError(
+            "subject cross-fitting requires raw counts; normalized-only input "
+            "cannot certify train-only preprocessing"
+        )
+    sanitized = _sanitize_validated_input(caller_view)
+    validated = validate_anndata(sanitized, _input_schema(config))
+    if validated.report.duplicate_genes:
+        raise ValueError("fold training does not support duplicate gene identifiers")
+    if config.counts_layer is None:  # pragma: no cover - validated counts contract
+        raise RuntimeError("cross-fit snapshot requires a declared counts layer")
+    selected = validated.matrix
+    _freeze_matrix(selected)
+    self = object.__new__(SanitizedRawInputSnapshot)
+    object.__setattr__(self, "adata", sanitized)
+    object.__setattr__(
+        self,
+        "identity",
+        _validated_raw_input_identity(validated, config),
+    )
+    object.__setattr__(self, "subject_key", config.subject_key)
+    object.__setattr__(self, "sample_key", config.sample_key)
+    object.__setattr__(self, "counts_layer", config.counts_layer)
+    object.__setattr__(self, "metadata_digest", _snapshot_metadata_digest(sanitized))
+    object.__setattr__(self, "expression_digest", _matrix_content_digest(selected))
+    object.__setattr__(
+        self,
+        "expression_shape",
+        tuple(int(value) for value in selected.shape),
+    )
+    object.__setattr__(self, "_expression_matrix", selected)
+    snapshot_payload = {
+        "counts_layer": self.counts_layer,
+        "expression_digest": self.expression_digest,
+        "expression_shape": list(self.expression_shape),
+        "identity_id": self.identity.identity_id,
+        "metadata_digest": self.metadata_digest,
+        "sample_key": self.sample_key,
+        "subject_key": self.subject_key,
+    }
+    object.__setattr__(
+        self,
+        "snapshot_id",
+        stable_id(
+            "sanitized_raw_input_snapshot",
+            snapshot_payload,
+            schema_version="1",
+        ),
+    )
+    object.__setattr__(self, "_producer_marker", _ROOT_SNAPSHOT_PRODUCER)
+    self._require_intact()
+    return self
+
+
+def _sanitized_raw_input_identity(
+    adata: AnnData,
+    config: CrychicConfig,
+) -> SanitizedRawInputIdentity:
+    """Build a typed identity without fitting any learned stage."""
+
+    return _sanitized_raw_input_snapshot(adata, config).identity
+
+
+def _sanitized_raw_input_digest(adata: AnnData, config: CrychicConfig) -> str:
+    """Digest the exact sanitized raw input without fitting any learned stage."""
+
+    return _sanitized_raw_input_identity(adata, config).input_digest
+
+
+def _empty_scope_pseudobulk(
+    validated: ValidatedInput,
+    *,
+    cell_types: tuple[str, ...],
+) -> PseudobulkDataset:
+    schema = validated.schema
+    rows: list[dict[str, object]] = []
+    for _, sample_row in validated.report.sample_metadata.iterrows():
+        sample_id = sample_row[schema.sample_key]
+        subject_id = sample_row[schema.subject_key]
+        context = tuple(
+            (key, sample_row[key]) for key in schema.context_keys
+        )
+        for cell_type in cell_types:
+            row: dict[str, object] = {
+                "unit_id": _unit_id(sample_id, context, cell_type),
+                "sample_id": sample_id,
+                "subject_id": subject_id,
+                "cell_type": cell_type,
+                "context": context,
+                "matrix_row": pd.NA,
+                "n_cells": 0,
+                "cell_proportion": np.nan,
+                "state_eligible": False,
+                "abundance_eligible": False,
+                "missingness_reason": MissingnessReason.SAMPLING_ZERO.value,
+                "library_size": pd.NA,
+                "median_umi": pd.NA,
+            }
+            for context_key, context_value in context:
+                if context_key != "context":
+                    row[context_key] = context_value
+            rows.append(row)
+    metadata = pd.DataFrame(rows).sort_values(
+        "unit_id", kind="stable", ignore_index=True
+    )
+    n_features = len(validated.feature_ids)
+    return PseudobulkDataset(
+        counts=sparse.csr_matrix((0, n_features), dtype=np.int64),
+        detection_fraction=sparse.csr_matrix((0, n_features), dtype=float),
+        unit_metadata=metadata,
+        feature_ids=validated.feature_ids,
+        matrix_unit_ids=(),
+        source_location=validated.report.expression_location,
+    )
 
 
 def _prepare_raw_fold(
@@ -592,6 +1109,7 @@ def _prepare_raw_fold(
     *,
     min_cells: int,
     cell_types: tuple[str, ...] | None = None,
+    root_input_identity: SanitizedRawInputIdentity | None = None,
 ) -> _PreparedRawFold:
     if not isinstance(adata, AnnData):
         raise TypeError("adata must be an AnnData instance")
@@ -599,32 +1117,64 @@ def _prepare_raw_fold(
         raise TypeError("config must be a CrychicConfig instance")
     schema = _input_schema(config)
     caller_view = validate_anndata(adata, schema)
+    scope_metadata = caller_view.report.sample_metadata
+    scope_subjects = tuple(
+        sorted(scope_metadata[config.subject_key].astype(str).unique())
+    )
+    scope_samples = tuple(
+        sorted(scope_metadata[config.sample_key].astype(str).unique())
+    )
     sanitized_adata = _sanitize_validated_input(caller_view)
+    excluded_cell_types: tuple[str, ...] = ()
+    all_requested_types_absent = False
+    if cell_types is not None:
+        requested_cell_types = tuple(sorted(cell_types))
+        observed_input_cell_types = set(
+            sanitized_adata.obs[config.cell_type_key].astype(str).unique()
+        )
+        excluded_cell_types = tuple(
+            sorted(observed_input_cell_types.difference(requested_cell_types))
+        )
+        if excluded_cell_types:
+            retained = sanitized_adata.obs[config.cell_type_key].astype(str).isin(
+                requested_cell_types
+            )
+            if not retained.any():
+                all_requested_types_absent = True
+            else:
+                sanitized_adata = sanitized_adata[retained].copy()
     validated = validate_anndata(sanitized_adata, schema)
     if validated.report.duplicate_genes:
         raise ValueError("fold training does not support duplicate gene identifiers")
-    aggregate = aggregate_pseudobulk(
-        validated,
-        min_cells=min_cells,
-        cell_types=cell_types,
+    aggregate = (
+        _empty_scope_pseudobulk(
+            validated,
+            cell_types=tuple(sorted(cell_types or ())),
+        )
+        if all_requested_types_absent
+        else aggregate_pseudobulk(
+            validated,
+            min_cells=min_cells,
+            cell_types=cell_types,
+        )
     )
-    metadata = validated.report.sample_metadata
-    subjects = tuple(sorted(metadata[config.subject_key].astype(str).unique()))
-    samples = tuple(sorted(metadata[config.sample_key].astype(str).unique()))
+    subjects = scope_subjects
+    samples = scope_samples
     observed_cell_types = tuple(
         sorted(aggregate.unit_metadata["cell_type"].astype(str).unique())
     )
-    input_digest = stable_id(
-        "sanitized_raw_fold_input",
-        {
-            "config_digest": config.digest,
-            "declared_obs_digest": _declared_obs_digest(validated),
-            "expression_matrix_digest": _matrix_digest(validated.matrix),
-            "feature_id_digest": _feature_id_digest(validated.feature_ids),
-            "sample_ids": list(samples),
-            "subject_ids": list(subjects),
-        },
-    )
+    if root_input_identity is None:
+        input_digest = _validated_raw_input_digest(
+            caller_view if excluded_cell_types else validated,
+            config,
+        )
+    else:
+        root_input_identity._require_intact()
+        if root_input_identity.config_digest != config.digest:
+            raise ValueError("root input identity does not match the fold config")
+        if not set(samples).issubset(root_input_identity.sample_ids):
+            raise ValueError("fold samples are outside the root input identity")
+        input_digest = root_input_identity.scope_digest(subjects)
     return _PreparedRawFold(
         validated=validated,
         aggregate=aggregate,
@@ -632,6 +1182,17 @@ def _prepare_raw_fold(
         sample_ids=samples,
         cell_type_ids=observed_cell_types,
         input_digest=input_digest,
+        config_digest=config.digest,
+        min_cells=min_cells,
+        requested_cell_type_ids=(
+            None if cell_types is None else tuple(sorted(cell_types))
+        ),
+        excluded_cell_type_ids=excluded_cell_types,
+        root_input_identity_id=(
+            None
+            if root_input_identity is None
+            else root_input_identity.identity_id
+        ),
     )
 
 
@@ -677,21 +1238,18 @@ def _planned_sender_contrasts(
     )
 
 
-def fit_training_artifacts(
-    adata: AnnData,
+def _fit_training_artifacts_from_prepared(
+    prepared: _PreparedRawFold,
     config: CrychicConfig,
     resource_bundle: ResourceBundle,
     target_prior: TargetPrior,
     *,
     spec: FoldTrainingSpec,
 ) -> TrainingArtifacts:
-    """Fit the implemented stage from a raw training-fold AnnData only.
-
-    The function derives biological subject provenance from ``adata.obs``.  It
-    deliberately accepts no fold manifest, subject list, precomputed matrix,
-    basis, functional, or provenance identifier.
-    """
-
+    if not isinstance(prepared, _PreparedRawFold):
+        raise TypeError("prepared must be a _PreparedRawFold")
+    if not isinstance(config, CrychicConfig):
+        raise TypeError("config must be a CrychicConfig")
     if not isinstance(resource_bundle, ResourceBundle):
         raise TypeError("resource_bundle must be a ResourceBundle")
     if not isinstance(target_prior, TargetPrior):
@@ -699,12 +1257,16 @@ def fit_training_artifacts(
     if not isinstance(spec, FoldTrainingSpec):
         raise TypeError("spec must be a FoldTrainingSpec")
     spec._require_intact()
+    prepared.require_compatible(
+        config,
+        min_cells=spec.min_cells,
+        cell_types=None,
+    )
     if resource_bundle.species is not target_prior.species:
         raise ValueError("resource bundle and target prior species must match")
     if resource_bundle.gene_namespace is not target_prior.gene_namespace:
         raise ValueError("resource bundle and target prior namespace must match")
 
-    prepared = _prepare_raw_fold(adata, config, min_cells=spec.min_cells)
     availability = _fit_interaction_universe(prepared, resource_bundle, spec)
     sender_contrasts = spec.sender_contrasts or _planned_sender_contrasts(
         availability.sample_interactions,
@@ -731,6 +1293,40 @@ def fit_training_artifacts(
         training_input_digest=prepared.input_digest,
         frozen_interaction_universe=availability.frozen_interaction_universe,
         sender_functionals=sender_functionals,
+    )
+
+
+def fit_training_artifacts(
+    adata: AnnData,
+    config: CrychicConfig,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    *,
+    spec: FoldTrainingSpec,
+) -> TrainingArtifacts:
+    """Fit the implemented stage from a raw training-fold AnnData only.
+
+    The function derives biological subject provenance from ``adata.obs``.  It
+    deliberately accepts no fold manifest, subject list, precomputed matrix,
+    basis, functional, or provenance identifier.
+    """
+
+    if not isinstance(config, CrychicConfig):
+        raise TypeError("config must be a CrychicConfig")
+    if not isinstance(resource_bundle, ResourceBundle):
+        raise TypeError("resource_bundle must be a ResourceBundle")
+    if not isinstance(target_prior, TargetPrior):
+        raise TypeError("target_prior must be a TargetPrior")
+    if not isinstance(spec, FoldTrainingSpec):
+        raise TypeError("spec must be a FoldTrainingSpec")
+    spec._require_intact()
+    prepared = _prepare_raw_fold(adata, config, min_cells=spec.min_cells)
+    return _fit_training_artifacts_from_prepared(
+        prepared,
+        config,
+        resource_bundle,
+        target_prior,
+        spec=spec,
     )
 
 
