@@ -13,7 +13,7 @@
     "simulation_source_interaction_id": "CXCL10_CXCR3",
     "simulation_source_namespace": "synthetic_cellchat_style_lr_id"
   },
-  "base_revision": "21e0bfb51230689d974a37a6ec1937ef81175da9",
+  "base_revision": "98f74d4763e0ef62c2671bc64b11bd8574df7a21",
   "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
   "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; receiver-program scoring is connected as a diagnostic-only component",
   "checks": {
@@ -33,10 +33,10 @@
     "method_superiority": false
   },
   "full_artifact": {
-    "canonical_sha256": "e95521af1bb7d10a31e095d64b7e5f4f80519ae03df8360464c2fea3a0f96447",
-    "file_sha256": "defa291d866ef5c935b97c6f9df23b4cb28269bc7cc260f21de24bb269142d02",
+    "canonical_sha256": "47d356a70aba793dc60a2f1b0cd52956bbb30c864c5b7d13e854034033f6792b",
+    "file_sha256": "c52f39e54fa082a8f5254b15fec8fd4a5586efcedc32e385d860c06bb637488a",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
-    "size_bytes": 216759,
+    "size_bytes": 216757,
     "tracked": false
   },
   "generated_on": "2026-07-14",
@@ -126,7 +126,7 @@
         }
       ],
       "dataset": "synthetic_active",
-      "elapsed_seconds": 60.461931948550045,
+      "elapsed_seconds": 59.76579053886235,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -222,7 +222,7 @@
         }
       ],
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 59.066715989261866,
+      "elapsed_seconds": 58.96314409840852,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -317,7 +317,7 @@
         }
       ],
       "dataset": "synthetic_receiver_autonomous",
-      "elapsed_seconds": 58.847563445568085,
+      "elapsed_seconds": 58.844345550984144,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -412,7 +412,7 @@
         }
       ],
       "dataset": "synthetic_global_null",
-      "elapsed_seconds": 58.69583024829626,
+      "elapsed_seconds": 59.04341702349484,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -498,19 +498,19 @@
     "src/crychic/core/serialization.py": "dff2b00173fc52e257d1cd18d2806fc5de77be11099f6fd4f6811df08fcaa808",
     "src/crychic/data/__init__.py": "2cf8b232bf1f8a2c76261e530ef0142ecd9e2ed227398b5aedc678bfc6c01248",
     "src/crychic/data/contracts.py": "83694b2f796c570aac9b7d4b6a79ffab00ed29e5d3c0265de6ad7646e2fb6681",
-    "src/crychic/data/validation.py": "e7c3978e28dd0ff6cc67ebbd532193274e4f4f216ce7fc4ae4f67aafc943513b",
+    "src/crychic/data/validation.py": "c2fa297a33ba0154871f8ad245fe8cde6b109bed541a3be93c2d2f4b493174bc",
     "src/crychic/design/__init__.py": "de552b37538c45b1c8e21f392fd90e086b13a3a155ac3ebc576209012d2e3405",
     "src/crychic/design/audit.py": "3be22eb8b9fbdfeb18b8e22476ab78fd1049071c57ad58c40c2ad719169ee5ac",
     "src/crychic/design/context_encoding.py": "0d63359e91b77c5ca0980d3281cacba35b8f3eaa77bd47368ff0ff0ffc86ce3f",
     "src/crychic/design/context_graph.py": "33c7379d8ac3b4f9450daa8caf7c1fe9812f30b85381c7d6b0295cfd1c06f0d4",
     "src/crychic/design/contrasts.py": "295db3666b01bf8e456e70d3781ae190db5adc72d95283577ddbbc8c722d31d7",
-    "src/crychic/design/frozen_encoder.py": "b8165127647f0d914419d04f7aa39e7e8150a5a88da8eaa72ec60155ae435795",
+    "src/crychic/design/frozen_encoder.py": "b6c3eb1b93764f534259d82c5a4250f4790d940a921b664d4496efbf2d612de2",
     "src/crychic/pseudobulk/__init__.py": "6ae1228c646af0a2ee85a30a2ad64fd847e7c0e3f257f9215f3af7a24d52dcf4",
     "src/crychic/pseudobulk/aggregation.py": "4b7999916f9971eb5639fffe96ff60029319e6606e65e7e40f852da17b7db04f",
     "src/crychic/pseudobulk/contracts.py": "e26e41328e0b93efedde974d11b3eafc013c9ab2ec0514be150547d4908c3d95",
     "src/crychic/resampling/__init__.py": "e0c9e13a09b6339c92ee8fc59b9aa0bf955db82644be7531a53f72bbfaa8576d",
-    "src/crychic/resampling/contracts.py": "34ad793e84cf59dfd0e2f03e67f7203ba13c1573df0cd7a4c0e3c6a433f70bf3",
-    "src/crychic/resampling/folds.py": "e84f6469f34dbc5cd2a5c9a441452fd506bcac45a7f59f05c9575501c7dba891",
+    "src/crychic/resampling/contracts.py": "c00bcae35b34c2252b02b65d1612e2eb3ae786fbd1fcab02f71446b4411626d5",
+    "src/crychic/resampling/folds.py": "615b71fa2d99ba1082e980e050ef6d536a9e22c85fda4ba8c9300b6c6b2b2c82",
     "src/crychic/resampling/validation.py": "8d374dbe92e51535fcf01fdf962976ea5e4c4cb15137779a0b75a343dd0d6a6f",
     "src/crychic/resources/__init__.py": "8b20692a085926f8d3eb7315501385678cd0ea5736cc0ee781f8a0f0052925e9",
     "src/crychic/resources/autonomous_registry.py": "29dd4907cb1b99c258ff85be33e016f703d536c7ddaaed6866180bc412d3c1db",
@@ -538,7 +538,7 @@
     "src/crychic/workflow/__init__.py": "cd4b0f87392cf278ab19406d18a490c3472d72f5139a42b79fe6ce3f487b8511",
     "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "25ded243aec7622aa6a89db54a84f13e9a90a925e7c451376fb0e07ee33605cd",
+    "src/crychic/workflow/crossfit.py": "941343b447e8f20b4ce5bbab9c5ff6c760067be1099fabf4d1bc219af7b40385",
     "src/crychic/workflow/receiver_incremental.py": "b8445203fd48c0820679dfdafb7a9cb02cdd98cb945506919198e0f47235bd29",
     "src/crychic/workflow/repeated_crossfit.py": "94b720a7095d73967635089f55495463897f144d2bebc52c8bf879bbba2f9b4d",
     "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"
