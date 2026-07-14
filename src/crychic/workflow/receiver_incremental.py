@@ -1313,6 +1313,7 @@ def _fit_subject_blocked_penalty_tuning(
     spec: PenaltyTuningSpec,
     tuning_scope_id: str,
     outer_fold_id: str,
+    inner_partition_seed_lineage: SeedLineage | None,
 ) -> tuple[SubjectFoldPlan | None, PenaltyTuningArtifact]:
     spec._require_intact()
     outer_subjects = tuple(sorted(set(inputs.sample_subject_ids)))
@@ -1416,6 +1417,7 @@ def _fit_subject_blocked_penalty_tuning(
             seed_lineage=SeedLineage(spec.root_seed).derive(
                 "receiver_incremental_inner_tuning", split_scope_id
             ),
+            partition_seed_lineage=inner_partition_seed_lineage,
         )
     except FoldPlanningError as error:
         return None, not_estimable_penalty_tuning(
@@ -1627,6 +1629,7 @@ def fit_receiver_incremental_training_artifact(
     lambda1: float = 0.0,
     lambda2: float = 0.0,
     penalty_tuning_spec: PenaltyTuningSpec | None = None,
+    inner_partition_seed_lineage: SeedLineage | None = None,
 ) -> ReceiverIncrementalTrainingArtifact:
     """Fit a receiver-null model and optional conditional subject-blocked tuning.
 
@@ -1636,6 +1639,8 @@ def fit_receiver_incremental_training_artifact(
     the encoder remain frozen from the complete outer-training fold;
     outer-heldout values are unavailable. Independent-group one-SE tuning fails
     closed until correlated pseudocontrast losses have a valid uncertainty rule.
+    An explicit inner partition lineage changes only the donor allocation; the
+    tuning and model identities remain bound to their exact outer-fold parents.
     """
 
     minimum_scale, null_loss_floor, lambda1, lambda2 = _validated_hyperparameters(
@@ -1652,6 +1657,16 @@ def fit_receiver_incremental_training_artifact(
             raise ValueError(
                 "explicit lambda values cannot be combined with penalty_tuning_spec"
             )
+    if inner_partition_seed_lineage is not None and not isinstance(
+        inner_partition_seed_lineage, SeedLineage
+    ):
+        raise TypeError(
+            "inner_partition_seed_lineage must be a SeedLineage or None"
+        )
+    if penalty_tuning_spec is None and inner_partition_seed_lineage is not None:
+        raise ValueError(
+            "inner_partition_seed_lineage requires an explicit penalty_tuning_spec"
+        )
     training_design = _validate_training_parents(
         encoder, response, precision, receiver_family
     )
@@ -1793,6 +1808,9 @@ def fit_receiver_incremental_training_artifact(
                         spec=penalty_tuning_spec,
                         tuning_scope_id=tuning_scope_id,
                         outer_fold_id=response.fold_id,
+                        inner_partition_seed_lineage=(
+                            inner_partition_seed_lineage
+                        ),
                     )
                 )
                 selected = tuning_artifact.selected_candidate

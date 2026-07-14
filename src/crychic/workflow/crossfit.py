@@ -46,6 +46,7 @@ from crychic.design import (
 from crychic.pseudobulk import PseudobulkDataset
 from crychic.resampling import (
     DesignFoldChecker,
+    FoldManifest,
     OOFCoverageAudit,
     SubjectFoldPlan,
     plan_subject_folds,
@@ -478,6 +479,45 @@ def _outer_fold_partition_lineage(
     return SeedLineage(seed).derive(
         "subject_crossfit_outer_partition_v1",
         f"repeat={spec.repeat_index}",
+    )
+
+
+def _inner_tuning_partition_base_lineage(
+    spec: CrossFitSpec,
+    fold: FoldManifest,
+) -> SeedLineage | None:
+    tuning_spec = spec.penalty_tuning_spec
+    outer_lineage = _outer_fold_partition_lineage(spec)
+    if tuning_spec is None or outer_lineage is None:
+        return None
+    outer_scope_id = stable_id(
+        "subject_crossfit_outer_partition_scope",
+        {
+            "partition_seed_lineage": outer_lineage.to_dict(),
+            "test_subject_ids": list(fold.test_subject_ids),
+            "train_subject_ids": list(fold.train_subject_ids),
+        },
+        schema_version="1",
+    )
+    return SeedLineage(tuning_spec.root_seed).derive(
+        "receiver_incremental_inner_partition_v1",
+        tuning_spec.spec_id,
+        outer_scope_id,
+    )
+
+
+def _receiver_inner_partition_lineage(
+    base_lineage: SeedLineage | None,
+    *,
+    receiver: str,
+    contrast_id: str,
+) -> SeedLineage | None:
+    if base_lineage is None:
+        return None
+    return base_lineage.derive(
+        "receiver_contrast",
+        f"receiver={receiver}",
+        f"contrast_id={contrast_id}",
     )
 
 
@@ -1426,6 +1466,42 @@ class CrossFitArtifacts:
                     "receiver incremental models do not match the cross-fit "
                     "penalty tuning policy"
                 )
+            inner_partition_base = _inner_tuning_partition_base_lineage(
+                self.spec,
+                manifest,
+            )
+            contrast_by_name = {
+                contrast.name: contrast for contrast in self.spec.contrasts
+            }
+            for model in item.receiver_incremental_models:
+                inner_plan = model.inner_fold_plan
+                if inner_plan is None:
+                    continue
+                contrast = contrast_by_name.get(model.contrast_name)
+                if contrast is None:
+                    raise ValueError(
+                        "receiver incremental model contrast does not match the "
+                        "cross-fit specification"
+                    )
+                expected_inner_lineage = _receiver_inner_partition_lineage(
+                    inner_partition_base,
+                    receiver=model.receiver,
+                    contrast_id=_contrast_id(contrast),
+                )
+                observed_inner_lineage = inner_plan.partition_seed_lineage
+                if (
+                    None
+                    if observed_inner_lineage is None
+                    else observed_inner_lineage.to_dict()
+                ) != (
+                    None
+                    if expected_inner_lineage is None
+                    else expected_inner_lineage.to_dict()
+                ):
+                    raise ValueError(
+                        "inner tuning partition seed lineage does not match the "
+                        "cross-fit outer partition"
+                    )
             expected_common_count = (
                 0
                 if self.spec.penalty_tuning_spec is None
@@ -2726,6 +2802,7 @@ def _fit_receiver_incremental_chains(
     min_subjects_per_context: int,
     autonomous_program_resource: ReceiverAutonomousProgramResource | None,
     penalty_tuning_spec: PenaltyTuningSpec | None,
+    inner_partition_seed_lineage: SeedLineage | None,
 ) -> tuple[
     tuple[FoldGeneResponseArtifact, ...],
     tuple[PrecisionTransformResult, ...],
@@ -2763,6 +2840,11 @@ def _fit_receiver_incremental_chains(
             autonomous_program_resource,
             minimum_scale=minimum_scale,
             penalty_tuning_spec=penalty_tuning_spec,
+            inner_partition_seed_lineage=_receiver_inner_partition_lineage(
+                inner_partition_seed_lineage,
+                receiver=response.receiver,
+                contrast_id=_contrast_id(encoder.contrast),
+            ),
         )
         responses.append(response)
         precisions.append(precision)
@@ -3556,6 +3638,9 @@ def _run_subject_crossfit(
             min_subjects_per_context=spec.min_train_subjects_per_context,
             autonomous_program_resource=spec.autonomous_program_resource,
             penalty_tuning_spec=spec.penalty_tuning_spec,
+            inner_partition_seed_lineage=(
+                _inner_tuning_partition_base_lineage(spec, fold)
+            ),
         )
         (
             receiver_response_applications,

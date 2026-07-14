@@ -1414,6 +1414,108 @@ def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
     assert coverage["reason_code"].isna().all()
 
 
+def test_explicit_outer_seed_pairs_inner_tuning_parameter_sensitivity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _spec()
+    resource = _trusted_target_resource(tmp_path, monkeypatch)
+    tuning_spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    first_spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        outer_fold_partition_seed=99173,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=tuning_spec,
+    )
+    changed_sender = replace(
+        first_spec.training_spec.sender_parameters,
+        ligand_contrast_minimum_effect=0.02,
+    )
+    second_spec = replace(
+        first_spec,
+        training_spec=replace(
+            first_spec.training_spec,
+            sender_parameters=changed_sender,
+        ),
+    )
+    adata = _adata(tuple(f"p{index}" for index in range(1, 9)))
+
+    first = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=first_spec,
+    )
+    second = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=second_spec,
+    )
+
+    def inner_plans(
+        result: CrossFitArtifacts,
+    ) -> dict[
+        tuple[tuple[str, ...], tuple[str, ...], str, str],
+        tuple[
+            tuple[tuple[tuple[str, ...], tuple[str, ...]], ...],
+            dict[str, object],
+            str,
+            str,
+        ],
+    ]:
+        manifests = {fold.fold_id: fold for fold in result.fold_plan.folds}
+        records = {}
+        for fold in result.folds:
+            outer = manifests[fold.fold_id]
+            for model in fold.receiver_incremental_models:
+                plan = model.inner_fold_plan
+                tuning = model.penalty_tuning_artifact
+                if plan is None or tuning is None:
+                    continue
+                assert plan.partition_seed_lineage is not None
+                key = (
+                    outer.train_subject_ids,
+                    outer.test_subject_ids,
+                    model.receiver,
+                    model.contrast_name,
+                )
+                records[key] = (
+                    tuple(
+                        (inner.train_subject_ids, inner.test_subject_ids)
+                        for inner in plan.folds
+                    ),
+                    plan.partition_seed_lineage.to_dict(),
+                    plan.plan_id,
+                    tuning.tuning_id,
+                )
+        return records
+
+    first_plans = inner_plans(first)
+    second_plans = inner_plans(second)
+    assert first_plans
+    assert set(first_plans) == set(second_plans)
+    for key in first_plans:
+        first_partitions, first_lineage, first_plan_id, first_tuning_id = (
+            first_plans[key]
+        )
+        second_partitions, second_lineage, second_plan_id, second_tuning_id = (
+            second_plans[key]
+        )
+        assert first_partitions == second_partitions
+        assert first_lineage == second_lineage
+        assert first_plan_id != second_plan_id
+        assert first_tuning_id != second_tuning_id
+
+
 def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

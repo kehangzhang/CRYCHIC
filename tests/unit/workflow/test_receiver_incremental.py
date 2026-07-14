@@ -27,7 +27,7 @@ from crychic.availability import (
     InteractionFilterApplication,
     InteractionFilterPolicy,
 )
-from crychic.core import ContractError
+from crychic.core import ContractError, SeedLineage
 from crychic.design import (
     FrozenDesignEncoder,
     apply_frozen_design_encoder,
@@ -335,6 +335,7 @@ def test_public_fit_and_apply_signatures_accept_only_typed_parents() -> None:
         "lambda1",
         "lambda2",
         "penalty_tuning_spec",
+        "inner_partition_seed_lineage",
     )
     assert tuple(apply_parameters) == (
         "model",
@@ -433,6 +434,21 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
     assert model.inner_fold_plan is not None
     assert model.penalty_tuning_artifact is not None
     tuning = model.penalty_tuning_artifact
+    assert model.inner_fold_plan.partition_seed_lineage is None
+    assert "partition_seed_lineage" not in model.inner_fold_plan.to_dict()
+    assert model.inner_fold_plan.plan_id == (
+        "subject_fold_plan_90f4410c6d923f1a03f522a4f1d38c5d"
+    )
+    assert tuple(fold.fold_id for fold in model.inner_fold_plan.folds) == (
+        "subject_fold_bb831a289fa98184b20854f9928ffaf2",
+        "subject_fold_d78fc0d232566059819396df119cd4e7",
+    )
+    assert tuning.tuning_id == (
+        "penalty_tuning_artifact_07eac8ced8571e92dccaf184f571b03c"
+    )
+    assert model.training_artifact_id == (
+        "receiver_incremental_training_artifact_751c44bdaec1882d5d231148297d0c45"
+    )
     assert tuning.status == "selected"
     assert tuning.is_oof_certified
     assert "outer_frozen_representation" in tuning.certification_status
@@ -477,6 +493,55 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
     assert not model.is_oof_certified
     assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
     model.to_dict()
+
+
+def test_explicit_inner_partition_lineage_is_persisted_and_requires_tuning() -> None:
+    encoder, response, precision, family = _training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("G1", "G2"),
+        program_ids=("generic_program",),
+        resource_id="test-autonomous-programs",
+        version="1",
+        manifest_digest="9" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    lineage = SeedLineage(808).derive("paired-inner-partition")
+
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(),
+        inner_partition_seed_lineage=lineage,
+    )
+
+    assert model.inner_fold_plan is not None
+    assert model.inner_fold_plan.partition_seed_lineage == lineage
+    assert model.inner_fold_plan.to_dict()["partition_seed_lineage"] == (
+        lineage.to_dict()
+    )
+
+    with pytest.raises(ValueError, match="requires an explicit penalty_tuning_spec"):
+        fit_receiver_incremental_training_artifact(
+            encoder,
+            response,
+            precision,
+            family,
+            inner_partition_seed_lineage=lineage,
+        )
+    with pytest.raises(TypeError, match="inner_partition_seed_lineage"):
+        fit_receiver_incremental_training_artifact(
+            encoder,
+            response,
+            precision,
+            family,
+            penalty_tuning_spec=_small_tuning_spec(),
+            inner_partition_seed_lineage=123,  # type: ignore[arg-type]
+        )
 
 
 def test_inner_tuning_plan_failure_is_typed_and_never_falls_back() -> None:
