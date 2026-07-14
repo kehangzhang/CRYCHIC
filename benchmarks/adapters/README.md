@@ -87,10 +87,12 @@ conda run -n liana_env python -m benchmarks.adapters.liana.run_by_sample \
 
 The NicheNet package is not installed locally. Its runner therefore consumes
 the checksum-pinned v2_2021 top-250 ligand-target matrix directly and exports a
-separate `ligand_target_program` Track B score. It is a sample-level proxy equal
-to sender ligand mean expression times the receiver's weighted target-program
-mean. It is explicitly not `predict_ligand_activities`, which requires a
-receiver DE gene set and background universe.
+separate `ligand_target_program` Track B score. For each sample, receiver, and
+candidate ligand, the proxy is the receiver's weighted target-program mean. It
+is source-agnostic: sender ligand expression is not multiplied into the score,
+and the output uses the `__source_agnostic__` sender placeholder rather than
+claiming sender attribution. It is explicitly not `predict_ligand_activities`,
+which requires a receiver DE gene set and background universe.
 
 ```bash
 uv run python -m benchmarks.adapters.nichenet.run_by_sample INPUT.h5ad OUTPUT \

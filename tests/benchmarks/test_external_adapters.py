@@ -371,7 +371,7 @@ def test_nichenet_prior_operator_preserves_ligand_order_and_coverage() -> None:
     np.testing.assert_array_equal(ligand_index, [0, -1])
 
 
-def test_nichenet_target_program_score_is_source_agnostic() -> None:
+def test_nichenet_target_program_score_does_not_multiply_sender_expression() -> None:
     resource = pd.DataFrame({"interaction_id": ["i1"]})
     operator = pd.DataFrame([[0.0], [1.0]])
     observed = _score_samples(
