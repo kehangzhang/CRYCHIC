@@ -14,25 +14,25 @@ is not counted as complete when the end-to-end workflow does not invoke it.
 | Four semantic outputs | Partial | Workflow contracts separate the components. The public opt-in path now fits and applies a source-, receptor- and sender-agnostic `receiver_program_score` parent, emits trusted paired incremental children plus family/member/sender diagnostics, and binds each component to its producer-owned lineage. The receiver program remains diagnostic only and is explicitly excluded from integrated edge evidence; public integrated scoring still uses the legacy baseline. |
 | Explained-share v3 | Partial | Implemented and tested as a candidate support method; the baseline default remains relative-coefficient v1. |
 | Held-out incremental downstream gain | Partial | Public cross-fit builds a producer-owned fold response, standardized-unit precision transform and typed incremental train/apply chain from the exact frozen design and eligible receiver-family basis. Fully paired and fully independent low-level estimands support technical-row aggregation and explicit structural-zero gains. The v7 contract maps raw family and autonomous bases into one frozen standardized response coordinate system, then evaluates the exact `null + residualized-context x family-effect` low-rank nuisance factorization instead of materializing a family x nuisance x feature tensor. The public opt-in paired path connects a code-registered `manifest_verified_static_trusted_v1` autonomous resource and producer-owned subject-blocked tuning. Response centering/scaling, nuisance projection, solver fitting and penalty scaling are refit in each inner training split while precision, encoder and family basis remain outer-frozen. Selection v2 uses subject-paired candidate-minus-best loss differences; eligible candidates use an explicit L1-first sparsity priority and L2 second. This is a declared policy order and descriptive heuristic, not a total cross-axis regularization magnitude, CI or noninferiority test. Estimable trusted chains can produce official `observed` training and held-out rows; caller-declared resources and unsupported independent/mixed inner tuning fail closed. Full-pipeline certification still requires repeated inference. |
-| Soft-min integration | Partial | Candidate integration and ablation tests exist; the public baseline still uses legacy four-component scoring. |
-| Hard receptor eligibility | Partial | Public partial cross-fit freezes a condition-blind, scale-invariant hard gate in each training fold and performs no held-out gate fitting. Every planned receiver/sample application is now retained in a separate exact-coverage audit. The gate remains absent from a certified common integrated score. |
+| Soft-min integration | Partial | Family-common v2 applies the released soft-min only after same-row receptor eligibility and common-sender v3 ligand-contrast support. It preserves structural zero versus `not_estimable` precedence and binds `score_version=family_first_mechanistic_ligand_contrast_gated_softmin_v2`. The public baseline still uses legacy four-component scoring. |
+| Hard receptor eligibility | Partial | Public partial cross-fit freezes a condition-blind, scale-invariant hard receptor gate in each training fold and performs no held-out gate fitting. Family-common v2 combines that receptor gate with the separate train-only interaction ligand-contrast gate on the same row. Every planned receiver/sample application is retained in an exact-coverage audit. The combined gate remains absent from a certified common integrated score. |
 | Winsorized normalized precision | Implemented | Precision v3 binds its exact fold-response parent, residual degrees of freedom, downstream feature scale, training row manifest, sample/subject provenance, encoder, ordered feature IDs and immutable raw/transformed values. Residual df <= 4 and missing-scale cases use equal supported-feature weights; higher-df inverse variance is converted to standardized-response units before winsorization and median normalization. This deterministic guardrail drives autonomous projection and the signed-residual solver boundary and is not an empirical-Bayes moderation claim. |
 | Strict complete-link families | Implemented | Chaining counterexamples are covered by family tests. The deterministic incremental complete-link implementation matches a brute-force reference across random sparse profiles, zero-similarity and tolerance cases, and reuses one static partition per fold feature universe while retaining receiver-specific gates and artifact IDs. |
-| True family-first fitting | Partial | Public opt-in cross-fit freezes hard eligibility, strict complete-link families and one medoid basis column per family, tunes and fits only eligible family columns, computes held-out family attribution and subject-family differential effects, then allocates an established family score to members using response-independent evidence. The v7 canonical one-seed smoke selects `0.1/0.1` with one active family in each fold and selects `1.0/1.0` with structural-zero family scores in ligand-only, receiver-autonomous and global-null controls. The source-/receptor-/sender-agnostic receiver-program component is connected as a diagnostic-only parent. The registered two-seed quick subset recovers all six known seed-edge pairs in every released view and keeps three negative controls at zero, but each active seed also selects one nontruth family with positive raw absolute and zero paired integrated effect. The legacy baseline remains unchanged, and multi-seed coverage of all seven scenarios plus repeated inference remain absent. |
-| Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. |
+| True family-first fitting | Partial | Public opt-in cross-fit freezes hard eligibility, strict complete-link families and one medoid basis column per family, tunes and fits only eligible family columns, computes held-out family attribution and subject-family differential effects, then applies family-common v2. Only interactions that pass both receptor eligibility and the frozen common-sender v3 ligand-contrast gate enter family availability or member evidence. No supported gate plus any eligible `not_estimable` gate propagates NE; all observed unsupported gates give structural zero. For an otherwise positive core, a mixed supported plus eligible-NE family may retain the supported family core, but entropy, member weights/scores, and sender descendants fail closed; an earlier structural zero remains zero. The receiver program remains diagnostic only and the legacy baseline is unchanged. Source-bound v2 smoke and full-seven campaign summaries now pass their frozen checks, but the path remains noncertifying and synthetic. |
+| Complete scoring manifest | Implemented | Every tracked candidate artifact participates in the model/function identity. Common-sender v3 additionally binds the exact `FrozenInteractionUniverse`, complete receiver x interaction candidate-sender manifest, canonical training availability, sanitized raw training input, complete-subject effects, and jointly reproducible Holm family. Family-common functional/application and cross-fit bindings use producer version `v2`. |
 | Receiver-child scoring collection provenance | Partial | Core `ScoringCollectionManifest` contracts and a versioned result extension bind each contrast/repeat/fold to emitted receiver children, scoring functional IDs, source row counts and source-key digests. Persistence validates exact emitted `sample_scores` coverage and receiver/contrast edge partitions, while fixing `composition_status=partial_emitted_only` and `common_functional_across_receivers=false`. No planned receiver universe or authoritative persisted child model/version/universe registry exists yet. |
 | State/ecosystem eligibility separation | Implemented | State rows no longer depend on abundance eligibility. |
 | All-missing sender evidence | Implemented | Returns missing values rather than fabricated uniform weights. |
-| Common sender functional | Partial | Public subject-cross-fit freezes the sender universe, cross-context training prevalence prior, minimum support and temperature in each training fold, applies only sample-local held-out ligand evidence, and verifies exact stage-level OOF coverage. The opt-in family-common application uses that functional only to conserve and allocate an already-established member score. The receiver program is now connected separately as a diagnostic parent and does not enter sender allocation or the integrated score. The family-common path remains separate from the legacy default and noncertifying. |
+| Common sender functional | Partial | Public subject-cross-fit common-sender v3 consumes the intact producer-owned `FrozenInteractionUniverse` and a complete frozen receiver x interaction candidate-sender manifest. It averages repeated rows per sender/subject/context, maximizes at interaction level across frozen candidates, retains only subjects complete for every contrast context without weight renormalization, and uses a one-sided Student-t contrast. Every frozen interaction remains in one outer-fold x receiver x contrast Holm family; NE uses effective p=1 and remains in `m`. The same functional separately freezes prevalence priors and applies only sample-local held-out ligand evidence for non-causal sender allocation. Family-common v2 consumes the immutable interaction gate; the path remains separate from the legacy default and noncertifying. |
 | Subject fold planning and OOF audit | Implemented | Subject blocks, K fallback, design re-audit, and exact coverage are tested. |
 | Repeated full train/apply split stability | Partial | `CrossFitSpec.repeat_index` defaults to `0`, preserving the base cross-fit policy identity while deriving a distinct repeat identity. `RepeatedCrossFitSpec` reruns the complete public train/apply workflow for every repeat and returns producer-owned `RepeatedCrossFitDiagnostics` with four immutable-digest tables: `repeat_registry`, `family_fold_events`, `subject_family_repeat_values`, and `family_repeat_stability`. Exact subject x repeat opportunities are enforced. A family absent from an observed training-fold universe is explicitly `not_estimable`, never a zero or nonselection event; the released universe is declared as the union of observed fold-family IDs. A row-order-invariant subject-content manifest derives every fold scope digest, and a defensive snapshot binds expression, metadata, configuration, resource-bundle content, and target-prior content. Selection and effect distributions require complete repeats and distinct family-specific partitions; fit-level and subject-exposure selection denominators are separate, and structural zeros do not count as estimable observations. It is descriptive split-stability only: inference eligibility is always false, full children are still retained in memory, and streaming bootstrap, permutation, confidence intervals, p/q values, communication probabilities, and G3 calibration remain absent. |
-| Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives folds from raw metadata, creates physical sanitized scopes, and freezes interaction/sender, complete-formula EMM design, receptor, family, receiver-program, response and precision artifacts. An opt-in `PenaltyTuningSpec` connects paired subject-blocked inner evaluation, selected incremental parents and family-common held-out applications. Training receiver reference expression must cover every expected sample exactly with authoritative subject/context lineage; held-out program applications bind the exact sample/subject/context manifest and expression digest. Producer-owned target-profile and input identities, tuning, selected penalties, trusted autonomous resources, edge evidence and receiver-specific sender inputs reject forged or stale parents. Independent/mixed inner one-SE tuning, repeated full-pipeline inference and default-method integration remain. |
+| Train/apply/cross-fit public workflow | Partial | Public `run_subject_crossfit` derives folds from raw metadata, creates physical sanitized scopes, and freezes the interaction universe, candidate-sender manifest, common-sender v3 support, complete-formula EMM design, receptor, family, receiver-program, response and precision artifacts. An opt-in `PenaltyTuningSpec` connects paired subject-blocked inner evaluation, selected incremental parents and family-common v2 held-out applications. Training receiver reference expression must cover every expected sample exactly with authoritative subject/context lineage; held-out program applications bind the exact sample/subject/context manifest and expression digest. Producer-owned target-profile and input identities, tuning, selected penalties, trusted autonomous resources, gate-bearing edge evidence and receiver-specific sender inputs reject forged or stale parents. Independent/mixed inner one-SE tuning, repeated full-pipeline inference and default-method integration remain. |
 | Exact-zero complex soft-min | Implemented | Zero and missingness behavior are covered by tests. |
-| Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, and cap conflicts are tested. |
+| Train-only frozen interaction universe | Implemented | Fit/apply identity, reversed-test perturbation, resource provenance, cap conflicts, complete per-receiver candidate manifests, row-order invariance, out-of-manifest rejection, and Holm-family integrity are tested. Missing/NE interactions remain in the frozen family rather than shrinking the multiplicity denominator. |
 | H-common data-driven cap ban | Implemented | v0.2 specs reject caps and the cSCC/MS H-common real-data runs completed without a cap. The harmonized resource has 638 interactions, below the former cap of 800, so this run validates the uncapped path but does not demonstrate coverage expansion from removing the cap. |
 | Coverage-risk hierarchy | Partial | Nine-level candidate ledger and monotone threshold contract exist; no real threshold campaign has run. |
 | G1.5 multi-edge, multi-seed truth | Implemented | 50-seed development and 200-seed holdout both pass all frozen gates. |
-| G1.5 through public workflow | Partial | The frozen public runner sends three known edges and all seven registered scenarios through `run_subject_crossfit`. The registered two-seed quick subset executes active, ligand-only, receiver-autonomous and global-null and is eligible for development interpretation: all four state/ecosystem member/sender summaries recover 6/6 seed-edge pairs, every active-minus-ligand-only margin is positive, and coverage loss is zero. All three executed negative controls have zero training/held-out family selection and zero paired/raw integrated family false positives. Each active seed still selects one nontruth family with positive raw absolute but zero paired integrated effect. The separate single-seed full-seven debug finds target-only/receptor-knockout raw false positives and abundance-only `not_estimable`, but is explicitly excluded. Multi-seed execution of all seven scenarios and repeated inference remain required. |
+| G1.5 through public workflow | Partial | The frozen public runner sends three known edges and all seven registered scenarios through `run_subject_crossfit`. A source-bound pre-gate two-seed all-seven run exposed target-only integrated false positives; generator, truth, seeds, and tolerances were unchanged. A focused post-gate check on untouched `public-g15-003` recovered all 12 active state/ecosystem member/sender pairs and made ligand-only, target-only, and receptor-knockout integrated scores zero. The final source-bound seeds 001/002 full-seven regression recovered 24/24 active pairs, retained positive active-minus-ligand-only margins with zero coverage loss, and gave zero paired/raw integrated family false positives in all six controls. Target-only used `ligand_contrast_not_supported`; knockout used receptor ineligibility. This remains synthetic, noncertifying, and without repeated inference. |
 | RBO, weighted Kendall, top-k curve, rank interval, stable tier | Partial | Frozen-universe APIs and the v02 finalizer/report run are complete with fixed `p=0.9`, Kendall power `1`, 200 split repeats, 2,000 subject bootstraps, 95% intervals, 0.80 top-k threshold, and seed `20260712`. All frozen members and receiver strata are required in every repeat. The real-data agreement rows are consequently all `NE`, rather than being inflated by shared-item intersection. A true LR equivalence/driver-family identifier remains absent, so `lr_family` is also explicit `NE`. |
 | cSCC influence diagnostics | Partial | Paired LOSO, bootstrap, rank intervals, availability frequency, and stable-tier tables now exist. Strict frozen-member propagation makes the new rank endpoints `NE`; explicit per-edge missingness trajectories and family identifiers remain absent. |
 | Persisted edge evidence | Partial | Optional versioned Parquet persistence, manifest linkage, semantic cross-table validation, lazy reads, and backward compatibility are implemented. Real cSCC opposite-edge root-cause analysis remains. |
@@ -55,6 +55,14 @@ In-memory functional, training, application or cross-fit artifacts created
 before the v7 contracts must be discarded and refitted so strict context-row
 manifests, held-out input digests and receiver-program target-profile bindings
 are regenerated.
+
+Common-sender parameters and functionals now require schema `3.0.0`, and their
+interaction support/gate IDs use identity schema `3`. Family-common functional,
+application, cross-fit binding, and edge-evidence producers use `v2`; score rows
+carry `family_first_mechanistic_ligand_contrast_gated_softmin_v2`. Older
+common-sender objects, family-common v1 objects, cached fold artifacts, and rows
+with `family_first_mechanistic_softmin_v1` must also be discarded and refitted
+from raw fold scopes. Old and new IDs or score rows cannot be merged.
 
 ## Frozen evidence
 
@@ -125,8 +133,8 @@ The fixed-penalty v5 rerun uses the paired branch of the loss contract and
 explicit zero-denominator semantics; every synthetic subject has both control
 and target samples. It deliberately supplies neither a trusted autonomous
 resource nor `PenaltyTuningSpec`. The two observed receiver diagnostics have
-mean raw gain `0.034475` for active and `-0.010714` for ligand-only; mean bounded
-gain is `0.034475` and `0`, respectively. All 48 official rows per dataset remain
+mean raw gain `0.051055` for active and `-0.017472` for ligand-only; mean bounded
+gain is `0.051055` and `0`, respectively. All 48 official rows per dataset remain
 `not_estimable` under that fixed-penalty spec. The independent-group branch is
 covered separately by low-level and public-workflow integration tests.
 Separately, the autonomous-overlap counterexample was rerun under the v7 frozen
@@ -138,54 +146,46 @@ is in
 `benchmarks/results/algorithm_crossfit_smoke_v5_summary.json` and
 `benchmarks/results/autonomous_overlap_smoke_v1_summary.json`.
 
-The trusted/tuned family-common smoke was also rerun under v7 after mapping raw
-family and autonomous bases into each fit's frozen standardized response
-coordinates and replacing the dense family-specific nuisance tensor with the
-exact `null + residualized-context x family-effect` factorization. The public
-path uses subject-equal reference summaries, requires complete authoritative
-training sample/subject/context coverage, and includes the source-, receptor-
-and sender-agnostic receiver-program component as a producer-bound
-diagnostic-only parent. Each scenario has two selected and four not-estimable
-receiver tuning artifacts, and two officially observed incremental children.
-Paired-delta v2 selects
-`lambda1_fraction=0.1` in both active folds, producing one nonzero family per
-fold. The known synthetic `CXCL10-CXCR3` interaction is uniquely rank 1 in both
-state/ecosystem member and sender summaries. Mean active member scores are
-`0.041837/0.039508`; sender scores are `0.021451/0.020400`. Ligand-only,
-receiver-autonomous, and global-null each select `1.0` twice, retain zero
-families in both folds, and emit 480 structural-zero family-score rows. The
-tracked interaction stays zero in every control. Family-common applications
-remain noncertifying, the autonomous fixture has `synthetic_benchmark_only`
-scope, and this single-seed result does not complete G1.5 or support biological
-or method-superiority claims. Compact evidence is in
-`benchmarks/results/family_common_crossfit_smoke_v1_summary.json`.
+The source-bound trusted/tuned family-common smoke was regenerated with common-
+sender v3 and family-common v2. Active selects `lambda1_fraction=0.1` in both
+folds and retains `[1, 2]` nonzero receiver families. Synthetic
+`CXCL10-CXCR3` is uniquely rank 1 in both state/ecosystem member and sender
+views; mean member scores are `0.021175/0.020994`, and mean sender scores are
+`0.010755/0.010671`. Ligand-only, receiver-autonomous, and global-null each
+emit `480/480` structural-zero family rows and retain no nonzero family. The
+four scenarios took `343.59` seconds and peaked at `569,096 KiB`. These are
+single-seed synthetic algorithm diagnostics, not certification or biology.
 
 The separate public G1.5 runner freezes three known edges, three registered seed
-sets and all seven scenarios before execution. Its preliminary one-seed
-full-seven validation recovers 2/3 active edges in each released
-state/ecosystem member/sender view. Target-only and receptor-knockout show raw
-held-out family-score false-positive diagnostics even though their paired
-integrated family-positive rates are zero; abundance-only component rows are
-`not_estimable`. The artifact scope is
-`single_seed_public_workflow_debug_excluded_from_campaign`, and
-`eligible_for_campaign_metric_interpretation=false`; it is therefore a runner
-and failure-mode check, not a campaign result.
+sets, and all seven scenarios before execution. A source-bound pre-gate run of
+the first two registered seeds across all seven scenarios exposed the motivating
+failure: target-only had `any_positive_integrated_family_rate=1.0`, and only
+`2/12` target-only integrated truth rows conformed. This was an algorithm
+failure, not a raw-score-only diagnostic. The failing artifacts are retained as
+`public_family_common_g15_campaign_v1_f48e4d0_pre_ligand_gate_failure.json` and
+its compact summary under `benchmark_work/algorithm_smoke/`. They must not be
+overwritten or presented as validation evidence.
 
-The registered quick subset then ran two frozen seeds through active,
-ligand-only, receiver-autonomous and global-null. All 6/6 known seed-edge pairs
-were recovered in each of the four state/ecosystem member/sender summaries;
-median dense rank was `2`, all active-minus-ligand-only margins were positive,
-and coverage loss was zero. Mean paired margins were `0.005967/0.012914` for
-state member/sender and `0.020062/0.017773` for ecosystem member/sender. The
-three negative controls had zero training-family selection, held-out selection,
-paired integrated false positives and raw integrated false positives. Each
-active seed did select one nontruth family whose raw absolute integrated score
-was positive while its paired integrated effect was zero. The eight runs took
-`723.51` seconds and peaked at `1,695,148 KiB`. The tracked evidence is
-`benchmarks/results/public_family_common_g15_campaign_v1_summary.json`. Its
-scope remains `development_preregistered_scenario_subset_diagnostic`; it covers
-only 4/7 scenarios and supports neither biology, method superiority, full OOF
-certification nor a default switch.
+The generator, truth matrix, registered seeds, and tolerances were not changed
+in response. Common-sender v3 instead freezes complete interaction/candidate
+families, uses subject-equal complete-case interaction contrasts and
+receiver-wise Holm support, and family-common v2 requires that upstream gate
+before integration. A focused check on untouched seed `public-g15-003` ran
+active, ligand-only, target-only, and receptor-knockout before the inspected-
+seed regression. It recovered all 12 active state/ecosystem member/sender pairs;
+all three controls had zero paired/raw integrated family positives. Target-only
+known-edge rows were structural zero with `ligand_contrast_not_supported`, and
+knockout rows used receptor ineligibility.
+
+The final source-bound seeds 001/002 regression executed all seven scenarios.
+All 24 active pairs were recovered, all 24 active-minus-ligand-only margins were
+positive, and maximum coverage loss was zero. Mean margins were
+`0.002446/0.010474` for state member/sender and `0.017997/0.016316` for
+ecosystem member/sender. All six controls had zero paired and raw integrated
+family false positives. The 14 runs took `23:14.45` and peaked at `584,420`
+KiB. Scope is `development_full_seven_scenario_diagnostic`; this remains
+synthetic, noncertifying evidence and supports neither biology, method
+superiority, full OOF certification, nor a default switch.
 
 The tiny active repeat-aware development smoke reran the complete public
 train/apply chain twice for 8 subjects and 1,260 cells. It produced two distinct
@@ -205,27 +205,25 @@ permutation, and formal repeated-pipeline inference have not been implemented.
 
 ## Execution order
 
-1. Extend the registered public G1.5 execution to multiple seeds across all
-   seven scenarios, preserving the frozen campaign. Quantify the observed
-   quick-versus-tiny sample-size sensitivity and active nontruth raw-family
-   selection without changing the generator, thresholds or default.
-2. Run the separately frozen competitive-sparsity sensitivity only if expanded
-   seeds reproduce unstable known-family recovery or active decoy selection;
-   do not tune the registered campaign post hoc.
-3. Extend the implemented repeated full train/apply split-stability diagnostic
+1. Preserve the pre-gate failure, focused unseen-seed artifact, and post-gate
+   full-seven artifact as immutable versioned evidence. Do not retune the
+   generator, truth, tolerances, or gate after these results. Run the separately
+   frozen competitive-sparsity sensitivity only if future registered repeats
+   reproduce unstable recovery or active decoy selection.
+2. Extend the implemented repeated full train/apply split-stability diagnostic
    with legal full-pipeline subject bootstrap, context permutation, effect-model
    refitting, and G3 calibration. Add independent and mixed-subject inner tuning
    only after their statistical estimands are frozen.
-4. Reuse prepared fold aggregates across stages and continue exact-equivalence
+3. Reuse prepared fold aggregates across stages and continue exact-equivalence
    sparse/block performance work beyond the completed v7 nuisance
    factorization.
-5. Develop a globally comparable contrast-common OOF functional, then rerun
+4. Develop a globally comparable contrast-common OOF functional, then rerun
    cSCC development and one locked MS holdout for a valid CRYCHIC primary
    comparison. The current receiver-specific family-common diagnostic does not
    validate receiver-row-union global rankings.
-6. Persist edge evidence and finish opposite/rank diagnostics.
-7. Run a frozen forward/reverse signed Track-B campaign, apply D-common to MS,
+5. Persist edge evidence and finish opposite/rank diagnostics.
+6. Run a frozen forward/reverse signed Track-B campaign, apply D-common to MS,
    and feed real Kuppe method scores through the repeated-measures backend.
    Native NicheNet is a separate adapter claim and cannot be inferred from the
    existing prior-activity proxy.
-8. Start G2/G3 only after the preceding scientific and computational gates.
+7. Start G2/G3 only after the preceding scientific and computational gates.

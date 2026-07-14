@@ -87,6 +87,14 @@ preserving the exploratory v0.1 behavior:
 - fold manifests enforce subject-blocked train/test separation, frozen
   interaction universes prevent test-fold filtering leakage, and the H-common
   benchmark arm rejects data-driven top-k interaction caps;
+- common-sender v3 consumes the intact outer-training
+  `FrozenInteractionUniverse` and a complete receiver x interaction candidate-
+  sender manifest. It averages repeated rows per sender/subject/context,
+  maximizes availability across frozen senders at interaction level, retains
+  only subjects complete for every contrast context, and applies a receiver-
+  wise Holm correction over every frozen interaction. Not-estimable
+  interactions remain in the multiplicity denominator with effective p=1;
+  held-out data cannot change family membership, rank, status, or gate ID;
 - an edge-evidence ledger records component status, missingness reasons and
   provenance at sample x context x sender x receiver x interaction grain. It
   can be persisted as an optional, versioned Parquet result extension with
@@ -156,43 +164,44 @@ preserving the exploratory v0.1 behavior:
 - current small algorithm checks record zero generic-only gain, `0.937149`
   active unique gain under autonomous overlap, and exact invariance to large
   subject-constant baselines. The fixed-penalty public cross-fit v5 smoke gives
-  active bounded/raw diagnostic gain `0.034475/0.034475`, versus
-  `0/-0.010714` for ligand-only; it deliberately supplies neither the trusted
+  active bounded/raw diagnostic gain `0.051055/0.051055`, versus
+  `0/-0.017472` for ligand-only; it deliberately supplies neither the trusted
   autonomous resource nor inner tuning, so all 48 official rows per dataset
   remain `not_estimable`.
   Independent-group execution is covered separately by unit and public-workflow
   integration tests but independent inner one-SE tuning is not yet supported;
-- the one-seed four-scenario trusted/tuned family-common smoke selects
-  `lambda1_fraction=0.1` in both active folds, with nonzero receiver-family
-  counts `[1, 1]`. The known synthetic `CXCL10-CXCR3` truth is uniquely rank 1 in
-  state/ecosystem member and sender summaries; mean member scores are
-  `0.041837/0.039508` and mean sender scores are `0.021451/0.020400`.
-  Ligand-only, receiver-autonomous and global-null select `1.0` in both folds,
-  retain zero families in both folds, and emit only structural-zero family
-  scores; the tracked active interaction stays zero in every control. Each
+- the source-bound one-seed four-scenario trusted/tuned family-common v2 smoke
+  selects `lambda1_fraction=0.1` in both active folds, with nonzero receiver-
+  family counts `[1, 2]`. The known synthetic `CXCL10-CXCR3` truth is uniquely
+  rank 1 in state/ecosystem member and sender summaries; mean member scores are
+  `0.021175/0.020994` and mean sender scores are `0.010755/0.010671`.
+  Ligand-only, receiver-autonomous and global-null each emit `480/480`
+  structural-zero family-score rows and retain zero nonzero families. Each
   scenario has 2/6 tuned and officially observed incremental children;
-  family-common tables remain noncertifying diagnostics. This is a single-seed
-  synthetic algorithm check, not biological validation;
+  family-common tables remain noncertifying diagnostics. The four scenarios
+  took `343.59` seconds in total and peaked at `569,096 KiB`. This is a
+  single-seed synthetic algorithm check, not biological validation;
 - the frozen public family-common G1.5 runner now covers three known edges and
-  all seven registered scenarios through `run_subject_crossfit`. A preliminary
-  single-seed full-seven debug recovered 2/3 active edges in every released
-  state/ecosystem member/sender view. Target-only and receptor-knockout exposed
-  raw held-out family-score false-positive diagnostics even though their paired
-  integrated family-positive rate was zero; abundance-only component rows were
-  `not_estimable`. Its scope is
-  `single_seed_public_workflow_debug_excluded_from_campaign`, so these values
-  are excluded from campaign-metric interpretation. The registered two-seed
-  quick subset is eligible for development interpretation and recovered all
-  six seed-edge pairs in each state/ecosystem member/sender view. All margins
-  over ligand-only were positive, with zero coverage loss; mean margins were
-  `0.005967/0.012914` for state member/sender and `0.020062/0.017773` for
-  ecosystem member/sender. Ligand-only, receiver-autonomous and global-null had
-  zero training or held-out family selection and zero paired or raw integrated
-  family false positives. Each active seed nevertheless selected one nontruth
-  family whose raw absolute integrated score was positive while its paired
-  integrated effect stayed zero. The run covers only 4/7 registered scenarios,
-  took `723.51` seconds and peaked at `1,695,148 KiB`; it remains a synthetic
-  development diagnostic, not a full G1.5, biology or superiority result;
+  all seven registered scenarios through `run_subject_crossfit`. The first
+  source-bound two-seed full-seven run exposed a target-only failure under the
+  pre-gate score: `any_positive_integrated_family_rate=1.0` and only `2/12`
+  integrated truth rows conformed. That immutable failure artifact is retained;
+  the generator, truth, seeds, and tolerances were not changed. A focused
+  post-gate check on untouched seed `public-g15-003` then ran active,
+  ligand-only, target-only, and receptor-knockout: all 12 active edge-view pairs
+  were recovered, while every target-only and knockout integrated score was
+  zero. The final source-bound regression ran seeds 001/002 across all seven
+  scenarios. All 24 active state/ecosystem member/sender pairs were recovered,
+  all 24 active-minus-ligand-only margins were positive, and coverage loss was
+  zero. Mean margins were `0.002446/0.010474` for state member/sender and
+  `0.017997/0.016316` for ecosystem member/sender. All six controls had zero
+  paired and raw integrated family false positives. Target-only known-edge rows
+  were structural zero with `ligand_contrast_not_supported`; receptor-knockout
+  rows were structural zero with `receptor_interaction_ineligible`. The 14 runs
+  took `23:14.45` and peaked at `584,420 KiB`. Scope remains
+  `development_full_seven_scenario_diagnostic`: this is synthetic algorithm
+  evidence, not biological validation, superiority, full OOF certification, or
+  a default switch;
 - the benchmark layer includes a frozen categorical repeated-measures backend
   for mixed paired/unpaired subjects and within-subject technical replicates.
   A metadata-only audit of the 29-sample Kuppe atlas found all 10 region
@@ -220,6 +229,13 @@ exported `fit_*`/`apply_*` producer. In-memory functional, training, application
 or cross-fit artifacts created before the v7 contracts must be discarded and
 refitted so their context manifests, input digests and target-profile bindings
 are regenerated.
+
+Common-sender parameter and functional schemas are now `3.0.0`; interaction
+support/gate identities use schema `3`; family-common functional/application,
+cross-fit binding, and edge-evidence producers use `v2`; and score rows carry
+`family_first_mechanistic_ligand_contrast_gated_softmin_v2`. Older common-sender
+or family-common objects, cached folds, and persisted v1 score rows are
+incompatible and must be refitted from the raw fold scope.
 
 `EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
 candidate. It allocates bounded model-level explained gain across driver
@@ -335,12 +351,18 @@ uv run python -m benchmarks.simulation.run_crossfit_smoke \
 uv run python -m benchmarks.simulation.run_family_common_crossfit_smoke \
   --workspace-root .. \
   --scenarios active ligand_only receiver_autonomous global_null \
-  --output benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json
+  --output ../benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json
 uv run python -m benchmarks.simulation.run_family_common_g15_campaign \
   --workspace-root .. --profile quick --seed-count 2 \
-  --scenarios active ligand_only receiver_autonomous global_null \
-  --output benchmark_work/algorithm_smoke/public_family_common_g15_campaign_v1.json \
-  --summary-output CRYCHIC/benchmarks/results/public_family_common_g15_campaign_v1_summary.json
+  --scenarios active global_null abundance_only ligand_only target_only \
+  receiver_autonomous receptor_knockout \
+  --output ../benchmark_work/algorithm_smoke/public_family_common_g15_campaign_v1.json \
+  --summary-output benchmarks/results/public_family_common_g15_campaign_v1_summary.json
+uv run python -m benchmarks.simulation.run_family_common_g15_campaign \
+  --workspace-root .. --profile quick --seed-ids public-g15-003 \
+  --scenarios active ligand_only target_only receptor_knockout \
+  --output ../benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final.json \
+  --summary-output ../benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final_summary.json
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json

@@ -140,6 +140,9 @@ diagnostic、strength、ranking 和 stability。只有通过 G3-F 或 G3-P 的�
 - LR target profile 聚类；
 - 超参数选择和稳定性选择；
 - sender coupling 和 assignment 参数；
+- outer-training `FrozenInteractionUniverse`、完整 receiver x interaction
+  candidate-sender manifest、interaction-level ligand contrast support 和
+  receiver-wise Holm family；
 - activity/signature 权重学习。
 
 测试折只使用冻结的训练产物生成 sample-level OOF score。任何 subject 不得
@@ -161,6 +164,11 @@ context-specific `alpha`、gating 和 sender assignment 是机制发现结果，
 - context-specific mechanistic score 可以另行输出，但标记 `not_comparable`，不得
   进入正式 context effect model；
 - 单纯 fold scale calibration 不能修复不同 scoring functional 的 estimand 问题。
+
+sender-side ligand contrast gate 是 contrast-common 的训练折产物，不属于 held-out
+context-specific gate。它必须对 contrast 中所有测试 context 复用同一状态和 ID；
+held-out ligand 值只进入 sample-local availability/assignment，不能改变 interaction
+family、Holm rank、adjusted p、support status 或 gate ID。
 
 正式 scoring functional 的精确定义、共同 eligible feature 规则和方向必须在
 ADR-011 中冻结，并用 fold-specific-functional null 端到端验证。
@@ -649,6 +657,23 @@ specificity、跨 subject prevalence 和调整 context/batch 后的 coupling。s
 assignment 输出权重、entropy 和支持度。receiver attribution 不允许偷带 sender
 身份先验以伪造可辨识性。
 
+当前 common-sender v3 先接受 producer-owned `FrozenInteractionUniverse`，再冻结
+每个 receiver x interaction 的非空 candidate-sender tuple；每个 receiver 必须覆盖
+完整 interaction universe，训练行若落在 manifest 之外则拒绝。ligand contrast
+support 在 interaction 层计算，而不是逐 sender 检验：先在
+sender x subject x context 内平均重复 sample/technical rows，再在冻结候选 sender
+间取最大值。只有 contrast 全部 context 有限的 subject 进入估计，保持原 contrast
+权重且 subject 等权，不因缺失 context 重归一化。
+
+对每个 interaction，以至少 `max(2, min_subjects)` 个 complete subject 做单侧
+Student-t 检验，原假设边界由预先冻结的
+`ligand_contrast_minimum_effect` 给出。每个 outer-training fold x receiver x
+contrast 的全部冻结 interactions 组成一个 Holm step-down family；`not_estimable`
+interaction 以 effective p=1 留在 family size `m` 中，不得在看见结果后缩小全集。
+只有 `holm_adjusted_p < 1 - ligand_contrast_confidence_level` 才为 `supported`。
+这些 p 值只服务于训练 gate，不是结果层 inferential p/q，也不声称跨 receiver、
+contrast、fold 或 repeat 的全局错误率控制。
+
 ### Step 8：共同计分 functional 与 OOF score
 
 每个训练折针对注册 contrast，从 attribution/sender 结果生成一个共同
@@ -662,6 +687,28 @@ availability 和 sample communication score；合并折和 repeat 形成 OOF tab
 context-specific mechanistic weights 可保存为 attribution 结果，但不能直接作为
 不同 context 的可比较 outcome。v0.2 提供最小一次 subject cross-fitting 和
 exploratory OOF strength；v0.3 使用 repeated cross-fitting 进入正式校准。
+
+family-common v2 的同一 interaction row 必须同时通过 hard receptor eligibility 和
+冻结 ligand-contrast gate，才可进入 family availability 与 member evidence。
+precedence 固定为：无 receptor-eligible interaction ->
+`receptor_family_ineligible` 结构零；无 supported 且存在 receptor-eligible
+`not_estimable` gate -> `ligand_contrast_not_estimable`；全部 eligible gate 已观察但
+unsupported -> `ligand_contrast_not_supported` 结构零；只有其后才进入 family
+selection、availability、incremental gain 和 soft-min。
+
+若同一 family 同时含 supported 与 receptor-eligible `not_estimable` member，且
+family core 在此前 precedence 下为正，则 core 可仅基于 supported rows 保持
+observed，但 within-family entropy、member weights、所有需分配的 member score 和
+sender-resolved descendants 必须 fail closed 为 `not_estimable`，不得在不完整
+denominator 上归一化。更早成立的 family structural zero 继续为精确零；
+receptor-ineligible 或已观察为 unsupported 的 member 也为精确零，不能借用 family
+score。
+
+该链的兼容边界为 common-sender parameter/functional schema `3.0.0`、interaction
+support/gate identity schema `3`、family-common producer/binding/edge-evidence `v2`
+和 `score_version=family_first_mechanistic_ligand_contrast_gated_softmin_v2`。旧版
+in-memory artifact、cache 和持久化 family rows 必须从 raw fold scope 重拟合，不能
+与新 ID/score 混合。
 
 ### Step 9：full-pipeline resampling、概率和正式检验
 
@@ -782,9 +829,9 @@ sender separation 的方法学增益；所有真实数据结果仍为 explorator
 | V02-07 | CVXPY graph-fused 原型 | `attribution` | V02-06/design | convex/KKT diagnostics |
 | V02-08 | graph-aware tuning/stability selection | `attribution` | V02-07 | deterministic、无泄漏 |
 | V02-09 | explained/predicted/residual response | `signatures` | V02-06/07 | 完整 signed residual |
-| V02-10 | sender specificity/prevalence/coupling | `sender` | v0.1/V02-03 | context/batch null |
-| V02-11 | soft assignment/entropy/uncertainty | `sender` | V02-10/attribution | 不可辨识 sender |
-| V02-12 | common contrast-level scoring functional | `scoring` | V02-08/11 | 跨 context 同量尺 |
+| V02-10 | sender specificity/prevalence/coupling | `sender` | v0.1/V02-03 | frozen candidate manifest、context/batch null |
+| V02-11 | common-sender v3 gate 与 soft assignment | `sender` | V02-10/attribution | subject-equal complete case、receiver-wise Holm、不可辨识 sender |
+| V02-12 | family-common v2 contrast-level scoring functional | `scoring` | V02-08/11 | receptor x ligand gate、跨 context 同量尺、member fail-closed |
 | V02-13 | minimal OOF exploratory strength | `workflow`, `scoring` | V02-02/12 | fold provenance、无 p/q |
 | V02-14 | LR/full signatures 与 exploratory hypergraph | signatures/network | V02-09/11/13 | stable directed hyperedges |
 
@@ -798,6 +845,10 @@ sender separation 的方法学增益；所有真实数据结果仍为 explorator
 - predicted contribution + residual 在容差内重构 observed response；
 - 每个训练折可估计且 train/test subject 零交叉；
 - 同一 contrast 的所有测试 context 使用相同 `scoring_function_id`；
+- 每个 receiver 的 Holm family 与 `FrozenInteractionUniverse` 完全一致，缺失/NE
+  interaction 不缩小 multiplicity denominator；
+- supported 与 eligible-NE member 混合时 family core/member allocation 的状态分离
+  符合冻结 precedence，且不破坏 observed sender conservation；
 - signed negative response 不会被非负 prior 错误宣称为解释完成。
 
 **G2 方法学决策门**：
@@ -970,7 +1021,14 @@ G3-P 的 active posterior，但 UI 必须清楚区分 active 与 differential in
 - LR target basis normalization 和 equivalence clustering；
 - graph-fused objective、KKT、primal/dual residual；
 - sender soft assignment normalization 和 entropy；
+- frozen receiver x interaction candidate-sender manifest 完整性、row-order
+  invariance、interaction-level sender max、subject-equal complete-case 和 Holm
+  family 联合重算；
+- `not_estimable` interaction 以 effective p=1 保留在 Holm denominator，伪造
+  support/gate lineage 必须拒绝；
 - communication geometric score 和 missingness propagation；
+- family-common v2 receptor/ligand-gate precedence，以及 mixed supported+NE
+  member allocation fail-closed 与 sender conservation；
 - common `ScoringFunctional` 跨 context 一致性；
 - full-pipeline resample 确实重跑 filtering/tuning/attribution；
 - contribution + residual 重构；
@@ -1006,7 +1064,7 @@ G3-P 的 active posterior，但 UI 必须清楚区分 active 与 differential in
 | abundance-only | 只变 cell proportion | ecosystem 变，state 基本不变 |
 | receiver-autonomous | 直接改变 receiver genes | response 检出，通信归因弱，residual 上升 |
 | ligand-only | sender ligand 上升 | availability 可升，functional probability 不应升 |
-| target-only | receiver target 上升但无 LR | downstream signal 可见，integrated edge 不通过 |
+| target-only | receiver target 上升但无 sender ligand contrast support | downstream signal 可见；无 support 时 integrated family 为结构零，support 不可估时传播 NE，不能从同 family 其他 member 借分通过 |
 | receptor knockout | receptor/必要亚基缺失 | 对应 integrated score 被门控 |
 | prior shuffle | degree-matched target prior 置换 | recovery 近随机，probability 不虚高 |
 | composition imbalance | cell 数/比例强不平衡 | 不产生大规模 state 假阳性 |
@@ -1270,6 +1328,8 @@ docs/
 | context 使用不同计分量尺 | 组差异被写入 score | scoring function ID 随 context 变 | contrast-level common functional + hard contract |
 | nuisance 不确定性遗漏 | CI 过窄/p 反保守 | 固定 OOF bootstrap 与 full rerun 差异 | repeated CF + full-pipeline subject resampling |
 | outcome-derived gating | 循环论证 | permutation 仍有信号 | baseline/train-only gating |
+| interaction support 多重性遗漏 | target-only/噪声 ligand contrast 通过 | candidate 数增加时 gate 阳性增加 | 完整冻结 universe + receiver-wise Holm；NE 仍计入 `m` |
+| 不完整 family denominator | supported member 在 NE member 缺失时吸收全部分数 | member 权重和为 1 但 family evidence 不完整 | mixed supported+eligible-NE allocation fail closed |
 | 层级检验不控 FDR | 假阳性 | post-hoc family 模拟超标 | 唯一 family/procedure 预注册并校准 |
 | local FDR 不稳定 | 假概率 | mixture 不收敛/边数少 | empirical p fallback，probability=NA |
 | 多种 null 混合 | posterior 无明确 estimand | null 来源异质 | active/context/sender null 分开 |

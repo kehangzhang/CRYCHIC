@@ -8,8 +8,10 @@
   registered autonomous resource plus estimable paired subject-blocked tuning
   can now produce officially observed incremental children. Held-out
   family-common applications are connected behind that gate but remain
-  noncertifying diagnostics. The source-agnostic receiver-program parent,
-  independent/mixed inner tuning and full-pipeline inference remain absent.
+  noncertifying diagnostics. The source-agnostic receiver-program parent is
+  connected as a diagnostic-only component and remains excluded from integrated
+  edge evidence. Independent/mixed inner tuning and full-pipeline inference
+  remain absent.
 
 ## Context
 
@@ -70,7 +72,9 @@ The base training path performs, in order:
 3. continuous response and precision-transform fitting;
 4. strict family construction and frozen target basis fitting;
 5. nuisance encoder and fixed-penalty incremental diagnostic fitting;
-6. a contrast-common sender functional;
+6. a common-sender v3 functional bound to the intact
+   `FrozenInteractionUniverse`, a complete receiver x interaction candidate-
+   sender manifest, and receiver-wise Holm ligand-contrast support;
 7. an aggregate fold/contrast scoring manifest.
 
 Supplying `PenaltyTuningSpec` additionally enables conditional subject-blocked
@@ -80,8 +84,10 @@ subjects. Independent and mixed allocations emit typed `not_estimable` tuning
 artifacts instead of falling back to caller-authored losses.
 
 Application performs only sample-local fixed count transforms, frozen-universe
-availability, frozen gate and design encoding, downstream and sender
-application, and, when enabled, family-common diagnostic scoring.
+availability, frozen receptor and ligand-contrast gates, design encoding,
+downstream and sender application, and, when enabled, family-common v2
+diagnostic scoring. It cannot change the frozen candidate manifest, Holm family
+size or rank, support status, or gate identity.
 
 A fold/contrast may contain multiple receiver models. Its scoring collection
 hashes the sorted receiver child manifest identifiers and explicitly declares
@@ -96,13 +102,15 @@ universe or authoritative child model registry is persisted yet.
 The following may be fixed before folds are observed: resource and target
 prior checksums, namespace maps, static complex definitions, the explicit
 context graph and contrasts, predefined nuisance gene programs, formulas,
-threshold candidates, component weights, fold policy, and seed lineage.
+threshold candidates, common-sender confidence/minimum-effect parameters,
+component weights, fold policy, and seed lineage.
 
 The following must never be learned from the complete dataset: expression or
 interaction support, a top-k cap, receptor gates, family definitions,
 precision winsorization, selected penalties, attribution coefficients, latent
 nuisance factors, downstream centering/scaling/models, sender prevalence or
-temperature, and data-driven component calibration.
+temperature, the candidate-sender manifest, interaction ligand-contrast
+support or Holm decisions, and data-driven component calibration.
 
 ## Acceptance tests
 
@@ -113,6 +121,20 @@ The workflow is not certified until all of these tests pass:
 - Test-only poison values that would alter a global filter, gate, precision
   transform, family, downstream model, or sender model do not alter training
   manifests.
+- Altering held-out ligand values may change sample-local availability and
+  sender allocation, but cannot change common-sender v3 support rows, Holm
+  family membership, adjusted p-values, or gate IDs.
+- Every receiver binds the complete `FrozenInteractionUniverse`; an absent or
+  not-estimable interaction remains in the Holm denominator rather than
+  shrinking the tested family.
+- Row reordering leaves the frozen candidate manifest, common-sender
+  functional, interaction supports, and family-common edge-evidence IDs
+  unchanged. Injecting a row outside the manifest or forging a gate lineage is
+  rejected.
+- A mixed supported plus receptor-eligible not-estimable family with an
+  otherwise positive core may retain that supported family core, but member
+  weights, entropy, member scores, and sender descendants fail closed to not
+  estimable. An earlier structural zero remains zero.
 - Monkeypatching every fit function to raise during application does not stop
   application.
 - Each training stage observes exactly its fold's training subjects.
@@ -145,10 +167,14 @@ point. It derives an estimability-aware fold plan from declared sample metadata,
 creates physical sanitized train/test copies, calls the producer-owned
 `fit_training_artifacts` and `apply_training_artifacts` primitives per fold,
 and audits exact subject/fold/contrast/context coverage for availability and the
-common-sender stage. The same physical boundary now fits a frozen nuisance
-encoder from the complete declared formula, condition-blind hard receptor
-gates, strict complete-link/medoid family bases, a reference-arm receiver
-program, fold response and response-parented precision. A typed adapter derives
+common-sender stage. Common-sender v3 consumes the producer-owned
+`FrozenInteractionUniverse`, freezes one candidate-sender tuple for every
+receiver x interaction, aggregates subject-equal complete-case ligand contrasts
+at interaction level, and applies receiver-wise Holm adjustment while retaining
+not-estimable interactions in the family. The same physical boundary now fits a
+frozen nuisance encoder from the complete declared formula, condition-blind
+hard receptor gates, strict complete-link/medoid family bases, a reference-arm
+receiver program, fold response and response-parented precision. A typed adapter derives
 design rows, reference masks and eligible family bases without caller matrices
 or IDs. Held-out application uses the exact parent chain; subject overlap,
 feature drift, unseen levels and incomplete receiver coverage fail closed. A
@@ -215,10 +241,27 @@ attribution, held-out subject-family differential effects, state/ecosystem
 family and member scores, and sender-resolved allocation. Exact application
 coverage and producer-owned bindings include the training application, tuning,
 selected penalty, autonomous resource, canonical edge evidence and
-receiver-specific sender inputs. Sender weights only allocate an established
+receiver-specific sender inputs. Family-common v2 requires receptor eligibility
+and the frozen interaction ligand-contrast gate on the same row. Receptor
+ineligibility and observed unsupported contrast give structural zeros; absent
+supported contrast with any eligible not-estimable gate remains not estimable.
+Only supported rows enter family availability. When supported and eligible
+not-estimable members coexist and the core is otherwise positive, the supported
+family core may remain observed, but member and sender allocation fails closed
+rather than normalizing over a selectively observed denominator. An earlier
+structural zero remains exact zero. Sender weights only allocate an established
 member score. These family-common outputs remain diagnostic rather than OOF-
-certified. The source-agnostic receiver-program parent remains explicitly
-`not_estimable`, and the complete pipeline therefore remains uncertified.
+certified. The source-agnostic receiver-program parent is producer-bound and
+diagnostic only, does not enter the integrated score, and does not certify the
+complete pipeline.
+
+Common-sender parameter and functional schemas are now `3.0.0`; interaction
+support/gate identities use schema `3`; family-common functional/application,
+cross-fit binding, and edge-evidence policies use `v2`; and family rows carry
+`family_first_mechanistic_ligand_contrast_gated_softmin_v2`. Older in-memory,
+cached, or persisted common-sender/family-common artifacts must be discarded and
+refitted from raw fold scopes. Their IDs and rows cannot be mixed with the new
+versions.
 
 The nuisance encoder reparameterizes the full training Patsy matrix as
 `[X N, X q]`, where the nuisance basis satisfies `l^T N = 0` and the contrast

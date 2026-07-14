@@ -1,6 +1,24 @@
-# G1.5 Mechanism-Specificity Result
+# Historical G1.5 Mechanism-Specificity Result
 
 Run date: 2026-07-13
+
+## Scope
+
+This document is an immutable account of the standalone G1.5 v2 campaign at its
+recorded source revision. It predates the public subject-cross-fit
+common-sender/family-common workflow and does not evaluate common-sender v3,
+receiver-wise Holm ligand-contrast support, or
+`family_first_mechanistic_ligand_contrast_gated_softmin_v2`. Its scores and
+pass/fail gates are not directly comparable with the current public-workflow
+family/member/sender tables.
+
+Public-workflow G1.5 artifacts are versioned separately; their tracked compact
+path is
+[`benchmarks/results/public_family_common_g15_campaign_v1_summary.json`](../../benchmarks/results/public_family_common_g15_campaign_v1_summary.json).
+That summary must carry its own source hashes, producer identities, score
+version, registered scenario/seed coverage, and certification boundary. A
+post-gate public-workflow result must not overwrite or retroactively reinterpret
+the historical values below.
 
 The frozen G1.5 v2 deterministic simulation was evaluated in two phases. Each
 seed contains three preregistered synthetic LR edges under seven component-level
@@ -42,12 +60,13 @@ It records exact input, generator, evidence, manifest, and metric SHA256 values.
 The full evidence and evaluator outputs remain under the ignored local directory
 `benchmark_work/g1_5_v2/`; they are not part of the Git repository.
 
-This v2 summary is a historical source lock. The live development generator
-now calls the sample-keyed autonomous-projected incremental v4 primitive with
-explicit structural-zero denominator semantics. It uses the separate v3 config,
-generator schema, seed namespace and default development output. Reusing the
-already inspected v2 holdout would be a reanalysis, not a new independent
-holdout, and must not overwrite this summary.
+This v2 summary is a historical source lock. The later standalone development
+generator calls the sample-keyed autonomous-projected incremental v4 primitive
+with explicit structural-zero denominator semantics and uses a separate v3
+config, generator schema, seed namespace, and default development output. The
+public family-common runner is a third, separately versioned workflow. Reusing
+the already inspected v2 holdout would be a reanalysis, not a new independent
+holdout, and neither later workflow may overwrite this summary.
 
 Reproduce both historical phases from commit `5e8b4b8` with:
 
@@ -71,8 +90,10 @@ uv run --extra benchmark python -m benchmarks.simulation.run_mechanism_specifici
 
 ## Interpretation Boundary
 
-This result demonstrates synthetic mechanism specificity under the frozen G1.5
-contract. It does not establish real-data accuracy, biological discovery,
-calibration, causal sender inference, or superiority over CellChat,
-CellPhoneDB, NicheNet, or LIANA. Those claims require the separate canonical and
-multi-group real-data benchmark tracks.
+This historical result demonstrates synthetic mechanism specificity under the
+standalone frozen G1.5 v2 contract only. It does not validate the current
+public-workflow ligand gate or family-common score, and it does not establish
+real-data accuracy, biological discovery, calibration, causal sender inference,
+or superiority over CellChat, CellPhoneDB, NicheNet, or LIANA. Those claims
+require the separately versioned public-workflow, canonical, and multi-group
+real-data benchmark tracks.
