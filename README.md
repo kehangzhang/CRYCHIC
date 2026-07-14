@@ -366,7 +366,14 @@ uv run python -m benchmarks.simulation.run_family_common_g15_campaign \
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json
+uv run python -m benchmarks.summarize_cscc_crossmethod_smoke \
+  --workspace-root .. --repo-root . --overwrite
 ```
+
+The [developer cross-fit tutorial](tutorials/developer_subject_crossfit.ipynb)
+loads or reruns the bounded Kang 2018 diagnostic, exposes deidentified inner
+penalty decisions, and shows how to distinguish ligand/receptor gates,
+structural zeros, diagnostic scores, and official certification status.
 
 ## Quality Checks
 
@@ -386,4 +393,5 @@ uv run --extra dev python -m build
 - [Fixed-penalty public cross-fit smoke summary](benchmarks/results/algorithm_crossfit_smoke_v5_summary.json)
 - [Trusted/tuned family-common smoke summary](benchmarks/results/family_common_crossfit_smoke_v1_summary.json)
 - [Public family-common G1.5 quick summary](benchmarks/results/public_family_common_g15_campaign_v1_summary.json)
+- [Developer subject-crossfit tutorial](tutorials/developer_subject_crossfit.ipynb)
 - [Repository development instructions](AGENTS.md)
