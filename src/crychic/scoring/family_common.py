@@ -19,7 +19,12 @@ from scipy import sparse
 
 from crychic.attribution import ReceiverFamilyTrainingArtifact
 from crychic.core import ContractError, stable_id
-from crychic.sender import CommonSenderApplication, ContrastCommonSenderFunctional
+from crychic.sender import (
+    CommonSenderApplication,
+    ContrastCommonSenderFunctional,
+    SenderContrastSupportStatus,
+    interaction_ligand_contrast_gate,
+)
 
 from .contracts import float64_array_digest
 from .downstream import (
@@ -39,6 +44,10 @@ FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS = (
     "receiver",
     "interaction_id",
     "mode",
+    "ligand_contrast_gate",
+    "ligand_contrast_gate_id",
+    "ligand_contrast_gate_status",
+    "ligand_contrast_gate_reason_code",
     "availability",
     "ligand_availability",
     "prior_quality",
@@ -82,6 +91,9 @@ FAMILY_COMMON_SCORE_COLUMNS = (
     "availability_score",
     "family_availability",
     "receptor_eligible",
+    "ligand_contrast_gate_status",
+    "ligand_contrast_supported_interaction_count",
+    "ligand_contrast_not_estimable_interaction_count",
     "receiver_program_score",
     "receiver_program_status",
     "receiver_program_reason_code",
@@ -111,6 +123,10 @@ FAMILY_MEMBER_SCORE_COLUMNS = (
     "availability",
     "receptor_gate",
     "receptor_eligible",
+    "ligand_contrast_gate",
+    "ligand_contrast_gate_id",
+    "ligand_contrast_gate_status",
+    "ligand_contrast_gate_reason_code",
     "ligand_availability",
     "prior_quality",
     "subject_prevalence",
@@ -146,16 +162,17 @@ FAMILY_SENDER_SCORE_COLUMNS = (
     "score_version",
 )
 
-_FUNCTIONAL_PRODUCER = "crychic.family_common_scoring_functional.v1"
-_APPLICATION_PRODUCER = "crychic.family_common_scoring_application.v1"
-_SCORE_VERSION = "family_first_mechanistic_softmin_v1"
+_FUNCTIONAL_PRODUCER = "crychic.family_common_scoring_functional.v2"
+_APPLICATION_PRODUCER = "crychic.family_common_scoring_application.v2"
+_SCORE_VERSION = "family_first_mechanistic_ligand_contrast_gated_softmin_v2"
 _CERTIFICATION_STATUS = "heldout_family_common_diagnostic_not_oof_certified_v1"
 _SELECTION_FREQUENCY_REASON = "single_heldout_application_no_resampling"
 _RELEASED_MODES = ("ecosystem", "state")
 _MEMBER_ALLOCATION_METHOD = (
-    "availability_x_hard_receptor_eligibility_x_frozen_receptor_gate_x_"
+    "availability_x_hard_receptor_eligibility_x_frozen_ligand_contrast_gate_x_"
+    "frozen_receptor_gate_x_"
     "ligand_x_prior_quality_x_subject_prevalence_x_resource_evidence_"
-    "then_family_normalize_v1"
+    "then_supported_family_normalize_v2"
 )
 
 
@@ -221,8 +238,10 @@ def family_common_edge_evidence_digest(edge_evidence: pd.DataFrame) -> str:
         "receiver",
         "interaction_id",
         "mode",
+        "ligand_contrast_gate_id",
     )
     numeric_columns = (
+        "ligand_contrast_gate",
         "availability",
         "ligand_availability",
         "prior_quality",
@@ -248,6 +267,22 @@ def family_common_edge_evidence_digest(edge_evidence: pd.DataFrame) -> str:
         canonical[column] = [
             _unit_value(value, field_name=column) for value in canonical[column]
         ]
+    canonical["ligand_contrast_gate_status"] = [
+        SenderContrastSupportStatus(value).value
+        for value in canonical["ligand_contrast_gate_status"]
+    ]
+    canonical["ligand_contrast_gate_reason_code"] = pd.Series(
+        [
+            None
+            if value is None or value is pd.NA or pd.isna(value)
+            else _required_name(
+                value, field_name="ligand_contrast_gate_reason_code"
+            )
+            for value in canonical["ligand_contrast_gate_reason_code"]
+        ],
+        index=canonical.index,
+        dtype=object,
+    )
     canonical = canonical.sort_values(key, kind="stable", ignore_index=True)
     return _table_digest(
         "family_common_edge_evidence_input",
@@ -385,6 +420,14 @@ class FamilyCommonScoringFunctional:
             ),
             "incremental_reason_code": self.incremental_reason_code,
             "interactions": [item.to_dict() for item in self.interactions],
+            "interaction_ligand_contrast_gates": [
+                interaction_ligand_contrast_gate(
+                    self.sender_functional,
+                    self.receiver,
+                    item.interaction_id,
+                ).to_dict()
+                for item in self.interactions
+            ],
             "member_allocation_method": _MEMBER_ALLOCATION_METHOD,
             "receiver": self.receiver,
             "receiver_program_training_artifact_id": (
@@ -490,7 +533,7 @@ class FamilyCommonScoringFunctional:
                 or stable_id(
                     "family_common_scoring_functional",
                     self._identity_payload(),
-                    schema_version="1",
+                    schema_version="2",
                 )
                 != self.family_common_functional_id
             ):
@@ -759,7 +802,7 @@ def fit_family_common_scoring_functional(
         stable_id(
             "family_common_scoring_functional",
             self._identity_payload(),
-            schema_version="1",
+            schema_version="2",
         ),
     )
     return self
@@ -881,7 +924,7 @@ def mark_family_common_scoring_not_estimable(
         stable_id(
             "family_common_scoring_functional",
             self._identity_payload(),
-            schema_version="1",
+            schema_version="2",
         ),
     )
     return self
@@ -982,6 +1025,7 @@ def _validated_edge_evidence(
         "receiver",
         "interaction_id",
         "mode",
+        "ligand_contrast_gate_id",
     )
     for column in identifiers:
         table[column] = [
@@ -998,6 +1042,34 @@ def _validated_edge_evidence(
         table[column] = [
             _unit_value(value, field_name=column) for value in table[column]
         ]
+    try:
+        table["ligand_contrast_gate"] = [
+            _unit_value(value, field_name="ligand_contrast_gate")
+            for value in table["ligand_contrast_gate"]
+        ]
+        table["ligand_contrast_gate_status"] = [
+            SenderContrastSupportStatus(value).value
+            for value in table["ligand_contrast_gate_status"]
+        ]
+        table["ligand_contrast_gate_reason_code"] = pd.Series(
+            [
+                None
+                if value is None or value is pd.NA or pd.isna(value)
+                else _required_name(
+                    value, field_name="ligand_contrast_gate_reason_code"
+                )
+                for value in table["ligand_contrast_gate_reason_code"]
+            ],
+            index=table.index,
+            dtype=object,
+        )
+    except (TypeError, ValueError) as error:
+        raise ContractError(
+            "Family-common ligand contrast gate fields are invalid",
+            code="invalid_family_common_edge_evidence",
+            field="ligand_contrast_gate_status",
+            remediation="Copy the exact frozen interaction gate into every row",
+        ) from error
     key = [
         "sample_id",
         "subject_id",
@@ -1072,6 +1144,45 @@ def _validated_edge_evidence(
             remediation="Apply one common function to the complete held-out contrast",
         )
     expected_interactions = set(functional.interaction_ids)
+    expected_gates = {
+        interaction_id: interaction_ligand_contrast_gate(
+            functional.sender_functional,
+            functional.receiver,
+            interaction_id,
+        )
+        for interaction_id in functional.interaction_ids
+    }
+    for row in table.itertuples(index=False):
+        expected_gate = expected_gates.get(str(row.interaction_id))
+        if expected_gate is None:
+            raise ContractError(
+                "Edge evidence contains an interaction outside the frozen parent",
+                code="family_common_application_parent_mismatch",
+                field="interaction_id",
+                remediation="Use the exact frozen interaction set",
+            )
+        observed_gate = (
+            _unit_value(
+                row.ligand_contrast_gate,
+                field_name="ligand_contrast_gate",
+            ),
+            row.ligand_contrast_gate_id,
+            row.ligand_contrast_gate_status,
+            row.ligand_contrast_gate_reason_code,
+        )
+        expected = (
+            expected_gate.gate,
+            expected_gate.gate_id,
+            SenderContrastSupportStatus(expected_gate.status).value,
+            expected_gate.reason_code,
+        )
+        if observed_gate != expected:
+            raise ContractError(
+                "Edge evidence ligand contrast gate does not match its sender parent",
+                code="family_common_application_parent_mismatch",
+                field="ligand_contrast_gate_id",
+                remediation="Copy the exact frozen interaction gate into every row",
+            )
     modes = tuple(sorted(set(table["mode"])))
     if modes != _RELEASED_MODES:
         raise ContractError(
@@ -1085,13 +1196,13 @@ def _validated_edge_evidence(
     )
     for sample_id in coverage_samples:
         for mode in modes:
-            observed = set(
+            observed_interactions = set(
                 table.loc[
                     table["sample_id"].eq(sample_id) & table["mode"].eq(mode),
                     "interaction_id",
                 ]
             )
-            if observed != expected_interactions:
+            if observed_interactions != expected_interactions:
                 raise ContractError(
                     "Every sample/mode must explicitly cover the frozen "
                     "interaction set",
@@ -1440,13 +1551,37 @@ def _score_tables(
                 None if pd.isna(raw_program_reason) else str(raw_program_reason)
             )
         eligible = group["receptor_eligible"].astype(bool)
+        gate_supported = group["ligand_contrast_gate_status"].eq(
+            SenderContrastSupportStatus.SUPPORTED.value
+        )
+        gate_not_estimable = group["ligand_contrast_gate_status"].eq(
+            SenderContrastSupportStatus.NOT_ESTIMABLE.value
+        )
+        eligible_supported = eligible & gate_supported
+        eligible_not_estimable = eligible & gate_not_estimable
         family_receptor_eligible = bool(eligible.any())
+        family_gate_supported = bool(eligible_supported.any())
+        family_gate_not_estimable = bool(eligible_not_estimable.any())
+        supported_interaction_count = int(eligible_supported.sum())
+        not_estimable_interaction_count = int(eligible_not_estimable.sum())
+        if not family_receptor_eligible:
+            family_gate_status = "not_applicable_receptor_ineligible"
+        elif family_gate_supported:
+            family_gate_status = SenderContrastSupportStatus.SUPPORTED.value
+        elif family_gate_not_estimable:
+            family_gate_status = SenderContrastSupportStatus.NOT_ESTIMABLE.value
+        else:
+            family_gate_status = SenderContrastSupportStatus.UNSUPPORTED.value
         availability_values = [
             _unit_value(value, field_name="availability")
-            for value in group.loc[eligible, "availability"]
+            for value in group.loc[eligible_supported, "availability"]
         ]
         if not family_receptor_eligible:
             family_availability: float | None = 0.0
+        elif not family_gate_supported:
+            family_availability = (
+                None if family_gate_not_estimable else 0.0
+            )
         elif any(value is None for value in availability_values):
             family_availability = None
         else:
@@ -1469,6 +1604,14 @@ def _score_tables(
             core: float | None = 0.0
             core_status = "structural_zero"
             core_reason: str | None = "receptor_family_ineligible"
+        elif not family_gate_supported and family_gate_not_estimable:
+            core = None
+            core_status = "not_estimable"
+            core_reason = "ligand_contrast_not_estimable"
+        elif not family_gate_supported:
+            core = 0.0
+            core_status = "structural_zero"
+            core_reason = "ligand_contrast_not_supported"
         elif family_selected is False:
             core = 0.0
             core_status = "structural_zero"
@@ -1503,11 +1646,35 @@ def _score_tables(
             core_status = "ok"
             core_reason = None
 
+        group_rows = list(group.itertuples(index=False))
+        gate_statuses = [
+            SenderContrastSupportStatus(str(row.ligand_contrast_gate_status))
+            for row in group_rows
+        ]
         evidence_scores: list[float | None] = []
-        for row in group.itertuples(index=False):
+        supported_indices: list[int] = []
+        eligible_gate_ne = False
+        for index, (row, gate_status) in enumerate(
+            zip(group_rows, gate_statuses, strict=True)
+        ):
+            if not bool(row.receptor_eligible):
+                evidence_scores.append(0.0)
+                continue
+            if gate_status is SenderContrastSupportStatus.UNSUPPORTED:
+                evidence_scores.append(0.0)
+                continue
+            if gate_status is SenderContrastSupportStatus.NOT_ESTIMABLE:
+                evidence_scores.append(None)
+                eligible_gate_ne = True
+                continue
+            supported_indices.append(index)
             evidence_components = (
                 _unit_value(row.availability, field_name="availability"),
                 float(bool(row.receptor_eligible)),
+                _unit_value(
+                    row.ligand_contrast_gate,
+                    field_name="ligand_contrast_gate",
+                ),
                 _unit_value(row.receptor_gate, field_name="receptor_gate"),
                 _unit_value(row.ligand_availability, field_name="ligand_availability"),
                 _unit_value(row.prior_quality, field_name="prior_quality"),
@@ -1520,22 +1687,44 @@ def _score_tables(
                 evidence_scores.append(
                     math.prod(cast(tuple[float, ...], evidence_components))
                 )
-        if any(value is None for value in evidence_scores):
-            weights: list[float | None] = [None] * len(evidence_scores)
+        weights: list[float | None] = [
+            None
+            if bool(row.receptor_eligible)
+            and gate_status is not SenderContrastSupportStatus.UNSUPPORTED
+            else 0.0
+            for row, gate_status in zip(group_rows, gate_statuses, strict=True)
+        ]
+        supported_scores = [evidence_scores[index] for index in supported_indices]
+        if not supported_indices:
             entropy: float | None = None
+            identifiability = "unresolved" if eligible_gate_ne else "resolved"
+            allocation_reason: str | None = (
+                "ligand_contrast_not_estimable"
+                if eligible_gate_ne
+                else "ligand_contrast_not_supported"
+            )
+        elif eligible_gate_ne:
+            entropy = None
             identifiability = "unresolved"
-            allocation_reason: str | None = "incomplete_member_evidence"
+            allocation_reason = "ligand_contrast_not_estimable"
+        elif any(value is None for value in supported_scores):
+            entropy = None
+            identifiability = "unresolved"
+            allocation_reason = "incomplete_member_evidence"
         else:
-            numeric_scores = cast(list[float], evidence_scores)
+            numeric_scores = cast(list[float], supported_scores)
             total = sum(numeric_scores)
             if total <= 0:
-                weights = [None] * len(numeric_scores)
                 entropy = None
                 identifiability = "unresolved"
                 allocation_reason = "no_positive_member_evidence"
             else:
-                weights = [value / total for value in numeric_scores]
-                entropy = _normalized_entropy(cast(list[float], weights))
+                normalized_weights = [value / total for value in numeric_scores]
+                for index, normalized_weight in zip(
+                    supported_indices, normalized_weights, strict=True
+                ):
+                    weights[index] = normalized_weight
+                entropy = _normalized_entropy(normalized_weights)
                 identifiability = "resolved"
                 allocation_reason = None
 
@@ -1551,6 +1740,13 @@ def _score_tables(
                 "availability_score": family_availability,
                 "family_availability": family_availability,
                 "receptor_eligible": family_receptor_eligible,
+                "ligand_contrast_gate_status": family_gate_status,
+                "ligand_contrast_supported_interaction_count": (
+                    supported_interaction_count
+                ),
+                "ligand_contrast_not_estimable_interaction_count": (
+                    not_estimable_interaction_count
+                ),
                 "receiver_program_score": receiver_program_score,
                 "receiver_program_status": receiver_program_status,
                 "receiver_program_reason_code": receiver_program_reason,
@@ -1567,27 +1763,41 @@ def _score_tables(
                 "score_version": functional.score_version,
             }
         )
-        for row, evidence_score, weight in zip(
-            group.itertuples(index=False), evidence_scores, weights, strict=True
+        for row, gate_status, evidence_score, member_weight in zip(
+            group_rows, gate_statuses, evidence_scores, weights, strict=True
         ):
-            if core == 0.0:
-                unresolved: float | None = 0.0
-                status = "structural_zero"
-                reason = core_reason
-            elif not bool(row.receptor_eligible):
+            unresolved: float | None
+            status: str
+            reason: str | None
+            if not bool(row.receptor_eligible):
                 unresolved = 0.0
                 status = "structural_zero"
                 reason = "receptor_interaction_ineligible"
+            elif gate_status is SenderContrastSupportStatus.UNSUPPORTED:
+                unresolved = 0.0
+                status = "structural_zero"
+                reason = "ligand_contrast_not_supported"
+            elif core == 0.0:
+                unresolved = 0.0
+                status = "structural_zero"
+                reason = core_reason
+            elif gate_status is SenderContrastSupportStatus.NOT_ESTIMABLE:
+                unresolved = None
+                status = "not_estimable"
+                reason = str(
+                    row.ligand_contrast_gate_reason_code
+                    or "ligand_contrast_not_estimable"
+                )
             elif core is None:
                 unresolved = None
                 status = "not_estimable"
                 reason = core_reason
-            elif weight is None:
+            elif member_weight is None:
                 unresolved = None
                 status = "not_estimable"
                 reason = allocation_reason
             else:
-                unresolved = core * weight
+                unresolved = core * member_weight
                 status = "ok"
                 reason = None
             member_rows.append(
@@ -1606,12 +1816,18 @@ def _score_tables(
                     "availability": row.availability,
                     "receptor_gate": row.receptor_gate,
                     "receptor_eligible": bool(row.receptor_eligible),
+                    "ligand_contrast_gate": row.ligand_contrast_gate,
+                    "ligand_contrast_gate_id": row.ligand_contrast_gate_id,
+                    "ligand_contrast_gate_status": row.ligand_contrast_gate_status,
+                    "ligand_contrast_gate_reason_code": (
+                        row.ligand_contrast_gate_reason_code
+                    ),
                     "ligand_availability": row.ligand_availability,
                     "prior_quality": row.prior_quality,
                     "subject_prevalence": row.subject_prevalence,
                     "resource_evidence": row.resource_evidence,
                     "member_evidence_score": evidence_score,
-                    "within_family_lr_weight": weight,
+                    "within_family_lr_weight": member_weight,
                     "within_family_entropy": entropy,
                     "lr_identifiability_status": identifiability,
                     "family_core_strength": core,
@@ -1899,7 +2115,7 @@ class FamilyCommonScoringApplication:
                 and stable_id(
                     "family_common_scoring_application",
                     self._identity_payload(),
-                    schema_version="1",
+                    schema_version="2",
                 )
                 == self.application_id
             )
@@ -2104,7 +2320,7 @@ def apply_family_common_scoring_functional(
         stable_id(
             "family_common_scoring_application",
             self._identity_payload(),
-            schema_version="1",
+            schema_version="2",
         ),
     )
     return self

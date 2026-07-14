@@ -86,7 +86,9 @@ from crychic.sender import (
     COMMON_SENDER_APPLICATION_COLUMNS,
     CommonSenderApplication,
     ContrastCommonSenderFunctional,
+    SenderContrastSupportStatus,
     apply_contrast_common_sender_functional,
+    interaction_ligand_contrast_gate,
 )
 
 from .application import (
@@ -126,8 +128,9 @@ _REMAINING_PUBLIC_STAGES = (
 )
 _CPM_SCALE = 1_000_000.0
 _FAMILY_EDGE_EVIDENCE_POLICY = (
-    "max_sender_local_availability_neutral_resource_evidence_v1"
+    "max_sender_local_availability_with_frozen_train_only_ligand_gate_v2"
 )
+_FAMILY_BINDING_PRODUCER = "crychic.family_common_crossfit_binding.v2"
 _FAMILY_SCORE_MODES = ("state", "ecosystem")
 _COVERAGE_COLUMNS = (
     "subject_id",
@@ -507,7 +510,7 @@ class _FamilyCommonCrossFitBinding:
             "edge_evidence_policy_id": _FAMILY_EDGE_EVIDENCE_POLICY,
             "edge_evidence_digest": edge_digest,
             "sender_input_digest": sender_digest,
-            "_producer_marker": "crychic.family_common_crossfit_binding.v1",
+            "_producer_marker": _FAMILY_BINDING_PRODUCER,
         }
         self = object.__new__(cls)
         for name, value in values.items():
@@ -518,7 +521,7 @@ class _FamilyCommonCrossFitBinding:
             stable_id(
                 "family_common_crossfit_binding",
                 self._identity_payload(),
-                schema_version="1",
+                schema_version="2",
             ),
         )
         return self
@@ -538,8 +541,7 @@ class _FamilyCommonCrossFitBinding:
 
     def _require_intact(self) -> None:
         valid = (
-            self._producer_marker
-            == "crychic.family_common_crossfit_binding.v1"
+            self._producer_marker == _FAMILY_BINDING_PRODUCER
             and self.edge_evidence_policy_id == _FAMILY_EDGE_EVIDENCE_POLICY
             and all(
                 isinstance(value, str) and bool(value) and value == value.strip()
@@ -549,7 +551,7 @@ class _FamilyCommonCrossFitBinding:
             == stable_id(
                 "family_common_crossfit_binding",
                 self._identity_payload(),
-                schema_version="1",
+                schema_version="2",
             )
         )
         if not valid:
@@ -1719,7 +1721,7 @@ class CrossFitArtifacts:
         """Return the producer-owned complete sanitized input digest."""
 
         self.root_input_identity._require_intact()
-        return self.root_input_identity.input_digest
+        return str(self.root_input_identity.input_digest)
 
     @property
     def oof_receiver_coverage(self) -> pd.DataFrame:
@@ -2912,6 +2914,14 @@ def _family_common_edge_evidence(
                 _maximum_observed(group["availability_ecosystem"]),
             )
     prevalence: dict[str, float | None] = {}
+    ligand_contrast_gates = {
+        interaction_id: interaction_ligand_contrast_gate(
+            functional.sender_functional,
+            functional.receiver,
+            interaction_id,
+        )
+        for interaction_id in functional.interaction_ids
+    }
     for interaction_id in functional.interaction_ids:
         priors = tuple(
             prior.prevalence_prior
@@ -2935,6 +2945,7 @@ def _family_common_edge_evidence(
         if context_id not in functional.context_ids:
             continue
         for interaction_id in functional.interaction_ids:
+            ligand_contrast_gate = ligand_contrast_gates[interaction_id]
             evidence = grouped.get((sample_id, functional.receiver, interaction_id))
             ligand_availability = None if evidence is None else evidence[0]
             for mode, evidence_index in (
@@ -2949,6 +2960,16 @@ def _family_common_edge_evidence(
                         "receiver": functional.receiver,
                         "interaction_id": interaction_id,
                         "mode": mode,
+                        "ligand_contrast_gate": ligand_contrast_gate.gate,
+                        "ligand_contrast_gate_id": ligand_contrast_gate.gate_id,
+                        "ligand_contrast_gate_status": (
+                            SenderContrastSupportStatus(
+                                ligand_contrast_gate.status
+                            ).value
+                        ),
+                        "ligand_contrast_gate_reason_code": (
+                            ligand_contrast_gate.reason_code
+                        ),
                         "availability": (
                             None
                             if evidence is None

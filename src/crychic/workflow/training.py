@@ -46,6 +46,7 @@ from crychic.sender import (
     ContrastCommonSenderFunctional,
     ContrastCommonSenderParameters,
     fit_contrast_common_sender_functional,
+    freeze_common_sender_candidate_manifest,
 )
 
 _PRODUCER_MARKER = "crychic.workflow.training.v1"
@@ -240,6 +241,7 @@ class TrainingArtifacts:
     target_prior_content_id: str
     frozen_interaction_universe: FrozenInteractionUniverse
     sender_functionals: tuple[ContrastCommonSenderFunctional, ...]
+    sender_availability_input_digests: tuple[tuple[str, str], ...]
     completed_stages: tuple[str, ...]
     remaining_stages: tuple[str, ...]
     certification_status: str
@@ -265,6 +267,7 @@ class TrainingArtifacts:
         training_input_digest: str,
         frozen_interaction_universe: FrozenInteractionUniverse,
         sender_functionals: tuple[ContrastCommonSenderFunctional, ...],
+        sender_availability_input_digests: tuple[tuple[str, str], ...],
     ) -> TrainingArtifacts:
         if not isinstance(config, CrychicConfig):
             raise TypeError("config must be a CrychicConfig")
@@ -323,11 +326,42 @@ class TrainingArtifacts:
             )
         for functional in functionals:
             functional._require_intact()
+        sender_digests = tuple(sorted(tuple(sender_availability_input_digests)))
+        if any(
+            not isinstance(contrast_id, str)
+            or not contrast_id
+            or not isinstance(input_digest, str)
+            or not input_digest
+            for contrast_id, input_digest in sender_digests
+        ):
+            raise ValueError(
+                "sender availability input digests must contain non-empty IDs"
+            )
+        if len({contrast_id for contrast_id, _ in sender_digests}) != len(
+            sender_digests
+        ):
+            raise ValueError("sender availability digest contrasts must be unique")
+        expected_sender_digests = tuple(
+            sorted(
+                (
+                    functional.contrast_manifest_id,
+                    functional.training_availability_digest,
+                )
+                for functional in functionals
+            )
+        )
+        if sender_digests != expected_sender_digests:
+            raise ValueError(
+                "sender availability input digests do not match their functionals"
+            )
         if functionals:
             if any(
                 functional.training_subject_ids != subjects
+                or functional.training_input_digest != training_input_digest
                 or functional.filter_universe_id
                 != frozen_interaction_universe.filter_universe_id
+                or functional.frozen_interaction_ids
+                != frozen_interaction_universe.interaction_ids
                 or functional.parameters.parameter_manifest_id
                 != spec.sender_parameters.parameter_manifest_id
                 for functional in functionals
@@ -367,6 +401,9 @@ class TrainingArtifacts:
             "sender_functional_ids": [
                 functional.sender_functional_id for functional in functionals
             ],
+            "sender_availability_input_digests": [
+                list(value) for value in sender_digests
+            ],
             "spec_id": spec.spec_id,
             "target_prior_manifest_digest": target_prior.manifest_digest,
             "target_prior_content_id": target_prior_content_id,
@@ -390,6 +427,7 @@ class TrainingArtifacts:
             "target_prior_content_id": target_prior_content_id,
             "frozen_interaction_universe": frozen_interaction_universe,
             "sender_functionals": functionals,
+            "sender_availability_input_digests": sender_digests,
             "completed_stages": completed,
             "remaining_stages": remaining,
             "certification_status": _PARTIAL_STATUS,
@@ -426,6 +464,9 @@ class TrainingArtifacts:
                 training_input_digest=self.training_input_digest,
                 frozen_interaction_universe=self.frozen_interaction_universe,
                 sender_functionals=self.sender_functionals,
+                sender_availability_input_digests=(
+                    self.sender_availability_input_digests
+                ),
             )
             valid = (
                 self._producer_marker == _PRODUCER_MARKER
@@ -433,6 +474,7 @@ class TrainingArtifacts:
                 and isinstance(self.training_sample_ids, tuple)
                 and isinstance(self.cell_type_ids, tuple)
                 and isinstance(self.sender_functionals, tuple)
+                and isinstance(self.sender_availability_input_digests, tuple)
                 and isinstance(self.completed_stages, tuple)
                 and isinstance(self.remaining_stages, tuple)
                 and self.training_subject_ids == repeated.training_subject_ids
@@ -443,6 +485,8 @@ class TrainingArtifacts:
                 == repeated.resource_bundle_content_id
                 and self.target_prior_content_id == repeated.target_prior_content_id
                 and self.sender_functionals == repeated.sender_functionals
+                and self.sender_availability_input_digests
+                == repeated.sender_availability_input_digests
                 and self.completed_stages == repeated.completed_stages
                 and self.remaining_stages == repeated.remaining_stages
                 and self.certification_status == repeated.certification_status
@@ -1272,15 +1316,36 @@ def _fit_training_artifacts_from_prepared(
         availability.sample_interactions,
         tuple(config.context_keys),
     )
+    sender_candidate_manifest = (
+        freeze_common_sender_candidate_manifest(
+            availability.sample_interactions,
+            frozen_interaction_ids=(
+                availability.frozen_interaction_universe.interaction_ids
+            ),
+        )
+        if sender_contrasts
+        else ()
+    )
     sender_functionals = tuple(
         fit_contrast_common_sender_functional(
             availability.sample_interactions,
             contrast=contrast,
             context_keys=tuple(config.context_keys),
-            filter_universe_id=availability.filter_universe_id,
+            frozen_interaction_universe=availability.frozen_interaction_universe,
+            frozen_candidate_sender_manifest=sender_candidate_manifest,
+            training_input_digest=prepared.input_digest,
             parameters=spec.sender_parameters,
         )
         for contrast in sender_contrasts
+    )
+    sender_availability_input_digests = tuple(
+        sorted(
+            (
+                functional.contrast_manifest_id,
+                functional.training_availability_digest,
+            )
+            for functional in sender_functionals
+        )
     )
     return TrainingArtifacts._from_training(
         config=config,
@@ -1293,6 +1358,7 @@ def _fit_training_artifacts_from_prepared(
         training_input_digest=prepared.input_digest,
         frozen_interaction_universe=availability.frozen_interaction_universe,
         sender_functionals=sender_functionals,
+        sender_availability_input_digests=sender_availability_input_digests,
     )
 
 

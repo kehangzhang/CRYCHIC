@@ -314,6 +314,43 @@ def test_raw_training_scope_derives_identity_and_fits_a_real_universe() -> None:
     assert sender_functional.filter_universe_id == (
         artifacts.frozen_interaction_universe.filter_universe_id
     )
+    assert sender_functional.frozen_interaction_ids == (
+        artifacts.frozen_interaction_universe.interaction_ids
+    )
+    assert sender_functional.training_input_digest == artifacts.training_input_digest
+    assert artifacts.sender_availability_input_digests == (
+        (
+            sender_functional.contrast_manifest_id,
+            sender_functional.training_availability_digest,
+        ),
+    )
+
+
+def test_training_artifact_rejects_coordinated_sender_functional_swap() -> None:
+    first = _fit()
+    changed_input = _adata(("train-1", "train-2"), first_high=True)
+    changed_counts = changed_input.layers["counts"].toarray()
+    changed_counts[changed_counts[:, 0] > 0, 0] = 80
+    changed_input.layers["counts"] = sparse.csr_matrix(changed_counts)
+    second = _fit_adata(changed_input)
+
+    assert first.frozen_interaction_universe.filter_universe_id == (
+        second.frozen_interaction_universe.filter_universe_id
+    )
+    assert first.training_input_digest != second.training_input_digest
+    assert first.sender_functionals[0].training_availability_digest != (
+        second.sender_functionals[0].training_availability_digest
+    )
+
+    object.__setattr__(first, "sender_functionals", second.sender_functionals)
+    object.__setattr__(
+        first,
+        "sender_availability_input_digests",
+        second.sender_availability_input_digests,
+    )
+    with pytest.raises(ContractError) as error:
+        first._require_intact()
+    assert error.value.details.code == "training_artifact_integrity_violation"
 
 
 def test_training_stage_receives_only_sanitized_declared_input(

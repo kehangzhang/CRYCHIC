@@ -541,6 +541,13 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     assert result.receiver_coverage_audit_id
     assert all(len(fold.design_encoders) == 1 for fold in result.folds)
     assert all(
+        functional.training_input_digest == fold.training.training_input_digest
+        and functional.frozen_interaction_ids
+        == fold.training.frozen_interaction_universe.interaction_ids
+        for fold in result.folds
+        for functional in fold.training.sender_functionals
+    )
+    assert all(
         application.status == "observed"
         for fold in result.folds
         for application in fold.design_applications
@@ -616,6 +623,15 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     manifest = result.to_manifest()
     assert manifest["completed_stage_oof_verified"] is True
     assert manifest["complete_pipeline_oof_certified"] is False
+    expected_family_edge_policy = (
+        "max_sender_local_availability_with_frozen_train_only_ligand_gate_v2"
+    )
+    assert manifest["family_edge_evidence_policy"] == expected_family_edge_policy
+    assert all(
+        artifact["edge_evidence_policy_id"] == expected_family_edge_policy
+        for fold_artifact in manifest["fold_artifacts"]
+        for artifact in fold_artifact["family_common_scoring_artifacts"]
+    )
     assert manifest["receiver_coverage_audit_id"] == (result.receiver_coverage_audit_id)
     assert manifest["receiver_coverage_status_counts"] == {
         "diagnostic_status": {

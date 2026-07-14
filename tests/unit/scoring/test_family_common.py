@@ -49,6 +49,8 @@ from crychic.sender import (
     ContrastCommonSenderParameters,
     apply_contrast_common_sender_functional,
     fit_contrast_common_sender_functional,
+    freeze_common_sender_candidate_manifest,
+    interaction_ligand_contrast_gate,
 )
 
 
@@ -217,7 +219,11 @@ def _incremental_application(
     )
 
 
-def _sender_training() -> pd.DataFrame:
+def _sender_training(
+    *,
+    unsupported_interactions: tuple[str, ...] = (),
+    not_estimable_interactions: tuple[str, ...] = (),
+) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for subject_index in range(1, 4):
         for context in ("reference", "target"):
@@ -232,7 +238,22 @@ def _sender_training() -> pd.DataFrame:
                             "receiver": "Receiver",
                             "interaction_id": interaction_id,
                             "ligand_availability": (
-                                0.8 - 0.1 * sender_index - 0.05 * interaction_index
+                                0.8
+                                - 0.1 * sender_index
+                                - 0.05 * interaction_index
+                                + (
+                                    0.0
+                                    if interaction_id in unsupported_interactions
+                                    else 0.2
+                                    if context == "target"
+                                    else 0.0
+                                )
+                                if not (
+                                    interaction_id in not_estimable_interactions
+                                    and context == "target"
+                                    and subject_index > 1
+                                )
+                                else None
                             ),
                         }
                     )
@@ -241,6 +262,9 @@ def _sender_training() -> pd.DataFrame:
 
 def _sender_functional(
     receiver_family: ReceiverFamilyTrainingArtifact,
+    *,
+    unsupported_interactions: tuple[str, ...] = (),
+    not_estimable_interactions: tuple[str, ...] = (),
 ) -> ContrastCommonSenderFunctional:
     contrast = balanced_contrast(
         ("target",),
@@ -248,11 +272,31 @@ def _sender_functional(
         name="stim_vs_ctrl",
         family="test",
     )
+    training = _sender_training(
+        unsupported_interactions=unsupported_interactions,
+        not_estimable_interactions=not_estimable_interactions,
+    )
+    frozen_interaction_ids = ("iA", "iB", "iC")
+    universe = FrozenInteractionUniverse(
+        interaction_ids=frozen_interaction_ids,
+        training_subject_ids=("p1", "p2", "p3"),
+        resource_id="tiny_lr",
+        resource_version="1",
+        resource_manifest_digest="tiny-lr-manifest",
+        min_pooled_availability=0.0,
+        max_interactions=None,
+        selection_policy=InteractionFilterPolicy.POOLED_SUPPORT_V1,
+    )
     return fit_contrast_common_sender_functional(
-        _sender_training(),
+        training,
         contrast=contrast,
         context_keys=("context_id",),
-        filter_universe_id=receiver_family.filter_universe_id,
+        frozen_interaction_universe=universe,
+        frozen_candidate_sender_manifest=freeze_common_sender_candidate_manifest(
+            training,
+            frozen_interaction_ids=frozen_interaction_ids,
+        ),
+        training_input_digest="family-common-unit-training-input",
         parameters=ContrastCommonSenderParameters(
             min_subjects=2,
             prevalence_threshold=0.0,
@@ -296,7 +340,20 @@ def _sender_heldout() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _edge_evidence() -> pd.DataFrame:
+def _edge_evidence(
+    sender_functional: ContrastCommonSenderFunctional | None = None,
+) -> pd.DataFrame:
+    sender = (
+        _sender_functional(_receiver_family())
+        if sender_functional is None
+        else sender_functional
+    )
+    gates = {
+        interaction_id: interaction_ligand_contrast_gate(
+            sender, "Receiver", interaction_id
+        )
+        for interaction_id in ("iA", "iB", "iC")
+    }
     rows: list[dict[str, object]] = []
     availability = {"iA": 0.8, "iB": 0.4, "iC": 1.0}
     manifest = _manifest(prefix="heldout", subjects=("h1", "h2"))
@@ -307,6 +364,7 @@ def _edge_evidence() -> pd.DataFrame:
         strict=True,
     ):
         for interaction_id in ("iA", "iB", "iC"):
+            gate = gates[interaction_id]
             for mode in ("state", "ecosystem"):
                 rows.append(
                     {
@@ -316,6 +374,10 @@ def _edge_evidence() -> pd.DataFrame:
                         "receiver": "Receiver",
                         "interaction_id": interaction_id,
                         "mode": mode,
+                        "ligand_contrast_gate": gate.gate,
+                        "ligand_contrast_gate_id": gate.gate_id,
+                        "ligand_contrast_gate_status": gate.status.value,
+                        "ligand_contrast_gate_reason_code": gate.reason_code,
                         "availability": availability[interaction_id],
                         "ligand_availability": 0.7,
                         "prior_quality": 1.0,
@@ -373,6 +435,22 @@ def test_functional_binds_common_contrast_fold_and_explicit_lineage() -> None:
     )
     assert manifest["tuning_manifest_id"] == "subject-blocked-tuning-manifest-1"
     assert manifest["selected_penalty_id"] == "selected-penalty-1"
+    expected_gates = [
+        interaction_ligand_contrast_gate(
+            functional.sender_functional,
+            functional.receiver,
+            interaction_id,
+        ).gate_id
+        for interaction_id in functional.interaction_ids
+    ]
+    assert [
+        gate["gate_id"]
+        for gate in manifest["interaction_ligand_contrast_gates"]
+    ] == expected_gates
+    assert manifest["member_allocation_method"].endswith(
+        "then_supported_family_normalize_v2"
+    )
+    assert str(manifest["score_version"]).endswith("softmin_v2")
     assert functional.family_common_functional_id != (
         changed_tuning.family_common_functional_id
     )
@@ -723,6 +801,264 @@ def test_producer_owned_types_and_edge_contract_fail_closed() -> None:
             _edge_evidence().loc[lambda frame: frame["mode"].eq("state")],
             sender_application,
         )
+
+
+@pytest.mark.parametrize(
+    ("column", "forged_value"),
+    (
+        ("ligand_contrast_gate", 0.0),
+        ("ligand_contrast_gate_id", "forged-gate-id"),
+        ("ligand_contrast_gate_status", "unsupported"),
+        (
+            "ligand_contrast_gate_reason_code",
+            "ligand_contrast_lower_bound_not_positive",
+        ),
+    ),
+)
+def test_edge_evidence_rejects_every_forged_ligand_contrast_gate_field(
+    column: str,
+    forged_value: object,
+) -> None:
+    _, incremental, sender, functional, sender_application = _parents()
+    evidence = _edge_evidence(sender)
+    evidence.loc[evidence.index[0], column] = forged_value
+
+    with pytest.raises(ContractError) as error:
+        apply_family_common_scoring_functional(
+            functional,
+            _incremental_application(incremental),
+            evidence,
+            sender_application,
+        )
+
+    assert error.value.details.code == "family_common_application_parent_mismatch"
+    assert error.value.details.field == "ligand_contrast_gate_id"
+
+
+def test_all_receptor_eligible_unsupported_gates_are_exact_family_zero() -> None:
+    receiver_family = _receiver_family()
+    incremental = _incremental_functional(receiver_family)
+    sender = _sender_functional(
+        receiver_family,
+        unsupported_interactions=("iA", "iB"),
+    )
+    functional = fit_family_common_scoring_functional(
+        receiver_family,
+        incremental,
+        sender,
+        receiver_incremental_training_artifact_id="incremental-unsupported-1",
+        tuning_manifest_id="tuning-unsupported-1",
+        selected_penalty_id="penalty-unsupported-1",
+        autonomous_program_resource_id=None,
+    )
+    application = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence(sender),
+        apply_contrast_common_sender_functional(sender, _sender_heldout()),
+    )
+    active_family = functional.active_family_ids[0]
+    family = application.family_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    members = application.member_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    assert family["integrated_lr_score"].eq(0.0).all()
+    assert set(family["status"]) == {"structural_zero"}
+    assert set(family["reason_code"]) == {"ligand_contrast_not_supported"}
+    assert set(family["ligand_contrast_gate_status"]) == {"unsupported"}
+    assert family["ligand_contrast_supported_interaction_count"].eq(0).all()
+    assert family["ligand_contrast_not_estimable_interaction_count"].eq(0).all()
+    assert set(members["ligand_contrast_gate_status"]) == {"unsupported"}
+    assert members["ligand_contrast_gate"].eq(0.0).all()
+    assert members["ligand_contrast_gate_id"].str.len().gt(0).all()
+    assert set(members["ligand_contrast_gate_reason_code"]) == {
+        "ligand_contrast_holm_adjusted_p_not_below_familywise_alpha"
+    }
+    assert members["within_family_lr_weight"].eq(0.0).all()
+    assert members["sender_unresolved_strength"].eq(0.0).all()
+
+
+def test_unsupported_member_cannot_borrow_from_supported_same_family_member() -> None:
+    receiver_family = _receiver_family()
+    incremental = _incremental_functional(receiver_family)
+    sender = _sender_functional(
+        receiver_family,
+        unsupported_interactions=("iB",),
+    )
+    functional = fit_family_common_scoring_functional(
+        receiver_family,
+        incremental,
+        sender,
+        receiver_incremental_training_artifact_id="incremental-mixed-gate-1",
+        tuning_manifest_id="tuning-mixed-gate-1",
+        selected_penalty_id="penalty-mixed-gate-1",
+        autonomous_program_resource_id=None,
+    )
+    application = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence(sender),
+        apply_contrast_common_sender_functional(sender, _sender_heldout()),
+    )
+    active_family = functional.active_family_ids[0]
+    family = application.family_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    members = application.member_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    supported = members.loc[lambda frame: frame["interaction_id"].eq("iA")]
+    unsupported = members.loc[lambda frame: frame["interaction_id"].eq("iB")]
+
+    assert family["integrated_lr_score"].gt(0.0).all()
+    assert set(family["ligand_contrast_gate_status"]) == {"supported"}
+    assert family["ligand_contrast_supported_interaction_count"].eq(1).all()
+    assert family["ligand_contrast_not_estimable_interaction_count"].eq(0).all()
+    assert supported["within_family_lr_weight"].eq(1.0).all()
+    assert set(supported["ligand_contrast_gate_status"]) == {"supported"}
+    assert supported["ligand_contrast_gate"].eq(1.0).all()
+    assert unsupported["member_evidence_score"].eq(0.0).all()
+    assert unsupported["within_family_lr_weight"].eq(0.0).all()
+    assert unsupported["sender_unresolved_strength"].eq(0.0).all()
+    assert set(unsupported["reason_code"]) == {"ligand_contrast_not_supported"}
+
+
+def test_not_estimable_member_prevents_partial_supported_member_allocation() -> None:
+    receiver_family = _receiver_family()
+    incremental = _incremental_functional(receiver_family)
+    sender = _sender_functional(
+        receiver_family,
+        not_estimable_interactions=("iB",),
+    )
+    functional = fit_family_common_scoring_functional(
+        receiver_family,
+        incremental,
+        sender,
+        receiver_incremental_training_artifact_id="incremental-mixed-ne-1",
+        tuning_manifest_id="tuning-mixed-ne-1",
+        selected_penalty_id="penalty-mixed-ne-1",
+        autonomous_program_resource_id=None,
+    )
+    application = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence(sender),
+        apply_contrast_common_sender_functional(sender, _sender_heldout()),
+    )
+    active_family = functional.active_family_ids[0]
+    family = application.family_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    members = application.member_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    senders = application.sender_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    supported = members.loc[lambda frame: frame["interaction_id"].eq("iA")]
+    not_estimable = members.loc[lambda frame: frame["interaction_id"].eq("iB")]
+
+    assert family["integrated_lr_score"].gt(0.0).all()
+    assert set(family["status"]) == {"ok"}
+    assert set(family["lr_identifiability_status"]) == {"unresolved"}
+    assert family["ligand_contrast_supported_interaction_count"].eq(1).all()
+    assert family["ligand_contrast_not_estimable_interaction_count"].eq(1).all()
+    assert supported["within_family_lr_weight"].isna().all()
+    assert supported["sender_unresolved_strength"].isna().all()
+    assert set(supported["reason_code"]) == {"ligand_contrast_not_estimable"}
+    assert not_estimable["within_family_lr_weight"].isna().all()
+    assert not_estimable["sender_unresolved_strength"].isna().all()
+    assert senders["sender_resolved_strength"].isna().all()
+    assert set(senders["status"]) == {"not_estimable"}
+
+
+def test_no_supported_gate_with_receptor_eligible_ne_is_family_ne() -> None:
+    receiver_family = _receiver_family()
+    incremental = _incremental_functional(receiver_family)
+    sender = _sender_functional(
+        receiver_family,
+        unsupported_interactions=("iB",),
+        not_estimable_interactions=("iA",),
+    )
+    functional = fit_family_common_scoring_functional(
+        receiver_family,
+        incremental,
+        sender,
+        receiver_incremental_training_artifact_id="incremental-gate-ne-1",
+        tuning_manifest_id="tuning-gate-ne-1",
+        selected_penalty_id="penalty-gate-ne-1",
+        autonomous_program_resource_id=None,
+    )
+    application = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence(sender),
+        apply_contrast_common_sender_functional(sender, _sender_heldout()),
+    )
+    active_family = functional.active_family_ids[0]
+    family = application.family_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    members = application.member_scores.loc[
+        lambda frame: frame["family_id"].eq(active_family)
+    ]
+    ne_member = members.loc[lambda frame: frame["interaction_id"].eq("iA")]
+    unsupported = members.loc[lambda frame: frame["interaction_id"].eq("iB")]
+
+    assert family["integrated_lr_score"].isna().all()
+    assert set(family["status"]) == {"not_estimable"}
+    assert set(family["reason_code"]) == {"ligand_contrast_not_estimable"}
+    assert set(family["ligand_contrast_gate_status"]) == {"not_estimable"}
+    assert family["ligand_contrast_supported_interaction_count"].eq(0).all()
+    assert family["ligand_contrast_not_estimable_interaction_count"].eq(1).all()
+    assert set(ne_member["ligand_contrast_gate_status"]) == {"not_estimable"}
+    assert ne_member["ligand_contrast_gate"].isna().all()
+    assert ne_member["sender_unresolved_strength"].isna().all()
+    assert unsupported["sender_unresolved_strength"].eq(0.0).all()
+
+
+def test_receptor_family_ineligible_precedes_ligand_gate_ne() -> None:
+    receiver_family = _receiver_family()
+    incremental = _incremental_functional(receiver_family)
+    sender = _sender_functional(
+        receiver_family,
+        not_estimable_interactions=("iC",),
+    )
+    functional = fit_family_common_scoring_functional(
+        receiver_family,
+        incremental,
+        sender,
+        receiver_incremental_training_artifact_id="incremental-receptor-first-1",
+        tuning_manifest_id="tuning-receptor-first-1",
+        selected_penalty_id="penalty-receptor-first-1",
+        autonomous_program_resource_id=None,
+    )
+    application = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence(sender),
+        apply_contrast_common_sender_functional(sender, _sender_heldout()),
+    )
+    ineligible_family = next(
+        family_id
+        for family_id in functional.family_ids
+        if family_id not in functional.active_family_ids
+    )
+    family = application.family_scores.loc[
+        lambda frame: frame["family_id"].eq(ineligible_family)
+    ]
+    members = application.member_scores.loc[
+        lambda frame: frame["family_id"].eq(ineligible_family)
+    ]
+
+    assert family["integrated_lr_score"].eq(0.0).all()
+    assert set(family["reason_code"]) == {"receptor_family_ineligible"}
+    assert set(family["ligand_contrast_gate_status"]) == {
+        "not_applicable_receptor_ineligible"
+    }
+    assert members["sender_unresolved_strength"].eq(0.0).all()
 
 
 def test_functional_rejects_mismatched_explicit_autonomous_lineage() -> None:
