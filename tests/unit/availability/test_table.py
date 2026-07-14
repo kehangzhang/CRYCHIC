@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy import sparse
 
 from crychic.availability import (
     AvailabilityParameters,
+    BatchAvailability,
     DetectionShrinkage,
     HillParameters,
     estimate_bundle_availability,
@@ -103,6 +105,149 @@ def _bundle() -> ResourceBundle:
         license="CC0",
         citation="Synthetic fixture",
     )
+
+
+def _copy_availability(
+    source: BatchAvailability,
+    *,
+    sample_interactions: pd.DataFrame | None = None,
+    application_subject_ids: tuple[object, ...] | None = None,
+) -> BatchAvailability:
+    return BatchAvailability(
+        sample_interactions=(
+            source.sample_interactions
+            if sample_interactions is None
+            else sample_interactions
+        ),
+        mapping_summary=source.mapping_summary,
+        resource_id=source.resource_id,
+        resource_version=source.resource_version,
+        detection_available=source.detection_available,
+        frozen_interaction_universe=source.frozen_interaction_universe,
+        filter_application=source.filter_application,
+        application_subject_ids=(
+            source.application_subject_ids
+            if application_subject_ids is None
+            else application_subject_ids
+        ),
+    )
+
+
+@pytest.mark.parametrize("column", ["sample_id", "subject_id", "context_id"])
+@pytest.mark.parametrize("invalid", [pd.NA, np.nan, None])
+def test_batch_availability_rejects_missing_row_identifiers(
+    column: str, invalid: object
+) -> None:
+    source = estimate_bundle_availability(
+        _aggregate(),
+        _bundle(),
+        context_keys=("condition",),
+        min_pooled_availability=0.0,
+    )
+    rows = source.sample_interactions.copy(deep=True)
+    rows[column] = rows[column].astype(object)
+    rows.loc[0, column] = invalid
+
+    with pytest.raises(
+        ValueError,
+        match=rf"sample_interactions\.{column} must not contain missing identifiers",
+    ):
+        _copy_availability(source, sample_interactions=rows)
+
+
+@pytest.mark.parametrize("column", ["sample_id", "subject_id", "context_id"])
+@pytest.mark.parametrize("invalid", ["", "   "])
+def test_batch_availability_rejects_empty_row_identifiers(
+    column: str, invalid: str
+) -> None:
+    source = estimate_bundle_availability(
+        _aggregate(),
+        _bundle(),
+        context_keys=("condition",),
+        min_pooled_availability=0.0,
+    )
+    rows = source.sample_interactions.copy(deep=True)
+    rows[column] = rows[column].astype(object)
+    rows.loc[0, column] = invalid
+
+    with pytest.raises(
+        ValueError,
+        match=rf"sample_interactions\.{column} must contain non-empty identifiers",
+    ):
+        _copy_availability(source, sample_interactions=rows)
+
+
+@pytest.mark.parametrize("invalid", [pd.NA, np.nan, None])
+def test_batch_availability_rejects_missing_application_subject_ids(
+    invalid: object,
+) -> None:
+    source = estimate_bundle_availability(
+        _aggregate(),
+        _bundle(),
+        context_keys=("condition",),
+        min_pooled_availability=0.0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="application_subject_ids must not contain missing identifiers",
+    ):
+        _copy_availability(source, application_subject_ids=(invalid,))
+
+
+@pytest.mark.parametrize("invalid", ["", "   "])
+def test_batch_availability_rejects_empty_application_subject_ids(
+    invalid: str,
+) -> None:
+    source = estimate_bundle_availability(
+        _aggregate(),
+        _bundle(),
+        context_keys=("condition",),
+        min_pooled_availability=0.0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="application_subject_ids must contain non-empty identifiers",
+    ):
+        _copy_availability(source, application_subject_ids=(invalid,))
+
+
+@pytest.mark.parametrize(
+    ("column", "invalid"),
+    [
+        ("sample_id", pd.NA),
+        ("sample_id", "  "),
+        ("subject_id", np.nan),
+        ("subject_id", ""),
+    ],
+)
+def test_estimation_rejects_invalid_aggregate_identifiers_before_stringification(
+    column: str, invalid: object
+) -> None:
+    source = _aggregate()
+    metadata = source.unit_metadata.copy(deep=True)
+    metadata[column] = metadata[column].astype(object)
+    metadata.loc[0, column] = invalid
+    aggregate = PseudobulkDataset(
+        counts=source.counts,
+        detection_fraction=source.detection_fraction,
+        unit_metadata=metadata,
+        feature_ids=source.feature_ids,
+        matrix_unit_ids=source.matrix_unit_ids,
+        source_location=source.source_location,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"aggregate\.unit_metadata\.{column} must",
+    ):
+        estimate_bundle_availability(
+            aggregate,
+            _bundle(),
+            context_keys=("condition",),
+            min_pooled_availability=0.0,
+        )
 
 
 def test_batch_availability_preserves_state_and_ecosystem_components() -> None:

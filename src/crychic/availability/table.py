@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -24,6 +24,47 @@ from .contracts import (
 
 Aggregate: TypeAlias = PseudobulkDataset | ExploratoryAggregate
 _DEFAULT_PARAMETERS = AvailabilityParameters()
+_BATCH_IDENTIFIER_COLUMNS = ("sample_id", "subject_id", "context_id")
+
+
+def _validate_identifier_columns(
+    table: pd.DataFrame,
+    columns: Sequence[str],
+    *,
+    table_name: str,
+) -> None:
+    if table.empty:
+        return
+    missing_columns = set(columns).difference(table.columns)
+    if missing_columns:
+        raise ValueError(
+            f"{table_name} is missing identifier columns: {sorted(missing_columns)}"
+        )
+    for column in columns:
+        values = table[column]
+        if bool(values.isna().any()):
+            raise ValueError(
+                f"{table_name}.{column} must not contain missing identifiers"
+            )
+        if any(not str(value).strip() for value in values.tolist()):
+            raise ValueError(
+                f"{table_name}.{column} must contain non-empty identifiers"
+            )
+
+
+def _normalize_application_subject_ids(values: Sequence[object]) -> tuple[str, ...]:
+    raw = tuple(values)
+    if not raw:
+        raise ValueError("application_subject_ids must be non-empty and unique")
+    source = pd.Series(raw, dtype="object")
+    if bool(source.isna().any()):
+        raise ValueError("application_subject_ids must not contain missing identifiers")
+    normalized = tuple(str(value) for value in raw)
+    if any(not value.strip() for value in normalized):
+        raise ValueError("application_subject_ids must contain non-empty identifiers")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("application_subject_ids must be non-empty and unique")
+    return tuple(sorted(normalized))
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,16 +81,17 @@ class BatchAvailability:
     application_subject_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.frozen_interaction_universe, FrozenInteractionUniverse
-        ):
+        if not isinstance(self.frozen_interaction_universe, FrozenInteractionUniverse):
             raise TypeError(
                 "frozen_interaction_universe must be a FrozenInteractionUniverse"
             )
         application = InteractionFilterApplication(self.filter_application)
-        subjects = tuple(sorted(str(value) for value in self.application_subject_ids))
-        if not subjects or len(subjects) != len(set(subjects)):
-            raise ValueError("application_subject_ids must be non-empty and unique")
+        subjects = _normalize_application_subject_ids(self.application_subject_ids)
+        _validate_identifier_columns(
+            self.sample_interactions,
+            _BATCH_IDENTIFIER_COLUMNS,
+            table_name="sample_interactions",
+        )
         observed_ids = set(
             self.sample_interactions.get("interaction_id", pd.Series(dtype="object"))
             .dropna()
@@ -77,7 +119,7 @@ class BatchAvailability:
     def filter_universe_id(self) -> str:
         """Stable identity of the selected or applied interaction universe."""
 
-        return self.frozen_interaction_universe.filter_universe_id
+        return cast(str, self.frozen_interaction_universe.filter_universe_id)
 
 
 def _entity_values(
@@ -192,6 +234,12 @@ def estimate_bundle_availability(
         raise ValueError(
             f"aggregate metadata lacks contexts: {sorted(missing_context)}"
         )
+
+    _validate_identifier_columns(
+        aggregate.unit_metadata,
+        ("sample_id", "subject_id"),
+        table_name="aggregate.unit_metadata",
+    )
 
     application_subject_ids = tuple(
         sorted(set(aggregate.unit_metadata["subject_id"].astype(str)))
