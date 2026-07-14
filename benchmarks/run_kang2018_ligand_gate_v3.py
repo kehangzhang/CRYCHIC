@@ -41,6 +41,7 @@ from crychic.sender import (
     interaction_ligand_contrast_gate,
 )
 from crychic.workflow import (
+    AutonomousProgramUseScope,
     CrossFitArtifacts,
     CrossFitFoldArtifacts,
     CrossFitSpec,
@@ -51,7 +52,7 @@ from crychic.workflow import (
 SCHEMA_VERSION = "crychic-kang2018-ligand-gate-v3-benchmark-v1"
 CONFIG_SCHEMA_VERSION = "crychic-kang2018-ligand-gate-v3-config-v1"
 EXPECTED_CONFIG_SHA256 = (
-    "2b10b670ccbb9e7034e94fe5a7a8a7fa590b4c97ee1d99e100748f83003ebdfc"
+    "31f0001e8c5db4b2b68c17bc0953a310c684f9f596be500db72bb669fbbb48c5"
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = REPOSITORY_ROOT / "benchmarks/configs/kang2018_ligand_gate_v3.json"
@@ -831,6 +832,10 @@ def build_crossfit_spec(
             policy["downstream_minimum_scale"], field="downstream_minimum_scale"
         ),
         autonomous_program_resource=None,
+        autonomous_program_use_scope=cast(
+            AutonomousProgramUseScope,
+            policy["autonomous_program_use_scope"],
+        ),
         penalty_tuning_spec=tuning,
     )
     crychic_config = CrychicConfig(

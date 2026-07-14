@@ -35,7 +35,7 @@ DEFAULT_GENERATED_AT = "2026-07-15T00:00:00+00:00"
 SVG_HASHSALT = "crychic-kang2018-ligand-gate-v3-report-v1"
 
 EXPECTED_CONFIG_SHA256 = (
-    "2b10b670ccbb9e7034e94fe5a7a8a7fa590b4c97ee1d99e100748f83003ebdfc"
+    "31f0001e8c5db4b2b68c17bc0953a310c684f9f596be500db72bb669fbbb48c5"
 )
 EXPECTED_INPUT_SHA256 = (
     "5ee14c9df0a58e385828f9339dc93eff52fae7614218e82ed9c9a022804b30ac"
@@ -251,6 +251,8 @@ def _partition_signature(payload: Mapping[str, Any]) -> dict[str, object]:
 
 def _crossfit_policy_signature(configuration: Mapping[str, Any]) -> dict[str, Any]:
     spec = dict(_mapping(configuration.get("crossfit_spec"), field="crossfit_spec"))
+    if spec.get("autonomous_program_use_scope") != "biological_analysis":
+        raise ValueError("real-data crossfit must require biological autonomous programs")
     for field in (
         "receptor_gate_threshold",
         "repeat_id",

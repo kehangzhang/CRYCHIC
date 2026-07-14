@@ -132,6 +132,16 @@ official use.
 The synthetic fixture may satisfy the algorithmic incremental-child lineage
 gate in synthetic benchmarks because that gate checks
 `is_manifest_verified_trusted`. This does not grant biological-reference
-status. Biological analyses must additionally require
-`is_biological_reference_trusted`; no such biological autonomous-program
-resource is currently registered.
+status. Public cross-fit specifications therefore default to
+`autonomous_program_use_scope="algorithm_diagnostic"` for backward-compatible
+simulation work. Real-data runners must explicitly declare
+`autonomous_program_use_scope="biological_analysis"`; that scope rejects any
+provided resource unless `is_biological_reference_trusted` is true. No such
+biological autonomous-program resource is currently registered, so official
+real-data incremental rows remain not estimable.
+
+PROGENy pathway footprints are not a substitute for this resource: EGFR,
+JAK-STAT, MAPK, NF-kappaB, TGF-beta, TNF-alpha, VEGF, and WNT responses may be
+mediators of the communication effect being estimated. They may be used only
+as a separately labeled exploratory pathway-footprint sensitivity analysis;
+they must not be registered as a receiver-autonomous biological reference.

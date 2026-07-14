@@ -167,6 +167,7 @@ def test_complete_config_checksum_rejects_any_policy_mutation(
         receptor_gate_threshold=0.1,
     )
     assert spec.outer_fold_partition_seed == 18021988
+    assert spec.autonomous_program_use_scope == "biological_analysis"
     config = json.loads(kang.DEFAULT_CONFIG.read_text(encoding="utf-8"))
     config["crossfit"]["outer_fold_partition_seed"] += 1
     mutated = tmp_path / "mutated.json"

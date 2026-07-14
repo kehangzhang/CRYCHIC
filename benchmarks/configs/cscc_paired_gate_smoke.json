@@ -178,6 +178,7 @@
     }
   ],
   "crossfit": {
+    "autonomous_program_use_scope": "biological_analysis",
     "outer_allowed_n_splits": [
       2
     ],

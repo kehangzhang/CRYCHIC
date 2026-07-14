@@ -14,6 +14,7 @@ from .contracts import (
     StagePlan,
 )
 from .crossfit import (
+    AutonomousProgramUseScope,
     CrossFitArtifacts,
     CrossFitFoldArtifacts,
     CrossFitSpec,
@@ -38,6 +39,7 @@ from .repeated_crossfit import (
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
 
 __all__ = [
+    "AutonomousProgramUseScope",
     "BaselineArtifacts",
     "BaselineAttributionRun",
     "BaselineDryRunPlan",

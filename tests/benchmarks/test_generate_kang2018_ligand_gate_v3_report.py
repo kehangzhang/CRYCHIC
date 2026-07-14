@@ -270,6 +270,7 @@ def _payload(role: str) -> dict[str, object]:
             },
             "crossfit_spec": {
                 "allowed_n_splits": [2],
+                "autonomous_program_use_scope": "biological_analysis",
                 "outer_fold_partition_seed": 18021988,
                 "receptor_gate_threshold": receptor_threshold,
                 "repeat_id": f"repeat-{role}",
@@ -481,6 +482,12 @@ def _mutate_json(path: Path, mutation: Callable[[dict[str, Any]], None]) -> None
         (
             lambda payload: payload["configuration"].update(sha256="f" * 64),
             "config checksum",
+        ),
+        (
+            lambda payload: payload["configuration"]["crossfit_spec"].update(
+                autonomous_program_use_scope="algorithm_diagnostic"
+            ),
+            "biological autonomous programs",
         ),
         (
             lambda payload: payload["resources"]["cellchat"].update(

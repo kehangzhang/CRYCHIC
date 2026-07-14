@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -129,6 +130,13 @@ _REMAINING_PUBLIC_STAGES = (
 )
 _CPM_SCALE = 1_000_000.0
 _MAX_SEED = 2**63 - 1
+AutonomousProgramUseScope = Literal[
+    "algorithm_diagnostic",
+    "biological_analysis",
+]
+_DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE: AutonomousProgramUseScope = (
+    "algorithm_diagnostic"
+)
 _FAMILY_EDGE_EVIDENCE_POLICY = (
     "max_sender_local_availability_with_frozen_train_only_ligand_gate_v2"
 )
@@ -238,6 +246,9 @@ class CrossFitSpec:
     family_cosine_threshold: float = 0.95
     downstream_minimum_scale: float = 0.25
     autonomous_program_resource: ReceiverAutonomousProgramResource | None = None
+    autonomous_program_use_scope: AutonomousProgramUseScope = (
+        _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE
+    )
     penalty_tuning_spec: PenaltyTuningSpec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
@@ -320,15 +331,30 @@ class CrossFitSpec:
         family_threshold = float(self.family_cosine_threshold)
         minimum_scale = float(self.downstream_minimum_scale)
         autonomous_resource = self.autonomous_program_resource
+        autonomous_use_scope = self.autonomous_program_use_scope
+        if not isinstance(autonomous_use_scope, str) or autonomous_use_scope not in {
+            "algorithm_diagnostic",
+            "biological_analysis",
+        }:
+            raise ValueError(
+                "autonomous_program_use_scope must be algorithm_diagnostic or "
+                "biological_analysis"
+            )
         if autonomous_resource is not None:
-            if not isinstance(
-                autonomous_resource, ReceiverAutonomousProgramResource
-            ):
+            if type(autonomous_resource) is not ReceiverAutonomousProgramResource:
                 raise TypeError(
                     "autonomous_program_resource must be a "
-                    "ReceiverAutonomousProgramResource"
+                    "producer-owned ReceiverAutonomousProgramResource"
                 )
             autonomous_resource._require_producer_owned()
+            if (
+                autonomous_use_scope == "biological_analysis"
+                and not autonomous_resource.is_biological_reference_trusted
+            ):
+                raise ValueError(
+                    "biological_analysis requires a registered biological-reference "
+                    "autonomous program resource"
+                )
         tuning_spec = self.penalty_tuning_spec
         if tuning_spec is not None:
             if not isinstance(tuning_spec, PenaltyTuningSpec):
@@ -358,6 +384,8 @@ class CrossFitSpec:
             payload["autonomous_program_resource_id"] = (
                 autonomous_resource.artifact_id
             )
+        if autonomous_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
+            payload["autonomous_program_use_scope"] = autonomous_use_scope
         if tuning_spec is not None:
             payload["penalty_tuning_spec_id"] = tuning_spec.spec_id
         if partition_seed is not None:
@@ -373,6 +401,11 @@ class CrossFitSpec:
         object.__setattr__(self, "family_cosine_threshold", family_threshold)
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
+        object.__setattr__(
+            self,
+            "autonomous_program_use_scope",
+            autonomous_use_scope,
+        )
         object.__setattr__(self, "penalty_tuning_spec", tuning_spec)
         object.__setattr__(self, "outer_fold_partition_seed", partition_seed)
         object.__setattr__(self, "spec_id", spec_id)
@@ -416,6 +449,8 @@ class CrossFitSpec:
         }
         if self.outer_fold_partition_seed is not None:
             result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
+        if self.autonomous_program_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
+            result["autonomous_program_use_scope"] = self.autonomous_program_use_scope
         return result
 
     def _require_intact(self) -> None:
@@ -437,6 +472,7 @@ class CrossFitSpec:
                 family_cosine_threshold=self.family_cosine_threshold,
                 downstream_minimum_scale=self.downstream_minimum_scale,
                 autonomous_program_resource=self.autonomous_program_resource,
+                autonomous_program_use_scope=self.autonomous_program_use_scope,
                 penalty_tuning_spec=self.penalty_tuning_spec,
                 schema_version=self.schema_version,
             )
@@ -451,6 +487,8 @@ class CrossFitSpec:
                 and self.training_spec.spec_id == repeated.training_spec.spec_id
                 and self.strata_keys == repeated.strata_keys
                 and self.allowed_n_splits == repeated.allowed_n_splits
+                and self.autonomous_program_use_scope
+                == repeated.autonomous_program_use_scope
                 and self.spec_id == repeated.spec_id
                 and self.repeat_id == repeated.repeat_id
             )
@@ -3791,6 +3829,7 @@ def run_subject_crossfit(
 
 
 __all__ = [
+    "AutonomousProgramUseScope",
     "CrossFitArtifacts",
     "CrossFitFoldArtifacts",
     "CrossFitSpec",

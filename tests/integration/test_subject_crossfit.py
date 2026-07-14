@@ -33,9 +33,11 @@ from crychic.resources import (
     TargetPrior,
 )
 from crychic.resources.autonomous_registry import (
+    AutonomousProgramReviewScope,
     ReceiverAutonomousProgramRegistration,
 )
 from crychic.response import (
+    ReceiverAutonomousProgramResource,
     build_receiver_autonomous_program_resource,
     load_receiver_autonomous_program_resource,
 )
@@ -132,7 +134,12 @@ def _ligand_prior_with_unmapped_driver() -> TargetPrior:
     )
 
 
-def _trusted_target_resource(root: Path, monkeypatch: pytest.MonkeyPatch):
+def _trusted_target_resource(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    review_scope: AutonomousProgramReviewScope = "synthetic_benchmark_only",
+) -> ReceiverAutonomousProgramResource:
     payload = b"feature_id\tgeneric_program\nT1\t1\nT2\t1\n"
     (root / "programs.tsv").write_bytes(payload)
     record = {
@@ -177,7 +184,7 @@ def _trusted_target_resource(root: Path, monkeypatch: pytest.MonkeyPatch):
         gene_namespace=GeneNamespace.HGNC_SYMBOL,
         expected_license="CC0-1.0",
         adapter_version="crychic-receiver-autonomous-feature-program-tsv-v1",
-        review_scope="synthetic_benchmark_only",
+        review_scope=review_scope,
         payload_path="programs.tsv",
         payload_role="receiver_autonomous_feature_by_program_matrix_v1",
         payload_sha256=hashlib.sha256(payload).hexdigest(),
@@ -367,6 +374,91 @@ def test_default_outer_partition_policy_preserves_legacy_identity() -> None:
     assert result.crossfit_id == (
         "subject_crossfit_40f4dfc5da61c3324f6550358db4e6a3"
     )
+
+
+def test_autonomous_program_use_scope_preserves_legacy_and_binds_biology() -> None:
+    diagnostic = _spec()
+    biological = replace(
+        diagnostic,
+        autonomous_program_use_scope="biological_analysis",
+    )
+
+    assert "autonomous_program_use_scope" not in diagnostic.to_dict()
+    assert biological.to_dict()["autonomous_program_use_scope"] == (
+        "biological_analysis"
+    )
+    assert biological.spec_id != diagnostic.spec_id
+    repeated = replace(biological, repeat_index=1)
+    assert repeated.autonomous_program_use_scope == "biological_analysis"
+    assert repeated.spec_id == biological.spec_id
+    assert repeated.repeat_id != biological.repeat_id
+    with pytest.raises(ValueError, match="autonomous_program_use_scope"):
+        replace(
+            diagnostic,
+            autonomous_program_use_scope="exploratory",  # type: ignore[arg-type]
+        )
+
+
+def test_biological_use_scope_rejects_nonbiological_registered_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic = _trusted_target_resource(tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match="biological-reference"):
+        replace(
+            _spec(),
+            autonomous_program_resource=synthetic,
+            autonomous_program_use_scope="biological_analysis",
+        )
+
+    biological = _trusted_target_resource(
+        tmp_path,
+        monkeypatch,
+        review_scope="biological_reference",
+    )
+    spec = replace(
+        _spec(),
+        autonomous_program_resource=biological,
+        autonomous_program_use_scope="biological_analysis",
+    )
+    assert spec.autonomous_program_resource is biological
+    assert biological.is_biological_reference_trusted
+
+
+def test_biological_scope_rejects_unverified_resource_and_spoofed_subclass() -> None:
+    unverified = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="unverified-autonomous-programs",
+        version="1",
+        manifest_digest="f" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    with pytest.raises(ValueError, match="biological-reference"):
+        replace(
+            _spec(),
+            autonomous_program_resource=unverified,
+            autonomous_program_use_scope="biological_analysis",
+        )
+
+    class SpoofedResource(ReceiverAutonomousProgramResource):
+        def _require_producer_owned(self) -> None:
+            return None
+
+        @property
+        def is_biological_reference_trusted(self) -> bool:
+            return True
+
+    spoofed = object.__new__(SpoofedResource)
+    with pytest.raises(TypeError, match="producer-owned"):
+        replace(
+            _spec(),
+            autonomous_program_resource=spoofed,
+            autonomous_program_use_scope="biological_analysis",
+        )
 
 
 @pytest.mark.parametrize("invalid", [True, -1, 2**63, 1.5])
@@ -1885,6 +1977,15 @@ def test_manifest_rejects_forced_private_table_poison(
 def test_crossfit_spec_rejects_forced_policy_mutation() -> None:
     spec = _spec()
     object.__setattr__(spec, "downstream_minimum_scale", 99.0)
+
+    with pytest.raises(ContractError) as error:
+        spec.to_dict()
+    assert error.value.details.code == "crossfit_spec_integrity_violation"
+
+
+def test_crossfit_spec_rejects_forced_autonomous_use_scope_mutation() -> None:
+    spec = _spec()
+    object.__setattr__(spec, "autonomous_program_use_scope", "biological_analysis")
 
     with pytest.raises(ContractError) as error:
         spec.to_dict()

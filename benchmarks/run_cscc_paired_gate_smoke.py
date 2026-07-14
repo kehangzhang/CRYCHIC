@@ -36,6 +36,7 @@ from crychic.sender import (
     interaction_ligand_contrast_gate,
 )
 from crychic.workflow import (
+    AutonomousProgramUseScope,
     CrossFitArtifacts,
     CrossFitSpec,
     FoldTrainingSpec,
@@ -264,6 +265,11 @@ def load_smoke_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, object]:
     )
 
     policy = _mapping(config.get("crossfit"), field="crossfit")
+    _require_equal(
+        policy.get("autonomous_program_use_scope"),
+        "biological_analysis",
+        field="crossfit.autonomous_program_use_scope",
+    )
     _require_equal(
         tuple(_sequence(policy.get("outer_allowed_n_splits"), field="outer splits")),
         (2,),
@@ -848,6 +854,10 @@ def build_crossfit_spec(
             policy["downstream_minimum_scale"], field="downstream_minimum_scale"
         ),
         autonomous_program_resource=None,
+        autonomous_program_use_scope=cast(
+            AutonomousProgramUseScope,
+            policy["autonomous_program_use_scope"],
+        ),
         penalty_tuning_spec=tuning,
     )
     crychic_config = CrychicConfig(

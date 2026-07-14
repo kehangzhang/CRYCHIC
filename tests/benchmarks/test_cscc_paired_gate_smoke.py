@@ -73,6 +73,7 @@ def test_config_builds_explicit_two_fold_tumor_minus_normal_spec() -> None:
     assert spec.allowed_n_splits == (2,)
     assert spec.outer_fold_partition_seed == 1442362020
     assert spec.outer_fold_partition_seed != crychic_config.random_seed
+    assert spec.autonomous_program_use_scope == "biological_analysis"
     assert spec.min_train_subjects_per_context == 4
     assert spec.min_test_subjects_per_context == 4
     assert spec.training_spec.sender_parameters.min_subjects == 4
