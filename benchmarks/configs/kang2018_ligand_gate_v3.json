@@ -1,0 +1,174 @@
+{
+  "schema_version": "crychic-kang2018-ligand-gate-v3-config-v1",
+  "dataset": {
+    "dataset_id": "GSE96583_Kang2018_batch2",
+    "relative_path": "benchmark_work/kang2018_batch2.h5ad",
+    "expected_h5ad": {
+      "sha256": "5ee14c9df0a58e385828f9339dc93eff52fae7614218e82ed9c9a022804b30ac",
+      "bytes": 72865662,
+      "crychic_conversion": {
+        "dataset_id": "GSE96583_Kang2018_batch2",
+        "source_archive_sha256": "e5d41a3248a813f99d68fd5c9eb9773de7f46a83680a67f4a02d683b8955fe80",
+        "genes_sha256": "93aa4e9b530ef9d6411ca129b416324c5cc1cc5a01a1fa6ed4f4a845480ed3ca",
+        "metadata_sha256": "1d57e72e92ca8695250e88cc0f1c3fa8c0be1175d974f8b427c58f1274dc6c09",
+        "counts_semantics": "raw non-negative integer UMI"
+      }
+    },
+    "cell_types": [
+      "CD14+ Monocytes",
+      "CD8 T cells"
+    ],
+    "conditions": {
+      "positive": "stim",
+      "negative": "ctrl"
+    },
+    "expected_subject_count": 8,
+    "require_all_available_subjects": true,
+    "require_complete_pairing": true
+  },
+  "diagnostic_interactions": [
+    {
+      "diagnostic_id": "CXCL10_CXCR3",
+      "source_interaction_id": "CXCL10_CXCR3",
+      "ligand": "CXCL10",
+      "ligand_subunits": [
+        "CXCL10"
+      ],
+      "receptor": "CXCR3",
+      "receptor_subunits": [
+        "CXCR3"
+      ],
+      "pre_specified_role": "candidate_ligand_supported_positive"
+    },
+    {
+      "diagnostic_id": "IFNB1_IFNAR1_IFNAR2",
+      "source_interaction_id": "IFNB1_IFNAR1_IFNAR2",
+      "ligand": "IFNB1",
+      "ligand_subunits": [
+        "IFNB1"
+      ],
+      "receptor": "IFNAR1_IFNAR2",
+      "receptor_subunits": [
+        "IFNAR1",
+        "IFNAR2"
+      ],
+      "pre_specified_role": "exogenous_ifn_beta_attribution_guard"
+    },
+    {
+      "diagnostic_id": "CCL5_CCR5",
+      "source_interaction_id": "CCL5_CCR5",
+      "ligand": "CCL5",
+      "ligand_subunits": [
+        "CCL5"
+      ],
+      "receptor": "CCR5",
+      "receptor_subunits": [
+        "CCR5"
+      ],
+      "pre_specified_role": "stable_or_weak_change_control"
+    }
+  ],
+  "gene_subset": {
+    "ann_data_feature_scope": "full_input_transcriptome",
+    "expected_input_gene_count": 32938,
+    "library_denominator": "all_input_genes_within_each_training_or_heldout_fold",
+    "model_target_prior_scope": "three_diagnostic_ligands_top20_h5ad_observable_links_each",
+    "expected_diagnostic_driver_count": 3,
+    "expected_diagnostic_link_count": 60,
+    "expected_diagnostic_target_link_digest": "399608a30dac12c62171c7cf275d1272c3c4dfc7d19ac67e37ff4dd3f129a097",
+    "nichenet_top_h5ad_observable_targets_per_ligand": 20,
+    "pre_specified_gene_sets": {
+      "interferon_stimulated": [
+        "DDX58",
+        "IFI6",
+        "IFI27",
+        "IFI44",
+        "IFI44L",
+        "IFIT1",
+        "IFIT2",
+        "IFIT3",
+        "IRF7",
+        "ISG15",
+        "MX1",
+        "MX2",
+        "OAS1",
+        "OAS2",
+        "OAS3",
+        "OASL",
+        "RSAD2",
+        "STAT1",
+        "STAT2",
+        "USP18"
+      ],
+      "antigen_presentation": [
+        "B2M",
+        "CD74",
+        "CIITA",
+        "HLA-A",
+        "HLA-B",
+        "HLA-C",
+        "HLA-DRA",
+        "HLA-DRB1",
+        "HLA-E",
+        "NLRC5",
+        "PSMB8",
+        "PSMB9",
+        "TAP1",
+        "TAP2"
+      ],
+      "housekeeping": [
+        "ACTB",
+        "GAPDH",
+        "HPRT1",
+        "MALAT1",
+        "PPIA",
+        "RPL13A",
+        "RPLP0",
+        "TBP"
+      ]
+    },
+    "include_lr_subunits": true
+  },
+  "crossfit": {
+    "outer_allowed_n_splits": [
+      2
+    ],
+    "minimum_train_subjects_per_context": 4,
+    "minimum_test_subjects_per_context": 4,
+    "minimum_cells_per_sample_cell_type": 10,
+    "minimum_pooled_availability": 0.0,
+    "sender_minimum_subjects": 4,
+    "sender_prevalence_threshold": 0.0,
+    "sender_softmax_temperature": 1.0,
+    "ligand_contrast_confidence_level": 0.95,
+    "penalty_lambda1_fractions": [
+      1.0,
+      0.1
+    ],
+    "penalty_lambda2_fractions": [
+      0.0
+    ],
+    "inner_allowed_n_splits": [
+      2
+    ],
+    "minimum_inner_train_subjects_per_context": 2,
+    "minimum_inner_validation_subjects_per_context": 1,
+    "family_cosine_threshold": 0.95,
+    "downstream_minimum_scale": 0.25,
+    "outer_fold_partition_seed": 18021988,
+    "sensitivity_comparison_scope": "contrast_support_only",
+    "random_seed": 31072018
+  },
+  "defaults": {
+    "ligand_contrast_minimum_effect": 0.0,
+    "receptor_gate_threshold": 0.1
+  },
+  "claims": {
+    "literature_informed": true,
+    "exploratory": true,
+    "certifying": false,
+    "biological_validation": false,
+    "method_superiority": false,
+    "default_switch_allowed": false
+  }
+}
