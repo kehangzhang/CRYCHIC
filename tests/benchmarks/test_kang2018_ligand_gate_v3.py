@@ -488,6 +488,7 @@ def test_incremental_tuning_records_are_deidentified_and_explain_sparsity() -> N
         folds=(
             SimpleNamespace(
                 fold_id="outer-fold",
+                receiver_family_models=(),
                 receiver_incremental_models=(model,),
             ),
         )
@@ -501,6 +502,9 @@ def test_incremental_tuning_records_are_deidentified_and_explain_sparsity() -> N
     assert record["n_strictly_positive_family_coefficients"] == 1
     assert record["n_effectively_positive_family_coefficients"] == 1
     assert record["effective_coefficient_tolerance"] == pytest.approx(1e-12)
+    assert record["effectively_positive_families"] == [
+        {"family_id": "family-b", "driver_ids": [], "coefficient": 0.25}
+    ]
     assert record["maximum_family_coefficient"] == pytest.approx(0.25)
     assert record["n_training_subjects"] == 4
     assert record["n_inner_folds"] == 2

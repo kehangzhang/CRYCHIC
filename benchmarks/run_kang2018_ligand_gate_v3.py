@@ -1293,6 +1293,13 @@ def compact_incremental_tuning_records(
 
     records: list[dict[str, object]] = []
     for fold in artifacts.folds:
+        family_driver_ids: dict[str, tuple[str, ...]] = {}
+        for receiver_model in fold.receiver_family_models:
+            definitions = (
+                receiver_model.receiver_family_artifact.family_basis.family_definitions
+            )
+            for definition in definitions:
+                family_driver_ids[definition.family_id] = definition.driver_ids
         for model in fold.receiver_incremental_models:
             tuning = model.penalty_tuning_artifact
             candidates: list[dict[str, object]] = []
@@ -1352,6 +1359,17 @@ def compact_incremental_tuning_records(
                 if functional is None
                 else np.asarray(functional.family_coefficients, dtype=np.float64)
             )
+            positive_families = [
+                {
+                    "family_id": family_id,
+                    "driver_ids": list(family_driver_ids.get(family_id, ())),
+                    "coefficient": float(coefficient),
+                }
+                for family_id, coefficient in zip(
+                    model.family_ids, coefficients, strict=True
+                )
+                if coefficient > 1e-12
+            ]
             records.append(
                 {
                     "fold_id": fold.fold_id,
@@ -1390,6 +1408,7 @@ def compact_incremental_tuning_records(
                         np.count_nonzero(coefficients > 1e-12)
                     ),
                     "effective_coefficient_tolerance": 1e-12,
+                    "effectively_positive_families": positive_families,
                     "maximum_family_coefficient": (
                         None if not len(coefficients) else float(np.max(coefficients))
                     ),
