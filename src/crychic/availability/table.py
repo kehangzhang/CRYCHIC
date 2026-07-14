@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -119,7 +119,7 @@ class BatchAvailability:
     def filter_universe_id(self) -> str:
         """Stable identity of the selected or applied interaction universe."""
 
-        return cast(str, self.frozen_interaction_universe.filter_universe_id)
+        return self.frozen_interaction_universe.filter_universe_id
 
 
 def _entity_values(
