@@ -34,6 +34,11 @@ from benchmarks.adapters.resource_tables import native_lr_resource
 METHOD_ID = "cellchat"
 R_SEED_MODULUS = 2_147_483_647
 UINT32_MAX = 2**32 - 1
+_NO_SIGNIFICANT_INTERACTIONS = (
+    "No significant signaling interactions are inferred based on the input!"
+)
+_INFERENCE_COMPLETE_MARKER = "CellChat inference is done"
+_SUBSET_ERROR_MARKER = "Error in subsetCommunication_internal"
 
 
 def _r_query(environment: str, expression: str) -> str:
@@ -100,6 +105,17 @@ def _seed_provenance(sample_ids: list[str], requested_seed: int) -> dict[str, An
             "otherwise 1 + ((effective - 1) modulo 2147483647)"
         ),
     }
+
+
+def _is_valid_empty_result(completed: subprocess.CompletedProcess[str]) -> bool:
+    """Recognize CellChat's post-inference exception for a valid empty result."""
+
+    return bool(
+        completed.returncode != 0
+        and _INFERENCE_COMPLETE_MARKER in completed.stdout
+        and _SUBSET_ERROR_MARKER in completed.stderr
+        and _NO_SIGNIFICANT_INTERACTIONS in completed.stderr
+    )
 
 
 def _expression(adata: ad.AnnData, layer: str | None) -> sparse.csr_matrix:
@@ -326,6 +342,7 @@ def run(
     raw_dir.mkdir()
     sample_status: dict[str, str] = {}
     sample_failures: dict[str, dict[str, object]] = {}
+    sample_empty_results: list[str] = []
     observed: list[pd.DataFrame] = []
     try:
         with tempfile.TemporaryDirectory(prefix="crychic_cellchat_") as temporary:
@@ -368,6 +385,16 @@ def run(
                     command, capture_output=True, text=True, check=False
                 )
                 if completed.returncode != 0:
+                    if _is_valid_empty_result(completed):
+                        sample_empty_results.append(sample_id)
+                        observed.append(
+                            _normalize_sample(
+                                pd.DataFrame(),
+                                sample_id=sample_id,
+                                source_map=source_map,
+                            )
+                        )
+                        continue
                     sample_status[sample_id] = "method_failed"
                     sample_failures[sample_id] = {
                         "returncode": completed.returncode,
@@ -404,6 +431,7 @@ def run(
             sample_status=sample_status,
         )
         manifest["sample_failures"] = sample_failures
+        manifest["sample_empty_results"] = sorted(sample_empty_results)
         return cast(
             dict[str, object],
             finalize_manifest(manifest, table, output_dir, started=started),

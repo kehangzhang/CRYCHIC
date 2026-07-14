@@ -22,6 +22,10 @@ is checksum-stable across methods in the same harmonized arm.
 - `method_failed`: the sample-specific external call failed.
 - `unsupported_resource`: the method cannot execute the requested resource arm.
 
+For CellChat, its explicit post-inference "No significant signaling interactions"
+exception is a valid empty sample result: all eligible frozen-universe rows are
+`not_returned`. Other R failures remain `method_failed` and are never filled with zero.
+
 The resource arms are `H-common`, `H-covered`, and `native`. H-common is the
 exact simple-LR intersection. H-covered is the frozen simple-LR union with
 method coverage retained as status. Native uses each released method-resource

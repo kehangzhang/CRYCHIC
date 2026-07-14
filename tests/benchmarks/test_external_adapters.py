@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -9,9 +10,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from benchmarks.adapters.cellchat.run_by_sample import (
+    _is_valid_empty_result,
+    _r_seed,
+    _seed_provenance,
+)
+from benchmarks.adapters.cellchat.run_by_sample import (
     _normalize_sample as normalize_cellchat,
 )
-from benchmarks.adapters.cellchat.run_by_sample import _r_seed, _seed_provenance
 from benchmarks.adapters.cellphonedb.run_by_sample import (
     _filtered_database,
 )
@@ -88,6 +93,34 @@ def test_cellchat_seed_provenance_records_requested_and_effective_values() -> No
         "s1": 2_137_588_580,
         "s2": 2_137_588_581,
     }
+
+
+def test_cellchat_distinguishes_valid_empty_result_from_method_failure() -> None:
+    valid_empty = subprocess.CompletedProcess(
+        args=["Rscript"],
+        returncode=1,
+        stdout="CellChat inference is done. Parameter values are stored.\n",
+        stderr=(
+            "Error in subsetCommunication_internal(...): "
+            "No significant signaling interactions are inferred based on the input!\n"
+        ),
+    )
+    unrelated_failure = subprocess.CompletedProcess(
+        args=["Rscript"],
+        returncode=1,
+        stdout=valid_empty.stdout,
+        stderr="Error in computeCommunProb: numerical failure\n",
+    )
+    premature_subset_failure = subprocess.CompletedProcess(
+        args=["Rscript"],
+        returncode=1,
+        stdout="",
+        stderr=valid_empty.stderr,
+    )
+
+    assert _is_valid_empty_result(valid_empty)
+    assert not _is_valid_empty_result(unrelated_failure)
+    assert not _is_valid_empty_result(premature_subset_failure)
 
 
 def test_fixed_universe_materializes_absence_and_support_states() -> None:
