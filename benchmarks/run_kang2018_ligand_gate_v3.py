@@ -1286,6 +1286,119 @@ def _fold_manifests(artifacts: CrossFitArtifacts) -> list[dict[str, object]]:
     return records
 
 
+def compact_incremental_tuning_records(
+    artifacts: CrossFitArtifacts,
+) -> list[dict[str, object]]:
+    """Return deidentified inner-tuning decisions for each receiver-fold model."""
+
+    records: list[dict[str, object]] = []
+    for fold in artifacts.folds:
+        for model in fold.receiver_incremental_models:
+            tuning = model.penalty_tuning_artifact
+            candidates: list[dict[str, object]] = []
+            if tuning is not None:
+                summary_by_id = {
+                    summary.candidate_id: summary for summary in tuning.summaries
+                }
+                comparison_by_id = {
+                    comparison.candidate_id: comparison
+                    for comparison in tuning.candidate_comparisons
+                }
+                for candidate in tuning.spec.candidates:
+                    summary = summary_by_id[candidate.candidate_id]
+                    comparison = comparison_by_id.get(candidate.candidate_id)
+                    candidates.append(
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "lambda1_fraction": candidate.lambda1_fraction,
+                            "lambda2_fraction": candidate.lambda2_fraction,
+                            "status": summary.status,
+                            "reason_code": summary.reason_code,
+                            "mean_subject_equal_loss": summary.mean_loss,
+                            "subject_equal_standard_error": (summary.standard_error),
+                            "mean_paired_loss_difference_to_best": (
+                                None
+                                if comparison is None
+                                else comparison.mean_loss_difference
+                            ),
+                            "relative_mean_loss_difference_to_best": (
+                                None
+                                if comparison is None
+                                or tuning.best_mean_loss is None
+                                or tuning.best_mean_loss == 0
+                                else comparison.mean_loss_difference
+                                / tuning.best_mean_loss
+                            ),
+                            "paired_difference_standard_error": (
+                                None
+                                if comparison is None
+                                else comparison.standard_error
+                            ),
+                            "within_paired_one_se": (
+                                None if comparison is None else comparison.within_one_se
+                            ),
+                            "is_best": (
+                                candidate.candidate_id == tuning.best_candidate_id
+                            ),
+                            "is_selected": (
+                                candidate.candidate_id == tuning.selected_candidate_id
+                            ),
+                        }
+                    )
+            selected = None if tuning is None else tuning.selected_candidate
+            functional = model.diagnostic_functional
+            coefficients = (
+                np.empty(0, dtype=np.float64)
+                if functional is None
+                else np.asarray(functional.family_coefficients, dtype=np.float64)
+            )
+            records.append(
+                {
+                    "fold_id": fold.fold_id,
+                    "receiver": model.receiver,
+                    "diagnostic_status": model.diagnostic_status,
+                    "diagnostic_reason_code": model.diagnostic_reason_code,
+                    "official_status": model.official_incremental_status,
+                    "official_reason_code": model.reason_code,
+                    "tuning_status": None if tuning is None else tuning.status,
+                    "tuning_reason_code": (
+                        None if tuning is None else tuning.reason_code
+                    ),
+                    "tuning_oof_certified": bool(
+                        tuning is not None and tuning.is_oof_certified
+                    ),
+                    "n_inner_folds": (
+                        0 if tuning is None else len(tuning.inner_fold_ids)
+                    ),
+                    "n_training_subjects": len(model.training_subject_ids),
+                    "selected_candidate_id": (
+                        None if tuning is None else tuning.selected_candidate_id
+                    ),
+                    "selected_lambda1_fraction": (
+                        None if selected is None else selected.lambda1_fraction
+                    ),
+                    "selected_lambda2_fraction": (
+                        None if selected is None else selected.lambda2_fraction
+                    ),
+                    "resolved_lambda1": (None if functional is None else model.lambda1),
+                    "resolved_lambda2": (None if functional is None else model.lambda2),
+                    "n_families": len(model.family_ids),
+                    "n_strictly_positive_family_coefficients": int(
+                        np.count_nonzero(coefficients > 0)
+                    ),
+                    "n_effectively_positive_family_coefficients": int(
+                        np.count_nonzero(coefficients > 1e-12)
+                    ),
+                    "effective_coefficient_tolerance": 1e-12,
+                    "maximum_family_coefficient": (
+                        None if not len(coefficients) else float(np.max(coefficients))
+                    ),
+                    "candidate_diagnostics": candidates,
+                }
+            )
+    return sorted(records, key=lambda row: (row["fold_id"], row["receiver"]))
+
+
 def _compact_crossfit_audit(artifacts: CrossFitArtifacts) -> dict[str, object]:
     manifest = artifacts.to_manifest()
     functionals = [
@@ -1314,9 +1427,16 @@ def _compact_crossfit_audit(artifacts: CrossFitArtifacts) -> dict[str, object]:
         "incremental_official_status_counts": _count_values(
             [model.official_incremental_status for model in models]
         ),
+        "incremental_diagnostic_status_counts": _count_values(
+            [model.diagnostic_status for model in models]
+        ),
+        "incremental_diagnostic_reason_counts": _count_values(
+            [model.diagnostic_reason_code for model in models]
+        ),
         "incremental_reason_counts": _count_values(
             [model.reason_code for model in models]
         ),
+        "incremental_tuning_records": compact_incremental_tuning_records(artifacts),
         "family_common_functional_status_counts": _count_values(
             [
                 "observed"

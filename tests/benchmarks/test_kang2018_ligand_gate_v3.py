@@ -415,6 +415,105 @@ def test_receptor_gate_records_require_exact_diagnostic_key_coverage() -> None:
         )
 
 
+def test_incremental_tuning_records_are_deidentified_and_explain_sparsity() -> None:
+    strongest = SimpleNamespace(
+        candidate_id="strong",
+        lambda1_fraction=1.0,
+        lambda2_fraction=0.0,
+    )
+    weaker = SimpleNamespace(
+        candidate_id="weak",
+        lambda1_fraction=0.1,
+        lambda2_fraction=0.0,
+    )
+    summaries = (
+        SimpleNamespace(
+            candidate_id="strong",
+            status="observed",
+            reason_code=None,
+            mean_loss=1.01,
+            standard_error=0.03,
+        ),
+        SimpleNamespace(
+            candidate_id="weak",
+            status="observed",
+            reason_code=None,
+            mean_loss=1.0,
+            standard_error=0.02,
+        ),
+    )
+    comparisons = (
+        SimpleNamespace(
+            candidate_id="strong",
+            mean_loss_difference=0.01,
+            standard_error=0.02,
+            within_one_se=True,
+        ),
+        SimpleNamespace(
+            candidate_id="weak",
+            mean_loss_difference=0.0,
+            standard_error=0.0,
+            within_one_se=True,
+        ),
+    )
+    tuning = SimpleNamespace(
+        summaries=summaries,
+        candidate_comparisons=comparisons,
+        spec=SimpleNamespace(candidates=(strongest, weaker)),
+        best_candidate_id="weak",
+        best_mean_loss=1.0,
+        selected_candidate_id="strong",
+        selected_candidate=strongest,
+        status="selected",
+        reason_code=None,
+        is_oof_certified=True,
+        inner_fold_ids=("inner-a", "inner-b"),
+    )
+    model = SimpleNamespace(
+        penalty_tuning_artifact=tuning,
+        diagnostic_functional=SimpleNamespace(
+            family_coefficients=np.asarray([0.0, 0.25])
+        ),
+        receiver="CD8 T cells",
+        diagnostic_status="observed",
+        diagnostic_reason_code=None,
+        official_incremental_status="not_estimable",
+        reason_code="receiver_autonomous_nuisance_not_frozen",
+        training_subject_ids=("s1", "s2", "s3", "s4"),
+        lambda1=0.8,
+        lambda2=0.0,
+        family_ids=("family-a", "family-b"),
+    )
+    artifacts = SimpleNamespace(
+        folds=(
+            SimpleNamespace(
+                fold_id="outer-fold",
+                receiver_incremental_models=(model,),
+            ),
+        )
+    )
+
+    records = kang.compact_incremental_tuning_records(artifacts)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["selected_lambda1_fraction"] == pytest.approx(1.0)
+    assert record["n_strictly_positive_family_coefficients"] == 1
+    assert record["n_effectively_positive_family_coefficients"] == 1
+    assert record["effective_coefficient_tolerance"] == pytest.approx(1e-12)
+    assert record["maximum_family_coefficient"] == pytest.approx(0.25)
+    assert record["n_training_subjects"] == 4
+    assert record["n_inner_folds"] == 2
+    assert [item["candidate_id"] for item in record["candidate_diagnostics"]] == [
+        "strong",
+        "weak",
+    ]
+    assert record["candidate_diagnostics"][0]["within_paired_one_se"] is True
+    serialized = json.dumps(records, sort_keys=True)
+    assert "s1" not in serialized
+    assert "inner-a" not in serialized
+
+
 def test_cli_writes_compact_json_and_forwards_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
