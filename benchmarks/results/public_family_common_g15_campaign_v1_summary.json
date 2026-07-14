@@ -23504,8 +23504,8 @@
     "src/crychic/workflow/__init__.py": "cd4b0f87392cf278ab19406d18a490c3472d72f5139a42b79fe6ce3f487b8511",
     "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "941343b447e8f20b4ce5bbab9c5ff6c760067be1099fabf4d1bc219af7b40385",
-    "src/crychic/workflow/receiver_incremental.py": "b8445203fd48c0820679dfdafb7a9cb02cdd98cb945506919198e0f47235bd29",
+    "src/crychic/workflow/crossfit.py": "48fc177a22098e7acc510472b8487a0d21074ac334422c515194d0ed69b2c450",
+    "src/crychic/workflow/receiver_incremental.py": "40b2516f58e73cf0bf1d5ec3055a22fcb3e73817eddd210e43c2117ba9a0f5f3",
     "src/crychic/workflow/repeated_crossfit.py": "94b720a7095d73967635089f55495463897f144d2bebc52c8bf879bbba2f9b4d",
     "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"
   },

@@ -13,7 +13,7 @@
     "simulation_source_interaction_id": "CXCL10_CXCR3",
     "simulation_source_namespace": "synthetic_cellchat_style_lr_id"
   },
-  "base_revision": "98f74d4763e0ef62c2671bc64b11bd8574df7a21",
+  "base_revision": "b1195332297a4503f34714dc20de5db6ec462c9b",
   "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
   "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; receiver-program scoring is connected as a diagnostic-only component",
   "checks": {
@@ -33,13 +33,13 @@
     "method_superiority": false
   },
   "full_artifact": {
-    "canonical_sha256": "47d356a70aba793dc60a2f1b0cd52956bbb30c864c5b7d13e854034033f6792b",
-    "file_sha256": "c52f39e54fa082a8f5254b15fec8fd4a5586efcedc32e385d860c06bb637488a",
+    "canonical_sha256": "5d2fea325772d4726f290c561c25e507ead3063035840b29c9bdc4c881f14f6b",
+    "file_sha256": "79c45fc8af506998f0b9390d524f2c807343b855f621c818349dc162e9e30d08",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
-    "size_bytes": 216757,
+    "size_bytes": 216758,
     "tracked": false
   },
-  "generated_on": "2026-07-14",
+  "generated_on": "2026-07-15",
   "interpretation": "Single-seed paired synthetic development smoke after the v6 frozen response-coordinate correction. The known CXCL10-CXCR3 interaction is uniquely rank 1 in both released modes, while ligand-only, receiver-autonomous, and global-null controls select the strongest penalty and retain no nonzero family. This is synthetic algorithm evidence only and does not certify biological discovery or method superiority.",
   "limitations": {
     "control_family_score_ok_rows": {
@@ -126,7 +126,7 @@
         }
       ],
       "dataset": "synthetic_active",
-      "elapsed_seconds": 59.76579053886235,
+      "elapsed_seconds": 59.431426861323416,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -222,7 +222,7 @@
         }
       ],
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 58.96314409840852,
+      "elapsed_seconds": 58.669767659157515,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -317,7 +317,7 @@
         }
       ],
       "dataset": "synthetic_receiver_autonomous",
-      "elapsed_seconds": 58.844345550984144,
+      "elapsed_seconds": 58.80390332266688,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -412,7 +412,7 @@
         }
       ],
       "dataset": "synthetic_global_null",
-      "elapsed_seconds": 59.04341702349484,
+      "elapsed_seconds": 58.88296831585467,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -538,8 +538,8 @@
     "src/crychic/workflow/__init__.py": "cd4b0f87392cf278ab19406d18a490c3472d72f5139a42b79fe6ce3f487b8511",
     "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "941343b447e8f20b4ce5bbab9c5ff6c760067be1099fabf4d1bc219af7b40385",
-    "src/crychic/workflow/receiver_incremental.py": "b8445203fd48c0820679dfdafb7a9cb02cdd98cb945506919198e0f47235bd29",
+    "src/crychic/workflow/crossfit.py": "48fc177a22098e7acc510472b8487a0d21074ac334422c515194d0ed69b2c450",
+    "src/crychic/workflow/receiver_incremental.py": "40b2516f58e73cf0bf1d5ec3055a22fcb3e73817eddd210e43c2117ba9a0f5f3",
     "src/crychic/workflow/repeated_crossfit.py": "94b720a7095d73967635089f55495463897f144d2bebc52c8bf879bbba2f9b4d",
     "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"
   },
