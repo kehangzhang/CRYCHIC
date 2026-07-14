@@ -13,7 +13,7 @@
     "simulation_source_interaction_id": "CXCL10_CXCR3",
     "simulation_source_namespace": "synthetic_cellchat_style_lr_id"
   },
-  "base_revision": "b1195332297a4503f34714dc20de5db6ec462c9b",
+  "base_revision": "7a694c487b3d87b90294664650133c63ccf9a813",
   "candidate_priority": "l1_fraction_desc_then_l2_fraction_desc_v1",
   "certification_boundary": "outer-heldout family-common diagnostics remain explicitly noncertifying; receiver-program scoring is connected as a diagnostic-only component",
   "checks": {
@@ -33,8 +33,8 @@
     "method_superiority": false
   },
   "full_artifact": {
-    "canonical_sha256": "5d2fea325772d4726f290c561c25e507ead3063035840b29c9bdc4c881f14f6b",
-    "file_sha256": "79c45fc8af506998f0b9390d524f2c807343b855f621c818349dc162e9e30d08",
+    "canonical_sha256": "2faec0d742821e0e9329bdc0056e6409bb21871b1542d217dd4e0b6db63bc146",
+    "file_sha256": "f511ca389ee98f1a651680e3ee383b387bc42a67e47f8e8fdc3df1b8522ab334",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json",
     "size_bytes": 216758,
     "tracked": false
@@ -126,7 +126,7 @@
         }
       ],
       "dataset": "synthetic_active",
-      "elapsed_seconds": 59.431426861323416,
+      "elapsed_seconds": 60.607632491737604,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -222,7 +222,7 @@
         }
       ],
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 58.669767659157515,
+      "elapsed_seconds": 59.316919311881065,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -317,7 +317,7 @@
         }
       ],
       "dataset": "synthetic_receiver_autonomous",
-      "elapsed_seconds": 58.80390332266688,
+      "elapsed_seconds": 59.09473521634936,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -412,7 +412,7 @@
         }
       ],
       "dataset": "synthetic_global_null",
-      "elapsed_seconds": 58.88296831585467,
+      "elapsed_seconds": 59.42654419224709,
       "family_common_application_status_counts": {
         "not_estimable": 4,
         "observed": 2
@@ -535,10 +535,10 @@
     "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
     "src/crychic/sender/common.py": "8599e5034ca67b1efcbb7368ae62957826fd2e91331c3f0eb33dcc0ecc143697",
     "src/crychic/sender/contracts.py": "c3d97f85fa70a7ea8201ec638670e67fffaedec280600cb2f23067141302d423",
-    "src/crychic/workflow/__init__.py": "cd4b0f87392cf278ab19406d18a490c3472d72f5139a42b79fe6ce3f487b8511",
+    "src/crychic/workflow/__init__.py": "45b1f16f77471e680b1e16b192ecbdb840391b6702042105da47749f17f8d8d3",
     "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "48fc177a22098e7acc510472b8487a0d21074ac334422c515194d0ed69b2c450",
+    "src/crychic/workflow/crossfit.py": "8be166cf59e59cb36b854788a50b3999c2fffba4be841784f7fc72366e1742eb",
     "src/crychic/workflow/receiver_incremental.py": "40b2516f58e73cf0bf1d5ec3055a22fcb3e73817eddd210e43c2117ba9a0f5f3",
     "src/crychic/workflow/repeated_crossfit.py": "94b720a7095d73967635089f55495463897f144d2bebc52c8bf879bbba2f9b4d",
     "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"
