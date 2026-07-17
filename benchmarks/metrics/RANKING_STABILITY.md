@@ -64,18 +64,22 @@ bootstraps, 95% intervals, a minimum selection frequency of `0.80`, and seed
 `20260712`. It emits four report tables: agreement summaries, complete top-k
 curves, bootstrap rank intervals, and stable tiers.
 
-The score contract currently supports three observed ranking grains:
+The score contract supports three always-available observed ranking grains:
 
 - `lr`: interaction identity aggregated over comparison-eligible cell pairs;
 - `sender`: sender identity aggregated over eligible receivers and LR items;
 - `sender_receiver_pair`: a network pair aggregated over eligible LR items.
 
-`sender_receiver_pair` is not called a biological LR family. A frozen LR
-equivalence/driver-family identifier is not yet present in the score contract,
-so the preregistered `lr_family` curve (`k=1..25`) and family selection
-frequency remain explicit `not_estimable` with reason
-`lr_family_mapping_not_available_in_score_contract`. LR curves cover
-`k=1..100`. NicheNet Track B cannot emit LR or sender rankings, and unsupported
+`sender_receiver_pair` is not called a biological LR family. The optional
+`molecular_lr_equivalence_id` score column enables the compatibility-named
+`lr_family` level (`k=1..25`). Its items are resource-independent molecular LR
+equivalence classes, explicitly not strict target/driver families. Multiple
+frozen source rows mapped to one molecular class form one equally weighted
+ranking item; every frozen source member remains required in every
+subject-context aggregate. With no mapping column, the historical result stays
+explicit `not_estimable` with reason
+`lr_family_mapping_not_available_in_score_contract`. LR curves cover `k=1..100`.
+NicheNet Track B cannot emit LR or sender rankings, and unsupported
 Kuppe/PancVAX designs retain explicit NE rows.
 
 ## Performance provenance

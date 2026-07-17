@@ -11,21 +11,28 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
 from crychic.attribution import (
+    GainCalibrationSpec,
     PenaltyFoldEvaluation,
     PenaltyTuningArtifact,
     PenaltyTuningSpec,
+    PenaltyValidationLossEstimand,
     PrecisionTransformResult,
     ReceiverFamilyTrainingArtifact,
     RelativePenaltyCandidate,
+    SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact,
     not_estimable_penalty_tuning,
     select_penalty_candidate,
+)
+from crychic.attribution.gain_calibration import (
+    _WORKFLOW_GAIN_CALIBRATION_PRODUCER_TOKEN,
+    _finalize_selected_penalty_inner_oof_gain_calibration,
 )
 from crychic.attribution.tuning import (
     _WORKFLOW_SUBJECT_BLOCKED_PRODUCER_TOKEN,
@@ -35,6 +42,9 @@ from crychic.core import ContractError, SeedLineage, stable_id
 from crychic.design import (
     FrozenDesignApplication,
     FrozenDesignEncoder,
+    SubjectDesign,
+    SubjectDesignAudit,
+    audit_subject_design,
     node_context_fields,
 )
 from crychic.resampling import (
@@ -50,17 +60,28 @@ from crychic.response import (
     FoldGeneResponseArtifact,
     ReceiverAutonomousProgramResource,
 )
+from crychic.response.repeated_fold import (
+    RepeatedMeasuresFoldResponseApplication,
+    RepeatedMeasuresFoldResponseArtifact,
+)
 from crychic.scoring import (
     DownstreamRowManifest,
+    FoldLatentNuisanceArtifact,
+    FrozenLatentNuisanceSpec,
     IncrementalDownstreamApplication,
     IncrementalDownstreamFunctional,
     apply_incremental_downstream_functional,
     fit_incremental_downstream_functional,
     incremental_heldout_input_digest,
 )
-from crychic.scoring.downstream import _subject_reference_summary
+from crychic.scoring.downstream import (
+    _WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN,
+    _fit_incremental_downstream_functional,
+    _LatentNuisanceNotEstimableError,
+    _subject_reference_summary,
+)
 
-_PRODUCER_MARKER = "crychic.workflow.receiver_incremental_training.v2"
+_PRODUCER_MARKER = "crychic.workflow.receiver_incremental_training.v3"
 _APPLICATION_PRODUCER_MARKER = "crychic.workflow.receiver_incremental_application.v2"
 _OFFICIAL_STATUS = "not_estimable"
 _FORMULA_CERTIFICATION_STATUS = "formula_nuisance_incremental_diagnostic_only"
@@ -77,6 +98,26 @@ _CERTIFIED_APPLICATION_STATUS = (
 _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS = (
     "trusted_autonomous_outer_frozen_representation_inner_tuned_heldout_ne_v1"
 )
+_LEARNED_CERTIFIED_TRAINING_STATUS = (
+    "fold_learned_autonomous_nested_inner_tuned_oof_ready_v1"
+)
+_LEARNED_CERTIFIED_APPLICATION_STATUS = (
+    "fold_learned_autonomous_nested_inner_tuned_oof_observed_v1"
+)
+_LEARNED_CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS = (
+    "fold_learned_autonomous_nested_inner_tuned_heldout_ne_v1"
+)
+_LEARNED_AUTONOMOUS_VERIFICATION_STATUS = (
+    "outer_training_control_feature_latent_nested_oof_v1"
+)
+_HYBRID_AUTONOMOUS_VERIFICATION_STATUS = (
+    "manifest_verified_static_plus_control_feature_latent_nested_oof_v1"
+)
+_UNTRUSTED_HYBRID_AUTONOMOUS_VERIFICATION_STATUS = (
+    "caller_declared_static_plus_control_feature_latent_unverified_v1"
+)
+_REPEATED_CERTIFICATION_STATUS = "repeated_measures_cr1_incremental_exploratory_only_v1"
+_REPEATED_REASON = "repeated_measures_cr1_diagnostic_only_no_formal_inference"
 _INNER_STATISTICAL_CONTRACT_FAILURES = frozenset(
     {
         "all_family_bases_not_identifiable_after_autonomous_projection",
@@ -94,6 +135,9 @@ _INNER_NOT_ESTIMABLE_VALUE_ERRORS = {
     "incremental training requires fully paired or independent subjects": (
         "inner_subject_allocation_not_estimable"
     ),
+    "incremental training requires a supported subject allocation": (
+        "inner_subject_allocation_not_estimable"
+    ),
     "reference_mask must select at least two training samples": (
         "inner_reference_sample_support_not_estimable"
     ),
@@ -108,6 +152,16 @@ _INNER_NOT_ESTIMABLE_VALUE_ERRORS = {
     ),
 }
 _MAD_GAUSSIAN_CONSISTENCY = 1.4826
+_PAIRED_LOSS_DESIGN = "fully_paired_subject_contrasts_v1"
+_INDEPENDENT_LOSS_DESIGN = "independent_subject_pseudocontrasts_v1"
+
+_ReceiverResponseArtifact: TypeAlias = (
+    FoldGeneResponseArtifact | RepeatedMeasuresFoldResponseArtifact
+)
+_ReceiverResponseApplication: TypeAlias = (
+    FoldGeneResponseApplication | RepeatedMeasuresFoldResponseApplication
+)
+_MIXED_LOSS_DESIGN = "mixed_subject_equal_full_prediction_loss_v1"
 
 
 def _parent_mismatch(message: str, *, field: str) -> ContractError:
@@ -132,23 +186,50 @@ def _receiver_tuning_scope_id(
     precision_transform_id: str,
     receiver_family_training_artifact_id: str,
     autonomous_program_resource_id: str | None,
+    latent_nuisance_spec_id: str | None,
     penalty_tuning_spec_id: str,
 ) -> str:
+    payload: dict[str, object] = {
+        "autonomous_program_resource_id": autonomous_program_resource_id,
+        "encoder_id": encoder_id,
+        "penalty_tuning_spec_id": penalty_tuning_spec_id,
+        "precision_transform_id": precision_transform_id,
+        "receiver_family_training_artifact_id": (receiver_family_training_artifact_id),
+        "response_artifact_id": response_artifact_id,
+    }
+    if latent_nuisance_spec_id is not None:
+        payload["latent_nuisance_spec_id"] = latent_nuisance_spec_id
     scope_id: str = stable_id(
         "receiver_incremental_tuning_scope",
-        {
-            "autonomous_program_resource_id": autonomous_program_resource_id,
-            "encoder_id": encoder_id,
-            "penalty_tuning_spec_id": penalty_tuning_spec_id,
-            "precision_transform_id": precision_transform_id,
-            "receiver_family_training_artifact_id": (
-                receiver_family_training_artifact_id
-            ),
-            "response_artifact_id": response_artifact_id,
-        },
+        payload,
         schema_version="1",
     )
     return scope_id
+
+
+def _autonomous_verification_status(
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None,
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None,
+    latent_nuisance_artifact: FoldLatentNuisanceArtifact | None = None,
+) -> str | None:
+    """Derive the exact nuisance-policy status from its frozen parents."""
+
+    learned_basis_observed = bool(
+        latent_nuisance_spec is not None
+        and latent_nuisance_artifact is not None
+        and latent_nuisance_artifact.status == "observed"
+    )
+    if latent_nuisance_spec is None or not learned_basis_observed:
+        return (
+            None
+            if autonomous_program_resource is None
+            else autonomous_program_resource.verification_status
+        )
+    if autonomous_program_resource is None:
+        return _LEARNED_AUTONOMOUS_VERIFICATION_STATUS
+    if autonomous_program_resource.is_manifest_verified_trusted:
+        return _HYBRID_AUTONOMOUS_VERIFICATION_STATUS
+    return _UNTRUSTED_HYBRID_AUTONOMOUS_VERIFICATION_STATUS
 
 
 def _validated_hyperparameters(
@@ -262,7 +343,12 @@ class ReceiverIncrementalTrainingArtifact:
     precision_transform_id: str
     receiver_family_training_artifact_id: str
     autonomous_program_resource_id: str | None
+    autonomous_program_source_id: str | None
     autonomous_program_verification_status: str | None
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None
+    latent_nuisance_artifact: FoldLatentNuisanceArtifact | None
+    latent_nuisance_spec_id: str | None
+    latent_nuisance_artifact_id: str | None
     autonomous_projection_id: str | None
     receiver: str
     contrast_name: str
@@ -275,6 +361,10 @@ class ReceiverIncrementalTrainingArtifact:
     penalty_tuning_spec_id: str | None
     inner_fold_plan: SubjectFoldPlan | None
     penalty_tuning_artifact: PenaltyTuningArtifact | None
+    gain_calibration_spec: GainCalibrationSpec | None
+    gain_calibration_artifact: (
+        SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact | None
+    )
     selected_penalty_candidate_id: str | None
     selected_penalty_scale_resolution_id: str | None
     selected_resolved_penalty_id: str | None
@@ -303,13 +393,18 @@ class ReceiverIncrementalTrainingArtifact:
         *,
         encoder: FrozenDesignEncoder,
         training_design: FrozenDesignApplication,
-        response: FoldGeneResponseArtifact,
+        response: _ReceiverResponseArtifact,
         precision: PrecisionTransformResult,
         receiver_family: ReceiverFamilyTrainingArtifact,
         autonomous_program_resource: ReceiverAutonomousProgramResource | None,
+        latent_nuisance_spec: FrozenLatentNuisanceSpec | None,
         penalty_tuning_spec: PenaltyTuningSpec | None,
         inner_fold_plan: SubjectFoldPlan | None,
         penalty_tuning_artifact: PenaltyTuningArtifact | None,
+        gain_calibration_spec: GainCalibrationSpec | None,
+        gain_calibration_artifact: (
+            SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact | None
+        ),
         family_ids: tuple[str, ...],
         minimum_scale: float,
         null_loss_floor: float,
@@ -317,6 +412,7 @@ class ReceiverIncrementalTrainingArtifact:
         lambda2: float,
         diagnostic_functional: IncrementalDownstreamFunctional | None,
         diagnostic_reason_code: str | None,
+        latent_nuisance_artifact: FoldLatentNuisanceArtifact | None,
     ) -> ReceiverIncrementalTrainingArtifact:
         diagnostic_status = (
             "observed" if diagnostic_functional is not None else "not_estimable"
@@ -326,28 +422,97 @@ class ReceiverIncrementalTrainingArtifact:
                 "diagnostic_reason_code is required exactly when fitting is unavailable"
             )
         if penalty_tuning_spec is None:
-            if inner_fold_plan is not None or penalty_tuning_artifact is not None:
-                raise ValueError("fixed penalties cannot retain tuning artifacts")
+            if any(
+                value is not None
+                for value in (
+                    inner_fold_plan,
+                    penalty_tuning_artifact,
+                    gain_calibration_spec,
+                    gain_calibration_artifact,
+                )
+            ):
+                raise ValueError(
+                    "fixed penalties cannot retain tuning or calibration artifacts"
+                )
         else:
             penalty_tuning_spec._require_intact()
             if penalty_tuning_artifact is None:
                 raise ValueError("tuned training requires a tuning artifact")
             penalty_tuning_artifact._require_intact()
+            if gain_calibration_spec is None:
+                raise ValueError("tuned training requires a gain calibration spec")
+            gain_calibration_spec._require_intact()
             if inner_fold_plan is not None:
                 inner_fold_plan._require_intact()
-        autonomous_id = (
-            None
-            if autonomous_program_resource is None
-            else autonomous_program_resource.artifact_id
+            if gain_calibration_artifact is not None:
+                gain_calibration_artifact._require_intact()
+            selected_and_fitted = bool(
+                penalty_tuning_artifact.selected_candidate_id is not None
+                and diagnostic_functional is not None
+            )
+            if selected_and_fitted != (gain_calibration_artifact is not None):
+                raise ValueError(
+                    "selected tuned training must retain exactly one gain calibration "
+                    "artifact"
+                )
+        latent_artifact = latent_nuisance_artifact
+        if diagnostic_functional is not None:
+            functional_latent_artifact = diagnostic_functional.latent_nuisance_artifact
+            if latent_artifact is not None and (
+                functional_latent_artifact is None
+                or latent_artifact.artifact_id != functional_latent_artifact.artifact_id
+            ):
+                raise ValueError("conflicting latent nuisance artifact parents")
+            latent_artifact = functional_latent_artifact
+        if latent_nuisance_spec is None:
+            if latent_artifact is not None:
+                raise ValueError(
+                    "incremental functional has an unplanned latent nuisance artifact"
+                )
+        else:
+            latent_nuisance_spec._require_intact()
+            if diagnostic_functional is not None:
+                if latent_artifact is None or (
+                    latent_artifact.spec_id != latent_nuisance_spec.spec_id
+                ):
+                    raise ValueError(
+                        "incremental functional latent nuisance lineage is incomplete"
+                    )
+                latent_artifact._require_intact()
+                if latent_artifact.status != "observed":
+                    raise ValueError(
+                        "observed incremental functional requires an observed "
+                        "latent nuisance artifact"
+                    )
+            elif latent_artifact is not None:
+                latent_artifact._require_intact()
+                if (
+                    latent_artifact.spec_id != latent_nuisance_spec.spec_id
+                    or latent_artifact.status != "not_estimable"
+                ):
+                    raise ValueError(
+                        "unavailable incremental fit requires a matching latent "
+                        "nuisance NE artifact"
+                    )
+        autonomous_source_id = (
+            diagnostic_functional.autonomous_basis_id
+            if diagnostic_functional is not None
+            and diagnostic_functional.autonomous_basis_id is not None
+            else (
+                autonomous_program_resource.artifact_id
+                if autonomous_program_resource is not None
+                else None
+            )
         )
-        autonomous_verification_status = (
-            None
-            if autonomous_program_resource is None
-            else autonomous_program_resource.verification_status
+        autonomous_verification_status = _autonomous_verification_status(
+            autonomous_program_resource,
+            latent_nuisance_spec,
+            latent_artifact,
         )
         projection_id = (
             None
-            if autonomous_program_resource is None or diagnostic_functional is None
+            if diagnostic_functional is None
+            or diagnostic_functional.autonomous_basis_id is None
             else diagnostic_functional.autonomous_projection_id
         )
         tuning_spec_id = (
@@ -368,24 +533,59 @@ class ReceiverIncrementalTrainingArtifact:
             if diagnostic_functional is None
             else diagnostic_functional.resolved_penalty_id
         )
-        certified = bool(
-            diagnostic_functional is not None
+        repeated_exploratory = bool(
+            isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+            and response.is_cr1_exploratory
+        )
+        learned_nuisance_ready = bool(
+            latent_nuisance_spec is not None
+            and latent_artifact is not None
+            and latent_artifact.status == "observed"
+            and (
+                autonomous_program_resource is None
+                or autonomous_program_resource.is_manifest_verified_trusted
+            )
+        )
+        static_nuisance_ready = bool(
+            latent_nuisance_spec is None
             and autonomous_program_resource is not None
             and autonomous_program_resource.is_manifest_verified_trusted
+        )
+        approved_nuisance_plan = bool(
+            static_nuisance_ready
+            or (
+                latent_nuisance_spec is not None
+                and (
+                    autonomous_program_resource is None
+                    or autonomous_program_resource.is_manifest_verified_trusted
+                )
+            )
+        )
+        certified = bool(
+            not repeated_exploratory
+            and diagnostic_functional is not None
+            and (learned_nuisance_ready or static_nuisance_ready)
             and penalty_tuning_artifact is not None
             and penalty_tuning_artifact.is_oof_certified
             and diagnostic_functional.penalty_candidate_id
             == penalty_tuning_artifact.selected_candidate_id
         )
-        trusted_resource = bool(
-            autonomous_program_resource is not None
-            and autonomous_program_resource.is_manifest_verified_trusted
-        )
-        if certified:
-            certification_status = _CERTIFIED_TRAINING_STATUS
+        certification_status: str
+        official_status: str
+        official_reason: str | None
+        if repeated_exploratory:
+            certification_status = _REPEATED_CERTIFICATION_STATUS
+            official_status = _OFFICIAL_STATUS
+            official_reason = _REPEATED_REASON
+        elif certified:
+            certification_status = (
+                _LEARNED_CERTIFIED_TRAINING_STATUS
+                if latent_nuisance_spec is not None
+                else _CERTIFIED_TRAINING_STATUS
+            )
             official_status = _CERTIFIED_STATUS
-            official_reason: str | None = None
-        elif not trusted_resource:
+            official_reason = None
+        elif not approved_nuisance_plan:
             certification_status = _FORMULA_CERTIFICATION_STATUS
             official_status = _OFFICIAL_STATUS
             official_reason = _FORMULA_REASON
@@ -415,8 +615,21 @@ class ReceiverIncrementalTrainingArtifact:
             "receiver_family_training_artifact_id": (
                 receiver_family.training_artifact_id
             ),
-            "autonomous_program_resource_id": autonomous_id,
+            "autonomous_program_resource_id": (
+                None
+                if autonomous_program_resource is None
+                else autonomous_program_resource.artifact_id
+            ),
+            "autonomous_program_source_id": autonomous_source_id,
             "autonomous_program_verification_status": (autonomous_verification_status),
+            "latent_nuisance_spec": latent_nuisance_spec,
+            "latent_nuisance_artifact": latent_artifact,
+            "latent_nuisance_spec_id": (
+                None if latent_nuisance_spec is None else latent_nuisance_spec.spec_id
+            ),
+            "latent_nuisance_artifact_id": (
+                None if latent_artifact is None else latent_artifact.artifact_id
+            ),
             "autonomous_projection_id": projection_id,
             "receiver": response.receiver,
             "contrast_name": response.contrast_name,
@@ -429,6 +642,8 @@ class ReceiverIncrementalTrainingArtifact:
             "penalty_tuning_spec_id": tuning_spec_id,
             "inner_fold_plan": inner_fold_plan,
             "penalty_tuning_artifact": penalty_tuning_artifact,
+            "gain_calibration_spec": gain_calibration_spec,
+            "gain_calibration_artifact": gain_calibration_artifact,
             "selected_penalty_candidate_id": selected_candidate_id,
             "selected_penalty_scale_resolution_id": selected_scale_resolution_id,
             "selected_resolved_penalty_id": selected_resolved_penalty_id,
@@ -452,7 +667,7 @@ class ReceiverIncrementalTrainingArtifact:
             stable_id(
                 "receiver_incremental_training_artifact",
                 self._identity_payload(),
-                schema_version="2",
+                schema_version="3",
             ),
         )
         return self
@@ -462,9 +677,20 @@ class ReceiverIncrementalTrainingArtifact:
         """Return whether trusted nuisance and tuning make the model OOF-ready."""
 
         return (
-            self.certification_status == _CERTIFIED_TRAINING_STATUS
+            self.certification_status
+            in {_CERTIFIED_TRAINING_STATUS, _LEARNED_CERTIFIED_TRAINING_STATUS}
             and self.official_incremental_status == _CERTIFIED_STATUS
             and self.reason_code is None
+        )
+
+    @property
+    def gain_calibration_spec_id(self) -> str | None:
+        """Return the frozen gain-calibration policy identity, when tuned."""
+
+        return (
+            None
+            if self.gain_calibration_spec is None
+            else self.gain_calibration_spec.spec_id
         )
 
     def _identity_payload(self) -> dict[str, object]:
@@ -481,7 +707,12 @@ class ReceiverIncrementalTrainingArtifact:
             if self.penalty_tuning_artifact is None
             else self.penalty_tuning_artifact.tuning_id
         )
-        return {
+        calibration_id = (
+            None
+            if self.gain_calibration_artifact is None
+            else self.gain_calibration_artifact.artifact_id
+        )
+        payload: dict[str, object] = {
             "certification_status": self.certification_status,
             "autonomous_program_resource_id": self.autonomous_program_resource_id,
             "autonomous_program_verification_status": (
@@ -497,6 +728,8 @@ class ReceiverIncrementalTrainingArtifact:
             "family_ids": list(self.family_ids),
             "feature_ids": list(self.feature_ids),
             "fold_id": self.fold_id,
+            "gain_calibration_artifact_id": calibration_id,
+            "gain_calibration_spec_id": self.gain_calibration_spec_id,
             "inner_fold_plan_id": inner_fold_plan_id,
             "lambda1": self.lambda1,
             "lambda2": self.lambda2,
@@ -524,6 +757,15 @@ class ReceiverIncrementalTrainingArtifact:
             "training_sample_context_ids": list(self.training_sample_context_ids),
             "training_subject_ids": list(self.training_subject_ids),
         }
+        if self.latent_nuisance_spec_id is not None:
+            payload.update(
+                {
+                    "autonomous_program_source_id": self.autonomous_program_source_id,
+                    "latent_nuisance_spec_id": self.latent_nuisance_spec_id,
+                    "latent_nuisance_artifact_id": self.latent_nuisance_artifact_id,
+                }
+            )
+        return payload
 
     def _require_intact(self) -> None:
         try:
@@ -561,23 +803,60 @@ class ReceiverIncrementalTrainingArtifact:
                 for value in self.training_sample_context_ids
             ):
                 raise ValueError("training sample contexts are invalid")
-            if (self.autonomous_program_resource_id is None) != (
+            if (self.autonomous_program_source_id is None) != (
                 self.autonomous_program_verification_status is None
             ):
                 raise ValueError(
-                    "autonomous resource ID and verification status must co-occur"
+                    "autonomous source ID and verification status must co-occur"
                 )
             if self.autonomous_program_verification_status not in {
                 None,
                 "caller_declared_static_unverified",
                 "manifest_verified_static_trusted_v1",
+                _LEARNED_AUTONOMOUS_VERIFICATION_STATUS,
+                _HYBRID_AUTONOMOUS_VERIFICATION_STATUS,
+                _UNTRUSTED_HYBRID_AUTONOMOUS_VERIFICATION_STATUS,
             }:
                 raise ValueError("unsupported autonomous resource verification status")
+            latent_spec = self.latent_nuisance_spec
+            latent_artifact = self.latent_nuisance_artifact
+            if latent_spec is None:
+                if any(
+                    value is not None
+                    for value in (
+                        self.latent_nuisance_spec_id,
+                        latent_artifact,
+                        self.latent_nuisance_artifact_id,
+                    )
+                ):
+                    raise ValueError("unplanned latent nuisance lineage is present")
+            else:
+                latent_spec._require_intact()
+                if latent_spec.spec_id != self.latent_nuisance_spec_id:
+                    raise ValueError("latent nuisance specification identity changed")
+                if latent_artifact is None:
+                    if self.latent_nuisance_artifact_id is not None:
+                        raise ValueError("absent latent artifact has an identity")
+                else:
+                    latent_artifact._require_intact()
+                    if (
+                        latent_artifact.spec_id != latent_spec.spec_id
+                        or latent_artifact.artifact_id
+                        != self.latent_nuisance_artifact_id
+                    ):
+                        raise ValueError("latent nuisance artifact lineage changed")
             tuning = self.penalty_tuning_artifact
             plan = self.inner_fold_plan
+            calibration_spec = self.gain_calibration_spec
+            calibration = self.gain_calibration_artifact
             if self.penalty_tuning_spec_id is None:
-                if tuning is not None or plan is not None:
-                    raise ValueError("fixed penalties cannot retain tuning artifacts")
+                if any(
+                    value is not None
+                    for value in (tuning, plan, calibration_spec, calibration)
+                ):
+                    raise ValueError(
+                        "fixed penalties cannot retain tuning or calibration artifacts"
+                    )
                 if any(
                     value is not None
                     for value in (
@@ -595,6 +874,9 @@ class ReceiverIncrementalTrainingArtifact:
                 if tuning is None:
                     raise ValueError("tuned training requires a tuning artifact")
                 tuning._require_intact()
+                if calibration_spec is None:
+                    raise ValueError("tuned training requires a gain calibration spec")
+                calibration_spec._require_intact()
                 expected_scope_id = _receiver_tuning_scope_id(
                     encoder_id=self.encoder_id,
                     response_artifact_id=self.response_artifact_id,
@@ -605,6 +887,7 @@ class ReceiverIncrementalTrainingArtifact:
                     autonomous_program_resource_id=(
                         self.autonomous_program_resource_id
                     ),
+                    latent_nuisance_spec_id=self.latent_nuisance_spec_id,
                     penalty_tuning_spec_id=self.penalty_tuning_spec_id,
                 )
                 if (
@@ -628,6 +911,57 @@ class ReceiverIncrementalTrainingArtifact:
                     ):
                         raise ValueError(
                             "inner fold plan does not match tuning lineage"
+                        )
+                if calibration is None:
+                    if tuning.selected_candidate_id is not None and (
+                        self.diagnostic_functional is not None
+                    ):
+                        raise ValueError(
+                            "selected tuned training is missing gain calibration"
+                        )
+                else:
+                    calibration._require_intact()
+                    if self.diagnostic_functional is None:
+                        raise ValueError(
+                            "gain calibration requires the outer final functional"
+                        )
+                    expected_calibration_lineage = (
+                        calibration.spec.spec_id,
+                        calibration.receiver,
+                        calibration.contrast_name,
+                        calibration.outer_fold_id,
+                        calibration.training_subject_ids,
+                        calibration.family_ids,
+                        calibration.feature_ids,
+                        calibration.null_loss_floor,
+                        calibration.tuning_spec_id,
+                        calibration.tuning_id,
+                        calibration.tuning_scope_id,
+                        calibration.inner_fold_plan_id,
+                        calibration.selected_candidate_id,
+                        calibration.outer_incremental_functional_id,
+                        calibration.outer_selected_resolved_penalty_id,
+                    )
+                    observed_calibration_lineage = (
+                        calibration_spec.spec_id,
+                        self.receiver,
+                        self.contrast_name,
+                        self.fold_id,
+                        self.training_subject_ids,
+                        self.family_ids,
+                        self.feature_ids,
+                        self.null_loss_floor,
+                        tuning.spec.spec_id,
+                        tuning.tuning_id,
+                        tuning.tuning_scope_id,
+                        tuning.inner_fold_plan_id,
+                        self.selected_penalty_candidate_id,
+                        self.diagnostic_functional.incremental_functional_id,
+                        self.selected_resolved_penalty_id,
+                    )
+                    if expected_calibration_lineage != observed_calibration_lineage:
+                        raise ValueError(
+                            "gain calibration does not match tuned training lineage"
                         )
             if self.diagnostic_functional is not None:
                 self.diagnostic_functional._require_intact()
@@ -655,7 +989,9 @@ class ReceiverIncrementalTrainingArtifact:
                     self.null_loss_floor,
                     self.lambda1,
                     self.lambda2,
-                    self.autonomous_program_resource_id,
+                    self.autonomous_program_source_id,
+                    self.latent_nuisance_spec_id,
+                    self.latent_nuisance_artifact_id,
                 )
                 observed_functional_lineage = (
                     functional.receiver,
@@ -674,6 +1010,8 @@ class ReceiverIncrementalTrainingArtifact:
                     functional.lambda1,
                     functional.lambda2,
                     functional.autonomous_basis_id,
+                    functional.latent_nuisance_spec_id,
+                    functional.latent_nuisance_artifact_id,
                 )
                 if observed_functional_lineage != expected_functional_lineage:
                     raise ValueError(
@@ -681,7 +1019,7 @@ class ReceiverIncrementalTrainingArtifact:
                     )
                 expected_projection_id = (
                     None
-                    if self.autonomous_program_resource_id is None
+                    if self.autonomous_program_source_id is None
                     else functional.autonomous_projection_id
                 )
                 if self.autonomous_projection_id != expected_projection_id:
@@ -717,24 +1055,62 @@ class ReceiverIncrementalTrainingArtifact:
                 raise ValueError(
                     "unavailable diagnostics cannot claim resolved final penalties"
                 )
+            repeated_exploratory = (
+                self.certification_status == _REPEATED_CERTIFICATION_STATUS
+            )
             certified = bool(
-                self.diagnostic_functional is not None
+                not repeated_exploratory
+                and self.diagnostic_functional is not None
                 and self.autonomous_program_verification_status
-                == "manifest_verified_static_trusted_v1"
+                in {
+                    "manifest_verified_static_trusted_v1",
+                    _LEARNED_AUTONOMOUS_VERIFICATION_STATUS,
+                    _HYBRID_AUTONOMOUS_VERIFICATION_STATUS,
+                }
+                and (
+                    self.latent_nuisance_spec_id is None
+                    or (
+                        latent_artifact is not None
+                        and latent_artifact.status == "observed"
+                    )
+                )
                 and tuning is not None
                 and tuning.is_oof_certified
                 and self.selected_penalty_candidate_id
                 == self.diagnostic_functional.penalty_candidate_id
             )
-            trusted_resource = (
+            approved_nuisance_plan = bool(
                 self.autonomous_program_verification_status
-                == "manifest_verified_static_trusted_v1"
+                in {
+                    _LEARNED_AUTONOMOUS_VERIFICATION_STATUS,
+                    _HYBRID_AUTONOMOUS_VERIFICATION_STATUS,
+                    "manifest_verified_static_trusted_v1",
+                }
+                or (
+                    self.latent_nuisance_spec_id is not None
+                    and self.autonomous_program_verification_status
+                    not in {
+                        "caller_declared_static_unverified",
+                        _UNTRUSTED_HYBRID_AUTONOMOUS_VERIFICATION_STATUS,
+                    }
+                )
             )
-            if certified:
-                expected_certification_status = _CERTIFIED_TRAINING_STATUS
+            expected_certification_status: str
+            expected_official_status: str
+            expected_reason: str | None
+            if repeated_exploratory:
+                expected_certification_status = _REPEATED_CERTIFICATION_STATUS
+                expected_official_status = _OFFICIAL_STATUS
+                expected_reason = _REPEATED_REASON
+            elif certified:
+                expected_certification_status = (
+                    _LEARNED_CERTIFIED_TRAINING_STATUS
+                    if self.latent_nuisance_spec_id is not None
+                    else _CERTIFIED_TRAINING_STATUS
+                )
                 expected_official_status = _CERTIFIED_STATUS
-                expected_reason: str | None = None
-            elif not trusted_resource:
+                expected_reason = None
+            elif not approved_nuisance_plan:
                 expected_certification_status = _FORMULA_CERTIFICATION_STATUS
                 expected_official_status = _OFFICIAL_STATUS
                 expected_reason = _FORMULA_REASON
@@ -753,7 +1129,7 @@ class ReceiverIncrementalTrainingArtifact:
             expected = stable_id(
                 "receiver_incremental_training_artifact",
                 self._identity_payload(),
-                schema_version="2",
+                schema_version="3",
             )
             valid = (
                 self._producer_marker == _PRODUCER_MARKER
@@ -785,6 +1161,16 @@ class ReceiverIncrementalTrainingArtifact:
         return {
             "training_artifact_id": self.training_artifact_id,
             **self._identity_payload(),
+            "latent_nuisance_spec": (
+                None
+                if self.latent_nuisance_spec is None
+                else self.latent_nuisance_spec.to_dict()
+            ),
+            "latent_nuisance_artifact": (
+                None
+                if self.latent_nuisance_artifact is None
+                else self.latent_nuisance_artifact.to_dict()
+            ),
             "inner_fold_plan": (
                 None if self.inner_fold_plan is None else self.inner_fold_plan.to_dict()
             ),
@@ -793,12 +1179,22 @@ class ReceiverIncrementalTrainingArtifact:
                 if self.penalty_tuning_artifact is None
                 else self.penalty_tuning_artifact.to_dict()
             ),
+            "gain_calibration_spec": (
+                None
+                if self.gain_calibration_spec is None
+                else self.gain_calibration_spec.to_dict()
+            ),
+            "gain_calibration_artifact": (
+                None
+                if self.gain_calibration_artifact is None
+                else self.gain_calibration_artifact.to_dict()
+            ),
         }
 
 
 def _validate_heldout_parents(
     model: ReceiverIncrementalTrainingArtifact,
-    response_application: FoldGeneResponseApplication,
+    response_application: _ReceiverResponseApplication,
     design_application: FrozenDesignApplication,
 ) -> None:
     model._require_intact()
@@ -888,7 +1284,7 @@ class ReceiverIncrementalApplication:
         cls,
         *,
         model: ReceiverIncrementalTrainingArtifact,
-        response_application: FoldGeneResponseApplication,
+        response_application: _ReceiverResponseApplication,
         design_application: FrozenDesignApplication,
         diagnostic_application: IncrementalDownstreamApplication | None,
         diagnostic_reason_code: str | None,
@@ -956,28 +1352,52 @@ class ReceiverIncrementalApplication:
                     "response and design values",
                     field="diagnostic_application",
                 )
+        repeated_exploratory = (
+            model.certification_status == _REPEATED_CERTIFICATION_STATUS
+        )
         certified_application = model.is_oof_certified and (
             diagnostic_status == "observed"
         )
-        certification_status = (
-            _CERTIFIED_APPLICATION_STATUS
-            if certified_application
-            else (
-                _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
-                if model.is_oof_certified
-                else model.certification_status
+        certification_status: str
+        official_status: str
+        official_reason: str | None
+        if repeated_exploratory:
+            certification_status = _REPEATED_CERTIFICATION_STATUS
+            official_status = _OFFICIAL_STATUS
+            official_reason = _REPEATED_REASON
+        else:
+            learned_certification = (
+                model.certification_status == _LEARNED_CERTIFIED_TRAINING_STATUS
             )
-        )
-        official_status = (
-            _CERTIFIED_STATUS if certified_application else _OFFICIAL_STATUS
-        )
-        official_reason = (
-            None
-            if certified_application
-            else (
-                diagnostic_reason_code if model.is_oof_certified else model.reason_code
+            certification_status = (
+                (
+                    _LEARNED_CERTIFIED_APPLICATION_STATUS
+                    if learned_certification
+                    else _CERTIFIED_APPLICATION_STATUS
+                )
+                if certified_application
+                else (
+                    (
+                        _LEARNED_CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
+                        if learned_certification
+                        else _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
+                    )
+                    if model.is_oof_certified
+                    else model.certification_status
+                )
             )
-        )
+            official_status = (
+                _CERTIFIED_STATUS if certified_application else _OFFICIAL_STATUS
+            )
+            official_reason = (
+                None
+                if certified_application
+                else (
+                    diagnostic_reason_code
+                    if model.is_oof_certified
+                    else model.reason_code
+                )
+            )
         self = object.__new__(cls)
         values: dict[str, Any] = {
             "training_artifact_id": model.training_artifact_id,
@@ -1018,7 +1438,11 @@ class ReceiverIncrementalApplication:
         """Return whether this held-out result passed the certified path."""
 
         return (
-            self.certification_status == _CERTIFIED_APPLICATION_STATUS
+            self.certification_status
+            in {
+                _CERTIFIED_APPLICATION_STATUS,
+                _LEARNED_CERTIFIED_APPLICATION_STATUS,
+            }
             and self.official_incremental_status == _CERTIFIED_STATUS
             and self.reason_code is None
             and self.diagnostic_status == "observed"
@@ -1077,9 +1501,10 @@ class ReceiverIncrementalApplication:
                 schema_version="2",
             )
             certified = self.is_oof_certified
-            trusted_but_unavailable = (
-                self.certification_status == _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS
-            )
+            trusted_but_unavailable = self.certification_status in {
+                _CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS,
+                _LEARNED_CERTIFIED_APPLICATION_NOT_ESTIMABLE_STATUS,
+            }
             valid = (
                 self._producer_marker == _APPLICATION_PRODUCER_MARKER
                 and (
@@ -1099,10 +1524,15 @@ class ReceiverIncrementalApplication:
                         in {
                             _FORMULA_CERTIFICATION_STATUS,
                             _TRUSTED_NOT_CERTIFIED_STATUS,
+                            _REPEATED_CERTIFICATION_STATUS,
                         }
                         and self.official_incremental_status == _OFFICIAL_STATUS
                         and bool(self.reason_code)
                         and not certified
+                        and (
+                            self.certification_status != _REPEATED_CERTIFICATION_STATUS
+                            or self.reason_code == _REPEATED_REASON
+                        )
                     )
                 )
                 and expected == self.application_id
@@ -1146,7 +1576,9 @@ class _IncrementalFitInputs:
     family_ids: tuple[str, ...]
     nuisance_column_ids: tuple[str, ...]
     family_basis: sparse.spmatrix | np.ndarray
+    latent_control_exclusion_basis: sparse.spmatrix | np.ndarray
     autonomous_program_resource: ReceiverAutonomousProgramResource | None
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None
     precision_weights: np.ndarray
     minimum_scale: float
     null_loss_floor: float
@@ -1178,39 +1610,52 @@ def _fit_incremental_subset(
     penalty_candidate: RelativePenaltyCandidate | None = None,
     lambda1: float = 0.0,
     lambda2: float = 0.0,
+    loss_design_override: str | None = None,
 ) -> IncrementalDownstreamFunctional:
     indices = _subject_indices(inputs, subject_ids)
     sample_ids = tuple(inputs.sample_ids[index] for index in indices)
     sample_subject_ids = tuple(inputs.sample_subject_ids[index] for index in indices)
     sample_context_ids = tuple(inputs.sample_context_ids[index] for index in indices)
-    return fit_incremental_downstream_functional(
+    row_manifest = DownstreamRowManifest(
+        sample_ids=sample_ids,
+        subject_ids=sample_subject_ids,
+        context_ids=sample_context_ids,
+    )
+    arguments: dict[str, Any] = {
+        "row_manifest": row_manifest,
+        "design_sample_ids": sample_ids,
+        "reference_mask": inputs.reference_mask[indices],
+        "nuisance_matrix": inputs.nuisance_matrix[indices],
+        "context_regressor": inputs.context_regressor[indices],
+        "receiver": inputs.receiver,
+        "contrast_name": inputs.contrast_name,
+        "fold_id": fold_id,
+        "context_regressor_id": inputs.context_regressor_id,
+        "nuisance_design_id": inputs.nuisance_design_id,
+        "feature_ids": inputs.feature_ids,
+        "family_ids": inputs.family_ids,
+        "nuisance_column_ids": inputs.nuisance_column_ids,
+        "training_subject_ids": tuple(sorted(subject_ids)),
+        "family_basis": inputs.family_basis,
+        "latent_control_exclusion_basis": inputs.latent_control_exclusion_basis,
+        "autonomous_program_resource": inputs.autonomous_program_resource,
+        "latent_nuisance_spec": inputs.latent_nuisance_spec,
+        "precision_weights": inputs.precision_weights,
+        "minimum_scale": inputs.minimum_scale,
+        "null_loss_floor": inputs.null_loss_floor,
+        "lambda1": lambda1,
+        "lambda2": lambda2,
+        "penalty_candidate": penalty_candidate,
+    }
+    if loss_design_override is None:
+        return fit_incremental_downstream_functional(
+            inputs.response_matrix[indices], **arguments
+        )
+    return _fit_incremental_downstream_functional(
         inputs.response_matrix[indices],
-        row_manifest=DownstreamRowManifest(
-            sample_ids=sample_ids,
-            subject_ids=sample_subject_ids,
-            context_ids=sample_context_ids,
-        ),
-        design_sample_ids=sample_ids,
-        reference_mask=inputs.reference_mask[indices],
-        nuisance_matrix=inputs.nuisance_matrix[indices],
-        context_regressor=inputs.context_regressor[indices],
-        receiver=inputs.receiver,
-        contrast_name=inputs.contrast_name,
-        fold_id=fold_id,
-        context_regressor_id=inputs.context_regressor_id,
-        nuisance_design_id=inputs.nuisance_design_id,
-        feature_ids=inputs.feature_ids,
-        family_ids=inputs.family_ids,
-        nuisance_column_ids=inputs.nuisance_column_ids,
-        training_subject_ids=tuple(sorted(subject_ids)),
-        family_basis=inputs.family_basis,
-        autonomous_program_resource=inputs.autonomous_program_resource,
-        precision_weights=inputs.precision_weights,
-        minimum_scale=inputs.minimum_scale,
-        null_loss_floor=inputs.null_loss_floor,
-        lambda1=lambda1,
-        lambda2=lambda2,
-        penalty_candidate=penalty_candidate,
+        **arguments,
+        loss_design_override=loss_design_override,
+        _loss_design_producer_token=_WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN,
     )
 
 
@@ -1252,6 +1697,8 @@ def _inner_failure_reason(error: Exception, *, stage: str) -> str:
 
 def _classify_inner_value_error(error: ValueError) -> tuple[str, str] | None:
     message = str(error)
+    if message.startswith("latent_nuisance_"):
+        return "not_estimable", message
     reason = _INNER_NOT_ESTIMABLE_VALUE_ERRORS.get(message)
     if reason is not None:
         return "not_estimable", reason
@@ -1265,6 +1712,7 @@ def _unavailable_inner_evaluation(
     inner_fold: FoldManifest,
     *,
     reason_code: str,
+    validation_loss_estimand: PenaltyValidationLossEstimand,
     functional: IncrementalDownstreamFunctional | None,
     application: IncrementalDownstreamApplication | None,
     status: str = "not_estimable",
@@ -1276,6 +1724,7 @@ def _unavailable_inner_evaluation(
         inner_fold_manifest_id=inner_fold.fold_id,
         training_subject_ids=inner_fold.train_subject_ids,
         validation_subject_ids=inner_fold.test_subject_ids,
+        validation_loss_estimand=validation_loss_estimand,
         scale_resolution_id=(
             None if functional is None else functional.penalty_scale_resolution_id
         ),
@@ -1295,6 +1744,118 @@ def _unavailable_inner_evaluation(
     )
 
 
+def _inner_validation_subject_losses(
+    functional: IncrementalDownstreamFunctional,
+    application: IncrementalDownstreamApplication,
+    *,
+    subject_design: SubjectDesign,
+) -> tuple[tuple[str, ...], np.ndarray]:
+    """Return independent validation units without reusing group pseudocontrasts."""
+
+    if subject_design is SubjectDesign.PAIRED:
+        if functional.loss_design != _PAIRED_LOSS_DESIGN:
+            raise RuntimeError(
+                "paired inner tuning received an incompatible loss design"
+            )
+        return application.subject_ids, np.asarray(
+            application.subject_full_losses, dtype=np.float64
+        )
+    if subject_design is SubjectDesign.INDEPENDENT:
+        expected_loss_design = _INDEPENDENT_LOSS_DESIGN
+    elif subject_design in {SubjectDesign.MIXED, SubjectDesign.REPEATED_MULTI_CONTEXT}:
+        if functional.loss_design != _MIXED_LOSS_DESIGN:
+            raise RuntimeError(
+                "mixed inner tuning received an incompatible loss design"
+            )
+        return application.subject_ids, np.asarray(
+            application.subject_full_losses, dtype=np.float64
+        )
+    else:
+        raise RuntimeError("unsupported subject design reached inner loss evaluation")
+    if functional.loss_design != expected_loss_design:
+        raise RuntimeError(
+            "full-prediction inner tuning received an incompatible loss design"
+        )
+    subjects = tuple(sorted(set(application.sample_subject_ids)))
+    losses: list[float] = []
+    sample_losses = np.asarray(application.sample_full_losses, dtype=np.float64)
+    for subject in subjects:
+        selected = np.asarray(
+            [row_subject == subject for row_subject in application.sample_subject_ids],
+            dtype=bool,
+        )
+        subject_contexts = {
+            context
+            for row_subject, context in zip(
+                application.sample_subject_ids,
+                application.sample_context_ids,
+                strict=True,
+            )
+            if row_subject == subject
+        }
+        if not subject_contexts or not np.any(selected):
+            raise RuntimeError(
+                "full-prediction validation subjects require observed context rows"
+            )
+        context_losses = [
+            float(
+                np.mean(
+                    sample_losses[
+                        np.asarray(
+                            [
+                                row_subject == subject and row_context == context
+                                for row_subject, row_context in zip(
+                                    application.sample_subject_ids,
+                                    application.sample_context_ids,
+                                    strict=True,
+                                )
+                            ],
+                            dtype=bool,
+                        )
+                    ]
+                )
+            )
+            for context in sorted(subject_contexts)
+        ]
+        losses.append(float(np.mean(context_losses)))
+    result = np.asarray(losses, dtype=np.float64)
+    if np.any(~np.isfinite(result)) or np.any(result < 0):
+        raise RuntimeError(
+            "independent validation losses must be finite and non-negative"
+        )
+    return subjects, result
+
+
+def _inner_tuning_subject_design(
+    inputs: _IncrementalFitInputs,
+) -> SubjectDesignAudit:
+    """Classify the complete outer-training allocation before fold planning."""
+
+    metadata = pd.DataFrame(
+        {
+            "sample_id": inputs.sample_ids,
+            "subject_id": inputs.sample_subject_ids,
+            "context_id": inputs.sample_context_ids,
+        }
+    )
+    return audit_subject_design(
+        metadata,
+        tuple(sorted(set(inputs.sample_context_ids))),
+        context_key="context_id",
+        subject_key="subject_id",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SubjectBlockedPenaltyTuningOutcome:
+    """Selected inner OOF parents retained only until calibration finalization."""
+
+    plan: SubjectFoldPlan | None
+    tuning: PenaltyTuningArtifact
+    selected_inner_functionals: tuple[IncrementalDownstreamFunctional, ...]
+    selected_inner_applications: tuple[IncrementalDownstreamApplication, ...]
+
+
 def _fit_subject_blocked_penalty_tuning(
     inputs: _IncrementalFitInputs,
     *,
@@ -1302,43 +1863,33 @@ def _fit_subject_blocked_penalty_tuning(
     tuning_scope_id: str,
     outer_fold_id: str,
     inner_partition_seed_lineage: SeedLineage | None,
-) -> tuple[SubjectFoldPlan | None, PenaltyTuningArtifact]:
+) -> _SubjectBlockedPenaltyTuningOutcome:
     spec._require_intact()
     outer_subjects = tuple(sorted(set(inputs.sample_subject_ids)))
-    contexts = set(inputs.sample_context_ids)
-    contexts_by_subject = {
-        subject: {
-            context
-            for row_subject, context in zip(
-                inputs.sample_subject_ids,
-                inputs.sample_context_ids,
-                strict=True,
-            )
-            if row_subject == subject
+    metadata = pd.DataFrame(
+        {
+            "sample_id": inputs.sample_ids,
+            "subject_id": inputs.sample_subject_ids,
+            "context_id": inputs.sample_context_ids,
         }
-        for subject in outer_subjects
-    }
-    fully_paired = bool(contexts) and all(
-        subject_contexts == contexts
-        for subject_contexts in contexts_by_subject.values()
     )
-    independent = len(contexts) >= 2 and all(
-        len(subject_contexts) == 1 for subject_contexts in contexts_by_subject.values()
+    allocation = _inner_tuning_subject_design(inputs)
+    if allocation.design is SubjectDesign.PAIRED:
+        validation_loss_estimand = PenaltyValidationLossEstimand.PAIRED_SUBJECT_CONTRAST
+    elif allocation.design is SubjectDesign.INDEPENDENT:
+        validation_loss_estimand = (
+            PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+        )
+    else:
+        validation_loss_estimand = (
+            PenaltyValidationLossEstimand.MIXED_SUBJECT_PREDICTION
+        )
+    loss_design_override = (
+        _MIXED_LOSS_DESIGN
+        if allocation.design
+        in {SubjectDesign.MIXED, SubjectDesign.REPEATED_MULTI_CONTEXT}
+        else None
     )
-    if independent:
-        return None, not_estimable_penalty_tuning(
-            spec,
-            tuning_scope_id=tuning_scope_id,
-            training_subject_ids=outer_subjects,
-            reason_code="independent_inner_tuning_one_se_not_supported",
-        )
-    if not fully_paired:
-        return None, not_estimable_penalty_tuning(
-            spec,
-            tuning_scope_id=tuning_scope_id,
-            training_subject_ids=outer_subjects,
-            reason_code="mixed_subject_allocation_inner_tuning_not_supported",
-        )
     split_scope_id = stable_id(
         "receiver_incremental_inner_split_scope",
         {
@@ -1359,13 +1910,6 @@ def _fit_subject_blocked_penalty_tuning(
             "split_scope_id": split_scope_id,
         },
         schema_version="1",
-    )
-    metadata = pd.DataFrame(
-        {
-            "sample_id": inputs.sample_ids,
-            "subject_id": inputs.sample_subject_ids,
-            "context_id": inputs.sample_context_ids,
-        }
     )
     repeat_id = stable_id(
         "receiver_incremental_inner_repeat",
@@ -1396,14 +1940,24 @@ def _fit_subject_blocked_penalty_tuning(
             partition_seed_lineage=inner_partition_seed_lineage,
         )
     except FoldPlanningError as error:
-        return None, not_estimable_penalty_tuning(
-            spec,
-            tuning_scope_id=tuning_scope_id,
-            training_subject_ids=outer_subjects,
-            reason_code=error.details.code,
+        return _SubjectBlockedPenaltyTuningOutcome(
+            plan=None,
+            tuning=not_estimable_penalty_tuning(
+                spec,
+                tuning_scope_id=tuning_scope_id,
+                training_subject_ids=outer_subjects,
+                reason_code=error.details.code,
+                validation_loss_estimand=validation_loss_estimand,
+            ),
+            selected_inner_functionals=(),
+            selected_inner_applications=(),
         )
 
     evaluations: list[PenaltyFoldEvaluation] = []
+    observed_inner_parents: dict[
+        tuple[str, str],
+        tuple[IncrementalDownstreamFunctional, IncrementalDownstreamApplication],
+    ] = {}
     for candidate in spec.candidates:
         for inner_fold in plan.folds:
             functional: IncrementalDownstreamFunctional | None = None
@@ -1414,6 +1968,7 @@ def _fit_subject_blocked_penalty_tuning(
                     subject_ids=inner_fold.train_subject_ids,
                     fold_id=inner_fold.fold_id,
                     penalty_candidate=candidate,
+                    loss_design_override=loss_design_override,
                 )
                 application = _apply_incremental_subset(
                     functional,
@@ -1429,12 +1984,20 @@ def _fit_subject_blocked_penalty_tuning(
                                 application.reason_code
                                 or "inner_penalty_candidate_apply_not_estimable"
                             ),
+                            validation_loss_estimand=validation_loss_estimand,
                             functional=functional,
                             application=application,
                         )
                     )
                     continue
-                if application.subject_ids != inner_fold.test_subject_ids:
+                validation_subject_ids, validation_losses = (
+                    _inner_validation_subject_losses(
+                        functional,
+                        application,
+                        subject_design=allocation.design,
+                    )
+                )
+                if validation_subject_ids != inner_fold.test_subject_ids:
                     raise ValueError(
                         "inner application subject losses do not match its fold"
                     )
@@ -1445,8 +2008,9 @@ def _fit_subject_blocked_penalty_tuning(
                         inner_fold_id=inner_fold.fold_id,
                         inner_fold_manifest_id=inner_fold.fold_id,
                         training_subject_ids=inner_fold.train_subject_ids,
-                        validation_subject_ids=application.subject_ids,
-                        subject_losses=application.subject_full_losses,
+                        validation_subject_ids=validation_subject_ids,
+                        validation_loss_estimand=validation_loss_estimand,
+                        subject_losses=validation_losses,
                         scale_resolution_id=functional.penalty_scale_resolution_id,
                         resolved_penalty_id=functional.resolved_penalty_id,
                         resolved_lambda1=functional.lambda1,
@@ -1454,6 +2018,10 @@ def _fit_subject_blocked_penalty_tuning(
                         training_functional_id=functional.incremental_functional_id,
                         heldout_application_id=application.application_id,
                     )
+                )
+                observed_inner_parents[(candidate.candidate_id, inner_fold.fold_id)] = (
+                    functional,
+                    application,
                 )
             except ContractError as error:
                 if error.details.code not in _INNER_STATISTICAL_CONTRACT_FAILURES:
@@ -1466,6 +2034,7 @@ def _fit_subject_blocked_penalty_tuning(
                             error,
                             stage=("fit" if functional is None else "apply"),
                         ),
+                        validation_loss_estimand=validation_loss_estimand,
                         functional=functional,
                         application=application,
                     )
@@ -1479,6 +2048,7 @@ def _fit_subject_blocked_penalty_tuning(
                             error,
                             stage=("fit" if functional is None else "apply"),
                         ),
+                        validation_loss_estimand=validation_loss_estimand,
                         functional=functional,
                         application=application,
                     )
@@ -1493,6 +2063,7 @@ def _fit_subject_blocked_penalty_tuning(
                         candidate,
                         inner_fold,
                         reason_code=reason,
+                        validation_loss_estimand=validation_loss_estimand,
                         functional=functional,
                         application=application,
                         status=status,
@@ -1506,19 +2077,37 @@ def _fit_subject_blocked_penalty_tuning(
         inner_fold_ids=tuple(fold.fold_id for fold in plan.folds),
         inner_fold_plan_id=plan.plan_id,
     )
-    return plan, tuning
+    selected_candidate_id = tuning.selected_candidate_id
+    selected_pairs = (
+        ()
+        if selected_candidate_id is None
+        else tuple(
+            observed_inner_parents[(selected_candidate_id, fold_id)]
+            for fold_id in tuning.inner_fold_ids
+            if (selected_candidate_id, fold_id) in observed_inner_parents
+        )
+    )
+    return _SubjectBlockedPenaltyTuningOutcome(
+        plan=plan,
+        tuning=tuning,
+        selected_inner_functionals=tuple(pair[0] for pair in selected_pairs),
+        selected_inner_applications=tuple(pair[1] for pair in selected_pairs),
+    )
 
 
 def _validate_training_parents(
     encoder: FrozenDesignEncoder,
-    response: FoldGeneResponseArtifact,
+    response: _ReceiverResponseArtifact,
     precision: PrecisionTransformResult,
     receiver_family: ReceiverFamilyTrainingArtifact,
 ) -> FrozenDesignApplication:
     if not isinstance(encoder, FrozenDesignEncoder):
         raise TypeError("encoder must be a FrozenDesignEncoder")
-    if not isinstance(response, FoldGeneResponseArtifact):
-        raise TypeError("response must be a FoldGeneResponseArtifact")
+    if not isinstance(
+        response,
+        (FoldGeneResponseArtifact, RepeatedMeasuresFoldResponseArtifact),
+    ):
+        raise TypeError("response must be a supported fold response artifact")
     if not isinstance(precision, PrecisionTransformResult):
         raise TypeError("precision must be a PrecisionTransformResult")
     if not isinstance(receiver_family, ReceiverFamilyTrainingArtifact):
@@ -1555,7 +2144,7 @@ def _validate_training_parents(
 
 def _receiver_incremental_feature_scale(
     encoder: FrozenDesignEncoder,
-    response: FoldGeneResponseArtifact,
+    response: _ReceiverResponseArtifact,
     *,
     minimum_scale: float,
 ) -> np.ndarray:
@@ -1593,30 +2182,36 @@ def _receiver_incremental_feature_scale(
 
 def fit_receiver_incremental_training_artifact(
     encoder: FrozenDesignEncoder,
-    response: FoldGeneResponseArtifact,
+    response: _ReceiverResponseArtifact,
     precision: PrecisionTransformResult,
     receiver_family: ReceiverFamilyTrainingArtifact,
     autonomous_program_resource: ReceiverAutonomousProgramResource | None = None,
     *,
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None = None,
     minimum_scale: float = 0.25,
     null_loss_floor: float = 1e-8,
     lambda1: float = 0.0,
     lambda2: float = 0.0,
     penalty_tuning_spec: PenaltyTuningSpec | None = None,
+    gain_calibration_spec: GainCalibrationSpec | None = None,
     inner_partition_seed_lineage: SeedLineage | None = None,
 ) -> ReceiverIncrementalTrainingArtifact:
     """Fit a receiver-null model and optional conditional subject-blocked tuning.
 
-    For fully paired allocations, inner folds refit response centering, scaling,
-    nuisance coefficients and the signed residual solver, and resolve relative
-    penalties from inner-training rows only. The autonomous basis is optional for
-    this explicitly nonofficial diagnostic; its absence still prevents official
-    certification. Precision, family construction and the encoder remain frozen
-    from the complete outer-training fold; outer-heldout values are unavailable.
-    Independent-group one-SE tuning fails closed until correlated pseudocontrast
-    losses have a valid uncertainty rule. An explicit inner partition lineage
-    changes only the donor allocation; the tuning and model identities remain
-    bound to their exact outer-fold parents.
+    Inner folds refit response centering, scaling, nuisance coefficients and the
+    signed residual solver, and resolve relative penalties from inner-training
+    rows only. Paired studies validate subject contrast loss; independent studies
+    validate subject-local full-prediction loss so shared held-out pseudocontrast
+    means do not enter the one-SE units. Mixed paired/unpaired and partial
+    repeated multi-context studies freeze a subject-equal full-prediction
+    estimand across outer and inner subsets. A strict CR2 outer response can enter
+    descriptive OOF scoring under the same trusted nuisance and nested tuning
+    requirements; the preserved CR1 response remains diagnostic only. The
+    autonomous basis is optional for diagnostics, but its absence still prevents
+    official certification. Precision, family construction and the encoder remain
+    frozen from the complete outer-training fold. An
+    explicit inner partition lineage changes only donor allocation; identities
+    remain bound to their exact outer-fold parents.
     """
 
     minimum_scale, null_loss_floor, lambda1, lambda2 = _validated_hyperparameters(
@@ -1633,6 +2228,13 @@ def fit_receiver_incremental_training_artifact(
             raise ValueError(
                 "explicit lambda values cannot be combined with penalty_tuning_spec"
             )
+        if gain_calibration_spec is None:
+            gain_calibration_spec = GainCalibrationSpec()
+        elif not isinstance(gain_calibration_spec, GainCalibrationSpec):
+            raise TypeError("gain_calibration_spec must be a GainCalibrationSpec")
+        gain_calibration_spec._require_intact()
+    elif gain_calibration_spec is not None:
+        raise ValueError("gain_calibration_spec requires penalty_tuning_spec")
     if inner_partition_seed_lineage is not None and not isinstance(
         inner_partition_seed_lineage, SeedLineage
     ):
@@ -1664,13 +2266,23 @@ def fit_receiver_incremental_training_artifact(
                 "ReceiverAutonomousProgramResource"
             )
         autonomous_program_resource._require_producer_owned()
+    if latent_nuisance_spec is not None:
+        if not isinstance(latent_nuisance_spec, FrozenLatentNuisanceSpec):
+            raise TypeError("latent_nuisance_spec must be a FrozenLatentNuisanceSpec")
+        latent_nuisance_spec._require_intact()
     basis = receiver_family.family_basis
     eligible_indices = np.flatnonzero(basis.family_eligible)
     family_ids = tuple(basis.family_ids[index] for index in eligible_indices)
     reason_code: str | None = None
     functional: IncrementalDownstreamFunctional | None = None
+    latent_diagnostic_artifact: FoldLatentNuisanceArtifact | None = None
     inner_fold_plan: SubjectFoldPlan | None = None
     tuning_artifact: PenaltyTuningArtifact | None = None
+    gain_calibration_artifact: (
+        SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact | None
+    ) = None
+    selected_inner_functionals: tuple[IncrementalDownstreamFunctional, ...] = ()
+    selected_inner_applications: tuple[IncrementalDownstreamApplication, ...] = ()
     tuning_scope_id = (
         None
         if penalty_tuning_spec is None
@@ -1684,6 +2296,9 @@ def fit_receiver_incremental_training_artifact(
                 if autonomous_program_resource is None
                 else autonomous_program_resource.artifact_id
             ),
+            latent_nuisance_spec_id=(
+                None if latent_nuisance_spec is None else latent_nuisance_spec.spec_id
+            ),
             penalty_tuning_spec_id=penalty_tuning_spec.spec_id,
         )
     )
@@ -1691,7 +2306,11 @@ def fit_receiver_incremental_training_artifact(
         response.subject_ids != response.training_subject_ids
     ):
         reason_code = "training_receiver_response_incomplete_sample_coverage"
-    elif response.status != "ok":
+    elif response.status != (
+        response.observed_status
+        if isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+        else "ok"
+    ):
         reason_code = response.reason_code or "receiver_response_not_estimable"
     elif not precision.estimable:
         reason_code = precision.reason_code or "insufficient_response_precision_support"
@@ -1758,7 +2377,11 @@ def fit_receiver_incremental_training_artifact(
             family_ids=family_ids,
             nuisance_column_ids=encoder.nuisance_column_ids,
             family_basis=basis.matrix[:, eligible_indices],
+            latent_control_exclusion_basis=(
+                receiver_family.source_basis.normalized_profiles
+            ),
             autonomous_program_resource=autonomous_program_resource,
+            latent_nuisance_spec=latent_nuisance_spec,
             precision_weights=precision.values,
             minimum_scale=minimum_scale,
             null_loss_floor=null_loss_floor,
@@ -1774,13 +2397,17 @@ def fit_receiver_incremental_training_artifact(
                 )
             else:
                 assert tuning_scope_id is not None
-                inner_fold_plan, tuning_artifact = _fit_subject_blocked_penalty_tuning(
+                tuning_outcome = _fit_subject_blocked_penalty_tuning(
                     inputs,
                     spec=penalty_tuning_spec,
                     tuning_scope_id=tuning_scope_id,
                     outer_fold_id=response.fold_id,
                     inner_partition_seed_lineage=(inner_partition_seed_lineage),
                 )
+                inner_fold_plan = tuning_outcome.plan
+                tuning_artifact = tuning_outcome.tuning
+                selected_inner_functionals = tuning_outcome.selected_inner_functionals
+                selected_inner_applications = tuning_outcome.selected_inner_applications
                 selected = tuning_artifact.selected_candidate
                 if selected is None:
                     reason_code = (
@@ -1804,15 +2431,34 @@ def fit_receiver_incremental_training_artifact(
             }:
                 raise
             reason_code = error.details.code
+        except _LatentNuisanceNotEstimableError as error:
+            latent_diagnostic_artifact = error.artifact
+            functional = None
+            reason_code = error.artifact.reason_code
         except ValueError as error:
-            if penalty_tuning_spec is None:
-                raise
             classification = _classify_inner_value_error(error)
             if classification is None:
                 raise
             _, classified_reason = classification
             functional = None
             reason_code = f"selected_penalty_final_{classified_reason}"
+    if (
+        penalty_tuning_spec is not None
+        and gain_calibration_spec is not None
+        and tuning_artifact is not None
+        and tuning_artifact.selected_candidate_id is not None
+        and functional is not None
+    ):
+        gain_calibration_artifact = (
+            _finalize_selected_penalty_inner_oof_gain_calibration(
+                _producer_token=_WORKFLOW_GAIN_CALIBRATION_PRODUCER_TOKEN,
+                spec=gain_calibration_spec,
+                tuning_artifact=tuning_artifact,
+                inner_functionals=selected_inner_functionals,
+                inner_applications=selected_inner_applications,
+                outer_final_functional=functional,
+            )
+        )
     if penalty_tuning_spec is not None and tuning_artifact is None:
         assert tuning_scope_id is not None
         tuning_artifact = not_estimable_penalty_tuning(
@@ -1828,9 +2474,12 @@ def fit_receiver_incremental_training_artifact(
         precision=precision,
         receiver_family=receiver_family,
         autonomous_program_resource=autonomous_program_resource,
+        latent_nuisance_spec=latent_nuisance_spec,
         penalty_tuning_spec=penalty_tuning_spec,
         inner_fold_plan=inner_fold_plan,
         penalty_tuning_artifact=tuning_artifact,
+        gain_calibration_spec=gain_calibration_spec,
+        gain_calibration_artifact=gain_calibration_artifact,
         family_ids=family_ids,
         minimum_scale=minimum_scale,
         null_loss_floor=null_loss_floor,
@@ -1838,20 +2487,24 @@ def fit_receiver_incremental_training_artifact(
         lambda2=lambda2,
         diagnostic_functional=functional,
         diagnostic_reason_code=reason_code,
+        latent_nuisance_artifact=latent_diagnostic_artifact,
     )
 
 
 def apply_receiver_incremental_training_artifact(
     model: ReceiverIncrementalTrainingArtifact,
-    response_application: FoldGeneResponseApplication,
+    response_application: _ReceiverResponseApplication,
     design_application: FrozenDesignApplication,
 ) -> ReceiverIncrementalApplication:
     """Apply a frozen diagnostic to exact typed held-out parents without fitting."""
 
     if not isinstance(model, ReceiverIncrementalTrainingArtifact):
         raise TypeError("model must be a ReceiverIncrementalTrainingArtifact")
-    if not isinstance(response_application, FoldGeneResponseApplication):
-        raise TypeError("response_application must be a FoldGeneResponseApplication")
+    if not isinstance(
+        response_application,
+        (FoldGeneResponseApplication, RepeatedMeasuresFoldResponseApplication),
+    ):
+        raise TypeError("response_application must be a supported fold application")
     if not isinstance(design_application, FrozenDesignApplication):
         raise TypeError("design_application must be a FrozenDesignApplication")
     _validate_heldout_parents(model, response_application, design_application)

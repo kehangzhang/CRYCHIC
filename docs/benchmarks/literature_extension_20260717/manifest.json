@@ -1,0 +1,279 @@
+{
+  "generated_on": "2026-07-17",
+  "headline": {
+    "citeseq_datasets_complete": 7,
+    "citeseq_datasets_expected": 7,
+    "cytosig_datasets_complete": 2,
+    "cytosig_datasets_expected": 2,
+    "ipf_cells": 138248,
+    "ipf_patients": 56,
+    "ipf_studies": 4,
+    "ipf_tasks_complete": 168,
+    "ipf_tasks_expected": 168
+  },
+  "inputs": {
+    "cytokine/her2/REPORT.md": {
+      "bytes": 5017,
+      "path": "cytokine/her2/REPORT.md",
+      "sha256": "43d9880c61d9dac1a0a8e59a31155cd2e5ad6f28872bdd8d1f19a616ab37d723"
+    },
+    "cytokine/her2/evaluation/fisher_rank_curves.tsv": {
+      "bytes": 90892,
+      "path": "cytokine/her2/evaluation/fisher_rank_curves.tsv",
+      "sha256": "11c38873aa8edb1e1a4455cc80b1cd80929da90c7820cacfcb7e6531a670706e"
+    },
+    "cytokine/her2/evaluation/manifest.json": {
+      "bytes": 3615,
+      "path": "cytokine/her2/evaluation/manifest.json",
+      "sha256": "2eb467610cb6fa4e7326fdb4546c2df931a22ce776164bcd51a26e0414750a22"
+    },
+    "cytokine/her2/evaluation/ranking_metrics.tsv": {
+      "bytes": 13157,
+      "path": "cytokine/her2/evaluation/ranking_metrics.tsv",
+      "sha256": "9fde7fa5fcde8e0bbdc9f49feaa6a969fced13185815902cb1c25c91f9d5b104"
+    },
+    "cytokine/her2/evaluation/score_inventory.tsv": {
+      "bytes": 1366,
+      "path": "cytokine/her2/evaluation/score_inventory.tsv",
+      "sha256": "86623089b8751e751e25563c43fce7848a49ecfc3ebab9a5f7d47d9280d69c1b"
+    },
+    "cytokine/her2/prepared/manifest.json": {
+      "bytes": 5887,
+      "path": "cytokine/her2/prepared/manifest.json",
+      "sha256": "4f35aab9ce191c2830b13975c71067b8b34bb9d5ae3745d08a72dc047ecae90e"
+    },
+    "reports/citeseq_extended_7datasets/REPORT.md": {
+      "bytes": 4549,
+      "path": "reports/citeseq_extended_7datasets/REPORT.md",
+      "sha256": "a6856aa937b3285cd28ff29baa4fc34afd8f91bfa5824f09f8c2f9c0ec22ed77"
+    },
+    "reports/citeseq_extended_7datasets/dataset_inventory.tsv": {
+      "bytes": 2503,
+      "path": "reports/citeseq_extended_7datasets/dataset_inventory.tsv",
+      "sha256": "3b033be2b604dcf49d7875bb0324fd98740d2ae57512ce48d81d170603e6baea"
+    },
+    "reports/citeseq_extended_7datasets/manifest.json": {
+      "bytes": 8184,
+      "path": "reports/citeseq_extended_7datasets/manifest.json",
+      "sha256": "ed20306dbeb9f69d300b66341fe6648da618ec6e1656fa10f9ae97708ccb8f07"
+    },
+    "reports/citeseq_extended_7datasets/method_summary.tsv": {
+      "bytes": 7436,
+      "path": "reports/citeseq_extended_7datasets/method_summary.tsv",
+      "sha256": "3c1b1213c9d8ea4cfbbbc12d76651ce531e1ee1c20775cbe3ba3dde412a53c64"
+    },
+    "reports/citeseq_extended_7datasets/metrics_by_dataset.tsv": {
+      "bytes": 90938,
+      "path": "reports/citeseq_extended_7datasets/metrics_by_dataset.tsv",
+      "sha256": "d8e067a885f3a61357f2178bb7e81e6b55ec1bb5211a9a1c36123ac756c95cd6"
+    },
+    "reports/citeseq_extended_7datasets/runtime_memory.tsv": {
+      "bytes": 2983,
+      "path": "reports/citeseq_extended_7datasets/runtime_memory.tsv",
+      "sha256": "67e33ad1adba52816774ff779da1f445484c2013a219e7cb2f5738d9d4323304"
+    },
+    "reports/citeseq_extended_7datasets/skipped_arms.tsv": {
+      "bytes": 1368,
+      "path": "reports/citeseq_extended_7datasets/skipped_arms.tsv",
+      "sha256": "2e95af3d86add49f1ee78580f2417a96962b219020c24337ea756ae97d6f8ffe"
+    },
+    "reports/literature_extension_20260717/REPORT.md": {
+      "bytes": 9494,
+      "path": "reports/literature_extension_20260717/REPORT.md",
+      "sha256": "f941cc448821845072aa50ba19a18fb97ff4ee3393027e9b1869641ca4ca10da"
+    },
+    "reports/literature_extension_20260717/manifest.json": {
+      "bytes": 3483,
+      "path": "reports/literature_extension_20260717/manifest.json",
+      "sha256": "3c85ccd0af13d49fca1927b2d5b37dafa1f8d5043aa4e7c8edd12f6ffcf4fb07"
+    },
+    "reports/literature_extension_20260717/tables/citeseq_extension_summary.tsv": {
+      "bytes": 1612,
+      "path": "reports/literature_extension_20260717/tables/citeseq_extension_summary.tsv",
+      "sha256": "bf0a1771f71e399aab1b289cafe92d6f8d719319f31fdfbaf215b09c9448b723"
+    },
+    "reports/literature_extension_20260717/tables/cytosig_extension_summary.tsv": {
+      "bytes": 981,
+      "path": "reports/literature_extension_20260717/tables/cytosig_extension_summary.tsv",
+      "sha256": "7d78418329399a7d4ebc84ebe4140037961a7aa3ffa3f37a3c741a2c972418ca"
+    },
+    "reports/literature_extension_20260717/tables/ipf_crychic_by_study.tsv": {
+      "bytes": 245,
+      "path": "reports/literature_extension_20260717/tables/ipf_crychic_by_study.tsv",
+      "sha256": "6984b7ce769767cc27befeccf73382dc9e82be2a13b67900a12eab7c16cd6e8c"
+    },
+    "reports/literature_extension_20260717/tables/ipf_primary_metrics.tsv": {
+      "bytes": 757,
+      "path": "reports/literature_extension_20260717/tables/ipf_primary_metrics.tsv",
+      "sha256": "e1643012a68a4965b67d78920936fe990aa80bfd64901daf02492a33b019a32a"
+    },
+    "results/ipf/full_cohort/REPORT.md": {
+      "bytes": 3505,
+      "path": "results/ipf/full_cohort/REPORT.md",
+      "sha256": "968d20d6efae64a64becc627866a9c730d16d695fd54332a447ef611e5536d19"
+    },
+    "results/ipf/full_cohort/cohort_summary/cohort_patient_equal.tsv": {
+      "bytes": 21928,
+      "path": "results/ipf/full_cohort/cohort_summary/cohort_patient_equal.tsv",
+      "sha256": "7608699e0958972b85ae654c5939daf772155fe32085e7c96843976fac274ece"
+    },
+    "results/ipf/full_cohort/cohort_summary/manifest.json": {
+      "bytes": 2658,
+      "path": "results/ipf/full_cohort/cohort_summary/manifest.json",
+      "sha256": "f6ac1586f8c28a9c24059feeadf7abaae4ff3aa47245b23510d739209366003a"
+    },
+    "results/ipf/full_cohort/cohort_summary/metrics_by_study.tsv": {
+      "bytes": 66811,
+      "path": "results/ipf/full_cohort/cohort_summary/metrics_by_study.tsv",
+      "sha256": "cc34e6d9ff510816031c8412ab4743cda19dd862c3a8241d321bff4c7d196fe5"
+    },
+    "results/ipf/full_cohort/cohort_summary/patient_bootstrap.tsv": {
+      "bytes": 26935,
+      "path": "results/ipf/full_cohort/cohort_summary/patient_bootstrap.tsv",
+      "sha256": "2759933ba907bfe15dd2437e14d34508705b1c757c0c2eca0471f57b58131ef9"
+    },
+    "results/ipf/full_cohort/cohort_summary/sample_metrics.tsv": {
+      "bytes": 436905,
+      "path": "results/ipf/full_cohort/cohort_summary/sample_metrics.tsv",
+      "sha256": "15b8c3d03b50c47f232f23681ad640f0eac198d533d792c1a8690aaf90c2b104"
+    },
+    "results/ipf/full_cohort/manifest.json": {
+      "bytes": 4233,
+      "path": "results/ipf/full_cohort/manifest.json",
+      "sha256": "f67cf92af2e192d70bbb839bf343e59773ef578a6537ba10d3219b694a9af79e"
+    }
+  },
+  "outputs": {
+    "README.md": {
+      "bytes": 9153,
+      "sha256": "b5f73cc3eb61c7bab327badd4a33c059e29fff09e209ab0b8785b7010ee5c8f8"
+    },
+    "citeseq/README.md": {
+      "bytes": 4861,
+      "sha256": "6b4ca6f95dbdbdaa08a5668cdc399c8e797b278b34fa28d17a5c902b27cab581"
+    },
+    "citeseq/dataset_inventory.tsv": {
+      "bytes": 2503,
+      "rows": 7,
+      "sha256": "3b033be2b604dcf49d7875bb0324fd98740d2ae57512ce48d81d170603e6baea"
+    },
+    "citeseq/manifest.json": {
+      "bytes": 1805,
+      "sha256": "46cd877c94b98166cbf60145c63de20690c22669ea1e9ae531b2885282eb7f41"
+    },
+    "citeseq/method_summary.tsv": {
+      "bytes": 7436,
+      "rows": 60,
+      "sha256": "3c1b1213c9d8ea4cfbbbc12d76651ce531e1ee1c20775cbe3ba3dde412a53c64"
+    },
+    "citeseq/metrics_by_dataset.tsv": {
+      "bytes": 90938,
+      "rows": 191,
+      "sha256": "d8e067a885f3a61357f2178bb7e81e6b55ec1bb5211a9a1c36123ac756c95cd6"
+    },
+    "citeseq/runtime_memory.tsv": {
+      "bytes": 2983,
+      "rows": 27,
+      "sha256": "67e33ad1adba52816774ff779da1f445484c2013a219e7cb2f5738d9d4323304"
+    },
+    "citeseq/skipped_arms.tsv": {
+      "bytes": 1368,
+      "rows": 14,
+      "sha256": "2e95af3d86add49f1ee78580f2417a96962b219020c24337ea756ae97d6f8ffe"
+    },
+    "cytosig_her2/README.md": {
+      "bytes": 3547,
+      "sha256": "446e96ccd453769472a34cd6ab0088cddc980dba9cd08eb3cb893c5d8604aa2c"
+    },
+    "cytosig_her2/fisher_rank_curves.tsv": {
+      "bytes": 90892,
+      "rows": 336,
+      "sha256": "11c38873aa8edb1e1a4455cc80b1cd80929da90c7820cacfcb7e6531a670706e"
+    },
+    "cytosig_her2/manifest.json": {
+      "bytes": 2264,
+      "sha256": "9bec50ba09569f81e3f97882bf48f9313432b5f11552c7a9be10d01107271a61"
+    },
+    "cytosig_her2/ranking_metrics.tsv": {
+      "bytes": 13157,
+      "rows": 48,
+      "sha256": "9fde7fa5fcde8e0bbdc9f49feaa6a969fced13185815902cb1c25c91f9d5b104"
+    },
+    "cytosig_her2/score_inventory.tsv": {
+      "bytes": 1366,
+      "rows": 12,
+      "sha256": "86623089b8751e751e25563c43fce7848a49ecfc3ebab9a5f7d47d9280d69c1b"
+    },
+    "ipf/README.md": {
+      "bytes": 3035,
+      "sha256": "b1022e7a21837ce697633499204380fbfa5a347ea1b481dc34a7c900799b1a2a"
+    },
+    "ipf/cohort_patient_equal.tsv": {
+      "bytes": 21928,
+      "rows": 98,
+      "sha256": "7608699e0958972b85ae654c5939daf772155fe32085e7c96843976fac274ece"
+    },
+    "ipf/manifest.json": {
+      "bytes": 3519,
+      "sha256": "35813076e988370367595da4b3e268223661289d13dd2f4d2980085eee269670"
+    },
+    "ipf/metrics_by_study.tsv": {
+      "bytes": 66811,
+      "rows": 390,
+      "sha256": "cc34e6d9ff510816031c8412ab4743cda19dd862c3a8241d321bff4c7d196fe5"
+    },
+    "ipf/patient_bootstrap.tsv": {
+      "bytes": 26935,
+      "rows": 98,
+      "sha256": "2759933ba907bfe15dd2437e14d34508705b1c757c0c2eca0471f57b58131ef9"
+    },
+    "ipf/sample_metrics.tsv": {
+      "bytes": 345381,
+      "rows": 616,
+      "sha256": "b14432f32d08127a6d4389b9cbe84d513d062fb6e70bfd9afcff6903671a05c4"
+    },
+    "tables/citeseq_extension_summary.tsv": {
+      "bytes": 1612,
+      "rows": 14,
+      "sha256": "bf0a1771f71e399aab1b289cafe92d6f8d719319f31fdfbaf215b09c9448b723"
+    },
+    "tables/cytosig_extension_summary.tsv": {
+      "bytes": 981,
+      "rows": 4,
+      "sha256": "7d78418329399a7d4ebc84ebe4140037961a7aa3ffa3f37a3c741a2c972418ca"
+    },
+    "tables/ipf_crychic_by_study.tsv": {
+      "bytes": 245,
+      "rows": 4,
+      "sha256": "6984b7ce769767cc27befeccf73382dc9e82be2a13b67900a12eab7c16cd6e8c"
+    },
+    "tables/ipf_primary_metrics.tsv": {
+      "bytes": 757,
+      "rows": 11,
+      "sha256": "e1643012a68a4965b67d78920936fe990aa80bfd64901daf02492a33b019a32a"
+    }
+  },
+  "repository_state_at_run": {
+    "commit": "87153a38e7fe377881e1d6cd97715aa4f28beba1",
+    "dirty": true
+  },
+  "safety": {
+    "absolute_machine_paths_in_bundle": false,
+    "all_markdown_links_resolve": true,
+    "excluded_artifact_types": [
+      ".h5",
+      ".h5ad",
+      ".log",
+      ".parquet",
+      ".rds",
+      ".xls",
+      ".xlsx"
+    ],
+    "ipf_sample_metrics_dropped_columns": [
+      "evaluation_dir"
+    ],
+    "raw_logs_and_task_commands_excluded": true
+  },
+  "schema_version": "crychic-literature-extension-publication-v1",
+  "status": "complete"
+}

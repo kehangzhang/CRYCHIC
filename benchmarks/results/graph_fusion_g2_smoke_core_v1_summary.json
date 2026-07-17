@@ -1,0 +1,38 @@
+{
+  "base_revision": "87153a38e7fe377881e1d6cd97715aa4f28beba1",
+  "schema_version": "crychic-g2-graph-fusion-smoke-summary-v1",
+  "benchmark_scope": "synthetic_graph_fusion_core_smoke",
+  "generated_on": "2026-07-17",
+  "scenario_cells": 16,
+  "replicates_per_scenario": 1,
+  "primary_metric": "driver_family_x_context_macro_auprc",
+  "fused_correct_mean": 0.8212673611111111,
+  "unfused_mean": 0.738454861111111,
+  "fused_minus_unfused_mean": 0.08281250000000001,
+  "fused_wins": 10,
+  "fused_ties": 3,
+  "fused_losses": 3,
+  "wrong_topology_minus_unfused_mean": 0.060416666666666674,
+  "decision_status": "NE",
+  "decision_reason": "insufficient_complete_paired_replicates_per_scenario",
+  "formal_gate_minimum_replicates_per_scenario": 200,
+  "source_sha256": {
+    "benchmarks/configs/graph_fusion_g2_v1.json": "079752691c0fa66c88cd79a0d020b59d834c0c35ba62df07b85bc8f52e2b9ac0",
+    "benchmarks/metrics/graph_fusion_g2.py": "c872ca03becf0e55c85535f1a5bf9515e98bcd793524ac3817c8c9294e8abbc4",
+    "benchmarks/simulation/graph_fusion_g2.py": "144e757d0cafe8d8a394247b8fe5bb200bea90476c8e40ac598a6be061667f49",
+    "benchmarks/simulation/run_graph_fusion_g2.py": "babe5c3150e2638a1e56c2af9651a1ea567b5e1989a8f049a96b2be2f34cd191",
+    "src/crychic/attribution/graph_fused.py": "4de4df1b1bb1b67f9b02f31c7bbe9a36a6c5fdcd192fb8eed61b67a420eb8e44"
+  },
+  "full_artifact": {
+    "relative_workspace_path": "benchmark_work/algorithm_smoke/graph_fusion_g2_smoke_core_v1_current",
+    "run_manifest_sha256": "1619464ff22a605247fb3074772caad577db07fd549b6a9b7adc48e9efb31f4b",
+    "paired_results_sha256": "33d00f5478ac9494add7ce1cf0148f5bb9c92a27933c0cef26544b0064807551",
+    "gate_sha256": "fa5df1b177f7e4939616f617b9fbd727b0992546164680613a1daeeb96c206dd",
+    "report_sha256": "9c6aac91010edb94bdcbb6f82750beb96d5546dceb3275fe2a4a2c2f17dea85a"
+  },
+  "claims": {
+    "default_switch": false,
+    "method_superiority": false,
+    "biological_discovery": false
+  }
+}

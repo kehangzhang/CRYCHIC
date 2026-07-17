@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3p-calibration-replicates:1.0.0",
+  "title": "CRYCHIC G3-P calibration replicate registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3p_calibration_replicates"},
+    "filename": {"const": "g3p_calibration_replicates.parquet"},
+    "primary_key": {"const": ["replicate_id"]},
+    "logical_key": {"const": ["dependence_structure", "non_null_prevalence", "replicate_index"]},
+    "foreign_keys": {"const": [{"columns": ["protocol_id"], "references": "manifest.protocol_id"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicate_id", "protocol_id", "scenario_id", "dependence_structure", "non_null_prevalence", "replicate_index", "seed_lineage_json", "source_active_null_id", "source_candidate_universe_id", "source_probability_collection_id", "status", "reason_code", "n_candidates", "n_eligible_candidates", "n_structural_zero_candidates"],
+      "properties": {
+        "replicate_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "scenario_id": {"dtype": "string", "nullable": false},
+        "dependence_structure": {"dtype": "string", "nullable": false, "enum": ["independent_candidate_edges", "sender_lr_block_correlated_edges", "target_degree_correlated_edges"]},
+        "non_null_prevalence": {"dtype": "float", "nullable": false, "enum": [0.005, 0.01, 0.05, 0.1]},
+        "replicate_index": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "seed_lineage_json": {"dtype": "string", "nullable": false},
+        "source_active_null_id": {"dtype": "string", "nullable": false},
+        "source_candidate_universe_id": {"dtype": "string", "nullable": false},
+        "source_probability_collection_id": {"dtype": "string", "nullable": true},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "not_estimable", "failed"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "n_candidates": {"dtype": "integer", "nullable": false, "minimum": 1},
+        "n_eligible_candidates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "n_structural_zero_candidates": {"dtype": "integer", "nullable": false, "minimum": 0}
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@ import pytest
 from benchmarks.metrics import multicondition as multicondition_metrics
 from benchmarks.metrics.multicondition import (
     EDGE_KEYS,
+    MOLECULAR_LR_EQUIVALENCE_COLUMN,
     aggregate_loso_primary_endpoint,
     cross_method_concordance,
     external_long_to_score_table,
@@ -577,6 +578,41 @@ def test_validation_rejects_duplicates_invalid_scores_and_sparse_universe() -> N
         validate_score_table(shifted)
 
 
+@pytest.mark.parametrize("invalid_id", [None, "", " molecular-a ", 7])
+def test_optional_molecular_lr_axis_requires_canonical_nonempty_strings(
+    invalid_id: object,
+) -> None:
+    table = _scores()
+    table[MOLECULAR_LR_EQUIVALENCE_COLUMN] = (
+        table["interaction_id"]
+        .map({f"I{index}": f"molecular-{index}" for index in range(4)})
+        .astype(object)
+    )
+    table.loc[table.index[0], MOLECULAR_LR_EQUIVALENCE_COLUMN] = invalid_id
+
+    with pytest.raises(ValueError, match="canonical non-empty strings"):
+        validate_score_table(table)
+
+
+def test_molecular_lr_source_mapping_is_unique_across_contrasts() -> None:
+    table = _scores()
+    table[MOLECULAR_LR_EQUIVALENCE_COLUMN] = table["interaction_id"].map(
+        {f"I{index}": f"molecular-{index}" for index in range(4)}
+    )
+    second_contrast = table.copy()
+    second_contrast["contrast"] = "Relapse-vs-Normal"
+    second_contrast.loc[
+        second_contrast["interaction_id"].eq("I0"),
+        MOLECULAR_LR_EQUIVALENCE_COLUMN,
+    ] = "conflicting-molecular-id"
+
+    with pytest.raises(ValueError, match="exactly one molecular_lr_equivalence_id"):
+        validate_score_table(pd.concat([table, second_contrast], ignore_index=True))
+
+    validated = validate_score_table(table)
+    assert validated[MOLECULAR_LR_EQUIVALENCE_COLUMN].notna().all()
+
+
 def test_resource_unavailable_is_a_frozen_edge_state() -> None:
     table = _scores()
     edge = table["interaction_id"].eq("I0")
@@ -1127,6 +1163,9 @@ def test_external_long_table_conversion_is_explicit_about_sparse_rows() -> None:
             "score_name": "magnitude_rank",
             "score_direction": "lower",
             "status": "ok",
+            MOLECULAR_LR_EQUIVALENCE_COLUMN: rows["interaction_id"].map(
+                {f"I{index}": f"molecular-{index}" for index in range(4)}
+            ),
         }
     )
 
@@ -1142,6 +1181,10 @@ def test_external_long_table_conversion_is_explicit_about_sparse_rows() -> None:
     assert set(mapped["method"]) == {"m1"}
     assert set(mapped["score_direction"]) == {"lower"}
     assert set(mapped["status"]) == {"observed"}
+    assert set(mapped[MOLECULAR_LR_EQUIVALENCE_COLUMN]) == {
+        "molecular-0",
+        "molecular-1",
+    }
     wrong_track = external.copy()
     wrong_track["analysis_track"] = "ligand_target_program"
     with pytest.raises(ValueError, match="Track B"):

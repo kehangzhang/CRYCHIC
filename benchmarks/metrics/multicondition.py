@@ -15,6 +15,7 @@ from scipy.stats import spearmanr
 
 EDGE_KEYS = ("sender", "receiver", "interaction_id", "ligand", "receptor")
 FAMILY_KEYS = ("sender", "receiver")
+MOLECULAR_LR_EQUIVALENCE_COLUMN = "molecular_lr_equivalence_id"
 METHOD_IDENTITY_KEYS = (
     "dataset",
     "method",
@@ -112,6 +113,32 @@ def _validate_fixed_universe(table: pd.DataFrame) -> None:
                 "resource_unavailable is a frozen method-resource edge state "
                 "and cannot vary by sample"
             )
+
+
+def _validate_molecular_lr_equivalence_mapping(table: pd.DataFrame) -> None:
+    if MOLECULAR_LR_EQUIVALENCE_COLUMN not in table.columns:
+        return
+
+    equivalence_ids = table[MOLECULAR_LR_EQUIVALENCE_COLUMN]
+    canonical = equivalence_ids.map(
+        lambda value: (
+            isinstance(value, str) and bool(value) and value == value.strip()
+        )
+    )
+    if not canonical.all():
+        raise ValueError(
+            "molecular_lr_equivalence_id must contain canonical non-empty strings"
+        )
+
+    source_edge_key = [*PERFORMANCE_IDENTITY_KEYS, *EDGE_KEYS]
+    mappings = table.loc[
+        :, [*source_edge_key, MOLECULAR_LR_EQUIVALENCE_COLUMN]
+    ].drop_duplicates()
+    if mappings.duplicated(source_edge_key, keep=False).any():
+        raise ValueError(
+            "each method-resource source edge must map to exactly one "
+            "molecular_lr_equivalence_id across samples and contrasts"
+        )
 
 
 def _add_comparison_values(table: pd.DataFrame) -> pd.DataFrame:
@@ -232,6 +259,7 @@ def validate_score_table(table: pd.DataFrame) -> pd.DataFrame:
         result.groupby(direction_groups, observed=True)["score_direction"].nunique() > 1
     ).any():
         raise ValueError("score_direction must be constant within each score identity")
+    _validate_molecular_lr_equivalence_mapping(result)
     _validate_fixed_universe(result)
     ordered = result.sort_values(key, kind="stable", ignore_index=True)
     return _add_comparison_values(ordered)
@@ -353,6 +381,10 @@ def external_long_to_score_table(
             "universe_size": table["universe_size"],
         }
     )
+    if MOLECULAR_LR_EQUIVALENCE_COLUMN in table.columns:
+        result[MOLECULAR_LR_EQUIVALENCE_COLUMN] = table[
+            MOLECULAR_LR_EQUIVALENCE_COLUMN
+        ]
     return validate_score_table(result) if validate else result
 
 
@@ -2576,6 +2608,7 @@ __all__ = [
     "EFFECT_ESTIMABLE_STATUSES",
     "FAMILY_KEYS",
     "METHOD_IDENTITY_KEYS",
+    "MOLECULAR_LR_EQUIVALENCE_COLUMN",
     "PERFORMANCE_IDENTITY_KEYS",
     "REQUIRED_SCORE_COLUMNS",
     "RESOURCE_MODES",

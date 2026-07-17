@@ -13,7 +13,7 @@ from scipy.stats import t as student_t
 
 from crychic.availability import FrozenInteractionUniverse
 from crychic.core import ContractError, canonical_json, stable_id
-from crychic.design import ContrastSpec
+from crychic.design import ContrastSpec, canonical_context, plain_context_value
 
 from .contracts import (
     _SENDER_CONTRAST_MULTIPLICITY_METHOD,
@@ -31,6 +31,7 @@ from .contracts import (
     SenderContrastSupportStatus,
     SenderPrevalencePrior,
     SenderPrevalenceStatus,
+    _canonical_contrast_weights,
     _holm_step_down_adjustments,
     _sender_contrast_family_id,
     _sender_contrast_familywise_alpha,
@@ -273,6 +274,7 @@ def _validated_candidate_sender_manifest(
 def _training_availability_digest(
     table: pd.DataFrame,
     *,
+    contrast_context_ids: tuple[tuple[Hashable, str], ...],
     contrast_weights: tuple[tuple[str, float], ...],
     filter_universe_id: str,
     frozen_interaction_ids: tuple[str, ...],
@@ -289,20 +291,26 @@ def _training_availability_digest(
         canonical_row = [*row[:-1], None if pd.isna(ligand) else float(ligand).hex()]
         row_digest.update(canonical_json(canonical_row).encode("ascii"))
         row_digest.update(b"\n")
+    canonical_weights = _canonical_contrast_weights(contrast_weights)
+    payload: dict[str, object] = {
+        "candidate_sender_manifest": [
+            [receiver, interaction_id, list(sender_ids)]
+            for receiver, interaction_id, sender_ids in candidate_sender_manifest
+        ],
+        "columns": list(_TRAINING_DIGEST_COLUMNS),
+        "contrast_weights": [list(value) for value in canonical_weights],
+        "filter_universe_id": filter_universe_id,
+        "frozen_interaction_ids": list(frozen_interaction_ids),
+        "row_count": len(canonical),
+        "row_sha256": row_digest.hexdigest(),
+    }
+    if len(contrast_context_ids) > 2:
+        payload["contrast_context_ids"] = [
+            [node, context_id] for node, context_id in contrast_context_ids
+        ]
     result: str = stable_id(
         "common_sender_training_availability",
-        {
-            "candidate_sender_manifest": [
-                [receiver, interaction_id, list(sender_ids)]
-                for receiver, interaction_id, sender_ids in candidate_sender_manifest
-            ],
-            "columns": list(_TRAINING_DIGEST_COLUMNS),
-            "contrast_weights": [list(value) for value in contrast_weights],
-            "filter_universe_id": filter_universe_id,
-            "frozen_interaction_ids": list(frozen_interaction_ids),
-            "row_count": len(canonical),
-            "row_sha256": row_digest.hexdigest(),
-        },
+        payload,
         schema_version="3",
         digest_length=64,
     )
@@ -395,6 +403,7 @@ def _fit_interaction_ligand_contrast_supports(
 ) -> tuple[InteractionLigandContrastSupport, ...]:
     """Fit and jointly Holm-adjust receiver interaction support."""
 
+    contrast_weights = _canonical_contrast_weights(contrast_weights)
     contexts = tuple(context_id for context_id, _ in contrast_weights)
     weight_by_context = dict(contrast_weights)
     minimum_complete = max(2, parameters.min_subjects)
@@ -661,23 +670,40 @@ def fit_contrast_common_sender_functional(
             remediation="Fit from the exact pre-frozen candidate universe",
         )
     node_to_context_id: dict[Hashable, str] = {}
-    for row in table.itertuples(index=False):
+    context_columns = tuple(dict.fromkeys((*keys, "context_id")))
+    context_rows = table.loc[:, list(context_columns)].drop_duplicates()
+    for _, row in context_rows.iterrows():
         if len(keys) == 1:
-            node: Hashable = getattr(row, keys[0])
+            node: Hashable = plain_context_value(row[keys[0]])
         else:
-            node = tuple((key, getattr(row, key)) for key in keys)
-        context_identifier = str(row.context_id)
+            node = canonical_context(row, keys)
+        context_identifier = str(row["context_id"])
         previous = node_to_context_id.setdefault(node, context_identifier)
         if previous != context_identifier:
             raise ValueError("context node maps to multiple context IDs")
     missing_nodes = set(contrast.weights).difference(node_to_context_id)
     if missing_nodes:
         raise ValueError("contrast contexts are absent from training availability")
-    contrast_weights = tuple(
-        (node_to_context_id[node], float(weight))
-        for node, weight in contrast.weights.items()
+    contrast_context_ids = tuple(
+        sorted(
+            (
+                (node, node_to_context_id[node])
+                for node in contrast.weights
+            ),
+            key=lambda item: canonical_json(item[0]),
+        )
     )
-    contexts = tuple(sorted(context_id for context_id, _ in contrast_weights))
+    if len({context_id for _, context_id in contrast_context_ids}) != len(
+        contrast_context_ids
+    ):
+        raise ValueError("contrast nodes must map to unique context IDs")
+    contrast_weights = _canonical_contrast_weights(
+        tuple(
+            (context_id, float(contrast.weights[node]))
+            for node, context_id in contrast_context_ids
+        )
+    )
+    contexts = tuple(context_id for context_id, _ in contrast_weights)
     table = (
         table.loc[table["context_id"].isin(contexts)]
         .sort_values(list(_INPUT_KEY), kind="stable")
@@ -733,6 +759,7 @@ def fit_contrast_common_sender_functional(
     )
     training_digest = _training_availability_digest(
         table,
+        contrast_context_ids=contrast_context_ids,
         contrast_weights=contrast_weights,
         filter_universe_id=filter_universe_id,
         frozen_interaction_ids=frozen_interactions,
@@ -741,9 +768,7 @@ def fit_contrast_common_sender_functional(
     return ContrastCommonSenderFunctional(
         _producer_token=_SENDER_FUNCTIONAL_PRODUCER_TOKEN,
         contrast=contrast,
-        contrast_context_ids=tuple(
-            (node, node_to_context_id[node]) for node in contrast.weights
-        ),
+        contrast_context_ids=contrast_context_ids,
         training_subject_ids=subjects,
         filter_universe_id=filter_universe_id,
         frozen_interaction_ids=frozen_interactions,

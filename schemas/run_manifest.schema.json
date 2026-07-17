@@ -63,7 +63,8 @@
       "minProperties": 1,
       "properties": {
         "edge_evidence": {"$ref": "#/$defs/edgeEvidenceRecord"},
-        "scoring_collections": {"$ref": "#/$defs/scoringCollectionsRecord"}
+        "scoring_collections": {"$ref": "#/$defs/scoringCollectionsRecord"},
+        "bootstrap_support": {"$ref": "#/$defs/bootstrapSupportRecord"}
       }
     },
     "stages": {
@@ -124,11 +125,18 @@
       "additionalProperties": false,
       "required": ["extension_schema_version", "filename", "collections", "sha256", "schema", "linked_tables"],
       "properties": {
-        "extension_schema_version": {"const": "1.0.0"},
+        "extension_schema_version": {"enum": ["1.0.0", "2.0.0", "3.0.0", "4.0.0"]},
         "filename": {"const": "scoring_collections.json"},
         "collections": {"type": "integer", "minimum": 1},
         "sha256": {"$ref": "#/$defs/sha256"},
-        "schema": {"const": "scoring_collections.schema.json"},
+        "schema": {
+          "enum": [
+            "scoring_collections.schema.json",
+            "scoring_collections_v2.schema.json",
+            "scoring_collections_v3.schema.json",
+            "scoring_collections_v4.schema.json"
+          ]
+        },
         "linked_tables": {
           "type": "object",
           "additionalProperties": false,
@@ -136,6 +144,85 @@
           "properties": {
             "interactions": {"$ref": "#/$defs/sha256"},
             "sample_scores": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["extension_schema_version"],
+            "properties": {"extension_schema_version": {"const": "1.0.0"}}
+          },
+          "then": {"properties": {"schema": {"const": "scoring_collections.schema.json"}}}
+        },
+        {
+          "if": {
+            "required": ["extension_schema_version"],
+            "properties": {"extension_schema_version": {"const": "2.0.0"}}
+          },
+          "then": {"properties": {"schema": {"const": "scoring_collections_v2.schema.json"}}}
+        },
+        {
+          "if": {
+            "required": ["extension_schema_version"],
+            "properties": {"extension_schema_version": {"const": "3.0.0"}}
+          },
+          "then": {"properties": {"schema": {"const": "scoring_collections_v3.schema.json"}}}
+        },
+        {
+          "if": {
+            "required": ["extension_schema_version"],
+            "properties": {"extension_schema_version": {"const": "4.0.0"}}
+          },
+          "then": {"properties": {"schema": {"const": "scoring_collections_v4.schema.json"}}}
+        }
+      ]
+    },
+    "bootstrapSupportRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extension_schema_version", "specificity_support", "selection_frequency", "registry", "linked_tables"],
+      "properties": {
+        "extension_schema_version": {"const": "1.0.0"},
+        "specificity_support": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename", "rows", "sha256", "schema"],
+          "properties": {
+            "filename": {"const": "specificity_support.parquet"},
+            "rows": {"type": "integer", "minimum": 1},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "schema": {"const": "specificity_support.schema.json"}
+          }
+        },
+        "selection_frequency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename", "rows", "sha256", "schema"],
+          "properties": {
+            "filename": {"const": "selection_frequency.parquet"},
+            "rows": {"type": "integer", "minimum": 1},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "schema": {"const": "selection_frequency.schema.json"}
+          }
+        },
+        "registry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename", "records", "sha256", "schema"],
+          "properties": {
+            "filename": {"const": "bootstrap_support_registry.json"},
+            "records": {"type": "integer", "minimum": 2},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "schema": {"const": "bootstrap_support.schema.json"}
+          }
+        },
+        "linked_tables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["differential"],
+          "properties": {
+            "differential": {"$ref": "#/$defs/sha256"}
           }
         }
       }

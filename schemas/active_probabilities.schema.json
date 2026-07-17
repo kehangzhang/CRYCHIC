@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:active-probabilities:1.0.0",
+  "title": "CRYCHIC ADR-013 released active probabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "active_probabilities"},
+    "filename": {"const": "active_probabilities.parquet"},
+    "primary_key": {"const": ["candidate_edge_id"]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_edge_id", "contrast_id", "context_id", "sender", "receiver", "interaction_id", "driver_id", "mode", "stratum_id", "score_version", "comm_probability", "status", "reason_code", "active_probability_record_id"],
+      "properties": {
+        "candidate_edge_id": {"dtype": "string", "nullable": false},
+        "contrast_id": {"dtype": "string", "nullable": false},
+        "context_id": {"dtype": "string", "nullable": false},
+        "sender": {"dtype": "string", "nullable": false},
+        "receiver": {"dtype": "string", "nullable": false},
+        "interaction_id": {"dtype": "string", "nullable": false},
+        "driver_id": {"dtype": "string", "nullable": false},
+        "mode": {"dtype": "string", "nullable": false, "enum": ["state", "ecosystem"]},
+        "stratum_id": {"dtype": "string", "nullable": false},
+        "score_version": {"dtype": "string", "nullable": false},
+        "comm_probability": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "status": {"dtype": "string", "nullable": false, "enum": ["released", "not_estimable"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "active_probability_record_id": {"dtype": "string", "nullable": false}
+      }
+    }
+  }
+}

@@ -19,7 +19,12 @@ from crychic.scoring import (
     fit_downstream_functional,
     fit_incremental_downstream_functional,
 )
-from crychic.scoring.downstream import _matrix_digest, _project_feature_values
+from crychic.scoring.downstream import (
+    _WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN,
+    _fit_incremental_downstream_functional,
+    _matrix_digest,
+    _project_feature_values,
+)
 
 
 def _paired_manifest(regressor: np.ndarray, *, prefix: str) -> DownstreamRowManifest:
@@ -809,6 +814,60 @@ def _independent_incremental_functional():
         family_ids=("LR_family",),
         nuisance_column_ids=("intercept",),
         training_subject_ids=manifest.subject_ids,
+        family_basis=np.asarray([[1.0], [0.0]]),
+        precision_weights=np.ones(2),
+        minimum_scale=0.25,
+        null_loss_floor=1e-8,
+    )
+
+
+def _mixed_incremental_functional():
+    manifest = DownstreamRowManifest(
+        sample_ids=(
+            "mixed-training-p1-reference",
+            "mixed-training-p1-target",
+            "mixed-training-p2-reference",
+            "mixed-training-p2-target",
+            "mixed-training-c3-reference",
+            "mixed-training-c4-reference",
+            "mixed-training-s3-target",
+            "mixed-training-s4-target",
+        ),
+        subject_ids=("p1", "p1", "p2", "p2", "c3", "c4", "s3", "s4"),
+        context_ids=(
+            "reference",
+            "target",
+            "reference",
+            "target",
+            "reference",
+            "reference",
+            "target",
+            "target",
+        ),
+    )
+    regressor = np.asarray([-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0])
+    response = np.column_stack(
+        [
+            np.asarray([0.0, 2.0, 0.1, 2.1, -0.1, 0.0, 1.9, 2.0]),
+            np.asarray([3.0, 3.0, 3.1, 3.1, 2.9, 3.0, 2.9, 3.0]),
+        ]
+    )
+    return fit_incremental_downstream_functional(
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        reference_mask=regressor < 0,
+        nuisance_matrix=np.ones((8, 1)),
+        context_regressor=regressor,
+        receiver="Receiver",
+        contrast_name="stim_vs_ctrl",
+        fold_id="fold-mixed",
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=tuple(sorted(set(manifest.subject_ids))),
         family_basis=np.asarray([[1.0], [0.0]]),
         precision_weights=np.ones(2),
         minimum_scale=0.25,
@@ -1849,6 +1908,191 @@ def test_incremental_loss_supports_independent_multicontext_contrast() -> None:
         [-1.0 / 6.0, -1.0 / 6.0, 1.0 / 3.0],
     )
     assert heldout.status == "observed"
+    assert heldout.model_gain is not None and heldout.model_gain > 0.9
+
+
+def test_mixed_full_prediction_loss_is_subject_context_and_technical_equal() -> None:
+    functional = _mixed_incremental_functional()
+    manifest = DownstreamRowManifest(
+        sample_ids=(
+            "heldout-p-reference-a",
+            "heldout-p-reference-b",
+            "heldout-p-target",
+            "heldout-c-reference",
+            "heldout-s-target",
+        ),
+        subject_ids=("heldout-p", "heldout-p", "heldout-p", "heldout-c", "heldout-s"),
+        context_ids=("reference", "reference", "target", "reference", "target"),
+    )
+    response = np.asarray(
+        [
+            [0.0, 3.0],
+            [2.0, 3.0],
+            [2.0, 3.0],
+            [0.0, 3.0],
+            [2.0, 3.0],
+        ]
+    )
+    result = apply_incremental_downstream_functional(
+        functional,
+        response,
+        row_manifest=manifest,
+        design_sample_ids=manifest.sample_ids,
+        nuisance_matrix=np.ones((5, 1)),
+        context_regressor=np.asarray([-1.0, -1.0, 1.0, -1.0, 1.0]),
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        nuisance_column_ids=("intercept",),
+    )
+
+    assert functional.loss_design == "mixed_subject_equal_full_prediction_loss_v1"
+    assert functional.loss_context_weights.size == 0
+    assert result.status == "observed"
+    assert "equal_observed_context" in result.loss_aggregation
+    standardized = (response - functional.feature_center) / functional.feature_scale
+    null_prediction = np.ones((5, 1)) @ functional.null_nuisance_coefficients
+    expected_paired_context_losses = []
+    context_masks = (
+        np.asarray([True, True, False, False, False]),
+        np.asarray([False, False, True, False, False]),
+    )
+    for selected in context_masks:
+        mean_residual = np.mean(
+            standardized[selected] - null_prediction[selected], axis=0
+        )
+        expected_paired_context_losses.append(
+            float(np.sum(np.square(mean_residual) * functional.precision_weights))
+        )
+    expected_paired_loss = float(np.mean(expected_paired_context_losses))
+    expected_single_losses = []
+    for index in (3, 4):
+        residual = standardized[index] - null_prediction[index]
+        expected_single_losses.append(
+            float(np.sum(np.square(residual) * functional.precision_weights))
+        )
+    np.testing.assert_allclose(
+        result.subject_null_losses,
+        [expected_single_losses[0], expected_paired_loss, expected_single_losses[1]],
+    )
+    assert result.null_loss == pytest.approx(
+        float(np.mean(result.subject_null_losses))
+    )
+
+
+def test_mixed_loss_override_is_private_and_preserves_outer_estimand() -> None:
+    manifest = DownstreamRowManifest(
+        sample_ids=("p1-reference", "p1-target", "p2-reference", "p2-target"),
+        subject_ids=("p1", "p1", "p2", "p2"),
+        context_ids=("reference", "target", "reference", "target"),
+    )
+    response = np.asarray([[0.0, 3.0], [2.0, 3.0], [0.1, 3.1], [2.1, 3.1]])
+    arguments = {
+        "row_manifest": manifest,
+        "design_sample_ids": manifest.sample_ids,
+        "reference_mask": np.asarray([True, False, True, False]),
+        "nuisance_matrix": np.ones((4, 1)),
+        "context_regressor": np.asarray([-1.0, 1.0, -1.0, 1.0]),
+        "receiver": "Receiver",
+        "contrast_name": "stim_vs_ctrl",
+        "fold_id": "inner-paired",
+        "context_regressor_id": "stim_vs_ctrl_regressor_v1",
+        "nuisance_design_id": "intercept_only_v1",
+        "feature_ids": ("TARGET", "AUTO"),
+        "family_ids": ("LR_family",),
+        "nuisance_column_ids": ("intercept",),
+        "training_subject_ids": ("p1", "p2"),
+        "family_basis": np.asarray([[1.0], [0.0]]),
+        "precision_weights": np.ones(2),
+        "minimum_scale": 0.25,
+        "null_loss_floor": 1e-8,
+        "loss_design_override": "mixed_subject_equal_full_prediction_loss_v1",
+    }
+    with pytest.raises(TypeError, match="workflow-producer-owned"):
+        _fit_incremental_downstream_functional(response, **arguments)
+
+    functional = _fit_incremental_downstream_functional(
+        response,
+        **arguments,
+        _loss_design_producer_token=_WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN,
+    )
+    assert functional.loss_design == "mixed_subject_equal_full_prediction_loss_v1"
+
+    object.__setattr__(functional, "loss_design", "fully_paired_subject_contrasts_v1")
+    with pytest.raises(ContractError) as error:
+        functional.to_dict()
+    assert error.value.details.code == "incremental_functional_integrity_violation"
+
+
+def test_partial_repeated_multicontext_heldout_loss_is_observed() -> None:
+    training_manifest = DownstreamRowManifest(
+        sample_ids=(
+            "p1-a",
+            "p1-b",
+            "p1-c",
+            "p2-a",
+            "p2-b",
+            "p2-c",
+            "ab-a",
+            "ab-b",
+            "bc-b",
+            "bc-c",
+        ),
+        subject_ids=("p1", "p1", "p1", "p2", "p2", "p2", "ab", "ab", "bc", "bc"),
+        context_ids=("a", "b", "c", "a", "b", "c", "a", "b", "b", "c"),
+    )
+    training_regressor = np.asarray([-1.0, 0.0, 1.0] * 2 + [-1.0, 0.0, 0.0, 1.0])
+    training_response = np.column_stack(
+        (
+            2.0 * training_regressor + np.asarray(
+                [0.0, 0.0, 0.0, 0.1, 0.1, 0.1, -0.1, -0.1, 0.05, 0.05]
+            ),
+            np.full(10, 3.0),
+        )
+    )
+    functional = fit_incremental_downstream_functional(
+        training_response,
+        row_manifest=training_manifest,
+        design_sample_ids=training_manifest.sample_ids,
+        reference_mask=training_regressor <= 0,
+        nuisance_matrix=np.ones((10, 1)),
+        context_regressor=training_regressor,
+        receiver="Receiver",
+        contrast_name="c_vs_a",
+        fold_id="fold-partial-repeated",
+        context_regressor_id="c_vs_a_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        family_ids=("LR_family",),
+        nuisance_column_ids=("intercept",),
+        training_subject_ids=tuple(sorted(set(training_manifest.subject_ids))),
+        family_basis=np.asarray([[1.0], [0.0]]),
+        precision_weights=np.ones(2),
+        minimum_scale=0.25,
+        null_loss_floor=1e-8,
+    )
+    heldout_manifest = DownstreamRowManifest(
+        sample_ids=("h1-a", "h1-b", "h2-b", "h2-c", "h3-a", "h3-c"),
+        subject_ids=("h1", "h1", "h2", "h2", "h3", "h3"),
+        context_ids=("a", "b", "b", "c", "a", "c"),
+    )
+    heldout_regressor = np.asarray([-1.0, 0.0, 0.0, 1.0, -1.0, 1.0])
+    heldout = apply_incremental_downstream_functional(
+        functional,
+        np.column_stack((2.0 * heldout_regressor, np.full(6, 3.0))),
+        row_manifest=heldout_manifest,
+        design_sample_ids=heldout_manifest.sample_ids,
+        nuisance_matrix=np.ones((6, 1)),
+        context_regressor=heldout_regressor,
+        context_regressor_id="c_vs_a_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("TARGET", "AUTO"),
+        nuisance_column_ids=("intercept",),
+    )
+
+    assert functional.loss_design == "mixed_subject_equal_full_prediction_loss_v1"
+    assert heldout.status == "observed"
+    assert heldout.subject_ids == ("h1", "h2", "h3")
     assert heldout.model_gain is not None and heldout.model_gain > 0.9
 
 

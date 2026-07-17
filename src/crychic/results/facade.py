@@ -34,6 +34,12 @@ from ._schema import (
     validate_scoring_collection_links,
     validate_table,
 )
+from .bootstrap_support import (
+    BootstrapSupportDocument,
+    bootstrap_support_contract,
+    validate_bootstrap_support_links,
+    validate_bootstrap_support_registry,
+)
 from .errors import IncompleteResultError, ResultValidationError
 from .persistence import (
     CONFIG_FILENAME,
@@ -217,7 +223,12 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
         extensions = value["extensions"]
         edge_contract = edge_evidence_contract()
         collection_contract = scoring_collections_contract()
-        allowed_extensions = {edge_contract.name, collection_contract.name}
+        support_contract = bootstrap_support_contract()
+        allowed_extensions = {
+            edge_contract.name,
+            collection_contract.name,
+            support_contract.name,
+        }
         if (
             not isinstance(extensions, Mapping)
             or not extensions
@@ -286,6 +297,16 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
                     code="invalid_run_manifest",
                     field_name=collection_contract.name,
                 )
+            try:
+                collection_contract = scoring_collections_contract(
+                    str(extension["extension_schema_version"])
+                )
+            except ResultValidationError:
+                _fail(
+                    "Run manifest scoring-collection extension version is unsupported",
+                    code="unsupported_result_extension",
+                    field_name="extension_schema_version",
+                )
             linked_tables = extension["linked_tables"]
             if (
                 extension["extension_schema_version"]
@@ -311,6 +332,79 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
                         "Scoring-collection linkage does not match its table",
                         code="result_digest_mismatch",
                         field_name=collection_contract.name,
+                    )
+        if support_contract.name in extensions:
+            extension = extensions[support_contract.name]
+            expected_fields = {
+                "extension_schema_version",
+                "specificity_support",
+                "selection_frequency",
+                "registry",
+                "linked_tables",
+            }
+            if not isinstance(extension, Mapping) or set(extension) != expected_fields:
+                _fail(
+                    "Run manifest bootstrap-support extension record is invalid",
+                    code="invalid_run_manifest",
+                    field_name=support_contract.name,
+                )
+            linked_tables = extension["linked_tables"]
+            if (
+                extension["extension_schema_version"]
+                != support_contract.extension_schema_version
+                or not isinstance(linked_tables, Mapping)
+                or set(linked_tables) != set(support_contract.linked_tables)
+            ):
+                _fail(
+                    "Run manifest bootstrap-support extension is incompatible",
+                    code="invalid_run_manifest",
+                    field_name=support_contract.name,
+                )
+            artifacts = (
+                ("specificity_support", support_contract.specificity, "rows"),
+                ("selection_frequency", support_contract.selection, "rows"),
+            )
+            for artifact_name, artifact_contract, count_field in artifacts:
+                artifact = extension[artifact_name]
+                if (
+                    not isinstance(artifact, Mapping)
+                    or set(artifact) != {"filename", count_field, "sha256", "schema"}
+                    or artifact["filename"] != artifact_contract.filename
+                    or artifact["schema"] != artifact_contract.schema_filename
+                    or not isinstance(artifact[count_field], int)
+                    or isinstance(artifact[count_field], bool)
+                    or artifact[count_field] <= 0
+                    or not isinstance(artifact["sha256"], str)
+                    or _SHA256.fullmatch(artifact["sha256"]) is None
+                ):
+                    _fail(
+                        "Bootstrap-support table manifest is incompatible",
+                        code="invalid_run_manifest",
+                        field_name=artifact_name,
+                    )
+            registry = extension["registry"]
+            if (
+                not isinstance(registry, Mapping)
+                or set(registry) != {"filename", "records", "sha256", "schema"}
+                or registry["filename"] != support_contract.registry_filename
+                or registry["schema"] != support_contract.registry_schema_filename
+                or not isinstance(registry["records"], int)
+                or isinstance(registry["records"], bool)
+                or registry["records"] < 2
+                or not isinstance(registry["sha256"], str)
+                or _SHA256.fullmatch(registry["sha256"]) is None
+            ):
+                _fail(
+                    "Bootstrap-support registry manifest is incompatible",
+                    code="invalid_run_manifest",
+                    field_name="registry",
+                )
+            for linked_table in support_contract.linked_tables:
+                if linked_tables[linked_table] != tables[linked_table]["sha256"]:
+                    _fail(
+                        "Bootstrap-support linkage does not match differential",
+                        code="result_digest_mismatch",
+                        field_name=support_contract.name,
                     )
     if not isinstance(value["stages"], list) or not isinstance(value["warnings"], list):
         _fail(
@@ -512,8 +606,11 @@ class CrychicResult:
                     field_name=extension_contract.name,
                 )
         if scoring_collections_contract().name in extensions:
-            collection_contract = scoring_collections_contract()
-            collection_record = extensions[collection_contract.name]
+            collection_name = scoring_collections_contract().name
+            collection_record = extensions[collection_name]
+            collection_contract = scoring_collections_contract(
+                str(collection_record["extension_schema_version"])
+            )
             collection_path = root / collection_contract.filename
             try:
                 collection_digest = sha256_file(collection_path)
@@ -573,6 +670,76 @@ class CrychicResult:
                     field=collection_contract.name,
                     remediation="Reject the artifact and regenerate it",
                 ) from exc
+        support_contract = bootstrap_support_contract()
+        if support_contract.name in extensions:
+            support_record = extensions[support_contract.name]
+            specificity_record = support_record["specificity_support"]
+            selection_record = support_record["selection_frequency"]
+            registry_record = support_record["registry"]
+            specificity_path = root / support_contract.specificity.filename
+            selection_path = root / support_contract.selection.filename
+            registry_path = root / support_contract.registry_filename
+            try:
+                specificity_digest = sha256_file(specificity_path)
+                selection_digest = sha256_file(selection_path)
+                registry_digest = sha256_file(registry_path)
+                specificity = _read_parquet(specificity_path, engine="pyarrow")
+                selection = _read_parquet(selection_path, engine="pyarrow")
+                registry = validate_bootstrap_support_registry(
+                    read_json(registry_path)
+                )
+                document = BootstrapSupportDocument(
+                    specificity_support=specificity,
+                    selection_frequency=selection,
+                    registry=registry,
+                )
+            except ResultValidationError:
+                raise
+            except Exception as exc:
+                raise ResultValidationError(
+                    "Bootstrap-support extension is missing or corrupted",
+                    code="corrupted_result_extension",
+                    field=support_contract.name,
+                    remediation="Reject the artifact and regenerate it",
+                ) from exc
+            if (
+                specificity_digest != specificity_record["sha256"]
+                or selection_digest != selection_record["sha256"]
+                or registry_digest != registry_record["sha256"]
+                or len(specificity) != specificity_record["rows"]
+                or len(selection) != selection_record["rows"]
+                or (
+                    len(specificity) + len(selection)
+                    != registry_record["records"]
+                )
+            ):
+                _fail(
+                    "Bootstrap-support extension does not match its manifest",
+                    code="result_digest_mismatch",
+                    field_name=support_contract.name,
+                )
+            try:
+                differential = _read_parquet(
+                    root / table_contract("differential").filename,
+                    columns=[
+                        "hypothesis_level",
+                        "hypothesis_id",
+                        "contrast",
+                        "mode",
+                        "view",
+                    ],
+                    engine="pyarrow",
+                )
+                validate_bootstrap_support_links(document, differential)
+            except ResultValidationError:
+                raise
+            except Exception as exc:
+                raise ResultValidationError(
+                    "Bootstrap-support differential linkage cannot be validated",
+                    code="corrupted_result_extension",
+                    field=support_contract.name,
+                    remediation="Reject the artifact and regenerate it",
+                ) from exc
 
         return cls(
             path=root.resolve(),
@@ -612,6 +779,83 @@ class CrychicResult:
 
         extensions = self._manifest.get("extensions", {})
         return scoring_collections_contract().name in extensions
+
+    @property
+    def has_bootstrap_support(self) -> bool:
+        """Whether authenticated specificity and selection support are present."""
+
+        extensions = self._manifest.get("extensions", {})
+        return bootstrap_support_contract().name in extensions
+
+    def read_bootstrap_support_registry(self) -> Mapping[str, Any]:
+        """Read and revalidate the exact bootstrap-support lineage registry."""
+
+        if not self.has_bootstrap_support:
+            raise KeyError("bootstrap_support")
+        contract = bootstrap_support_contract()
+        registry = validate_bootstrap_support_registry(
+            read_json(self.path / contract.registry_filename)
+        )
+        return cast(Mapping[str, Any], _freeze(registry))
+
+    def _read_bootstrap_support_table(
+        self,
+        *,
+        specificity: bool,
+        filters: Mapping[str, object] | None,
+        columns: Sequence[str] | None,
+    ) -> pd.DataFrame:
+        if not self.has_bootstrap_support:
+            raise KeyError("bootstrap_support")
+        support = bootstrap_support_contract()
+        contract = support.specificity if specificity else support.selection
+        requested_columns = None if columns is None else list(columns)
+        if requested_columns is not None:
+            unknown_columns = set(requested_columns).difference(contract.columns)
+            if unknown_columns:
+                raise KeyError(sorted(unknown_columns)[0])
+        parquet_filters: list[tuple[str, str, object]] | None = None
+        if filters:
+            unknown_filters = set(filters).difference(contract.columns)
+            if unknown_filters:
+                raise KeyError(sorted(unknown_filters)[0])
+            parquet_filters = [
+                (column, "==", value) for column, value in filters.items()
+            ]
+        return _read_parquet(
+            self.path / contract.filename,
+            columns=requested_columns,
+            filters=parquet_filters,
+            engine="pyarrow",
+        )
+
+    def read_specificity_support(
+        self,
+        *,
+        filters: Mapping[str, object] | None = None,
+        columns: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Read authenticated specificity support with Parquet pushdown."""
+
+        return self._read_bootstrap_support_table(
+            specificity=True,
+            filters=filters,
+            columns=columns,
+        )
+
+    def read_selection_frequency(
+        self,
+        *,
+        filters: Mapping[str, object] | None = None,
+        columns: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Read equal-bootstrap family selection frequency."""
+
+        return self._read_bootstrap_support_table(
+            specificity=False,
+            filters=filters,
+            columns=columns,
+        )
 
     def read_scoring_collections(self) -> tuple[ScoringCollectionManifest, ...]:
         """Read validated receiver-child scoring collection manifests."""
@@ -758,4 +1002,4 @@ class CrychicResult:
 def run_manifest_schema() -> dict[str, Any]:
     """Expose the normative run-manifest schema for contract validation."""
 
-    return load_schema_document("run_manifest.schema.json")
+    return dict(load_schema_document("run_manifest.schema.json"))

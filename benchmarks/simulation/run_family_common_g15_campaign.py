@@ -607,6 +607,7 @@ def build_campaign_spec(
         allowed_n_splits=(2,),
         min_train_subjects_per_context=2,
         min_test_subjects_per_context=1,
+        outer_fold_partition_seed=crossfit_seed,
         autonomous_program_resource=autonomous_resource,
         penalty_tuning_spec=tuning,
     )
@@ -1570,7 +1571,7 @@ def _aggregate_component_semantics(
                             conforms = bool(mean > positive_tolerance)
                         elif truth_code == "zero":
                             status = "observed"
-                            conforms = bool(mean <= positive_tolerance)
+                            conforms = bool(abs(mean) <= positive_tolerance)
                         else:
                             status = "diagnostic_only"
                             conforms = None

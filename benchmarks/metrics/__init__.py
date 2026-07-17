@@ -7,6 +7,11 @@ from .exploratory import (
     rank_concordance,
     top_k_jaccard,
 )
+from .literature_gold_standard import (
+    LiteratureGoldStandardResult,
+    LiteratureGoldStandardSpec,
+    evaluate_literature_gold_standard,
+)
 from .multicondition import (
     aggregate_loso_primary_endpoint,
     cross_method_concordance,
@@ -58,6 +63,8 @@ from .signed_track_b import (
 __all__ = [
     "DCommonSpec",
     "FrozenRepeatedMeasuresDesign",
+    "LiteratureGoldStandardResult",
+    "LiteratureGoldStandardSpec",
     "RankAgreement",
     "RankInterval",
     "RankStabilityParameters",
@@ -73,6 +80,7 @@ __all__ = [
     "bootstrap_rank_intervals",
     "cross_method_concordance",
     "d_common_edge_effects",
+    "evaluate_literature_gold_standard",
     "evaluate_multicondition_rank_stability",
     "evaluate_signed_track_b",
     "external_long_to_score_table",

@@ -1,0 +1,15 @@
+dataset	species	comparison_arm	method	status	reason_code
+cbmc_seuratdata	human	H-common/resource_fixed	all	not_evaluable	no_receptor_truth_coverage
+cbmc_seuratdata	human	H-common/independent	all	not_evaluable	no_receptor_truth_coverage
+sln_111	mouse	H-common/resource_fixed	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_111	mouse	H-common/independent	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_111	mouse	native/independent	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_111	mouse	H-common/resource_fixed	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable
+sln_111	mouse	H-common/independent	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable
+sln_111	mouse	native/independent	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	H-common/resource_fixed	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	H-common/independent	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	native/independent	CellPhoneDB composite	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	H-common/resource_fixed	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	H-common/independent	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable
+sln_208	mouse	native/independent	CellPhoneDB p-value	skipped	cellphonedb_mouse_unavailable

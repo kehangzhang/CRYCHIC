@@ -15,13 +15,19 @@ ROOT = Path(__file__).parents[2]
     "filename",
     [
         "run_manifest.schema.json",
+        "bootstrap_support.schema.json",
         "edge_evidence.schema.json",
+        "selection_frequency.schema.json",
         "scoring_collections.schema.json",
+        "scoring_collections_v2.schema.json",
+        "scoring_collections_v3.schema.json",
+        "scoring_collections_v4.schema.json",
         "interactions.schema.json",
         "differential.schema.json",
         "responses.schema.json",
         "sample_scores.schema.json",
         "signatures.schema.json",
+        "specificity_support.schema.json",
     ],
 )
 def test_v0_1_result_schema_is_valid_draft_2020_12(filename: str) -> None:
@@ -87,6 +93,22 @@ def test_run_manifest_schema_accepts_v0_1_shape() -> None:
     }
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 
+    scoring_record = manifest["extensions"]["scoring_collections"]
+    for version, schema_filename in (
+        ("2.0.0", "scoring_collections_v2.schema.json"),
+        ("3.0.0", "scoring_collections_v3.schema.json"),
+        ("4.0.0", "scoring_collections_v4.schema.json"),
+    ):
+        scoring_record["extension_schema_version"] = version
+        scoring_record["schema"] = schema_filename
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(
+            manifest
+        )
+    scoring_record["schema"] = "scoring_collections_v2.schema.json"
+    assert not Draft202012Validator(
+        schema, format_checker=FormatChecker()
+    ).is_valid(manifest)
+
     manifest["extensions"] = {
         "edge_evidence": {
             "extension_schema_version": "1.0.0",
@@ -109,5 +131,31 @@ def test_run_manifest_schema_accepts_v0_1_shape() -> None:
                 "sample_scores": tables["sample_scores"]["sha256"],
             },
         },
+    }
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
+
+    manifest["extensions"] = {
+        "bootstrap_support": {
+            "extension_schema_version": "1.0.0",
+            "specificity_support": {
+                "filename": "specificity_support.parquet",
+                "rows": 1,
+                "sha256": "1" * 64,
+                "schema": "specificity_support.schema.json",
+            },
+            "selection_frequency": {
+                "filename": "selection_frequency.parquet",
+                "rows": 1,
+                "sha256": "2" * 64,
+                "schema": "selection_frequency.schema.json",
+            },
+            "registry": {
+                "filename": "bootstrap_support_registry.json",
+                "records": 2,
+                "sha256": "3" * 64,
+                "schema": "bootstrap_support.schema.json",
+            },
+            "linked_tables": {"differential": tables["differential"]["sha256"]},
+        }
     }
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)

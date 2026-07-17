@@ -12,6 +12,7 @@ from crychic.attribution import (
     PenaltyScaleResolution,
     PenaltyTuningArtifact,
     PenaltyTuningSpec,
+    PenaltyValidationLossEstimand,
     RelativePenaltyCandidate,
     ResolvedPenalty,
     not_estimable_penalty_tuning,
@@ -633,6 +634,34 @@ def test_selection_rejects_missing_candidate_fold_and_partition_drift() -> None:
         _select(spec, tuple(drifted))
 
 
+def test_selection_rejects_mixed_validation_loss_estimands() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+    )
+    evaluations = list(
+        _evaluations(
+            spec,
+            {
+                (1.0, 0.0): (1.0, 1.0, 1.0, 1.0),
+                (0.1, 0.0): (1.0, 1.0, 1.0, 1.0),
+            },
+        )
+    )
+    evaluations[0] = record_penalty_fold_evaluation(
+        spec.candidates[0],
+        inner_fold_id="inner-0",
+        validation_subject_ids=("s1", "s2"),
+        subject_losses=np.asarray([1.0, 1.0]),
+        validation_loss_estimand=(
+            PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+        ),
+    )
+
+    with pytest.raises(ValueError, match="one validation loss estimand"):
+        _select(spec, tuple(evaluations))
+
+
 def test_producer_owned_arrays_and_tamper_detection() -> None:
     spec = PenaltyTuningSpec(
         lambda1_fractions=(1.0,),
@@ -661,6 +690,27 @@ def test_producer_owned_arrays_and_tamper_detection() -> None:
 
     object.__setattr__(evaluation, "subject_losses", evaluation.subject_losses.copy())
     evaluation.subject_losses[0] = 99.0
+    with pytest.raises(ContractError) as error:
+        tuning.to_dict()
+    assert error.value.details.code == "penalty_tuning_integrity_violation"
+
+
+def test_validation_loss_estimand_is_bound_to_evaluation_identity() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0,),
+        lambda2_fractions=(0.0,),
+    )
+    tuning = _select(
+        spec,
+        _evaluations(spec, {(1.0, 0.0): (1.0, 1.0, 1.0, 1.0)}),
+    )
+    evaluation = tuning.evaluations[0]
+    object.__setattr__(
+        evaluation,
+        "validation_loss_estimand",
+        PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION,
+    )
+
     with pytest.raises(ContractError) as error:
         tuning.to_dict()
     assert error.value.details.code == "penalty_tuning_integrity_violation"

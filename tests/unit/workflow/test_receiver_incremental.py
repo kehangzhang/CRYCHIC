@@ -5,6 +5,8 @@ import inspect
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -13,14 +15,18 @@ import pytest
 from scipy import sparse
 
 import crychic.response.autonomous as autonomous_module
+import crychic.scoring.downstream as downstream_module
 import crychic.workflow.receiver_incremental as incremental_module
 from crychic.attribution import (
+    GainCalibrationSpec,
     PenaltyTuningSpec,
+    PenaltyValidationLossEstimand,
     PrecisionTransformResult,
     ReceiverFamilyTrainingArtifact,
     fit_receiver_family_training_artifact,
     fit_response_precision,
 )
+from crychic.attribution.precision import fit_repeated_response_precision
 from crychic.availability import (
     BatchAvailability,
     FrozenInteractionUniverse,
@@ -30,6 +36,7 @@ from crychic.availability import (
 from crychic.core import ContractError, SeedLineage
 from crychic.design import (
     FrozenDesignEncoder,
+    SubjectDesign,
     apply_frozen_design_encoder,
     balanced_contrast,
     fit_frozen_design_encoder,
@@ -52,8 +59,14 @@ from crychic.response import (
     fit_fold_gene_response,
     load_receiver_autonomous_program_resource,
 )
+from crychic.response.repeated_fold import (
+    apply_repeated_measures_fold_response,
+    fit_repeated_measures_cr2_fold_response,
+    fit_repeated_measures_fold_response,
+)
 from crychic.scoring import (
     DownstreamRowManifest,
+    FrozenLatentNuisanceSpec,
     apply_incremental_downstream_functional,
 )
 from crychic.workflow import (
@@ -74,6 +87,31 @@ def _metadata(subjects: tuple[str, ...], *, prefix: str = "") -> pd.DataFrame:
             }
             for subject in subjects
             for condition in ("ctrl", "stim")
+        ]
+    )
+
+
+def _independent_metadata(
+    n_subjects_per_context: int,
+    *,
+    prefix: str = "",
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "sample_id": f"{prefix}c{index}:ctrl",
+                "subject_id": f"{prefix}c{index}",
+                "condition": "ctrl",
+            }
+            for index in range(1, n_subjects_per_context + 1)
+        ]
+        + [
+            {
+                "sample_id": f"{prefix}s{index}:stim",
+                "subject_id": f"{prefix}s{index}",
+                "condition": "stim",
+            }
+            for index in range(1, n_subjects_per_context + 1)
         ]
     )
 
@@ -240,6 +278,147 @@ def _training_parents() -> tuple[
     return encoder, response, precision, family
 
 
+def _latent_training_parents(
+    *,
+    include_ineligible_target: bool = False,
+) -> tuple[
+    FrozenDesignEncoder,
+    FoldGeneResponseArtifact,
+    PrecisionTransformResult,
+    ReceiverFamilyTrainingArtifact,
+]:
+    metadata = _metadata(("p1", "p2", "p3", "p4"))
+    encoder = _encoder(metadata)
+    counts: list[tuple[int, int, int, int]] = []
+    units: list[dict[str, object]] = []
+    matrix_ids: list[str] = []
+    for position, (_, row) in enumerate(metadata.reset_index(drop=True).iterrows()):
+        sample_id = str(row["sample_id"])
+        subject_id = str(row["subject_id"])
+        subject_index = int(subject_id[1:])
+        is_stim = str(row["condition"]) == "stim"
+        latent_value = (subject_index - 2.5) * 4.0
+        counts.append(
+            (
+                30 + 12 * int(is_stim) + subject_index,
+                80 + int(latent_value) + 3 * int(is_stim),
+                65 + int(2.0 * latent_value) + 2 * int(is_stim),
+                90 - int(latent_value) + int(is_stim),
+            )
+        )
+        unit_id = f"unit:{sample_id}"
+        matrix_ids.append(unit_id)
+        units.append(
+            {
+                "unit_id": unit_id,
+                "sample_id": sample_id,
+                "subject_id": subject_id,
+                "cell_type": "Receiver",
+                "context": (("condition", str(row["condition"])),),
+                "matrix_row": position,
+                "n_cells": 20,
+                "cell_proportion": 1.0,
+                "state_eligible": True,
+                "abundance_eligible": True,
+                "missingness_reason": "observed",
+            }
+        )
+    matrix = sparse.csr_matrix(np.asarray(counts, dtype=np.int64))
+    aggregate = PseudobulkDataset(
+        counts=matrix,
+        detection_fraction=sparse.csr_matrix(matrix.toarray() > 0),
+        unit_metadata=pd.DataFrame(units),
+        feature_ids=("G1", "G2", "G3", "G4"),
+        matrix_unit_ids=tuple(matrix_ids),
+        source_location="synthetic-latent-nuisance",
+    )
+    response = fit_fold_gene_response(
+        aggregate,
+        encoder,
+        receiver="Receiver",
+        fold_id="fold-latent",
+        training_input_digest="latent-training-input",
+    )
+    precision = fit_response_precision(response, min_positive_features=2)
+    subjects = response.training_subject_ids
+    interaction_ids = ("i1", "i2") if include_ineligible_target else ("i1",)
+    universe = FrozenInteractionUniverse(
+        interaction_ids=interaction_ids,
+        training_subject_ids=subjects,
+        resource_id="tiny-lr",
+        resource_version="1",
+        resource_manifest_digest="tiny-lr-manifest",
+        min_pooled_availability=0.0,
+        max_interactions=None,
+        selection_policy=InteractionFilterPolicy.POOLED_SUPPORT_V1,
+    )
+    availability = BatchAvailability(
+        sample_interactions=pd.DataFrame(
+            [
+                {
+                    "sample_id": f"{subject}:ctrl",
+                    "subject_id": subject,
+                    "context_id": "ctrl",
+                    "receiver": "Receiver",
+                    "interaction_id": interaction_id,
+                    "receptor_availability": (0.9 if interaction_id == "i1" else 0.0),
+                }
+                for subject in subjects
+                for interaction_id in interaction_ids
+            ]
+        ),
+        mapping_summary=pd.DataFrame(),
+        resource_id="tiny-lr",
+        resource_version="1",
+        detection_available=True,
+        frozen_interaction_universe=universe,
+        filter_application=InteractionFilterApplication.TRAINING_SELECTION_V1,
+        application_subject_ids=subjects,
+    )
+    family = fit_receiver_family_training_artifact(
+        availability,
+        _prior(
+            {
+                "D1": {"G1": 1.0},
+                **({"D2": {"G2": 1.0}} if include_ineligible_target else {}),
+            }
+        ),
+        receiver="Receiver",
+        fold_id="fold-latent",
+        feature_ids=("G1", "G2", "G3", "G4"),
+        driver_by_interaction={
+            "i1": "D1",
+            **({"i2": "D2"} if include_ineligible_target else {}),
+        },
+        receptor_gate_threshold=0.1,
+        cosine_threshold=0.99,
+    )
+    return encoder, response, precision, family
+
+
+def _independent_training_parents() -> tuple[
+    FrozenDesignEncoder,
+    FoldGeneResponseArtifact,
+    PrecisionTransformResult,
+    ReceiverFamilyTrainingArtifact,
+]:
+    metadata = _independent_metadata(4)
+    encoder = _encoder(metadata)
+    response = fit_fold_gene_response(
+        _aggregate(metadata),
+        encoder,
+        receiver="Receiver",
+        fold_id="fold-independent",
+        training_input_digest="training-input-independent",
+    )
+    precision = fit_response_precision(response, min_positive_features=2)
+    family = _receiver_family(
+        response.training_subject_ids,
+        fold_id="fold-independent",
+    )
+    return encoder, response, precision, family
+
+
 def _small_tuning_spec(**changes: object) -> PenaltyTuningSpec:
     arguments: dict[str, object] = {
         "lambda1_fractions": (1.0, 0.1),
@@ -248,6 +427,63 @@ def _small_tuning_spec(**changes: object) -> PenaltyTuningSpec:
     }
     arguments.update(changes)
     return PenaltyTuningSpec(**arguments)  # type: ignore[arg-type]
+
+
+def _mixed_incremental_inputs() -> Any:
+    sample_subject_ids = (
+        "p1",
+        "p1",
+        "p2",
+        "p2",
+        "c1",
+        "c2",
+        "s1",
+        "s2",
+    )
+    sample_context_ids = (
+        "ctrl",
+        "stim",
+        "ctrl",
+        "stim",
+        "ctrl",
+        "ctrl",
+        "stim",
+        "stim",
+    )
+    sample_ids = tuple(
+        f"{subject}:{context}:{index}"
+        for index, (subject, context) in enumerate(
+            zip(sample_subject_ids, sample_context_ids, strict=True)
+        )
+    )
+    return incremental_module._IncrementalFitInputs(
+        response_matrix=np.column_stack(
+            (
+                np.asarray([0.0, 2.0, 0.1, 2.1, -0.1, 0.0, 1.9, 2.0]),
+                np.asarray([3.0, 3.0, 3.1, 3.1, 2.9, 3.0, 2.9, 3.0]),
+            )
+        ),
+        sample_ids=sample_ids,
+        sample_subject_ids=sample_subject_ids,
+        sample_context_ids=sample_context_ids,
+        nuisance_matrix=np.ones((8, 1)),
+        context_regressor=np.asarray([-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0]),
+        reference_mask=np.asarray([True, False, True, False, True, True, False, False]),
+        receiver="Receiver",
+        contrast_name="stim_vs_ctrl",
+        context_regressor_id="stim_vs_ctrl_regressor_v1",
+        nuisance_design_id="intercept_only_v1",
+        feature_ids=("G1", "G2"),
+        family_ids=("family-1",),
+        nuisance_column_ids=("intercept",),
+        family_basis=np.asarray([[1.0], [0.0]]),
+        latent_control_exclusion_basis=np.asarray([[1.0], [0.0]]),
+        autonomous_program_resource=None,
+        latent_nuisance_spec=None,
+        precision_weights=np.ones(2),
+        minimum_scale=0.25,
+        null_loss_floor=1e-8,
+    )
 
 
 def _trusted_autonomous_resource(root: Path, monkeypatch: pytest.MonkeyPatch):
@@ -329,11 +565,13 @@ def test_public_fit_and_apply_signatures_accept_only_typed_parents() -> None:
         "precision",
         "receiver_family",
         "autonomous_program_resource",
+        "latent_nuisance_spec",
         "minimum_scale",
         "null_loss_floor",
         "lambda1",
         "lambda2",
         "penalty_tuning_spec",
+        "gain_calibration_spec",
         "inner_partition_seed_lineage",
     )
     assert tuple(apply_parameters) == (
@@ -396,6 +634,12 @@ def test_tuned_formula_nuisance_keeps_diagnostic_separate_from_official() -> Non
     assert model.penalty_tuning_artifact is not None
     assert model.penalty_tuning_artifact.status == "selected"
     assert model.penalty_tuning_artifact.is_oof_certified
+    assert model.gain_calibration_spec is not None
+    assert model.gain_calibration_artifact is not None
+    assert model.gain_calibration_artifact.status == "not_estimable"
+    assert model.gain_calibration_artifact.reason_code == (
+        "insufficient_inner_oof_subjects"
+    )
     expected_subjects = set(response.training_subject_ids)
     for evaluation in model.penalty_tuning_artifact.evaluations:
         assert set(evaluation.inner_training_subject_ids).isdisjoint(
@@ -492,13 +736,16 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
         "subject_fold_d78fc0d232566059819396df119cd4e7",
     )
     assert tuning.tuning_id == (
-        "penalty_tuning_artifact_4663847723f770876dbc52a875b12851"
+        "penalty_tuning_artifact_ae50c0a458fc9c0f69a758dbde8c0103"
     )
     assert model.training_artifact_id == (
-        "receiver_incremental_training_artifact_971ea55ccb0ec8297b5c51b3943380d2"
+        "receiver_incremental_training_artifact_13748856b002f8528086df13c2afc42a"
     )
     assert tuning.status == "selected"
     assert tuning.is_oof_certified
+    assert tuning.validation_loss_estimand is (
+        PenaltyValidationLossEstimand.PAIRED_SUBJECT_CONTRAST
+    )
     assert "outer_frozen_representation" in tuning.certification_status
     assert tuning.inner_fold_plan_id == model.inner_fold_plan.plan_id
     assert len(tuning.evaluations) == (
@@ -507,6 +754,9 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
     expected_subjects = set(response.training_subject_ids)
     for evaluation in tuning.evaluations:
         assert "outer_frozen_representation" in evaluation.verification_status
+        assert evaluation.validation_loss_estimand is (
+            PenaltyValidationLossEstimand.PAIRED_SUBJECT_CONTRAST
+        )
         assert set(evaluation.inner_training_subject_ids).isdisjoint(
             evaluation.validation_subject_ids
         )
@@ -541,9 +791,409 @@ def test_subject_blocked_inner_tuning_has_complete_verified_lineage() -> None:
     )
     assert model.lambda1 == model.diagnostic_functional.lambda1
     assert model.lambda2 == model.diagnostic_functional.lambda2
+    assert model.gain_calibration_spec is not None
+    assert model.gain_calibration_spec_id == model.gain_calibration_spec.spec_id
+    assert model.gain_calibration_artifact is not None
+    calibration = model.gain_calibration_artifact
+    assert calibration.status == "not_estimable"
+    assert calibration.reason_code == "insufficient_inner_oof_subjects"
+    assert calibration.tuning_id == tuning.tuning_id
+    assert calibration.outer_incremental_functional_id == (
+        model.diagnostic_functional.incremental_functional_id
+    )
+    assert calibration.training_subject_ids == response.training_subject_ids
+    assert calibration.family_ids == model.family_ids
     assert not model.is_oof_certified
     assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
     model.to_dict()
+
+
+def test_latent_nuisance_is_refit_inside_every_inner_training_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder, response, precision, family = _latent_training_parents()
+    latent_spec = FrozenLatentNuisanceSpec(
+        max_components=1,
+        min_control_features=2,
+        min_training_subjects=2,
+        minimum_explained_fraction=0.01,
+    )
+    tuning_spec = _small_tuning_spec()
+    captured: list[Any] = []
+    original = downstream_module.fit_fold_latent_nuisance
+
+    def capture_latent_fit(*args: Any, **kwargs: Any) -> Any:
+        artifact = original(*args, **kwargs)
+        captured.append(artifact)
+        return artifact
+
+    monkeypatch.setattr(
+        downstream_module,
+        "fit_fold_latent_nuisance",
+        capture_latent_fit,
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        None,
+        latent_nuisance_spec=latent_spec,
+        penalty_tuning_spec=tuning_spec,
+    )
+
+    assert model.inner_fold_plan is not None
+    assert model.latent_nuisance_artifact is not None
+    assert model.latent_nuisance_artifact.status == "observed"
+    assert model.latent_nuisance_artifact.training_subject_ids == (
+        response.training_subject_ids
+    )
+    assert model.diagnostic_functional is not None
+    assert model.autonomous_program_source_id == (
+        model.diagnostic_functional.autonomous_basis_id
+    )
+    assert model.is_oof_certified
+    assert model.official_incremental_status == "observed"
+    for inner_fold in model.inner_fold_plan.folds:
+        inner_artifacts = [
+            artifact for artifact in captured if artifact.fold_id == inner_fold.fold_id
+        ]
+        assert len(inner_artifacts) == len(tuning_spec.candidates)
+        assert len({artifact.artifact_id for artifact in inner_artifacts}) == 1
+        for artifact in inner_artifacts:
+            assert artifact.status == "observed"
+            assert artifact.training_subject_ids == inner_fold.train_subject_ids
+            assert set(artifact.training_subject_ids).isdisjoint(
+                inner_fold.test_subject_ids
+            )
+            assert {
+                subject_id for subject_id in artifact.training_sample_subject_ids
+            } == set(inner_fold.train_subject_ids)
+    outer_artifacts = [
+        artifact for artifact in captured if artifact.fold_id == response.fold_id
+    ]
+    assert len(outer_artifacts) == 1
+    model.to_dict()
+
+
+def test_latent_controls_exclude_targets_from_ineligible_families() -> None:
+    encoder, response, precision, family = _latent_training_parents(
+        include_ineligible_target=True
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        None,
+        latent_nuisance_spec=FrozenLatentNuisanceSpec(
+            max_components=1,
+            min_control_features=2,
+            min_training_subjects=2,
+            minimum_explained_fraction=0.01,
+        ),
+    )
+
+    assert len(model.family_ids) == 1
+    assert model.latent_nuisance_artifact is not None
+    assert model.latent_nuisance_artifact.status == "observed"
+    assert model.latent_nuisance_artifact.family_count == 2
+    assert model.latent_nuisance_artifact.control_feature_ids == ("G3", "G4")
+
+
+def test_latent_not_estimable_artifact_is_retained_for_diagnostics() -> None:
+    encoder, response, precision, family = _latent_training_parents()
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        None,
+        latent_nuisance_spec=FrozenLatentNuisanceSpec(
+            max_components=1,
+            min_control_features=5,
+            min_training_subjects=2,
+            minimum_explained_fraction=0.01,
+        ),
+    )
+
+    assert model.diagnostic_functional is None
+    assert model.latent_nuisance_artifact is not None
+    assert model.latent_nuisance_artifact.status == "not_estimable"
+    assert model.latent_nuisance_artifact.reason_code == (
+        "latent_nuisance_insufficient_control_features"
+    )
+    assert model.diagnostic_reason_code == (
+        "latent_nuisance_insufficient_control_features"
+    )
+    assert model.autonomous_program_source_id is None
+    assert model.autonomous_program_verification_status is None
+    payload = model.to_dict()
+    assert payload["latent_nuisance_artifact"] is not None
+
+
+def test_hybrid_latent_basis_binds_the_exact_static_prefix() -> None:
+    encoder, response, precision, family = _latent_training_parents()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[0.0], [0.0], [0.0], [1.0]]),
+        feature_ids=("G1", "G2", "G3", "G4"),
+        program_ids=("static-program",),
+        resource_id="hybrid-static-programs",
+        version="1",
+        manifest_digest="7" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        latent_nuisance_spec=FrozenLatentNuisanceSpec(
+            max_components=1,
+            min_control_features=2,
+            min_training_subjects=2,
+            minimum_explained_fraction=0.01,
+        ),
+    )
+
+    assert model.diagnostic_functional is not None
+    assert model.latent_nuisance_artifact is not None
+    artifact = model.latent_nuisance_artifact
+    functional = model.diagnostic_functional
+    assert artifact.status == "observed"
+    assert artifact.static_program_ids == ("static-program",)
+    assert functional.autonomous_basis_source == (
+        "static_plus_fold_learned_control_feature_latent_v1"
+    )
+    assert functional.autonomous_program_ids == (
+        "static-program",
+        *artifact.program_ids,
+    )
+    np.testing.assert_allclose(
+        functional.autonomous_basis[:, :1],
+        artifact.static_coordinate_basis,
+    )
+    np.testing.assert_allclose(
+        functional.autonomous_basis[:, 1:],
+        artifact.coordinate_basis,
+    )
+    functional.to_dict()
+
+
+def test_independent_inner_tuning_uses_subject_local_losses_and_applies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder, response, precision, family = _independent_training_parents()
+    resource = _trusted_autonomous_resource(tmp_path, monkeypatch)
+    captured: dict[str, tuple[Any, Any]] = {}
+    original_apply = incremental_module._apply_incremental_subset
+
+    def capture_application(
+        functional: Any,
+        inputs: Any,
+        *,
+        subject_ids: tuple[str, ...],
+    ) -> Any:
+        application = original_apply(
+            functional,
+            inputs,
+            subject_ids=subject_ids,
+        )
+        captured[application.application_id] = (functional, application)
+        return application
+
+    monkeypatch.setattr(
+        incremental_module,
+        "_apply_incremental_subset",
+        capture_application,
+    )
+    model = fit_receiver_incremental_training_artifact(
+        encoder,
+        response,
+        precision,
+        family,
+        resource,
+        penalty_tuning_spec=_small_tuning_spec(),
+    )
+
+    assert model.inner_fold_plan is not None
+    assert model.penalty_tuning_artifact is not None
+    tuning = model.penalty_tuning_artifact
+    assert tuning.status == "selected"
+    assert tuning.is_oof_certified
+    assert tuning.validation_loss_estimand is (
+        PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+    )
+    assert model.diagnostic_functional is not None
+    assert model.diagnostic_functional.loss_design == (
+        "independent_subject_pseudocontrasts_v1"
+    )
+    assert model.is_oof_certified
+    for evaluation in tuning.evaluations:
+        assert evaluation.validation_loss_estimand is (
+            PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+        )
+        functional, application = captured[evaluation.heldout_application_id]
+        assert functional.training_subject_ids == (
+            evaluation.inner_training_subject_ids
+        )
+        assert set(functional.training_subject_ids).isdisjoint(
+            evaluation.validation_subject_ids
+        )
+        expected_losses = []
+        for subject in evaluation.validation_subject_ids:
+            selected = np.asarray(
+                [
+                    row_subject == subject
+                    for row_subject in application.sample_subject_ids
+                ],
+                dtype=bool,
+            )
+            expected_losses.append(
+                float(np.mean(application.sample_full_losses[selected]))
+            )
+        np.testing.assert_allclose(
+            evaluation.subject_losses,
+            np.asarray(expected_losses),
+        )
+
+    heldout_metadata = _independent_metadata(2, prefix="heldout-")
+    heldout_design = apply_frozen_design_encoder(encoder, heldout_metadata)
+    heldout_response = apply_fold_gene_response(
+        _aggregate(heldout_metadata, offset=9),
+        response,
+        heldout_design,
+    )
+    application = apply_receiver_incremental_training_artifact(
+        model,
+        heldout_response,
+        heldout_design,
+    )
+
+    assert application.diagnostic_status == "observed"
+    assert application.official_incremental_status == "observed"
+    assert application.reason_code is None
+    assert application.is_oof_certified
+    assert set(application.heldout_subject_ids).isdisjoint(model.training_subject_ids)
+    application.to_dict()
+
+
+def test_inner_tuning_allocation_planner_classifies_mixed_subjects() -> None:
+    inputs = SimpleNamespace(
+        sample_ids=("p1:ctrl", "p1:stim", "c2:ctrl", "s2:stim"),
+        sample_subject_ids=("p1", "p1", "c2", "s2"),
+        sample_context_ids=("ctrl", "stim", "ctrl", "stim"),
+    )
+
+    allocation = incremental_module._inner_tuning_subject_design(
+        inputs  # type: ignore[arg-type]
+    )
+
+    assert allocation.design is SubjectDesign.MIXED
+    assert not allocation.ready
+    assert allocation.reason_code == "mixed_paired_unpaired_design_not_supported"
+
+
+def test_mixed_inner_split_preserves_outer_full_prediction_estimand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _mixed_incremental_inputs()
+    fold_lineage = SeedLineage(17).derive("crossfit", "mixed-repeat", "k=2", "fold=0")
+    fold = incremental_module.FoldManifest(
+        repeat_id="mixed-repeat",
+        train_subject_ids=("p1", "p2"),
+        test_subject_ids=("c1", "c2", "s1", "s2"),
+        design_matrix_id="mixed-inner-design",
+        contrast_ids=("mixed-inner-contrast",),
+        context_support={"ctrl": 2, "stim": 2},
+        test_context_support={"ctrl": 2, "stim": 2},
+        estimable=True,
+        reason_code=None,
+        seed_lineage=fold_lineage,
+        requested_n_splits=2,
+        effective_n_splits=2,
+        fold_index=0,
+    )
+    captured_loss_designs: list[str] = []
+
+    def fake_plan(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args, kwargs
+        return SimpleNamespace(folds=(fold,), plan_id="mixed-plan")
+
+    def fake_select(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args, kwargs
+        return SimpleNamespace(
+            selected_candidate_id=None,
+            inner_fold_ids=(fold.fold_id,),
+        )
+
+    original_fit = incremental_module._fit_incremental_subset
+
+    def capture_fit(*args: object, **kwargs: object) -> Any:
+        functional = original_fit(*args, **kwargs)
+        captured_loss_designs.append(functional.loss_design)
+        return functional
+
+    monkeypatch.setattr(incremental_module, "plan_subject_folds", fake_plan)
+    monkeypatch.setattr(incremental_module, "select_penalty_candidate", fake_select)
+    monkeypatch.setattr(incremental_module, "_fit_incremental_subset", capture_fit)
+
+    incremental_module._fit_subject_blocked_penalty_tuning(
+        inputs,
+        spec=PenaltyTuningSpec(
+            lambda1_fractions=(0.0,),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+        ),
+        tuning_scope_id="mixed-scope",
+        outer_fold_id="outer-mixed",
+        inner_partition_seed_lineage=None,
+    )
+
+    assert captured_loss_designs == ["mixed_subject_equal_full_prediction_loss_v1"]
+
+
+def test_mixed_subject_blocked_tuning_runs_complete_candidate_fold_grid() -> None:
+    spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+        min_inner_train_subjects_per_context=2,
+        min_inner_validation_subjects_per_context=1,
+    )
+
+    outcome = incremental_module._fit_subject_blocked_penalty_tuning(
+        _mixed_incremental_inputs(),
+        spec=spec,
+        tuning_scope_id="mixed-real-plan-scope",
+        outer_fold_id="outer-mixed-real-plan",
+        inner_partition_seed_lineage=None,
+    )
+    plan, tuning = outcome.plan, outcome.tuning
+
+    assert plan is not None
+    assert plan.effective_n_splits == 2
+    assert tuning.status == "selected"
+    assert tuning.validation_loss_estimand is (
+        PenaltyValidationLossEstimand.MIXED_SUBJECT_PREDICTION
+    )
+    assert len(tuning.evaluations) == len(spec.candidates) * len(plan.folds)
+    assert all(item.status == "observed" for item in tuning.evaluations)
+    assert all(
+        item.validation_loss_estimand
+        is PenaltyValidationLossEstimand.MIXED_SUBJECT_PREDICTION
+        for item in tuning.evaluations
+    )
+    assert len(outcome.selected_inner_functionals) == len(plan.folds)
+    assert len(outcome.selected_inner_applications) == len(plan.folds)
+    assert all(
+        item.penalty_candidate_id == tuning.selected_candidate_id
+        for item in outcome.selected_inner_functionals
+    )
+    tuning.to_dict()
 
 
 def test_explicit_inner_partition_lineage_is_persisted_and_requires_tuning() -> None:
@@ -627,7 +1277,22 @@ def test_inner_tuning_plan_failure_is_typed_and_never_falls_back() -> None:
     assert model.diagnostic_status == "not_estimable"
     assert model.diagnostic_reason_code == "no_estimable_subject_fold_plan"
     assert model.selected_penalty_candidate_id is None
+    assert model.gain_calibration_spec is not None
+    assert model.gain_calibration_artifact is None
     model.to_dict()
+
+
+def test_gain_calibration_spec_requires_subject_blocked_tuning() -> None:
+    encoder, response, precision, family = _training_parents()
+
+    with pytest.raises(ValueError, match="requires penalty_tuning_spec"):
+        fit_receiver_incremental_training_artifact(
+            encoder,
+            response,
+            precision,
+            family,
+            gain_calibration_spec=GainCalibrationSpec(),
+        )
 
 
 @pytest.mark.parametrize("target", ["tuning", "plan", "selected_penalty"])
@@ -1024,3 +1689,142 @@ def test_not_estimable_artifact_revalidates_hyperparameters() -> None:
     object.__setattr__(model, "lambda1", -1.0)
     with pytest.raises(ContractError, match="integrity"):
         model.to_dict()
+
+
+def _mixed_repeated_metadata() -> pd.DataFrame:
+    allocations = {
+        "p1": ("ctrl", "stim"),
+        "p2": ("ctrl", "stim"),
+        "c1": ("ctrl",),
+        "c2": ("ctrl",),
+        "c3": ("ctrl",),
+        "s1": ("stim",),
+        "s2": ("stim",),
+        "s3": ("stim",),
+    }
+    return pd.DataFrame(
+        [
+            {
+                "sample_id": f"{subject}:{condition}",
+                "subject_id": subject,
+                "condition": condition,
+            }
+            for subject, conditions in allocations.items()
+            for condition in conditions
+        ]
+    )
+
+
+def test_cr2_repeated_parent_can_reach_descriptive_oof_without_releasing_pq(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _mixed_repeated_metadata()
+    encoder = _encoder(metadata)
+    aggregate = _aggregate(metadata)
+    fit_arguments: dict[str, object] = {
+        "receiver": "Receiver",
+        "fold_id": "fold-cr2",
+        "training_input_digest": "training-input-cr2",
+        "min_subjects_per_context": 2,
+        "min_subject_clusters": 6,
+    }
+    cr1 = fit_repeated_measures_fold_response(
+        aggregate,
+        encoder,
+        metadata,
+        **fit_arguments,  # type: ignore[arg-type]
+    )
+    cr2 = fit_repeated_measures_cr2_fold_response(
+        aggregate,
+        encoder,
+        metadata,
+        **fit_arguments,  # type: ignore[arg-type]
+    )
+    assert cr1.status == "exploratory"
+    assert cr2.status == "ok"
+    feature_scale = incremental_module._receiver_incremental_feature_scale(
+        encoder, cr2, minimum_scale=0.25
+    )
+    cr1_precision = fit_repeated_response_precision(
+        cr1,
+        feature_scale=feature_scale,
+        min_positive_features=2,
+    )
+    cr2_precision = fit_repeated_response_precision(
+        cr2,
+        feature_scale=feature_scale,
+        min_positive_features=2,
+    )
+    insufficient_cr2_precision = fit_repeated_response_precision(
+        cr2,
+        feature_scale=feature_scale,
+        min_positive_features=3,
+    )
+    family = _receiver_family(cr2.training_subject_ids, fold_id="fold-cr2")
+    resource = _trusted_autonomous_resource(tmp_path, monkeypatch)
+    tuning = _small_tuning_spec()
+
+    cr1_model = fit_receiver_incremental_training_artifact(
+        encoder,
+        cr1,
+        cr1_precision,
+        family,
+        resource,
+        penalty_tuning_spec=tuning,
+    )
+    cr2_model = fit_receiver_incremental_training_artifact(
+        encoder,
+        cr2,
+        cr2_precision,
+        family,
+        resource,
+        penalty_tuning_spec=tuning,
+    )
+    insufficient_cr2_model = fit_receiver_incremental_training_artifact(
+        encoder,
+        cr2,
+        insufficient_cr2_precision,
+        family,
+        resource,
+        penalty_tuning_spec=tuning,
+    )
+
+    assert cr1_model.diagnostic_status == "observed"
+    assert cr1_model.official_incremental_status == "not_estimable"
+    assert cr1_model.reason_code == (
+        "repeated_measures_cr1_diagnostic_only_no_formal_inference"
+    )
+    assert not cr1_model.is_oof_certified
+    assert cr2_model.diagnostic_status == "observed"
+    assert cr2_model.official_incremental_status == "observed"
+    assert cr2_model.reason_code is None
+    assert cr2_model.is_oof_certified
+    assert cr2.formal_inference_allowed is False
+    assert {"p", "p_value", "q", "q_value"}.isdisjoint(cr2_model.to_dict())
+    assert not insufficient_cr2_precision.estimable
+    assert insufficient_cr2_model.diagnostic_status == "not_estimable"
+    assert insufficient_cr2_model.diagnostic_reason_code == (
+        "insufficient_response_precision_support"
+    )
+    assert insufficient_cr2_model.official_incremental_status == "not_estimable"
+    assert insufficient_cr2_model.reason_code == (
+        "insufficient_response_precision_support"
+    )
+    assert insufficient_cr2_model.reason_code != (
+        "repeated_measures_cr1_diagnostic_only_no_formal_inference"
+    )
+
+    heldout_metadata = _metadata(("q1", "q2"))
+    heldout_design = apply_frozen_design_encoder(encoder, heldout_metadata)
+    heldout_response = apply_repeated_measures_fold_response(
+        _aggregate(heldout_metadata), cr2, heldout_design
+    )
+    application = apply_receiver_incremental_training_artifact(
+        cr2_model, heldout_response, heldout_design
+    )
+    assert application.diagnostic_status == "observed"
+    assert application.official_incremental_status == "observed"
+    assert application.reason_code is None
+    assert application.is_oof_certified
+    assert {"p", "p_value", "q", "q_value"}.isdisjoint(application.to_dict())

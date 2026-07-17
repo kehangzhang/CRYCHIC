@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3f-calibration-scenarios:1.0.0",
+  "title": "CRYCHIC producer-derived G3-F calibration scenario metrics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3f_calibration_scenarios"},
+    "filename": {"const": "g3f_calibration_scenarios.parquet"},
+    "primary_key": {"const": ["scenario_result_id"]},
+    "logical_key": {"const": ["dependence_structure", "non_null_prevalence", "metric"]},
+    "foreign_keys": {"const": [{"columns": ["protocol_id"], "references": "manifest.protocol_id"}, {"columns": ["replicate_ids_json"], "references": "g3f_calibration_replicates.replicate_id[]"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_result_id", "scenario_id", "protocol_id", "dependence_structure", "non_null_prevalence", "metric", "status", "reason_code", "n_replicates", "n_observed_replicates", "n_metric_replicates", "replicate_ids_json", "point_estimate", "one_sided_bound", "bootstrap_seed", "noninferiority_baseline_id", "noninferiority_estimand", "noninferiority_direction", "noninferiority_margin", "metric_weighting"],
+      "properties": {
+        "scenario_result_id": {"dtype": "string", "nullable": false},
+        "scenario_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "dependence_structure": {"dtype": "string", "nullable": false, "enum": ["independent_hypotheses", "positive_within_family_block", "negative_within_family_block"]},
+        "non_null_prevalence": {"dtype": "float", "nullable": true, "enum": [0.005, 0.01, 0.05, 0.1]},
+        "metric": {"dtype": "string", "nullable": false, "enum": ["null_type_i_upper", "mixed_fdr_upper", "primary_fdr_upper", "selective_child_fdr_upper", "coverage_lower", "power_noninferiority_lower", "interval_width_noninferiority_lower"]},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "not_estimable"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "n_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "n_observed_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "n_metric_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "replicate_ids_json": {"dtype": "string", "nullable": false, "encoding": "canonical_json"},
+        "point_estimate": {"dtype": "float", "nullable": true},
+        "one_sided_bound": {"dtype": "float", "nullable": true},
+        "bootstrap_seed": {"dtype": "integer", "nullable": true, "minimum": 0},
+        "noninferiority_baseline_id": {"dtype": "string", "nullable": true},
+        "noninferiority_estimand": {"dtype": "string", "nullable": true},
+        "noninferiority_direction": {"dtype": "string", "nullable": true},
+        "noninferiority_margin": {"dtype": "float", "nullable": true},
+        "metric_weighting": {"dtype": "string", "nullable": false, "enum": ["hypothesis_equal_within_replicate_then_informative_replicate_equal_v2"]}
+      }
+    }
+  }
+}

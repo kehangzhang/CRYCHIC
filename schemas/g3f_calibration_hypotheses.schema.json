@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3f-calibration-hypotheses:1.0.0",
+  "title": "CRYCHIC complete G3-F per-hypothesis truth and procedure ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3f_calibration_hypotheses"},
+    "filename": {"const": "g3f_calibration_hypotheses.parquet"},
+    "primary_key": {"const": ["hypothesis_row_id"]},
+    "logical_key": {"const": ["replicate_id", "hypothesis_id"]},
+    "foreign_keys": {"const": [{"columns": ["replicate_id"], "references": "g3f_calibration_replicates.replicate_id"}, {"columns": ["protocol_id"], "references": "manifest.protocol_id"}, {"columns": ["hypothesis_id"], "references": "manifest.hypothesis_universe.hypothesis_ids"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hypothesis_row_id", "replicate_id", "protocol_id", "scenario_id", "hypothesis_index", "hypothesis_id", "hypothesis_role", "parent_hypothesis_id", "truth_non_null", "candidate_rejected_at_alpha", "baseline_rejected_at_alpha", "ci_contains_truth", "candidate_ci_interval_width", "baseline_ci_interval_width"],
+      "properties": {
+        "hypothesis_row_id": {"dtype": "string", "nullable": false},
+        "replicate_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "scenario_id": {"dtype": "string", "nullable": false},
+        "hypothesis_index": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "hypothesis_id": {"dtype": "string", "nullable": false},
+        "hypothesis_role": {"dtype": "string", "nullable": false, "enum": ["primary", "secondary"]},
+        "parent_hypothesis_id": {"dtype": "string", "nullable": true},
+        "truth_non_null": {"dtype": "boolean", "nullable": false},
+        "candidate_rejected_at_alpha": {"dtype": "boolean", "nullable": false},
+        "baseline_rejected_at_alpha": {"dtype": "boolean", "nullable": false},
+        "ci_contains_truth": {"dtype": "boolean", "nullable": false},
+        "candidate_ci_interval_width": {"dtype": "float", "nullable": true, "minimum": 0.0},
+        "baseline_ci_interval_width": {"dtype": "float", "nullable": true, "minimum": 0.0}
+      }
+    }
+  }
+}

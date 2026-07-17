@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:extension:scoring-collections:3.0.0",
+  "title": "CRYCHIC authoritative planned-receiver scoring registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "extension_schema_version",
+    "result_schema_version",
+    "collection_kind",
+    "digest_method",
+    "registry_id",
+    "planning_status",
+    "is_authoritative_registry",
+    "planned_collections",
+    "collections"
+  ],
+  "properties": {
+    "extension_schema_version": {"const": "3.0.0"},
+    "result_schema_version": {"const": "0.1.0"},
+    "collection_kind": {"const": "authoritative_planned_receiver_registry"},
+    "digest_method": {"const": "sha256_canonical_csv_v1"},
+    "registry_id": {"$ref": "#/$defs/identifier"},
+    "planning_status": {"const": "producer_declared_complete"},
+    "is_authoritative_registry": {"const": true},
+    "planned_collections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/plannedCollection"}
+    },
+    "collections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/collection"}
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "minLength": 1},
+    "nullableIdentifier": {
+      "oneOf": [
+        {"$ref": "#/$defs/identifier"},
+        {"type": "null"}
+      ]
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullableSha256": {
+      "oneOf": [
+        {"$ref": "#/$defs/sha256"},
+        {"type": "null"}
+      ]
+    },
+    "receiverUniverse": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/identifier"}
+    },
+    "plannedCollection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_entry_version",
+        "plan_manifest_id",
+        "contrast",
+        "repeat_id",
+        "fold_id",
+        "planned_receivers",
+        "filter_universe_id",
+        "provenance_status"
+      ],
+      "properties": {
+        "plan_entry_version": {"const": "3.0.0"},
+        "plan_manifest_id": {"$ref": "#/$defs/identifier"},
+        "contrast": {"$ref": "#/$defs/identifier"},
+        "repeat_id": {"$ref": "#/$defs/identifier"},
+        "fold_id": {"$ref": "#/$defs/identifier"},
+        "planned_receivers": {"$ref": "#/$defs/receiverUniverse"},
+        "filter_universe_id": {"$ref": "#/$defs/identifier"},
+        "provenance_status": {"const": "producer_declared_complete"}
+      }
+    },
+    "child": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_entry_version",
+        "child_manifest_id",
+        "receiver",
+        "receiver_family_model_id",
+        "receiver_incremental_model_id",
+        "filter_universe_id",
+        "scoring_functional_id",
+        "score_version",
+        "functional_status",
+        "registry_status",
+        "emission_status",
+        "reason_code",
+        "provenance_status",
+        "source_score_key_digest",
+        "source_score_row_count"
+      ],
+      "properties": {
+        "registry_entry_version": {"const": "3.0.0"},
+        "child_manifest_id": {"$ref": "#/$defs/identifier"},
+        "receiver": {"$ref": "#/$defs/identifier"},
+        "receiver_family_model_id": {"$ref": "#/$defs/identifier"},
+        "receiver_incremental_model_id": {"$ref": "#/$defs/identifier"},
+        "filter_universe_id": {"$ref": "#/$defs/identifier"},
+        "scoring_functional_id": {"$ref": "#/$defs/nullableIdentifier"},
+        "score_version": {"$ref": "#/$defs/nullableIdentifier"},
+        "functional_status": {"enum": ["observed", "not_estimable", null]},
+        "registry_status": {
+          "enum": ["functional_registered", "functional_not_produced"]
+        },
+        "emission_status": {"enum": ["emitted", "not_emitted"]},
+        "reason_code": {"$ref": "#/$defs/nullableIdentifier"},
+        "provenance_status": {"const": "producer_lineage_verified"},
+        "source_score_key_digest": {"$ref": "#/$defs/nullableSha256"},
+        "source_score_row_count": {"type": "integer", "minimum": 0}
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["registry_status"],
+            "properties": {"registry_status": {"const": "functional_not_produced"}}
+          },
+          "then": {
+            "properties": {
+              "scoring_functional_id": {"const": null},
+              "score_version": {"const": null},
+              "functional_status": {"const": null},
+              "emission_status": {"const": "not_emitted"},
+              "reason_code": {"$ref": "#/$defs/identifier"}
+            }
+          },
+          "else": {
+            "properties": {
+              "scoring_functional_id": {"$ref": "#/$defs/identifier"},
+              "score_version": {"$ref": "#/$defs/identifier"},
+              "functional_status": {"enum": ["observed", "not_estimable"]}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["functional_status"],
+            "properties": {"functional_status": {"const": "observed"}}
+          },
+          "then": {"properties": {"reason_code": {"const": null}}}
+        },
+        {
+          "if": {
+            "required": ["functional_status"],
+            "properties": {"functional_status": {"const": "not_estimable"}}
+          },
+          "then": {"properties": {"reason_code": {"$ref": "#/$defs/identifier"}}}
+        },
+        {
+          "if": {
+            "required": ["emission_status"],
+            "properties": {"emission_status": {"const": "emitted"}}
+          },
+          "then": {
+            "properties": {
+              "registry_status": {"const": "functional_registered"},
+              "source_score_key_digest": {"$ref": "#/$defs/sha256"},
+              "source_score_row_count": {"type": "integer", "minimum": 1}
+            }
+          },
+          "else": {
+            "properties": {
+              "source_score_key_digest": {"const": null},
+              "source_score_row_count": {"const": 0}
+            }
+          }
+        }
+      ]
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection_contract_version",
+        "scoring_collection_id",
+        "contrast",
+        "repeat_id",
+        "fold_id",
+        "partition_key",
+        "receiver_scope",
+        "composition_status",
+        "common_functional_across_receivers",
+        "planned_receivers",
+        "emitted_receivers",
+        "comparability_scope",
+        "row_union_policy",
+        "children",
+        "source_score_key_digest",
+        "source_score_row_count"
+      ],
+      "properties": {
+        "collection_contract_version": {"const": "3.0.0"},
+        "scoring_collection_id": {"$ref": "#/$defs/identifier"},
+        "contrast": {"$ref": "#/$defs/identifier"},
+        "repeat_id": {"$ref": "#/$defs/identifier"},
+        "fold_id": {"$ref": "#/$defs/identifier"},
+        "partition_key": {"const": "receiver"},
+        "receiver_scope": {"const": "planned_receiver_universe"},
+        "composition_status": {"const": "planned_receiver_exact"},
+        "common_functional_across_receivers": {"const": false},
+        "planned_receivers": {"$ref": "#/$defs/receiverUniverse"},
+        "emitted_receivers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        },
+        "comparability_scope": {"const": "within_receiver_across_contexts_only"},
+        "row_union_policy": {"const": "cross_receiver_row_union_forbidden"},
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/child"}
+        },
+        "source_score_key_digest": {"$ref": "#/$defs/sha256"},
+        "source_score_row_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

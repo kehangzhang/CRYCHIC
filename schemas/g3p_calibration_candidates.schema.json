@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3p-calibration-candidates:1.0.0",
+  "title": "CRYCHIC complete G3-P candidate truth and probability ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3p_calibration_candidates"},
+    "filename": {"const": "g3p_calibration_candidates.parquet"},
+    "primary_key": {"const": ["candidate_row_id"]},
+    "logical_key": {"const": ["replicate_id", "candidate_edge_id"]},
+    "foreign_keys": {"const": [{"columns": ["replicate_id"], "references": "g3p_calibration_replicates.replicate_id"}, {"columns": ["protocol_id"], "references": "manifest.protocol_id"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_row_id", "replicate_id", "protocol_id", "scenario_id", "candidate_index", "candidate_edge_id", "stratum_id", "candidate_status", "candidate_reason_code", "truth_active", "candidate_probability"],
+      "properties": {
+        "candidate_row_id": {"dtype": "string", "nullable": false},
+        "replicate_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "scenario_id": {"dtype": "string", "nullable": false},
+        "candidate_index": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "candidate_edge_id": {"dtype": "string", "nullable": false},
+        "stratum_id": {"dtype": "string", "nullable": false},
+        "candidate_status": {"dtype": "string", "nullable": false, "enum": ["eligible", "structural_zero", "not_estimable", "failed"]},
+        "candidate_reason_code": {"dtype": "string", "nullable": true},
+        "truth_active": {"dtype": "boolean", "nullable": false},
+        "candidate_probability": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0}
+      }
+    }
+  }
+}

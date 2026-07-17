@@ -173,6 +173,52 @@ def test_d_common_paired_difference_adjusts_sample_varying_batch() -> None:
     assert row["effect"] == pytest.approx(0.15)
 
 
+def test_d_common_paired_difference_without_batch_is_intercept_only() -> None:
+    subjects = ("s1", "s2", "s3", "s4", "s5")
+    design = pd.DataFrame(
+        [
+            {
+                "sample_id": f"{subject}-{context}",
+                "subject_id": subject,
+                "context": context,
+            }
+            for subject in subjects
+            for context in ("control", "case")
+        ]
+    )
+    deltas = dict(zip(subjects, (0.1, 0.2, 0.3, 0.4, 0.5), strict=True))
+    values: dict[tuple[str, str], float] = {}
+    for row in design.itertuples(index=False):
+        baseline = 0.2 + 0.01 * int(str(row.subject_id)[1:])
+        values[(row.sample_id, "i0")] = baseline + (
+            deltas[str(row.subject_id)] if row.context == "case" else 0.0
+        )
+        values[(row.sample_id, "i1")] = baseline
+
+    result = d_common_edge_effects(
+        _prepared_scores(design, values=values),
+        design,
+        spec=DCommonSpec(
+            reference="control",
+            target="case",
+            min_subjects_per_group=3,
+        ),
+        validated=True,
+    )
+
+    selected = result.loc[result["interaction_id"].eq("i0")]
+    assert set(selected["status"]) == {"exploratory"}
+    assert set(selected["design_kind"]) == {"paired_difference_ols"}
+    assert set(selected["model_columns"]) == {("target_minus_reference_intercept",)}
+    assert selected["d_common_effect_model_id"].nunique() == 1
+    np.testing.assert_allclose(selected["effect"], 0.3, atol=1e-12)
+    np.testing.assert_allclose(
+        selected["diagnostic_standard_error"],
+        np.sqrt(0.005),
+        atol=1e-12,
+    )
+
+
 def test_d_common_marks_mixed_paired_unpaired_design_not_estimable() -> None:
     design = pd.DataFrame(
         [

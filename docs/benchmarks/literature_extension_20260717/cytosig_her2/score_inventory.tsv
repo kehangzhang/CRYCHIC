@@ -1,0 +1,13 @@
+method_id	method_name	implementation	raw_score_rows	cytokine_matched_rows	unique_stlr_rows	unique_ligand_target_rows	matched_positive_rows
+cellchat_composite	CellChat composite	LIANA 1.7.3 current Python	2959	2959	2959	251	544
+cellchat_pvalue	CellChat p-value	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+cellphonedb_composite	CellPhoneDB composite	LIANA 1.7.3 current Python	7302	7302	7302	399	1257
+cellphonedb_pvalue	CellPhoneDB p-value	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+connectome_specificity	Connectome specificity	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+crychic_availability_ecosystem	CRYCHIC availability-ecosystem	CRYCHIC 0.0.1.dev56+g87153a38e.d20260716	168750	168750	168750	1075	21050
+crychic_availability_state	CRYCHIC availability-state	CRYCHIC 0.0.1.dev56+g87153a38e.d20260716	168750	168750	168750	1075	21050
+liana_magnitude_consensus	LIANA magnitude consensus	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+liana_specificity_consensus	LIANA specificity consensus	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+logfc_specificity	logFC specificity	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+natmi_specificity	NATMI specificity	LIANA 1.7.3 current Python	10353	10353	10353	408	1552
+singlecellsignalr_lrscore	SingleCellSignalR LRscore	LIANA 1.7.3 current Python	10236	10236	10236	408	1538

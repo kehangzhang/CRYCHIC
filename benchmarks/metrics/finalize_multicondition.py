@@ -28,6 +28,11 @@ import pyarrow.compute as pc  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import yaml  # type: ignore[import-untyped]
 
+from benchmarks.adapters.crychic.resource import (
+    MOLECULAR_LR_CROSSWALK_COLUMNS,
+    attach_molecular_lr_equivalence_ids,
+)
+from benchmarks.metrics.d_common import DCommonSpec, d_common_edge_effects
 from benchmarks.metrics.multicondition import (
     EDGE_KEYS,
     METHOD_IDENTITY_KEYS,
@@ -44,6 +49,7 @@ from benchmarks.metrics.multicondition import (
     unpaired_differential_split_half_reproducibility,
     unpaired_edge_effects,
     unpaired_leave_one_subject_influence,
+    validate_score_table,
     within_context_reproducibility,
 )
 from benchmarks.metrics.multicondition_rank_stability import (
@@ -51,11 +57,21 @@ from benchmarks.metrics.multicondition_rank_stability import (
     evaluate_multicondition_rank_stability,
     not_estimable_rank_stability,
 )
+from benchmarks.metrics.repeated_measures import (
+    RepeatedMeasuresSpec,
+    repeated_measures_effects,
+)
+from benchmarks.metrics.repeated_measures_cr2 import repeated_measures_cr2_effects
+from crychic.design.contrasts import balanced_contrast
+from crychic.design.repeated_measures import RepeatedMeasuresDesignSpec
 
 SPEC_SCHEMA_VERSION = "crychic-multicondition-finalize-v1"
 REPORT_INPUT_SCHEMA_VERSION = "multicondition-report-inputs.v1"
 SCORE_INDEX_SCHEMA_VERSION = "crychic-unified-score-index-v1"
 FINALIZATION_SCHEMA_VERSION = "crychic-multicondition-finalization-v1"
+MOLECULAR_LR_CROSSWALK_MANIFEST_SCHEMA_VERSION = (
+    "crychic-molecular-lr-crosswalk-manifest-v1"
+)
 
 METRIC_FILES: dict[str, str] = {
     "dataset_design": "dataset_design.tsv",
@@ -139,9 +155,7 @@ PERFORMANCE_ROLES = frozenset(
         "excluded",
     }
 )
-METHOD_RUNTIME_ROLES = frozenset(
-    {"method_total", "core_fit", "source_pipeline_total"}
-)
+METHOD_RUNTIME_ROLES = frozenset({"method_total", "core_fit", "source_pipeline_total"})
 
 
 @dataclass(frozen=True)
@@ -153,6 +167,9 @@ class DatasetSpec:
     truth_scope: str
     simulation_truth: Path | None
     dataset_manifest: Path | None
+    sample_design: Path | None
+    sample_design_sha256: str | None
+    effect_models: tuple[Mapping[str, Any], ...]
     adapter_runs: tuple[Mapping[str, Any], ...]
 
 
@@ -198,6 +215,15 @@ class ScoreView:
     @property
     def primary(self) -> bool:
         return self.include and self.role == "primary"
+
+
+@dataclass(frozen=True)
+class MolecularLRCrosswalkBinding:
+    path: Path
+    sha256: str
+    manifest_path: Path | None
+    manifest_sha256: str | None
+    manifest: Mapping[str, Any] | None
 
 
 def _sha256(path: Path) -> str:
@@ -365,9 +391,7 @@ def _read_unique_parquet_metadata(
                     value = _canonical_run_id(value)
                 unique[column].setdefault(value_key(value), value)
             if column != "run_id" and len(unique[column]) > 1:
-                raise ValueError(
-                    f"adapter column {column!r} must contain one value"
-                )
+                raise ValueError(f"adapter column {column!r} must contain one value")
     run_ids = list(unique["run_id"].values())
     if not run_ids:
         return pd.DataFrame(columns=list(columns))
@@ -395,9 +419,7 @@ def _read_parquet_score_view(
     parquet = pq.ParquetFile(path)
     _validate_parquet_adapter_schema(
         parquet,
-        require_universe_member=(
-            columns is not None and "universe_member" in columns
-        ),
+        require_universe_member=(columns is not None and "universe_member" in columns),
     )
     frame = pd.read_parquet(
         path,
@@ -499,6 +521,471 @@ def _manifest_identity(
     )
 
 
+def _canonical_config_text(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field} must be a canonical non-empty string")
+    return value
+
+
+def _config_field_names(value: object, *, field: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"{field} must be a list of field names")
+    names = tuple(_canonical_config_text(item, field=f"{field}[]") for item in value)
+    if len(set(names)) != len(names):
+        raise ValueError(f"{field} must contain unique field names")
+    return names
+
+
+def _config_integer(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
+def _effect_model_specs(
+    raw_models: object,
+    *,
+    field: str,
+    context_key: str,
+    comparison: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    if raw_models is None:
+        return ()
+    if not isinstance(raw_models, list) or not all(
+        isinstance(item, Mapping) for item in raw_models
+    ):
+        raise ValueError(f"{field} must be a list of objects")
+
+    common_keys = {
+        "backend",
+        "batch_keys",
+        "context_key",
+        "contrast",
+        "id",
+        "reference",
+        "role",
+        "target",
+    }
+    backend_keys = {
+        "d_common": common_keys | {"min_subjects_per_group"},
+        "repeated_measures": common_keys
+        | {
+            "max_condition_number",
+            "min_subject_clusters",
+            "min_subjects_per_context",
+            "region_key",
+        },
+        "repeated_measures_cr2": common_keys
+        | {
+            "max_condition_number",
+            "min_subject_clusters",
+            "min_subjects_per_context",
+            "region_key",
+            "subject_fixed_effects",
+        },
+    }
+    normalized: list[Mapping[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, model_value in enumerate(raw_models):
+        model = cast(Mapping[str, Any], model_value)
+        prefix = f"{field}[{index}]"
+        backend = _canonical_config_text(
+            model.get("backend"), field=f"{prefix}.backend"
+        )
+        if backend not in backend_keys:
+            raise ValueError(
+                f"{prefix}.backend must be d_common, repeated_measures, "
+                "or repeated_measures_cr2"
+            )
+        unknown = set(model).difference(backend_keys[backend])
+        if unknown:
+            raise ValueError(f"{prefix} contains unsupported fields: {sorted(unknown)}")
+        model_id = _canonical_config_text(model.get("id"), field=f"{prefix}.id")
+        if model_id in seen_ids:
+            raise ValueError(f"{field} contains duplicate id {model_id!r}")
+        seen_ids.add(model_id)
+        reference = _canonical_config_text(
+            model.get("reference"), field=f"{prefix}.reference"
+        )
+        target = _canonical_config_text(model.get("target"), field=f"{prefix}.target")
+        declared_context = _canonical_config_text(
+            model.get("context_key", context_key), field=f"{prefix}.context_key"
+        )
+        if declared_context != context_key:
+            raise ValueError(
+                f"{prefix}.context_key must equal the dataset context_key "
+                f"{context_key!r}"
+            )
+        if context_key in {"sample_id", "subject_id"}:
+            raise ValueError(f"{prefix}.context_key cannot be sample_id or subject_id")
+        contrast = _canonical_config_text(
+            model.get("contrast", comparison.get("contrast")),
+            field=f"{prefix}.contrast",
+        )
+        role = _canonical_config_text(
+            model.get("role", "exploratory"), field=f"{prefix}.role"
+        )
+        if role != "exploratory":
+            raise ValueError(f"{prefix}.role must be exploratory")
+        batch_keys = _config_field_names(
+            model.get("batch_keys", []), field=f"{prefix}.batch_keys"
+        )
+        reserved = {"sample_id", "subject_id", "context", context_key}
+        overlap = reserved.intersection(batch_keys)
+        if overlap:
+            raise ValueError(
+                f"{prefix}.batch_keys cannot contain reserved fields: {sorted(overlap)}"
+            )
+        base: dict[str, Any] = {
+            "backend": backend,
+            "batch_keys": batch_keys,
+            "context_key": context_key,
+            "contrast": contrast,
+            "id": model_id,
+            "reference": reference,
+            "role": role,
+            "target": target,
+        }
+        if backend == "d_common":
+            minimum = _config_integer(
+                model.get("min_subjects_per_group", 3),
+                field=f"{prefix}.min_subjects_per_group",
+            )
+            DCommonSpec(
+                reference=reference,
+                target=target,
+                batch_keys=batch_keys,
+                min_subjects_per_group=minimum,
+            )
+            base["min_subjects_per_group"] = minimum
+        else:
+            region_value = model.get("region_key")
+            region_key = (
+                None
+                if region_value is None
+                else _canonical_config_text(region_value, field=f"{prefix}.region_key")
+            )
+            minimum_context = _config_integer(
+                model.get("min_subjects_per_context", 3),
+                field=f"{prefix}.min_subjects_per_context",
+            )
+            minimum_clusters = _config_integer(
+                model.get("min_subject_clusters", 6),
+                field=f"{prefix}.min_subject_clusters",
+            )
+            maximum_value = model.get("max_condition_number", 1.0e10)
+            if isinstance(maximum_value, bool) or not isinstance(
+                maximum_value, (int, float)
+            ):
+                raise ValueError(f"{prefix}.max_condition_number must be numeric")
+            maximum = float(maximum_value)
+            RepeatedMeasuresSpec(
+                context_key=context_key,
+                reference=reference,
+                target=target,
+                region_key=region_key,
+                batch_keys=batch_keys,
+                min_subjects_per_context=minimum_context,
+                min_subject_clusters=minimum_clusters,
+                max_condition_number=maximum,
+            )
+            subject_fixed_effects = False
+            if backend == "repeated_measures_cr2":
+                subject_fixed_value = model.get("subject_fixed_effects", False)
+                if not isinstance(subject_fixed_value, bool):
+                    raise ValueError(f"{prefix}.subject_fixed_effects must be boolean")
+                subject_fixed_effects = subject_fixed_value
+                covariates = (
+                    *((region_key,) if region_key not in {None, context_key} else ()),
+                    *batch_keys,
+                )
+                RepeatedMeasuresDesignSpec(
+                    context_keys=(context_key,),
+                    covariates=covariates,
+                    categorical_covariates=covariates,
+                    subject_fixed_effects=subject_fixed_effects,
+                    min_subjects_per_context=minimum_context,
+                    min_subject_clusters=minimum_clusters,
+                    max_condition_number=maximum,
+                )
+            base.update(
+                {
+                    "max_condition_number": maximum,
+                    "min_subject_clusters": minimum_clusters,
+                    "min_subjects_per_context": minimum_context,
+                    "region_key": region_key,
+                }
+            )
+            if backend == "repeated_measures_cr2":
+                base["subject_fixed_effects"] = subject_fixed_effects
+        normalized.append(base)
+    return tuple(normalized)
+
+
+def _sample_design_binding(
+    root: Path,
+    raw_binding: object,
+    *,
+    field: str,
+    required: bool,
+) -> tuple[Path | None, str | None]:
+    if raw_binding is None:
+        if required:
+            raise ValueError(f"{field} is required when effect_models are declared")
+        return None, None
+    if not isinstance(raw_binding, Mapping):
+        raise ValueError(f"{field} must be an object with path and sha256")
+    unknown = set(raw_binding).difference({"path", "sha256"})
+    if unknown:
+        raise ValueError(f"{field} contains unsupported fields: {sorted(unknown)}")
+    sample_path = _resolve(root, raw_binding.get("path"), field=f"{field}.path")
+    if not sample_path.is_file():
+        raise FileNotFoundError(sample_path)
+    expected = _canonical_config_text(
+        raw_binding.get("sha256"), field=f"{field}.sha256"
+    )
+    if len(expected) != 64 or any(
+        character not in "0123456789abcdef" for character in expected
+    ):
+        raise ValueError(f"{field}.sha256 must be a lowercase SHA256 digest")
+    observed = _sha256(sample_path)
+    if observed != expected:
+        raise ValueError(
+            f"{field} SHA256 mismatch: expected={expected}, observed={observed}"
+        )
+    return sample_path, expected
+
+
+def _sha256_binding_value(value: object, *, field: str) -> str:
+    digest = _canonical_config_text(value, field=field)
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise ValueError(f"{field} must be a lowercase SHA256 digest")
+    return digest
+
+
+def _molecular_lr_crosswalk_binding(
+    root: Path,
+    raw_binding: object,
+    *,
+    field: str,
+) -> MolecularLRCrosswalkBinding | None:
+    if raw_binding is None:
+        return None
+    if not isinstance(raw_binding, Mapping):
+        raise ValueError(f"{field} must be an object with path and sha256")
+    unknown = set(raw_binding).difference({"path", "sha256", "manifest"})
+    if unknown:
+        raise ValueError(f"{field} contains unsupported fields: {sorted(unknown)}")
+    crosswalk_path = _resolve(root, raw_binding.get("path"), field=f"{field}.path")
+    if not crosswalk_path.is_file():
+        raise FileNotFoundError(crosswalk_path)
+    expected = _sha256_binding_value(
+        raw_binding.get("sha256"), field=f"{field}.sha256"
+    )
+    observed = _sha256(crosswalk_path)
+    if observed != expected:
+        raise ValueError(
+            f"{field} SHA256 mismatch: expected={expected}, observed={observed}"
+        )
+
+    raw_manifest = raw_binding.get("manifest")
+    if raw_manifest is None:
+        return MolecularLRCrosswalkBinding(
+            path=crosswalk_path,
+            sha256=expected,
+            manifest_path=None,
+            manifest_sha256=None,
+            manifest=None,
+        )
+    if not isinstance(raw_manifest, Mapping):
+        raise ValueError(f"{field}.manifest must be an object with path and sha256")
+    manifest_unknown = set(raw_manifest).difference({"path", "sha256"})
+    if manifest_unknown:
+        raise ValueError(
+            f"{field}.manifest contains unsupported fields: "
+            f"{sorted(manifest_unknown)}"
+        )
+    manifest_path = _resolve(
+        root, raw_manifest.get("path"), field=f"{field}.manifest.path"
+    )
+    if not manifest_path.is_file():
+        raise FileNotFoundError(manifest_path)
+    manifest_expected = _sha256_binding_value(
+        raw_manifest.get("sha256"), field=f"{field}.manifest.sha256"
+    )
+    manifest_observed = _sha256(manifest_path)
+    if manifest_observed != manifest_expected:
+        raise ValueError(
+            f"{field}.manifest SHA256 mismatch: expected={manifest_expected}, "
+            f"observed={manifest_observed}"
+        )
+    manifest = _read_json(manifest_path)
+    if manifest.get("schema_version") != (
+        MOLECULAR_LR_CROSSWALK_MANIFEST_SCHEMA_VERSION
+    ):
+        raise ValueError(
+            f"{field}.manifest schema_version must be "
+            f"{MOLECULAR_LR_CROSSWALK_MANIFEST_SCHEMA_VERSION!r}"
+        )
+    declared_crosswalk_digest = _manifest_value(manifest, "output", "sha256")
+    if declared_crosswalk_digest != expected:
+        raise ValueError(
+            f"{field}.manifest output.sha256 disagrees with the bound crosswalk"
+        )
+    return MolecularLRCrosswalkBinding(
+        path=crosswalk_path,
+        sha256=expected,
+        manifest_path=manifest_path,
+        manifest_sha256=manifest_expected,
+        manifest=manifest,
+    )
+
+
+def _canonical_crosswalk_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and value == value.strip()
+
+
+def _crosswalk_constant(table: pd.DataFrame, column: str) -> str:
+    values = table[column].drop_duplicates()
+    if len(values) != 1 or not _canonical_crosswalk_text(values.iloc[0]):
+        raise ValueError(
+            f"molecular LR crosswalk {column} must contain one canonical value"
+        )
+    return str(values.iloc[0])
+
+
+def _validate_molecular_lr_crosswalk(
+    table: pd.DataFrame,
+    *,
+    binding: MolecularLRCrosswalkBinding,
+    identity: RunIdentity,
+) -> dict[str, str]:
+    missing = set(MOLECULAR_LR_CROSSWALK_COLUMNS).difference(table.columns)
+    if missing:
+        raise ValueError(
+            f"molecular LR crosswalk is missing columns: {sorted(missing)}"
+        )
+    if table.empty:
+        raise ValueError("molecular LR crosswalk must not be empty")
+    key = ["resource_id", "resource_version", "interaction_id"]
+    if table.duplicated(key).any():
+        raise ValueError("molecular LR crosswalk has duplicate resource-edge keys")
+    for column in ("interaction_id", "source_interaction_id"):
+        valid = table[column].map(_canonical_crosswalk_text)
+        if not valid.all():
+            raise ValueError(
+                f"molecular LR crosswalk {column} must contain canonical strings"
+            )
+
+    constant_columns = (
+        "resource_id",
+        "resource_version",
+        "resource_manifest_digest",
+        "resource_bundle_content_id",
+        "molecular_lr_equivalence_universe_id",
+        "molecular_lr_axis_id",
+        "mechanistic_variant_axis_id",
+        "mapping_axis_id",
+    )
+    constants = {
+        column: _crosswalk_constant(table, column) for column in constant_columns
+    }
+    if constants["resource_id"] != identity.resource or constants[
+        "resource_version"
+    ] != identity.resource_version:
+        crosswalk_identity = (
+            constants["resource_id"],
+            constants["resource_version"],
+        )
+        score_identity = (identity.resource, identity.resource_version)
+        raise ValueError(
+            "molecular LR crosswalk resource identity disagrees with the adapter "
+            f"score table: crosswalk={crosswalk_identity}, score={score_identity}"
+        )
+
+    statuses = table["mapping_status"].astype(str)
+    if not set(statuses).issubset({"mapped", "unsupported_direction"}):
+        raise ValueError(
+            "molecular LR crosswalk contains invalid mapping_status values"
+        )
+    mapped = statuses.eq("mapped")
+    mapped_ids = table.loc[
+        mapped, ["molecular_lr_equivalence_id", "mechanistic_variant_id"]
+    ]
+    if (
+        mapped_ids.isna().any(axis=None)
+        or not mapped_ids.map(_canonical_crosswalk_text).all(axis=None)
+        or table.loc[mapped, "reason_code"].notna().any()
+    ):
+        raise ValueError(
+            "molecular LR crosswalk mapped rows are internally inconsistent"
+        )
+    unsupported = ~mapped
+    if (
+        table.loc[
+            unsupported, ["molecular_lr_equivalence_id", "mechanistic_variant_id"]
+        ]
+        .notna()
+        .any(axis=None)
+        or not table.loc[unsupported, "reason_code"]
+        .map(_canonical_crosswalk_text)
+        .all()
+    ):
+        raise ValueError(
+            "molecular LR crosswalk unsupported rows are internally inconsistent"
+        )
+
+    if binding.manifest is not None:
+        output = binding.manifest.get("output")
+        resource = binding.manifest.get("resource")
+        axes = binding.manifest.get("axes")
+        if not all(isinstance(value, Mapping) for value in (output, resource, axes)):
+            raise ValueError(
+                "molecular LR crosswalk manifest requires output, resource, and axes"
+            )
+        output_mapping = cast(Mapping[str, Any], output)
+        declared_rows = _config_integer(
+            output_mapping.get("rows"),
+            field="molecular_lr_crosswalk.manifest.output.rows",
+        )
+        if declared_rows != len(table):
+            raise ValueError(
+                "molecular LR crosswalk manifest output.rows disagrees with the table"
+            )
+        manifest_values = {
+            "resource_id": _manifest_value(binding.manifest, "resource", "resource_id"),
+            "resource_version": _manifest_value(
+                binding.manifest, "resource", "resource_version"
+            ),
+            "resource_manifest_digest": _manifest_value(
+                binding.manifest, "resource", "resource_manifest_digest"
+            ),
+            "resource_bundle_content_id": _manifest_value(
+                binding.manifest, "resource", "resource_bundle_content_id"
+            ),
+            "molecular_lr_equivalence_universe_id": _manifest_value(
+                binding.manifest, "axes", "molecular_lr_equivalence_universe_id"
+            ),
+            "molecular_lr_axis_id": _manifest_value(
+                binding.manifest, "axes", "molecular_lr_axis_id"
+            ),
+            "mechanistic_variant_axis_id": _manifest_value(
+                binding.manifest, "axes", "mechanistic_variant_axis_id"
+            ),
+            "mapping_axis_id": _manifest_value(
+                binding.manifest, "axes", "mapping_axis_id"
+            ),
+        }
+        if manifest_values != constants:
+            raise ValueError(
+                "molecular LR crosswalk manifest identity/axis bindings disagree "
+                "with the table"
+            )
+    return constants
+
+
 def _load_spec(path: Path) -> tuple[dict[str, Any], tuple[DatasetSpec, ...]]:
     payload = _read_json(path)
     schema = payload.get("schema_version")
@@ -549,6 +1036,18 @@ def _load_spec(path: Path) -> tuple[dict[str, Any], tuple[DatasetSpec, ...]]:
                     raise ValueError(
                         f"datasets[{index}].comparison.{field} must be a string"
                     )
+        effect_models = _effect_model_specs(
+            raw.get("effect_models"),
+            field=f"datasets[{index}].effect_models",
+            context_key=context_key,
+            comparison=cast(Mapping[str, Any], comparison),
+        )
+        sample_design, sample_design_sha256 = _sample_design_binding(
+            root,
+            raw.get("sample_design"),
+            field=f"datasets[{index}].sample_design",
+            required=bool(effect_models),
+        )
         truth_scope = str(raw.get("truth_scope", "real_data"))
         simulation_truth = _optional_path(
             root,
@@ -579,6 +1078,9 @@ def _load_spec(path: Path) -> tuple[dict[str, Any], tuple[DatasetSpec, ...]]:
                 truth_scope=truth_scope,
                 simulation_truth=simulation_truth,
                 dataset_manifest=dataset_manifest,
+                sample_design=sample_design,
+                sample_design_sha256=sample_design_sha256,
+                effect_models=effect_models,
                 adapter_runs=tuple(cast(Sequence[Mapping[str, Any]], adapter_runs)),
             )
         )
@@ -724,9 +1226,7 @@ def _rank_scope_for_view(
     common_claim = record.get("common_functional_claim") if record else None
     if common_claim is False:
         if requested == "global_common_functional":
-            raise ValueError(
-                "common_functional_claim=false forbids global rank_scope"
-            )
+            raise ValueError("common_functional_claim=false forbids global rank_scope")
         # The current finalizer cannot apply one receiver-stratified estimand to
         # every primary, concordance, and supportive-biology endpoint yet.
         return (
@@ -899,9 +1399,7 @@ def _annotate_truth_scope(
     if "truth_scope" in result:
         supplied = result["truth_scope"].notna()
         conflict = (
-            supplied
-            & mapped.notna()
-            & result["truth_scope"].astype(str).ne(mapped)
+            supplied & mapped.notna() & result["truth_scope"].astype(str).ne(mapped)
         )
         if conflict.any():
             datasets = sorted(result.loc[conflict, "dataset"].astype(str).unique())
@@ -1104,9 +1602,7 @@ def _derived_performance_record(
     source_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     if performance_role not in PERFORMANCE_ROLES:
-        raise ValueError(
-            f"performance_role must be one of {sorted(PERFORMANCE_ROLES)}"
-        )
+        raise ValueError(f"performance_role must be one of {sorted(PERFORMANCE_ROLES)}")
     status = str(manifest.get("status", "failed"))
     if status not in {"complete", "failed", "not_supported", "skipped"}:
         status = "failed"
@@ -1174,8 +1670,7 @@ def _performance_records_for_run(
     )
     if unknown:
         raise ValueError(
-            "performance_override contains unsupported fields: "
-            f"{sorted(unknown)}"
+            f"performance_override contains unsupported fields: {sorted(unknown)}"
         )
     if role not in {"adapter_readback", "excluded"}:
         raise ValueError(
@@ -1345,9 +1840,7 @@ def _performance_component_summary(records: pd.DataFrame) -> pd.DataFrame:
             )
         source_digests = sorted(
             set(
-                complete.get(
-                    "performance_source_manifest_sha256", pd.Series(dtype=str)
-                )
+                complete.get("performance_source_manifest_sha256", pd.Series(dtype=str))
                 .dropna()
                 .astype(str)
             )
@@ -1439,16 +1932,14 @@ def _biology_support_table(
 
     variant_columns = ["dataset", "method", "resource_mode"]
     if variants.empty or "rank_scope" not in variants:
-        rank_scope_policy = pd.DataFrame(
-            columns=[*variant_columns, "rank_scope"]
-        )
+        rank_scope_policy = pd.DataFrame(columns=[*variant_columns, "rank_scope"])
     else:
-        rank_scope_policy = variants.loc[
-            :, [*variant_columns, "rank_scope"]
-        ].dropna(subset=["rank_scope"]).drop_duplicates()
-        duplicated_scope = rank_scope_policy.duplicated(
-            variant_columns, keep=False
+        rank_scope_policy = (
+            variants.loc[:, [*variant_columns, "rank_scope"]]
+            .dropna(subset=["rank_scope"])
+            .drop_duplicates()
         )
+        duplicated_scope = rank_scope_policy.duplicated(variant_columns, keep=False)
         if duplicated_scope.any():
             raise ValueError(
                 "one biology method/resource variant cannot mix rank_scope values"
@@ -1483,9 +1974,7 @@ def _biology_support_table(
         evidence = evidence.copy(deep=True)
         evidence["dataset"] = evidence["dataset"].astype(str).replace(aliases)
         if "rank_scope" in evidence:
-            evidence = evidence.rename(
-                columns={"rank_scope": "evidence_rank_scope"}
-            )
+            evidence = evidence.rename(columns={"rank_scope": "evidence_rank_scope"})
         else:
             evidence["evidence_rank_scope"] = "global_common_functional"
         if evidence.duplicated(key).any():
@@ -1542,13 +2031,11 @@ def _biology_support_table(
     )
     if "evidence_rank_scope" not in result:
         result["evidence_rank_scope"] = "not_recorded"
-    result["evidence_rank_scope"] = result["evidence_rank_scope"].fillna(
-        "not_recorded"
-    )
-    result["rank_scope"] = result["benchmark_rank_scope"].fillna(
-        result["evidence_rank_scope"].replace("not_recorded", pd.NA)
-    ).fillna(
-        "annotation_only_unbound_rank_scope"
+    result["evidence_rank_scope"] = result["evidence_rank_scope"].fillna("not_recorded")
+    result["rank_scope"] = (
+        result["benchmark_rank_scope"]
+        .fillna(result["evidence_rank_scope"].replace("not_recorded", pd.NA))
+        .fillna("annotation_only_unbound_rank_scope")
     )
     defaults: dict[str, str] = {
         "support_status": "not_evaluated",
@@ -1580,9 +2067,7 @@ def _biology_support_table(
     )
     result.loc[scope_mismatch, "support_status"] = "not_estimable"
     result.loc[scope_mismatch, "status"] = "not_estimable"
-    result.loc[scope_mismatch, "reason_code"] = (
-        "supportive_biology_rank_scope_mismatch"
-    )
+    result.loc[scope_mismatch, "reason_code"] = "supportive_biology_rank_scope_mismatch"
     result.loc[scope_mismatch, "evidence_note"] = (
         "supportive_biology_evidence_scope_does_not_match_benchmark_estimand"
     )
@@ -1669,6 +2154,236 @@ def _iteration_table(path: Path | None, real_datasets: frozenset[str]) -> pd.Dat
             f"invalid iteration metric_direction: {sorted(invalid_direction)}"
         )
     return result
+
+
+def _canonical_metadata_column(table: pd.DataFrame, column: str) -> pd.Series:
+    if column not in table:
+        raise ValueError(f"sample_design is missing columns: {[column]}")
+    values = table[column]
+    if values.isna().any():
+        raise ValueError(f"sample_design.{column} must not contain missing values")
+    labels = values.astype(str)
+    if labels.eq("").any() or labels.str.strip().ne(labels).any():
+        raise ValueError(
+            f"sample_design.{column} must contain canonical non-empty labels"
+        )
+    return labels
+
+
+def _load_effect_sample_design(
+    dataset: DatasetSpec,
+    scores: pd.DataFrame,
+) -> pd.DataFrame:
+    if dataset.sample_design is None or dataset.sample_design_sha256 is None:
+        raise RuntimeError("effect_models require a checksum-bound sample_design")
+    observed_digest = _sha256(dataset.sample_design)
+    if observed_digest != dataset.sample_design_sha256:
+        raise ValueError(
+            f"{dataset.dataset}.sample_design SHA256 mismatch: "
+            f"expected={dataset.sample_design_sha256}, observed={observed_digest}"
+        )
+    design = _read_table(dataset.sample_design)
+    required = {"sample_id", "subject_id", dataset.context_key}
+    missing = required.difference(design.columns)
+    if missing:
+        raise ValueError(f"sample_design is missing columns: {sorted(missing)}")
+    design = design.copy(deep=True)
+    for column in required:
+        design[column] = _canonical_metadata_column(design, column)
+    if design["sample_id"].duplicated().any():
+        raise ValueError("sample_design must contain exactly one row per sample_id")
+
+    score_map = scores.loc[:, ["sample_id", "subject_id", "context"]].copy()
+    for score_column in ("sample_id", "subject_id", "context"):
+        score_map[score_column] = score_map[score_column].astype(str)
+    score_map = score_map.drop_duplicates(ignore_index=True)
+    if score_map["sample_id"].duplicated().any():
+        raise ValueError(
+            "primary score tables map a sample_id to multiple subject/context values"
+        )
+    design_samples = set(design["sample_id"])
+    score_samples = set(score_map["sample_id"])
+    absent_from_design = sorted(score_samples.difference(design_samples))
+    absent_from_scores = sorted(design_samples.difference(score_samples))
+    if absent_from_design or absent_from_scores:
+        raise ValueError(
+            f"{dataset.dataset}.sample_design sample coverage mismatch; "
+            f"absent_from_design={absent_from_design}; "
+            f"absent_from_primary_scores={absent_from_scores}"
+        )
+
+    design_map = design.loc[:, ["sample_id", "subject_id", dataset.context_key]].rename(
+        columns={
+            "subject_id": "design_subject_id",
+            dataset.context_key: "design_context",
+        }
+    )
+    bound = score_map.merge(
+        design_map,
+        on="sample_id",
+        how="left",
+        validate="one_to_one",
+    )
+    if not bound["subject_id"].eq(bound["design_subject_id"]).all():
+        raise ValueError(
+            f"{dataset.dataset}.sample_design subject mapping disagrees with scores"
+        )
+    if not bound["context"].eq(bound["design_context"]).all():
+        raise ValueError(
+            f"{dataset.dataset}.sample_design context mapping disagrees with scores"
+        )
+    return design
+
+
+def _effect_result_annotations(
+    result: pd.DataFrame,
+    *,
+    dataset: DatasetSpec,
+    model: Mapping[str, Any],
+) -> pd.DataFrame:
+    annotated = result.copy(deep=True)
+    annotated["effect_model_id"] = str(model["id"])
+    annotated["effect_model_backend"] = str(model["backend"])
+    annotated["effect_model_role"] = str(model["role"])
+    annotated["effect_model_contrast"] = str(model["contrast"])
+    annotated["reference"] = str(model["reference"])
+    annotated["target"] = str(model["target"])
+    annotated["sample_design_sha256"] = dataset.sample_design_sha256
+    annotated["score_view_role"] = "primary"
+    annotated["score_view_primary"] = True
+    annotated["rank_scope"] = "global_common_functional"
+    annotated["truth_scope"] = dataset.truth_scope
+    if "formal_inference_allowed" not in annotated:
+        annotated["formal_inference_allowed"] = False
+    formal = annotated["formal_inference_allowed"]
+    if formal.isna().any() or not formal.map(
+        lambda value: isinstance(value, (bool, np.bool_)) and not bool(value)
+    ).all():
+        raise RuntimeError(
+            "exploratory common effect backends cannot authorize formal inference"
+        )
+    forbidden = {"p", "p_value", "q", "q_value"}.intersection(annotated.columns)
+    if forbidden:
+        raise RuntimeError(
+            "exploratory common effect backends emitted forbidden inferential "
+            f"fields: {sorted(forbidden)}"
+        )
+    return annotated
+
+
+def _run_declared_effect_models(
+    dataset: DatasetSpec,
+    scores: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    sample_design = _load_effect_sample_design(dataset, scores)
+    group_keys = (*METHOD_IDENTITY_KEYS, "contrast", *EDGE_KEYS)
+    frames: dict[str, list[pd.DataFrame]] = {
+        "d_common": [],
+        "repeated_measures": [],
+        "repeated_measures_cr2": [],
+    }
+    for model in dataset.effect_models:
+        backend = str(model["backend"])
+        batch_keys = cast(tuple[str, ...], model["batch_keys"])
+        if backend == "d_common":
+            context_key = str(model["context_key"])
+            design_columns = list(
+                dict.fromkeys(["sample_id", "subject_id", context_key, *batch_keys])
+            )
+            common_design = sample_design.loc[:, design_columns].copy()
+            if context_key != "context":
+                common_design = common_design.rename(columns={context_key: "context"})
+            result = d_common_edge_effects(
+                scores,
+                common_design,
+                spec=DCommonSpec(
+                    reference=str(model["reference"]),
+                    target=str(model["target"]),
+                    batch_keys=batch_keys,
+                    min_subjects_per_group=int(model["min_subjects_per_group"]),
+                ),
+                contrast=str(model["contrast"]),
+                validated=True,
+            )
+        else:
+            selected = scores.loc[
+                scores["contrast"].astype(str).eq(str(model["contrast"]))
+            ]
+            if selected.empty:
+                raise ValueError(
+                    f"effect model {model['id']!r} contrast "
+                    f"{model['contrast']!r} is absent from primary scores"
+                )
+            effect_input = selected.loc[
+                :,
+                [
+                    *group_keys,
+                    "sample_id",
+                    "comparison_strength",
+                    "status",
+                ],
+            ].copy()
+            if backend == "repeated_measures":
+                result = repeated_measures_effects(
+                    effect_input,
+                    sample_design,
+                    spec=RepeatedMeasuresSpec(
+                        context_key=str(model["context_key"]),
+                        reference=str(model["reference"]),
+                        target=str(model["target"]),
+                        region_key=cast(str | None, model["region_key"]),
+                        batch_keys=batch_keys,
+                        min_subjects_per_context=int(
+                            model["min_subjects_per_context"]
+                        ),
+                        min_subject_clusters=int(model["min_subject_clusters"]),
+                        max_condition_number=float(model["max_condition_number"]),
+                    ),
+                    group_keys=group_keys,
+                    value_key="comparison_strength",
+                    status_key="status",
+                    observed_statuses=("observed", "not_predicted"),
+                )
+            else:
+                context_key = str(model["context_key"])
+                region_key = cast(str | None, model["region_key"])
+                covariates = (
+                    *((region_key,) if region_key not in {None, context_key} else ()),
+                    *batch_keys,
+                )
+                result = repeated_measures_cr2_effects(
+                    effect_input,
+                    sample_design,
+                    design_spec=RepeatedMeasuresDesignSpec(
+                        context_keys=(context_key,),
+                        covariates=covariates,
+                        categorical_covariates=covariates,
+                        subject_fixed_effects=bool(model["subject_fixed_effects"]),
+                        min_subjects_per_context=int(
+                            model["min_subjects_per_context"]
+                        ),
+                        min_subject_clusters=int(model["min_subject_clusters"]),
+                        max_condition_number=float(model["max_condition_number"]),
+                    ),
+                    contrast=balanced_contrast(
+                        (str(model["target"]),),
+                        (str(model["reference"]),),
+                        name=str(model["contrast"]),
+                    ),
+                    identity_keys=(*METHOD_IDENTITY_KEYS, "contrast"),
+                    edge_keys=EDGE_KEYS,
+                    value_key="comparison_strength",
+                    status_key="status",
+                    observed_statuses=("observed", "not_predicted"),
+                )
+        frames[backend].append(
+            _effect_result_annotations(result, dataset=dataset, model=model)
+        )
+    return {
+        backend: pd.concat(values, ignore_index=True, sort=False)
+        for backend, values in frames.items()
+        if values
+    }
 
 
 def _copy_input(source: Path, destination: Path) -> Path:
@@ -1766,6 +2481,12 @@ def finalize(
     sensitivity_loso_frames: list[pd.DataFrame] = []
     sensitivity_influence_frames: list[pd.DataFrame] = []
     sensitivity_simulation_frames: list[pd.DataFrame] = []
+    declared_effect_frames: dict[str, list[pd.DataFrame]] = {
+        "d_common": [],
+        "repeated_measures": [],
+        "repeated_measures_cr2": [],
+    }
+    declared_effect_outputs: dict[str, Path] = {}
     ranking_agreement_frames: list[pd.DataFrame] = []
     ranking_curve_frames: list[pd.DataFrame] = []
     ranking_interval_frames: list[pd.DataFrame] = []
@@ -1776,6 +2497,11 @@ def finalize(
     adapter_manifest_outputs: list[Path] = []
     score_outputs: list[Path] = []
     dataset_manifest_outputs: list[Path] = []
+    sample_design_outputs: list[Path] = []
+    molecular_lr_crosswalk_outputs: list[Path] = []
+    molecular_lr_crosswalk_manifest_outputs: list[Path] = []
+    molecular_lr_crosswalk_records: list[dict[str, Any]] = []
+    molecular_lr_crosswalk_score_tables = 0
     source_records: list[dict[str, Any]] = [
         _source_record(spec_path, "run specification")
     ]
@@ -1810,35 +2536,56 @@ def finalize(
         _write_tsv(staging / "metrics" / METRIC_FILES["dataset_design"], design)
 
         for dataset_index, dataset in enumerate(datasets):
+            dataset_effect_score_frames: list[pd.DataFrame] = []
             dataset_rank_parameters = replace(
                 rank_parameters,
-                min_subjects=max(
-                    3, int(dataset.comparison.get("min_subjects", 3))
-                ),
+                min_subjects=max(3, int(dataset.comparison.get("min_subjects", 3))),
             )
             generated_dataset_manifest = (
                 staging / "datasets" / _slug(dataset.dataset) / "dataset_manifest.json"
             )
-            _write_json(
-                generated_dataset_manifest,
-                {
-                    "schema_version": "crychic-finalized-dataset-manifest-v1",
-                    "dataset_id": dataset.dataset,
-                    "input": dict(dataset.design),
-                    "design_audit": {
-                        "design_type": dataset.comparison["design"],
-                        "status": design.loc[
-                            design["dataset"].eq(dataset.dataset), "status"
-                        ].iloc[0],
-                        "reason_code": design.loc[
-                            design["dataset"].eq(dataset.dataset), "reason_code"
-                        ].iloc[0],
-                    },
-                    "comparison": dict(dataset.comparison),
-                    "truth_scope": dataset.truth_scope,
+            generated_manifest_payload: dict[str, Any] = {
+                "schema_version": "crychic-finalized-dataset-manifest-v1",
+                "dataset_id": dataset.dataset,
+                "input": dict(dataset.design),
+                "design_audit": {
+                    "design_type": dataset.comparison["design"],
+                    "status": design.loc[
+                        design["dataset"].eq(dataset.dataset), "status"
+                    ].iloc[0],
+                    "reason_code": design.loc[
+                        design["dataset"].eq(dataset.dataset), "reason_code"
+                    ].iloc[0],
                 },
-            )
+                "comparison": dict(dataset.comparison),
+                "truth_scope": dataset.truth_scope,
+            }
+            if dataset.effect_models:
+                generated_manifest_payload["effect_models"] = [
+                    dict(model) for model in dataset.effect_models
+                ]
+                generated_manifest_payload["sample_design"] = {
+                    "name": cast(Path, dataset.sample_design).name,
+                    "sha256": dataset.sample_design_sha256,
+                }
+            _write_json(generated_dataset_manifest, generated_manifest_payload)
             dataset_manifest_outputs.append(generated_dataset_manifest)
+            if dataset.sample_design is not None:
+                source_records.append(
+                    _source_record(dataset.sample_design, "effect model sample design")
+                )
+                copied_design = _copy_input(
+                    dataset.sample_design,
+                    staging
+                    / "provenance"
+                    / "sample_designs"
+                    / f"{dataset_index:03d}_{dataset.sample_design.name}",
+                )
+                if _sha256(copied_design) != dataset.sample_design_sha256:
+                    raise RuntimeError(
+                        "copied sample_design failed checksum validation"
+                    )
+                sample_design_outputs.append(copied_design)
             if dataset.dataset_manifest is not None:
                 source_records.append(
                     _source_record(dataset.dataset_manifest, "source dataset manifest")
@@ -1862,6 +2609,11 @@ def finalize(
                 )
 
             if not dataset.adapter_runs:
+                if dataset.effect_models:
+                    raise ValueError(
+                        f"{dataset.dataset}.effect_models require at least one "
+                        "adapter run with a primary LR score table"
+                    )
                 if str(dataset.comparison.get("design")) == "unsupported":
                     reason = str(
                         dataset.design.get("reason_code")
@@ -1963,6 +2715,89 @@ def finalize(
                 )
                 adapter_manifest_outputs.append(copied_manifest)
                 fallback_identity = _manifest_identity(dataset, run, manifest)
+                crosswalk_field = (
+                    f"{dataset.dataset}.adapter_runs[{run_index}]."
+                    "molecular_lr_crosswalk"
+                )
+                crosswalk_binding = _molecular_lr_crosswalk_binding(
+                    spec_root,
+                    run.get("molecular_lr_crosswalk"),
+                    field=crosswalk_field,
+                )
+                crosswalk_table: pd.DataFrame | None = None
+                crosswalk_constants: dict[str, str] | None = None
+                crosswalk_record: dict[str, Any] | None = None
+                if crosswalk_binding is not None:
+                    source_records.append(
+                        _source_record(
+                            crosswalk_binding.path,
+                            "molecular LR equivalence crosswalk",
+                        )
+                    )
+                    copied_crosswalk = _copy_input(
+                        crosswalk_binding.path,
+                        staging
+                        / "provenance"
+                        / "molecular_lr_crosswalks"
+                        / (
+                            f"{dataset_index:03d}_{run_index:03d}_"
+                            f"{crosswalk_binding.path.name}"
+                        ),
+                    )
+                    if _sha256(copied_crosswalk) != crosswalk_binding.sha256:
+                        raise RuntimeError(
+                            "copied molecular LR crosswalk failed checksum validation"
+                        )
+                    molecular_lr_crosswalk_outputs.append(copied_crosswalk)
+                    copied_crosswalk_manifest: Path | None = None
+                    if crosswalk_binding.manifest_path is not None:
+                        source_records.append(
+                            _source_record(
+                                crosswalk_binding.manifest_path,
+                                "molecular LR crosswalk manifest",
+                            )
+                        )
+                        copied_crosswalk_manifest = _copy_input(
+                            crosswalk_binding.manifest_path,
+                            staging
+                            / "provenance"
+                            / "molecular_lr_crosswalk_manifests"
+                            / (
+                                f"{dataset_index:03d}_{run_index:03d}_"
+                                f"{crosswalk_binding.manifest_path.name}"
+                            ),
+                        )
+                        if _sha256(copied_crosswalk_manifest) != (
+                            crosswalk_binding.manifest_sha256
+                        ):
+                            raise RuntimeError(
+                                "copied molecular LR crosswalk manifest failed "
+                                "checksum validation"
+                            )
+                        molecular_lr_crosswalk_manifest_outputs.append(
+                            copied_crosswalk_manifest
+                        )
+                    crosswalk_table = _read_table(crosswalk_binding.path)
+                    crosswalk_record = {
+                        "dataset": fallback_identity.dataset,
+                        "method": fallback_identity.method,
+                        "method_version": fallback_identity.method_version,
+                        "resource": fallback_identity.resource,
+                        "resource_version": fallback_identity.resource_version,
+                        "crosswalk_path": copied_crosswalk.relative_to(
+                            staging
+                        ).as_posix(),
+                        "crosswalk_sha256": crosswalk_binding.sha256,
+                        "manifest_path": (
+                            copied_crosswalk_manifest.relative_to(staging).as_posix()
+                            if copied_crosswalk_manifest is not None
+                            else None
+                        ),
+                        "manifest_sha256": crosswalk_binding.manifest_sha256,
+                        "score_tables_attached": 0,
+                        "status": "checksum_verified_not_yet_applied",
+                    }
+                    molecular_lr_crosswalk_records.append(crosswalk_record)
                 long_value = run.get("long_table")
                 long_path = (
                     _resolve(
@@ -1973,6 +2808,13 @@ def finalize(
                     if long_value is not None
                     else None
                 )
+                if crosswalk_binding is not None and (
+                    long_path is None or not long_path.is_file()
+                ):
+                    raise ValueError(
+                        "molecular LR crosswalk binding requires an existing "
+                        "adapter long_table for strict application"
+                    )
                 run_performance, performance_sources = _performance_records_for_run(
                     spec_root=spec_root,
                     identity=fallback_identity,
@@ -2062,6 +2904,29 @@ def finalize(
                     long_path, TRACK_METADATA_COLUMNS
                 )
                 base_identity = _identity_from_track_metadata(track_metadata, dataset)
+                if crosswalk_table is not None:
+                    if base_identity.analysis_track != "lr_stlr":
+                        raise ValueError(
+                            "molecular LR crosswalks may be attached only to "
+                            "analysis_track='lr_stlr'"
+                        )
+                    crosswalk_constants = _validate_molecular_lr_crosswalk(
+                        crosswalk_table,
+                        binding=cast(MolecularLRCrosswalkBinding, crosswalk_binding),
+                        identity=base_identity,
+                    )
+                    if crosswalk_record is not None:
+                        crosswalk_record.update(
+                            {
+                                "dataset": base_identity.dataset,
+                                "method": base_identity.method,
+                                "method_version": base_identity.method_version,
+                                "resource": base_identity.resource,
+                                "resource_version": base_identity.resource_version,
+                                **crosswalk_constants,
+                            }
+                        )
+                        crosswalk_record["status"] = "validated_not_yet_applied"
                 views = _score_views(track_metadata, dataset, run, manifest)
                 multiple_views = len(views) > 1
                 variant_rows.append(
@@ -2214,6 +3079,28 @@ def finalize(
                         "source_path": long_path.as_posix(),
                         "source_sha256": source_digest,
                         "rank_scope": rank_scope,
+                        "molecular_lr_crosswalk_sha256": (
+                            crosswalk_binding.sha256
+                            if crosswalk_binding is not None
+                            else None
+                        ),
+                        "molecular_lr_crosswalk_manifest_sha256": (
+                            crosswalk_binding.manifest_sha256
+                            if crosswalk_binding is not None
+                            else None
+                        ),
+                        "molecular_lr_equivalence_universe_id": (
+                            crosswalk_constants[
+                                "molecular_lr_equivalence_universe_id"
+                            ]
+                            if crosswalk_constants is not None
+                            else None
+                        ),
+                        "molecular_lr_axis_id": (
+                            crosswalk_constants["molecular_lr_axis_id"]
+                            if crosswalk_constants is not None
+                            else None
+                        ),
                     }
                     if not view.include:
                         score_index_rows.append(
@@ -2255,6 +3142,17 @@ def finalize(
                         dataset=dataset.dataset,
                     )
                     del selected_external
+                    if crosswalk_table is not None:
+                        mapped = attach_molecular_lr_equivalence_ids(
+                            mapped, crosswalk_table
+                        )
+                        mapped = validate_score_table(mapped)
+                        molecular_lr_crosswalk_score_tables += 1
+                        if crosswalk_record is not None:
+                            crosswalk_record["score_tables_attached"] = int(
+                                crosswalk_record["score_tables_attached"]
+                            ) + 1
+                            crosswalk_record["status"] = "applied"
                     # Validation performs sorting/ranking using ordinary NumPy
                     # dtypes where required. Return repeated string identifiers
                     # to Arrow storage before downstream metric fan-out.
@@ -2284,9 +3182,7 @@ def finalize(
                     coverage_result = _annotate_view(
                         score_coverage_summary(mapped, validated=True), view
                     )
-                    coverage_result = _annotate_rank_scope(
-                        coverage_result, rank_scope
-                    )
+                    coverage_result = _annotate_rank_scope(coverage_result, rank_scope)
                     coverage_target = (
                         coverage_frames if view.primary else sensitivity_coverage_frames
                     )
@@ -2296,6 +3192,12 @@ def finalize(
                         else sensitivity_stability_frames
                     )
                     coverage_target.append(coverage_result)
+                    if (
+                        dataset.effect_models
+                        and view.primary
+                        and rank_scope_reason is None
+                    ):
+                        dataset_effect_score_frames.append(mapped)
                     design_type = str(dataset.comparison["design"])
                     reference = str(dataset.comparison.get("reference", ""))
                     target = str(dataset.comparison.get("target", ""))
@@ -2579,6 +3481,43 @@ def finalize(
                 del track_metadata
                 gc.collect()
 
+            if dataset.effect_models:
+                if not dataset_effect_score_frames:
+                    raise ValueError(
+                        f"{dataset.dataset}.effect_models require at least one "
+                        "globally comparable primary LR score table"
+                    )
+                dataset_effect_scores = pd.concat(
+                    dataset_effect_score_frames,
+                    ignore_index=True,
+                    sort=False,
+                )
+                model_results = _run_declared_effect_models(
+                    dataset,
+                    dataset_effect_scores,
+                )
+                for backend, result in model_results.items():
+                    declared_effect_frames[backend].append(result)
+                del dataset_effect_scores
+                dataset_effect_score_frames.clear()
+                gc.collect()
+
+        effect_filenames = {
+            "d_common": "d_common_edge_effects.parquet",
+            "repeated_measures": "repeated_measures_edge_effects.parquet",
+            "repeated_measures_cr2": "repeated_measures_cr2_edge_effects.parquet",
+        }
+        for backend, frames in declared_effect_frames.items():
+            if not frames:
+                continue
+            path = staging / "derived" / effect_filenames[backend]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pd.concat(frames, ignore_index=True, sort=False).to_parquet(
+                path,
+                index=False,
+            )
+            declared_effect_outputs[backend] = path
+
         if paired_loso_frames:
             all_loso = _annotate_truth_scope(
                 pd.concat(paired_loso_frames, ignore_index=True, sort=False),
@@ -2700,8 +3639,7 @@ def finalize(
             missing_coverage = required_coverage.difference(coverage_input.columns)
             if missing_coverage:
                 raise ValueError(
-                    "coverage_records is missing columns: "
-                    f"{sorted(missing_coverage)}"
+                    f"coverage_records is missing columns: {sorted(missing_coverage)}"
                 )
             coverage = pd.concat(
                 [coverage, coverage_input], ignore_index=True, sort=False
@@ -2761,9 +3699,7 @@ def finalize(
                     f"{sorted(invalid_scopes)}"
                 )
             simulation = (
-                pd.concat(
-                    [simulation, simulation_input], ignore_index=True, sort=False
-                )
+                pd.concat([simulation, simulation_input], ignore_index=True, sort=False)
                 if simulation_frames
                 else simulation_input
             )
@@ -2908,6 +3844,17 @@ def finalize(
             _write_tsv(staging / "metrics" / METRIC_FILES[key], table)
 
         score_index = pd.DataFrame(score_index_rows)
+        unapplied_crosswalks = [
+            record
+            for record in molecular_lr_crosswalk_records
+            if record["status"] != "applied"
+            or int(record["score_tables_attached"]) < 1
+        ]
+        if unapplied_crosswalks:
+            raise RuntimeError(
+                "every declared molecular LR crosswalk must be applied to at least "
+                f"one score table: {unapplied_crosswalks}"
+            )
         _write_tsv(staging / "score_tables" / "score_table_index.tsv", score_index)
 
         report_inputs = {
@@ -2930,6 +3877,25 @@ def finalize(
                 key: f"metrics/{filename}" for key, filename in METRIC_FILES.items()
             },
         }
+        if sample_design_outputs:
+            report_inputs["effect_model_sample_designs"] = [
+                path.relative_to(staging).as_posix() for path in sample_design_outputs
+            ]
+        if molecular_lr_crosswalk_outputs:
+            report_inputs["molecular_lr_crosswalks"] = [
+                path.relative_to(staging).as_posix()
+                for path in molecular_lr_crosswalk_outputs
+            ]
+        if molecular_lr_crosswalk_manifest_outputs:
+            report_inputs["molecular_lr_crosswalk_manifests"] = [
+                path.relative_to(staging).as_posix()
+                for path in molecular_lr_crosswalk_manifest_outputs
+            ]
+        if declared_effect_outputs:
+            report_inputs["exploratory_effect_models"] = {
+                backend: path.relative_to(staging).as_posix()
+                for backend, path in declared_effect_outputs.items()
+            }
         _write_json(staging / "report_inputs.json", report_inputs)
 
         generated_at = str(payload.get("generated_at", datetime.now(UTC).isoformat()))
@@ -2947,12 +3913,17 @@ def finalize(
                 "lr_top_k_curve": [1, 100],
                 "sender_top_k_curve": [1, 25],
                 "sender_receiver_pair_top_k_curve": [1, 25],
-                "lr_family_mapping_status": "not_available_in_score_contract",
+                "lr_family_mapping_status": (
+                    "available_for_checksum_bound_score_tables"
+                    if molecular_lr_crosswalk_score_tables
+                    else "not_available_in_score_contract"
+                ),
+                "molecular_lr_crosswalk_score_tables": (
+                    molecular_lr_crosswalk_score_tables
+                ),
                 "resampling_unit": "subject",
                 "rank_interval_conditioning": "conditional_on_rank_availability",
-                "rank_availability_frequency_denominator": (
-                    "all_requested_replicates"
-                ),
+                "rank_availability_frequency_denominator": ("all_requested_replicates"),
                 "top_k_frequency_denominator": "all_requested_replicates",
                 "tie_policy": "average_rank_and_tie_inclusive_top_k",
             },
@@ -3013,9 +3984,22 @@ def finalize(
                 "receiver_child_functionals_ranked_globally": False,
             },
             "supportive_biology_dataset_aliases": biology_dataset_aliases,
+            "molecular_lr_crosswalk_bindings": molecular_lr_crosswalk_records,
             "report_inputs": "report_inputs.json",
             "checksum_manifest": "SHA256SUMS.tsv",
         }
+        if declared_effect_outputs:
+            final_manifest["exploratory_effect_model_outputs"] = {
+                backend: path.relative_to(staging).as_posix()
+                for backend, path in declared_effect_outputs.items()
+            }
+            counts = cast(dict[str, Any], final_manifest["counts"])
+            for backend, frames in declared_effect_frames.items():
+                if frames:
+                    counts[f"{backend}_effect_rows"] = sum(map(len, frames))
+            guardrails = cast(dict[str, Any], final_manifest["guardrails"])
+            guardrails["exploratory_effects_replaced_legacy_edge_effects"] = False
+            guardrails["exploratory_effects_emitted_formal_p_or_q"] = False
         _write_json(staging / "finalization_manifest.json", final_manifest)
         checksums = pd.DataFrame([*source_records, *_output_records(staging)])
         _write_tsv(staging / "SHA256SUMS.tsv", checksums)

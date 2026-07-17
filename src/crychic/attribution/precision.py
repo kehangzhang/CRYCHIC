@@ -12,6 +12,7 @@ import numpy as np
 
 from crychic.core import ContractError, stable_id
 from crychic.response import FoldGeneResponseArtifact
+from crychic.response.repeated_fold import RepeatedMeasuresFoldResponseArtifact
 
 _EXPLORATORY_METHOD = "winsorized_median_normalized_v2"
 _STANDARDIZED_GUARDRAIL_METHOD = (
@@ -21,6 +22,12 @@ _PRODUCER_MARKER = "crychic.attribution.precision.v3"
 _TRANSFORM_SCHEMA_VERSION = "3"
 _EXPLORATORY_LINEAGE_MODE = "exploratory_unparented_v2"
 _RESPONSE_LINEAGE_MODE = "fold_gene_response_parented_v1"
+_REPEATED_RESPONSE_LINEAGE_MODE = "repeated_measures_fold_response_parented_v1"
+_REPEATED_CR2_RESPONSE_LINEAGE_MODE = "repeated_measures_cr2_fold_response_parented_v1"
+_REPEATED_STANDARDIZED_METHOD = (
+    "repeated_cr1_diagnostic_standardized_inverse_variance_v1"
+)
+_REPEATED_CR2_STANDARDIZED_METHOD = "repeated_cr2_standardized_inverse_variance_v1"
 _LOW_DF_THRESHOLD = 4
 _RAW_WEIGHT_MODE = "winsorized_raw_inverse_variance_v2"
 _STANDARDIZED_WEIGHT_MODE = "winsorized_standardized_inverse_variance_v1"
@@ -31,6 +38,20 @@ _CALLER_SCALE_SOURCE = "caller_supplied_downstream_feature_scale_v1"
 _MISSING_SCALE_SOURCE = "not_provided_v1"
 _ARTIFACT_DF_SOURCE = "fold_gene_response_residual_df_v1"
 _MISSING_DF_SOURCE = "not_estimable_fold_gene_response_v1"
+_REPEATED_DF_SOURCE = "feature_specific_subject_cluster_cr1_v1"
+_REPEATED_CR2_DF_SOURCE = "feature_specific_subject_cluster_cr2_v1"
+_REPEATED_STANDARDIZED_WEIGHT_MODE = (
+    "winsorized_repeated_cr1_standardized_inverse_variance_v1"
+)
+_REPEATED_CR2_STANDARDIZED_WEIGHT_MODE = (
+    "winsorized_repeated_cr2_standardized_inverse_variance_v1"
+)
+_REPEATED_MISSING_SCALE_WEIGHT_MODE = (
+    "equal_supported_repeated_cr1_feature_scale_unavailable_v1"
+)
+_REPEATED_CR2_MISSING_SCALE_WEIGHT_MODE = (
+    "equal_supported_repeated_cr2_feature_scale_unavailable_v1"
+)
 
 
 def _names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
@@ -94,7 +115,11 @@ def _validated_lineage(
                 "exploratory precision lineage cannot declare response parents"
             )
         return mode, None, None, (), None
-    if mode != _RESPONSE_LINEAGE_MODE:
+    if mode not in {
+        _RESPONSE_LINEAGE_MODE,
+        _REPEATED_RESPONSE_LINEAGE_MODE,
+        _REPEATED_CR2_RESPONSE_LINEAGE_MODE,
+    }:
         raise ValueError("lineage_mode is not a supported precision lineage mode")
     if not subjects:
         raise ValueError("parented precision requires training_subject_ids")
@@ -172,8 +197,10 @@ def _validated_feature_scale(
     n_features: int,
 ) -> tuple[np.ndarray, str | None, str]:
     if feature_scale is None:
-        return _immutable_vector(np.empty(0, dtype=np.float64)), None, (
-            _MISSING_SCALE_SOURCE
+        return (
+            _immutable_vector(np.empty(0, dtype=np.float64)),
+            None,
+            (_MISSING_SCALE_SOURCE),
         )
     scale = np.asarray(feature_scale, dtype=np.float64)
     if scale.shape != (n_features,):
@@ -438,9 +465,7 @@ class PrecisionTransformResult:
                 scale.size and (np.any(~np.isfinite(scale)) or np.any(scale <= 0))
             ):
                 raise ValueError("precision feature scale is invalid")
-            scale_digest = (
-                None if scale.size == 0 else _finite_vector_digest(scale)
-            )
+            scale_digest = None if scale.size == 0 else _finite_vector_digest(scale)
             if self.residual_df is not None and (
                 isinstance(self.residual_df, bool)
                 or not isinstance(self.residual_df, int)
@@ -508,8 +533,7 @@ class PrecisionTransformResult:
             and self.low_df_threshold == _LOW_DF_THRESHOLD
             and self.feature_scale_source
             in {_CALLER_SCALE_SOURCE, _MISSING_SCALE_SOURCE}
-            and self.residual_df_source
-            in {_ARTIFACT_DF_SOURCE, _MISSING_DF_SOURCE}
+            and self.residual_df_source in {_ARTIFACT_DF_SOURCE, _MISSING_DF_SOURCE}
             and self.weight_mode
             in {
                 _STANDARDIZED_WEIGHT_MODE,
@@ -545,8 +569,7 @@ class PrecisionTransformResult:
                 )
             )
             and (
-                self.weight_mode != _UNKNOWN_DF_WEIGHT_MODE
-                or self.residual_df is None
+                self.weight_mode != _UNKNOWN_DF_WEIGHT_MODE or self.residual_df is None
             )
             and (
                 self.weight_mode != _MISSING_SCALE_WEIGHT_MODE
@@ -557,8 +580,65 @@ class PrecisionTransformResult:
                 )
             )
         )
+        repeated_cr1_metadata_valid = (
+            self.method == _REPEATED_STANDARDIZED_METHOD
+            and self.lineage_mode == _REPEATED_RESPONSE_LINEAGE_MODE
+            and self.low_df_threshold is None
+            and self.feature_scale_source
+            in {_CALLER_SCALE_SOURCE, _MISSING_SCALE_SOURCE}
+            and self.residual_df is None
+            and self.residual_df_source == _REPEATED_DF_SOURCE
+            and self.weight_mode
+            in {
+                _REPEATED_STANDARDIZED_WEIGHT_MODE,
+                _REPEATED_MISSING_SCALE_WEIGHT_MODE,
+            }
+            and (
+                (scale.size == len(self.feature_ids))
+                == (self.feature_scale_source == _CALLER_SCALE_SOURCE)
+            )
+            and (
+                self.weight_mode == _REPEATED_STANDARDIZED_WEIGHT_MODE
+                or self.normalization_median in {None, 1.0}
+            )
+            and (
+                (self.weight_mode == _REPEATED_STANDARDIZED_WEIGHT_MODE)
+                == (scale.size == len(self.feature_ids))
+            )
+        )
+        repeated_cr2_metadata_valid = (
+            self.method == _REPEATED_CR2_STANDARDIZED_METHOD
+            and self.lineage_mode == _REPEATED_CR2_RESPONSE_LINEAGE_MODE
+            and self.low_df_threshold is None
+            and self.feature_scale_source
+            in {_CALLER_SCALE_SOURCE, _MISSING_SCALE_SOURCE}
+            and self.residual_df is None
+            and self.residual_df_source == _REPEATED_CR2_DF_SOURCE
+            and self.weight_mode
+            in {
+                _REPEATED_CR2_STANDARDIZED_WEIGHT_MODE,
+                _REPEATED_CR2_MISSING_SCALE_WEIGHT_MODE,
+            }
+            and (
+                (scale.size == len(self.feature_ids))
+                == (self.feature_scale_source == _CALLER_SCALE_SOURCE)
+            )
+            and (
+                self.weight_mode == _REPEATED_CR2_STANDARDIZED_WEIGHT_MODE
+                or self.normalization_median in {None, 1.0}
+            )
+            and (
+                (self.weight_mode == _REPEATED_CR2_STANDARDIZED_WEIGHT_MODE)
+                == (scale.size == len(self.feature_ids))
+            )
+        )
         valid = (
-            (exploratory_metadata_valid or response_metadata_valid)
+            (
+                exploratory_metadata_valid
+                or response_metadata_valid
+                or repeated_cr1_metadata_valid
+                or repeated_cr2_metadata_valid
+            )
             and scale_digest == self.feature_scale_digest
             and transformed_digest == self.transformed_precision_digest
             and int(np.count_nonzero(transformed)) == self.n_positive_features
@@ -609,16 +689,30 @@ class PrecisionTransformResult:
             )
 
     def require_response_compatible(
-        self, response_artifact: FoldGeneResponseArtifact
+        self,
+        response_artifact: (
+            FoldGeneResponseArtifact | RepeatedMeasuresFoldResponseArtifact
+        ),
     ) -> None:
         """Validate integrity and exact fold-response parentage."""
 
-        if not isinstance(response_artifact, FoldGeneResponseArtifact):
-            raise TypeError("response_artifact must be a FoldGeneResponseArtifact")
+        if not isinstance(
+            response_artifact,
+            (FoldGeneResponseArtifact, RepeatedMeasuresFoldResponseArtifact),
+        ):
+            raise TypeError("response_artifact must be a supported fold response")
         response_artifact._require_intact()
         self._require_producer_owned()
+        if isinstance(response_artifact, RepeatedMeasuresFoldResponseArtifact):
+            lineage_mode = (
+                _REPEATED_RESPONSE_LINEAGE_MODE
+                if response_artifact.is_cr1_exploratory
+                else _REPEATED_CR2_RESPONSE_LINEAGE_MODE
+            )
+        else:
+            lineage_mode = _RESPONSE_LINEAGE_MODE
         expected = (
-            _RESPONSE_LINEAGE_MODE,
+            lineage_mode,
             response_artifact.artifact_id,
             response_artifact.training_sample_manifest_digest,
             response_artifact.training_subject_ids,
@@ -658,7 +752,11 @@ class PrecisionTransformResult:
         """Validate the exact response standardization and df guardrail inputs."""
 
         self._require_producer_owned()
-        if self.method != _STANDARDIZED_GUARDRAIL_METHOD:
+        if self.method not in {
+            _STANDARDIZED_GUARDRAIL_METHOD,
+            _REPEATED_STANDARDIZED_METHOD,
+            _REPEATED_CR2_STANDARDIZED_METHOD,
+        }:
             raise ContractError(
                 "Precision transform is not defined for a standardized response",
                 code="precision_transform_standardization_mismatch",
@@ -917,9 +1015,7 @@ def fit_response_precision(
         upper_quantile=upper_quantile,
         min_positive_features=min_positive_features,
         method=_STANDARDIZED_GUARDRAIL_METHOD,
-        source_raw_precision_digest=_raw_vector_digest(
-            response_artifact.raw_precision
-        ),
+        source_raw_precision_digest=_raw_vector_digest(response_artifact.raw_precision),
         feature_scale=scale,
         feature_scale_digest=scale_digest,
         feature_scale_source=scale_source,
@@ -937,5 +1033,93 @@ def fit_response_precision(
     result.require_standardized_space_compatible(
         feature_scale=feature_scale,
         residual_df=residual_df,
+    )
+    return result
+
+
+def fit_repeated_response_precision(
+    response_artifact: RepeatedMeasuresFoldResponseArtifact,
+    *,
+    feature_scale: np.ndarray | Sequence[float] | None = None,
+    lower_quantile: float = 0.05,
+    upper_quantile: float = 0.95,
+    min_positive_features: int = 2,
+) -> PrecisionTransformResult:
+    """Fit backend-specific weights with exact repeated-response parentage.
+
+    The transform consumes CR1 diagnostic precision or strict CR2 precision as
+    declared by the response parent. It only supplies relative feature weights
+    and never authorizes analytic p/q values.
+    """
+
+    if not isinstance(response_artifact, RepeatedMeasuresFoldResponseArtifact):
+        raise TypeError(
+            "response_artifact must be a RepeatedMeasuresFoldResponseArtifact"
+        )
+    response_artifact._require_intact()
+    is_cr1 = response_artifact.is_cr1_exploratory
+    scale, scale_digest, scale_source = _validated_feature_scale(
+        feature_scale,
+        n_features=len(response_artifact.feature_ids),
+    )
+    raw = np.asarray(response_artifact.raw_precision, dtype=np.float64)
+    supported = np.isfinite(raw) & (raw > 0)
+    if scale.size == 0:
+        working_precision = supported.astype(np.float64)
+        weight_mode = _REPEATED_MISSING_SCALE_WEIGHT_MODE
+    else:
+        with np.errstate(over="ignore", invalid="ignore"):
+            working_precision = raw * np.square(scale)
+        if np.any(~np.isfinite(working_precision[supported])):
+            raise ValueError(
+                "standardized repeated precision must be finite for supported features"
+            )
+        weight_mode = (
+            _REPEATED_STANDARDIZED_WEIGHT_MODE
+            if is_cr1
+            else _REPEATED_CR2_STANDARDIZED_WEIGHT_MODE
+        )
+    if scale.size == 0:
+        weight_mode = (
+            _REPEATED_MISSING_SCALE_WEIGHT_MODE
+            if is_cr1
+            else _REPEATED_CR2_MISSING_SCALE_WEIGHT_MODE
+        )
+    result = _fit_precision_transform(
+        working_precision,
+        feature_ids=response_artifact.feature_ids,
+        receiver=response_artifact.receiver,
+        contrast_name=response_artifact.contrast_name,
+        fold_id=response_artifact.fold_id,
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        min_positive_features=min_positive_features,
+        method=(
+            _REPEATED_STANDARDIZED_METHOD
+            if is_cr1
+            else _REPEATED_CR2_STANDARDIZED_METHOD
+        ),
+        source_raw_precision_digest=_raw_vector_digest(response_artifact.raw_precision),
+        feature_scale=scale,
+        feature_scale_digest=scale_digest,
+        feature_scale_source=scale_source,
+        residual_df=None,
+        residual_df_source=(_REPEATED_DF_SOURCE if is_cr1 else _REPEATED_CR2_DF_SOURCE),
+        low_df_threshold=None,
+        weight_mode=weight_mode,
+        lineage_mode=(
+            _REPEATED_RESPONSE_LINEAGE_MODE
+            if is_cr1
+            else _REPEATED_CR2_RESPONSE_LINEAGE_MODE
+        ),
+        response_artifact_id=response_artifact.artifact_id,
+        training_row_manifest_id=(response_artifact.training_sample_manifest_digest),
+        training_subject_ids=response_artifact.training_subject_ids,
+        encoder_id=response_artifact.encoder_id,
+    )
+    result.require_response_compatible(response_artifact)
+    result.require_standardized_space_compatible(
+        feature_scale=feature_scale,
+        residual_df=None,
     )
     return result

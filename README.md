@@ -9,9 +9,12 @@ balanced context contrasts, scores LR availability, optionally attributes
 receiver responses with a versioned NicheNet prior, and writes atomic,
 queryable results.
 
-This is not the completed roadmap or a calibrated inference release. v0.1
-strengths are descriptive and in-sample; p-values, q-values,
-`comm_probability`, posterior quantities, and causal sender claims are disabled.
+This is not the completed roadmap or a calibrated inference release. The
+default v0.1 strengths are descriptive and in-sample. The opt-in subject
+cross-fit path can produce held-out strength, effect and candidate inference
+diagnostics, but public q-values and `comm_probability` remain unavailable
+until their exact producer-owned calibration gates pass. Causal sender claims
+are not supported.
 
 ## Current Development Status
 
@@ -26,15 +29,22 @@ preserving the exploratory v0.1 behavior:
   exact held-out expression and row manifest. The program is diagnostic only:
   it is explicitly excluded from `integrated_lr_score` and is not incremental
   or integrated edge evidence. Public cross-fit also fits a typed fold response,
-  response-parented precision and incremental diagnostic. When supplied, the
-  opt-in path accepts only a typed autonomous resource and can consume a
+  response-parented precision and incremental diagnostic. The opt-in path can
+  consume a typed static autonomous resource and/or a
+  `FrozenLatentNuisanceSpec`. The latter learns a small precision-weighted
+  receiver-autonomous basis separately inside every outer and inner training
+  split. Its control genes exclude the complete frozen target-prior universe,
+  including targets of receptor-ineligible families; held-out rows are never
+  accepted by the fitting API. Static resources can consume a
   manifest-backed registration that pins the manifest digest, payload path,
   SHA-256, size, canonical matrix digest, release, species, namespace, license,
   review scope and static TSV schema. With
-  `manifest_verified_static_trusted_v1` provenance and an estimable paired
-  subject-blocked tuning plan, incremental training and held-out applications
-  may receive official `observed` status. Caller-built resources remain
-  unverified and fail closed at the official gate;
+  `manifest_verified_static_trusted_v1` provenance, or with an observed nested
+  fold-learned latent artifact, an estimable subject-blocked tuning plan lets
+  incremental training and held-out applications receive descriptive OOF
+  `observed` status. A failed latent fit is retained as a typed diagnostic
+  artifact. Caller-built static resources remain unverified and fail closed at
+  the official gate;
 - attribution now consumes a producer-owned v3 response-precision artifact. It
   binds the exact fold-response parent, residual degrees of freedom, downstream
   feature scale, training rows, subjects, encoder, ordered features and values.
@@ -66,8 +76,13 @@ preserving the exploratory v0.1 behavior:
   eligible set is ordered by explicit L1-first sparsity priority, then L2. This
   is a policy order, not a claim that cross-axis elastic-net candidates have a
   single physical regularization magnitude. The heuristic is not a confidence
-  interval or noninferiority test. Independent and mixed-subject one-SE tuning
-  remain explicitly unsupported;
+  interval or noninferiority test. Independent and mixed-subject paths now use
+  their own frozen subject-blocked validation-loss estimands. Mixed and
+  repeated-multi-context outer folds use strict subject-equal CR2 responses;
+  partial feature failures receive zero precision weight, insufficient feature
+  or cluster support fails closed, and the legacy CR1 producer remains
+  diagnostic-only. Result v9 persists a response-backend and precision audit,
+  while analytic p/q remain unavailable;
 - opt-in attribution candidates provide hard receptor eligibility, directional
   response channels, strict family-first bases, and evidence-weighted member
   allocation without changing the legacy default;
@@ -75,12 +90,12 @@ preserving the exploratory v0.1 behavior:
   fitted basis, coefficient digest, receptor gates, target weights, sender and
   downstream functionals, availability and precision transforms, filtering,
   and tuning artifacts;
-- integrated result directories now persist a versioned
-  `scoring_collections.json` registry. Each contrast/repeat/fold collection
-  enumerates only the emitted receiver-specific scoring functional IDs and
-  source-score key digests. It is marked `partial_emitted_only`, records
-  `common_functional_across_receivers=false`, and does not claim a complete
-  planned receiver universe or verified persisted model metadata;
+- integrated baseline result directories retain their versioned emitted-score
+  registry. Public cross-fit artifacts additionally derive an authoritative v3
+  registry for every planned `contrast x repeat x fold x receiver` child,
+  including typed not-produced/not-estimable states and the frozen filter
+  universe. The registry and its stable identity are embedded in the source
+  cross-fit manifest;
 - availability state and ecosystem eligibility have separate status and reason
   fields, and missing sender evidence no longer receives an implicit uniform
   assignment;
@@ -110,36 +125,93 @@ preserving the exploratory v0.1 behavior:
   the same path produces family-first attribution, held-out subject-family
   differential effects, state/ecosystem family and member scores, and conserved
   sender allocation. Producer-owned bindings cover the exact incremental,
-  tuning, autonomous-resource, receiver-program target-profile and held-out
-  input, edge-evidence and receiver-specific sender input lineage. Training
+  tuning, effective autonomous-source, latent spec/artifact, static resource,
+  receiver-program target-profile and held-out input, edge-evidence and
+  receiver-specific sender input lineage. Training
   receiver reference expression must cover every expected training sample
   exactly and preserve its authoritative subject and context identity; partial
   or relabeled coverage fails closed. Trusted paired incremental children can
   be officially observed, and the source-/receptor-/sender-agnostic receiver
-  program is connected as a diagnostic-only parent. Family-common tables remain
-  explicitly noncertifying diagnostics, while untrusted, independent or
-  otherwise inestimable chains stay `not_estimable`. The receiver program does
-  not enter the integrated score, and full repeated-pipeline inference is still
-  absent, so the aggregate `is_oof_certified` remains false;
+  program is connected as a diagnostic-only parent. A separate fail-closed
+  audit certifies the aggregate only when the authoritative registry, approved
+  static or nested fold-learned nuisance policy, tuning policy, every planned
+  train/apply child and all subject leakage barriers are complete. This means
+  complete OOF descriptive scoring
+  only; untrusted, diagnostic-only or inestimable chains remain uncertified.
+  Full-pipeline resampling and multiplicity workflows are separate opt-in
+  artifacts and do not retroactively turn this descriptive audit into an
+  inferential release;
 - `CrossFitSpec.repeat_index` now defaults to `0`, preserving the existing
   cross-fit policy identity while deriving a distinct repeat identity for each
   nonzero repeat. `RepeatedCrossFitSpec` and
   `run_repeated_subject_crossfit()` rerun the complete public train/apply chain
   for every declared repeat and return producer-owned
-  `RepeatedCrossFitDiagnostics`. Its four immutable-digest tables are
+  `RepeatedCrossFitDiagnostics`. Its six immutable-digest tables are
   `repeat_registry`, `family_fold_events`,
-  `subject_family_repeat_values`, and `family_repeat_stability`. The contract
-  enforces exact subject x repeat coverage; a family absent from an observed
-  training-fold universe is `not_estimable`, never zero or unselected, and the
-  table declares its union-of-observed family universe. A row-order-invariant
+  `subject_family_repeat_values`, `family_repeat_stability`,
+  `subject_family_point_estimates`, and `family_point_estimates`. Point
+  estimation first averages OOF values within each subject across complete
+  repeats, then takes an equal-subject family mean. Incomplete subject-repeat
+  coverage fails the family estimate closed instead of conditioning on easier
+  subjects. The contract enforces exact subject x repeat coverage. Diagnostics
+  v3 freezes the complete
+  receiver x strict-family opportunity universe before repeats from the root
+  feature/receiver axes and TargetPrior, requires every observed fold parent to
+  reproduce that family axis, and materializes every missing opportunity as
+  typed `not_estimable`, never zero, unselected, or silently absent. The same
+  root-family parent is mandatory in ordinary cross-fit and result-v9
+  persistence. A row-order-invariant
   subject-content manifest derives every fold scope digest, while a defensive
   snapshot binds expression, metadata, configuration, in-memory resource
   content, and target-prior content. Complete-repeat fit-level and
   subject-exposure selection denominators remain separate, and structural zeros
-  do not count as estimable observations. This is descriptive split-stability
-  diagnostics only: formal
-  inference is always disabled, and bootstrap, permutation, confidence
-  intervals, p/q values, and communication probabilities remain unavailable;
+  do not count as estimable observations in stability denominators. Numeric
+  structural zeros remain explicit in the complete-grid descriptive point
+  estimator. This object does not provide formal inference. Bootstrap,
+  permutation, effect/q and
+  active-probability workflows are separate, exact-parent-bound entry points;
+- `fit_active_probability()` now composes a real point cross-fit, a frozen
+  sender-LR-receiver candidate universe, complete degree/evidence-matched
+  target-prior rewiring reruns, receiver/mode-stratified beta-uniform-mixture
+  local FDR, and independent atomic persistence. It uses the v4 conserved
+  sender statistic: frozen assignment weights divide each prior-adjusted LR
+  parent and complete sender groups sum exactly to that parent. Candidate
+  empirical p/local-FDR values remain diagnostic. A public
+  `comm_probability` table appears only when a producer-owned G3-P gate bound
+  to the exact runtime contracts has passed; callers cannot unlock it. The
+  calibration producer derives metrics from explicit candidate-status ledgers,
+  evaluates each runtime stratum separately, and has an independent atomic
+  diagnostic result whose loader recomputes all summaries. Replay-backed
+  generator manifests, immutable registries and attested summarizers are now
+  implemented; attested G3-P persistence requires exact replay both before
+  write and on load. Public raw ledgers remain diagnostic, and no production
+  release campaign has yet supplied the required approved registry;
+- G3-F calibration now fixes a dependence/prevalence grid and derives type-I,
+  mixed/primary/selective-child FDR, coverage, and permutation diagnostics from
+  complete hypothesis-level replicate ledgers. Hand-filled scenario metrics no
+  longer form a gate. Independent G3-F persistence reconstructs the universe,
+  procedure, raw ledgers, summaries and gate, with exact attested replay before
+  write and on load. A real attested 1,000-replicate campaign has not run, so
+  formal effect/q release remains unauthorized;
+- active-null planning now uses integer edge occupancy and delayed link
+  materialization. The 3,000-edge regression improved from 6.57 seconds to
+  about 0.15 seconds; the complete 306,250-edge NicheNet prior completes in
+  52.68 seconds at 378,928 KiB while preserving the pre-optimization plan ID and
+  all switch/overlap counts. Independent full-pipeline null plans accept bounded
+  `n_jobs`; threads share the immutable snapshot but each worker retains
+  fold-local model memory, so the default remains `n_jobs=1`. Serial and
+  parallel scientific IDs and values are exact-equivalent;
+- complete subject-bootstrap and context-permutation resampling also accept
+  bounded `n_jobs` with the same shared immutable snapshot policy. Plan order
+  and scientific `result_id` are invariant to scheduling; requested/effective
+  worker counts are stored in a separate execution metadata identity;
+- a current-code Kang IFN-beta smoke processed 7,427 cells from 8 paired donors,
+  two cell types and ctrl/stim contexts. Its two-fold v4 cross-fit took 56.00
+  seconds and the full process peaked at 3,064,156 KiB. Family applications were
+  observed, while official incremental rows remained `not_estimable` because no
+  reviewed biological receiver-autonomous nuisance resource exists. This is a
+  real-H5AD execution check, not probability calibration, biological validation
+  or method superiority;
 - a tiny active two-repeat development smoke reran the full chain for 8
   subjects and 1,260 cells, producing two distinct subject partitions. Receiver
   known-family fit-level conditional selection frequencies were `0.75` for
@@ -170,7 +242,7 @@ preserving the exploratory v0.1 behavior:
   remain `not_estimable`.
   Independent-group execution is covered separately by unit and public-workflow
   integration tests but independent inner one-SE tuning is not yet supported;
-- the source-bound one-seed four-scenario trusted/tuned family-common v2 smoke
+- the historical source-bound one-seed four-scenario trusted/tuned family-common v2 smoke
   selects `lambda1_fraction=0.1` in both active folds, with nonzero receiver-
   family counts `[1, 2]`. The known synthetic `CXCL10-CXCR3` truth is uniquely
   rank 1 in state/ecosystem member and sender summaries; mean member scores are
@@ -202,12 +274,14 @@ preserving the exploratory v0.1 behavior:
   `development_full_seven_scenario_diagnostic`: this is synthetic algorithm
   evidence, not biological validation, superiority, full OOF certification, or
   a default switch;
-- the benchmark layer includes a frozen categorical repeated-measures backend
-  for mixed paired/unpaired subjects and within-subject technical replicates.
-  A metadata-only audit of the 29-sample Kuppe atlas found all 10 region
-  contrasts design-estimable under complete method-score coverage, but fitted
-  no effects and made no biological claim. Condition contrasts with region
-  adjustment were rank deficient and remain `not_estimable`;
+- the benchmark layer retains its exploratory categorical CR1 repeated-measures
+  backend and now adds a separate `repeated_measures_cr2` finalizer option. The
+  latter batches method/receiver edge matrices through the formal-ready core
+  fitter and persists effect, SE, cluster, condition and leverage diagnostics
+  without analytic p/q. A metadata-only audit of the 29-sample Kuppe atlas found
+  all 10 region contrasts design-estimable under complete method-score coverage,
+  but fitted no effects and made no biological claim. Condition contrasts with
+  region adjustment were rank deficient and remain `not_estimable`;
 - benchmark utilities now provide frozen-universe RBO, weighted Kendall,
   top-k curves, rank intervals, and stable-tier assignments. The v02 real-data
   finalizer/report integration requires all frozen items and fixed receiver
@@ -236,6 +310,13 @@ cross-fit binding, and edge-evidence producers use `v2`; and score rows carry
 `family_first_mechanistic_ligand_contrast_gated_softmin_v2`. Older common-sender
 or family-common objects, cached folds, and persisted v1 score rows are
 incompatible and must be refitted from the raw fold scope.
+
+Cross-fit result bundles now use schema `5.0.0`. The four descriptive score
+tables retain their v4 calibrated semantics, while a separate
+`directional_channel_registry` records opt-in forward/reverse lineage without
+changing LR scores. The loader retains explicit read-only compatibility for
+schemas v1-v4; legacy bundles cannot acquire a directional registry or a
+certified claim through loading.
 
 `EXPLAINED_SHARE_V3` is available only as an opt-in attribution-support
 candidate. It allocates bounded model-level explained gain across driver
@@ -328,6 +409,33 @@ result = model.fit(
 omitted. With an output directory it returns `CrychicResult`, which supports
 validated table reads and ranked interaction queries.
 
+For new descriptive analyses, the high-level entry point defaults to the
+subject-blocked cross-fit profile. Contrasts remain explicit and are never
+inferred from the observed data:
+
+```python
+from crychic.design import balanced_contrast
+
+contrast = balanced_contrast(
+    ("treated",),
+    ("control",),
+    name="treated_vs_control",
+)
+crossfit_spec = crychic.recommended_crossfit_spec(contrasts=(contrast,))
+result = model.analyze(
+    adata,
+    spec=crossfit_spec,
+    output_dir="crychic_crossfit_result",
+)
+```
+
+`crossfit_descriptive_v1` is a user-entry profile, not a scientific default
+switch or an inference release. It uses an uncapped interaction universe,
+train-fold latent nuisance learning and subject-blocked penalty tuning. Missing
+support remains typed `not_estimable`; the API never falls back to the legacy
+baseline. Use `model.analyze(..., profile="legacy_v01")` or `model.fit()` only
+when the historical exploratory workflow is explicitly intended.
+
 ## Reproduce Benchmarks
 
 ```bash
@@ -347,22 +455,22 @@ uv run python -m benchmarks.report.generate_multicondition_report \
   --report-id multicondition_v02
 uv run python -m benchmarks.simulation.run_crossfit_smoke \
   --workspace-root .. --scenarios active ligand_only \
-  --output ../benchmark_work/algorithm_smoke/crossfit_summary_v5.json
+  --output benchmark_work/algorithm_smoke/crossfit_summary_v5.json
 uv run python -m benchmarks.simulation.run_family_common_crossfit_smoke \
   --workspace-root .. \
   --scenarios active ligand_only receiver_autonomous global_null \
-  --output ../benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json
+  --output benchmark_work/algorithm_smoke/family_common_crossfit_smoke_v1.json
 uv run python -m benchmarks.simulation.run_family_common_g15_campaign \
   --workspace-root .. --profile quick --seed-count 2 \
   --scenarios active global_null abundance_only ligand_only target_only \
   receiver_autonomous receptor_knockout \
-  --output ../benchmark_work/algorithm_smoke/public_family_common_g15_campaign_v1.json \
-  --summary-output benchmarks/results/public_family_common_g15_campaign_v1_summary.json
+  --output benchmark_work/algorithm_smoke/public_family_common_g15_campaign_v1.json \
+  --summary-output CRYCHIC/benchmarks/results/public_family_common_g15_campaign_v1_summary.json
 uv run python -m benchmarks.simulation.run_family_common_g15_campaign \
   --workspace-root .. --profile quick --seed-ids public-g15-003 \
   --scenarios active ligand_only target_only receptor_knockout \
-  --output ../benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final.json \
-  --summary-output ../benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final_summary.json
+  --output benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final.json \
+  --summary-output benchmark_work/algorithm_smoke/public_family_common_g15_seed003_holm_v3_final_summary.json
 uv run python -m benchmarks.datasets.audit_kuppe_repeated_measures \
   --h5ad ../dataset/Kuppe_MI_Zenodo6578047/snRNA-seq-submission.h5ad \
   --output ../benchmark_work/kuppe_repeated_measures/design_audit.json
@@ -371,9 +479,199 @@ uv run python -m benchmarks.summarize_cscc_crossmethod_smoke \
 ```
 
 The [developer cross-fit tutorial](tutorials/developer_subject_crossfit.ipynb)
-loads or reruns the bounded Kang 2018 diagnostic, exposes deidentified inner
-penalty decisions, and shows how to distinguish ligand/receptor gates,
-structural zeros, diagnostic scores, and official certification status.
+is a runnable multi-condition H5AD workflow. It validates the input contract,
+loads CellChatDB/CellPhoneDB plus a NicheNet prior, constructs contrasts and
+penalty tuning, persists `CrossFitResult`, queries family/LR/sender ledgers,
+demonstrates optional repeated/full-pipeline resampling diagnostics, and writes
+publication-ready descriptive plots. A tiny synthetic fixture runs without
+external data; real paths remain caller-configured.
+
+Persisted condition-specific outputs can be selected with
+`query_family_scores()`, `query_integrated_lr_scores()`, and
+`query_sender_lr_pairs()`. The integrated-LR query fixes the canonical
+family-allocated LR-member component and excludes registered directional
+contrasts, whose two channels use the dedicated directional result. The lower
+level `query_lr_pairs()` remains available for explicit component inspection.
+Queries retain structural-zero and not-estimable rows unless a status filter is
+requested, and comparisons remain receiver-scoped.
+
+Result v9 persists the exact fold-by-receiver training-support grid and the
+complete run-root receiver-family opportunity universe.
+`read_receiver_training_support()` returns the complete table, while
+`query_receiver_training_support()` selects receiver, fold, support status, or
+reason without reconstructing fitted model objects.
+
+The same v8 bundle persists all four producer-owned semantic views as separate
+Parquet tables. They can be read exactly after reload:
+
+```python
+from crychic import write_crossfit_result
+
+persisted = write_crossfit_result(artifacts, "crossfit-result")
+availability = persisted.read_semantic_availability()
+receiver_program = persisted.read_semantic_receiver_programs()
+integrated_lr = persisted.read_semantic_integrated_lr_scores()
+differential = persisted.read_semantic_differential_effects()
+view_status = persisted.semantic_score_manifest
+```
+
+The views are also available directly from intact in-memory artifacts without
+refitting:
+
+```python
+from crychic import build_crossfit_semantic_scores
+
+artifacts = model.analyze(adata, spec=crossfit_spec)
+semantic = build_crossfit_semantic_scores(artifacts)
+availability = semantic.availability_score
+receiver_program = semantic.receiver_program_score
+integrated_lr = semantic.integrated_lr_score
+differential = semantic.differential_effect
+```
+
+Each view has its own biological grain, source IDs and digest, typed status and
+reason, and `formal_inference_allowed=False`. Without penalty tuning, the
+availability and receiver-program views remain available while integrated LR
+and differential views are explicitly `not_produced` in `view_manifest`; no
+zero or not-estimable score rows are invented. Result versions v1-v8 remain
+read-only compatible; their canonical integrated-LR query uses the historical
+ledger projection because those bundles do not contain the four exact tables.
+
+Graph-fused conditional family effects can be joined to the family-common LR
+evidence through a separate experimental adapter. The mapping keys are the
+stable context IDs used by the persisted workflow, not display labels:
+
+```python
+from crychic import (
+    GraphFusedIntegratedLRSpec,
+    build_graph_fused_integrated_lr_scores,
+    derive_graph_fused_family_effects,
+)
+from crychic.design import node_context_fields
+
+effects = derive_graph_fused_family_effects(artifacts, graph_registry)
+context_contrasts = {
+    node_context_fields(node, config.context_keys)[0]: contrast.name
+    for node, contrast in zip(graph.nodes, focal_global_contrasts, strict=True)
+}
+graph_scores = build_graph_fused_integrated_lr_scores(
+    artifacts,
+    effects,
+    spec=GraphFusedIntegratedLRSpec(context_contrasts=context_contrasts),
+)
+family_scores = graph_scores.family_scores
+lr_scores = graph_scores.integrated_lr_scores
+```
+
+This adapter is opt-in and is not connected to `analyze()` or result
+persistence. Its graph-joint conditional-gain estimand is distinct from the
+ordinary family differential effect; rows are descriptive only and declare
+`cross_receiver_comparable=False`, `cross_context_comparable=False`,
+`cross_mode_comparable=False`, and `formal_inference_allowed=False`. The graph
+registry freezes a run-level receiver-by-family opportunity universe from the
+complete TargetPrior and root feature axis. Training-absent receivers retain a
+complete typed-NE family-effect grid with no model parents; the integrated LR
+adapter fails closed because no legitimate sample-level LR rows exist for that
+receiver.
+
+The explicit active-edge workflow accepts the same H5AD and `CrossFitSpec` and
+targets one declared contrast at a time:
+
+```python
+active_result = model.fit_active_probability(
+    adata,
+    spec=crossfit_spec,
+    contrast_id_or_name="treated_vs_control",
+    n_plans=200,
+    n_jobs=2,  # choose from available RAM; the default is 1
+    output_dir="crychic_active_probability",
+)
+
+# Without a matching passed G3-P gate this is intentionally diagnostic-only.
+assert active_result.has_released_probabilities is False
+```
+
+Pass only a gate built from the preregistered calibration producer for these
+exact score, universe, null, estimator and stratum contracts. Public raw-ledger
+summaries are diagnostic; verified release additionally requires replayable
+generator attestation. Persisting a released result also requires the exact
+`G3PCalibrationResult` parent and its `CalibrationReplayRegistry`; the loader
+replays that parent and recomputes the probability collection from raw
+point/null rows. There is no caller-controlled release switch.
+
+Live producer-owned `CrossFitArtifacts` also support two descriptive post-fit
+views without refitting:
+
+```python
+artifacts = model.fit_crossfit(adata, spec=crossfit_spec)
+signatures = model.export_crossfit_signatures(
+    artifacts, mode="state", entropy_threshold=0.8
+)
+hypergraph = model.export_crossfit_hypergraph(artifacts)
+
+assert signatures.inference_eligible is False
+assert hypergraph.inference_eligible is False
+```
+
+The signature export preserves receiver-context, LR-attributed, and
+sender-LR-receiver layers with an explicit availability audit. The hypergraph
+uses subject-equal sender-resolved strengths and explicit ligand/receptor
+complex nodes. Neither view contains p-values, q-values, or calibrated
+communication probabilities. These methods require in-memory
+`CrossFitArtifacts`; a persisted `CrossFitResult` intentionally does not
+reconstruct fitted model objects.
+
+An opt-in cross-fit configured with an explicit `directional_pairs` registry
+can also emit common-scale signed Track-B target-program rows:
+
+```python
+from crychic import (
+    freeze_crossfit_directional_target_program_universe,
+    score_crossfit_directional_target_programs,
+)
+
+program_universe = freeze_crossfit_directional_target_program_universe(artifacts)
+pair = artifacts.spec.directional_pairs[0]
+signed_programs = score_crossfit_directional_target_programs(
+    artifacts,
+    program_universe,
+    pair_spec_id=pair.pair_spec_id,
+)
+signed_program_table = signed_programs.scores
+```
+
+This table is source-agnostic and descriptive. It compares positive and
+negative held-out OOF gene-effect channels with a complete prior-only program
+universe; it is not sender attribution, LR-edge recovery, active inhibition,
+or a native NicheNet result. Programs without enough matched targets remain as
+typed `not_estimable` rows rather than being dropped. The receiver axis is the
+frozen run axis: if a receiver is absent from any outer-training fold, its
+complete program-by-channel grid is `not_estimable` and no partial-OOF effect
+is fitted.
+
+The same directional run can expose the two family-common LR applications in a
+dedicated view without refitting:
+
+```python
+from crychic import build_directional_integrated_lr_scores
+
+directional_lr = build_directional_integrated_lr_scores(
+    artifacts,
+    pair_spec_id=pair.pair_spec_id,
+)
+forward_and_reverse_lr = directional_lr.scores
+receiver_opportunities = directional_lr.opportunity_registry
+```
+
+These are two independently conserved, activation-compatible LR channels on an
+exact shared key grid. They are not cross-channel comparable and must not be
+subtracted, divided, converted to a signed LR score, or interpreted as active
+inhibition. Registered directional contrasts are omitted from the generic
+semantic LR/effect row union so their direction is never implicit. The
+opportunity registry covers every outer fold and run receiver. A
+training-absent receiver is retained there as typed `not_estimable` with null
+model/application parents; no family/LR score rows are invented without a
+frozen receiver-family/LR hypothesis grid.
 
 ## Quality Checks
 
@@ -388,10 +686,12 @@ uv run --extra dev python -m build
 - [v0.1 method specification](docs/methods/v0.1-exploratory-baseline.md)
 - [Suggestion 1 implementation status](docs/methods/suggestion-1-implementation-status.md)
 - [Train-only cross-fit boundary decision](docs/adr/ADR-004-train-only-crossfit-boundary.md)
+- [Common-scale signed Track-B producer](docs/adr/ADR-014-common-scale-signed-track-b.md)
 - [G1.5 mechanism-specificity results](docs/results/g1-5-mechanism-specificity.md)
 - [Multi-condition v02 benchmark summary](benchmarks/results/multicondition_v02_summary.json)
 - [Fixed-penalty public cross-fit smoke summary](benchmarks/results/algorithm_crossfit_smoke_v5_summary.json)
 - [Trusted/tuned family-common smoke summary](benchmarks/results/family_common_crossfit_smoke_v1_summary.json)
+- [Graph-fusion G2 core smoke summary](benchmarks/results/graph_fusion_g2_smoke_core_v1_summary.json)
 - [Public family-common G1.5 quick summary](benchmarks/results/public_family_common_g15_campaign_v1_summary.json)
 - [Developer subject-crossfit tutorial](tutorials/developer_subject_crossfit.ipynb)
 - [Repository development instructions](AGENTS.md)

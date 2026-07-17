@@ -35,6 +35,11 @@ from ._schema import (
     validate_scoring_collections,
     validate_table,
 )
+from .bootstrap_support import (
+    BootstrapSupportDocument,
+    bootstrap_support_contract,
+    validate_bootstrap_support_links,
+)
 from .errors import ResultWriteError
 
 if TYPE_CHECKING:
@@ -194,10 +199,11 @@ def write_result(
     scoring_collections: (
         ScoringCollectionDocument | Sequence[ScoringCollectionManifest] | None
     ) = None,
+    bootstrap_support: BootstrapSupportDocument | None = None,
 ) -> CrychicResult:
     """Validate and atomically publish a complete v0.1 result directory.
 
-    Optional extensions are independently versioned. Omitting both preserves
+    Optional extensions are independently versioned. Omitting them preserves
     the original v0.1.0 manifest and directory shape.
     """
 
@@ -269,8 +275,10 @@ def write_result(
                 },
             }
         if scoring_collections is not None:
-            collection_contract = scoring_collections_contract()
             collection_document = validate_scoring_collections(scoring_collections)
+            collection_contract = scoring_collections_contract(
+                str(collection_document.extension_schema_version)
+            )
             validate_scoring_collection_links(
                 collection_document,
                 tables["sample_scores"],
@@ -280,7 +288,7 @@ def write_result(
             write_json(collection_path, collection_document.to_dict())
             extension_records[collection_contract.name] = {
                 "extension_schema_version": (
-                    collection_contract.extension_schema_version
+                    collection_document.extension_schema_version
                 ),
                 "filename": collection_contract.filename,
                 "collections": len(collection_document.collections),
@@ -289,6 +297,67 @@ def write_result(
                 "linked_tables": {
                     table_name: table_records[table_name]["sha256"]
                     for table_name in collection_contract.linked_tables
+                },
+            }
+        if bootstrap_support is not None:
+            if not isinstance(bootstrap_support, BootstrapSupportDocument):
+                raise TypeError(
+                    "bootstrap_support must be BootstrapSupportDocument"
+                )
+            validated_bootstrap_support = BootstrapSupportDocument(
+                specificity_support=bootstrap_support.specificity_support,
+                selection_frequency=bootstrap_support.selection_frequency,
+                registry=bootstrap_support.registry,
+            )
+            support_contract = bootstrap_support_contract()
+            validate_bootstrap_support_links(
+                validated_bootstrap_support,
+                tables["differential"],
+            )
+            specificity_path = temporary / support_contract.specificity.filename
+            selection_path = temporary / support_contract.selection.filename
+            registry_path = temporary / support_contract.registry_filename
+            validated_bootstrap_support.specificity_support.to_parquet(
+                specificity_path,
+                index=False,
+                engine="pyarrow",
+                compression="zstd",
+            )
+            validated_bootstrap_support.selection_frequency.to_parquet(
+                selection_path,
+                index=False,
+                engine="pyarrow",
+                compression="zstd",
+            )
+            write_json(registry_path, validated_bootstrap_support.registry)
+            extension_records[support_contract.name] = {
+                "extension_schema_version": (
+                    support_contract.extension_schema_version
+                ),
+                "specificity_support": {
+                    "filename": support_contract.specificity.filename,
+                    "rows": len(validated_bootstrap_support.specificity_support),
+                    "sha256": sha256_file(specificity_path),
+                    "schema": support_contract.specificity.schema_filename,
+                },
+                "selection_frequency": {
+                    "filename": support_contract.selection.filename,
+                    "rows": len(validated_bootstrap_support.selection_frequency),
+                    "sha256": sha256_file(selection_path),
+                    "schema": support_contract.selection.schema_filename,
+                },
+                "registry": {
+                    "filename": support_contract.registry_filename,
+                    "records": (
+                        len(validated_bootstrap_support.specificity_support)
+                        + len(validated_bootstrap_support.selection_frequency)
+                    ),
+                    "sha256": sha256_file(registry_path),
+                    "schema": support_contract.registry_schema_filename,
+                },
+                "linked_tables": {
+                    table_name: table_records[table_name]["sha256"]
+                    for table_name in support_contract.linked_tables
                 },
             }
 

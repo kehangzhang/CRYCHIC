@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:active-probability-null-sources:1.0.0",
+  "title": "CRYCHIC ADR-013 complete null source rectangle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "active_probability_null_sources"},
+    "filename": {"const": "active_probability_null_sources.parquet"},
+    "primary_key": {"const": ["candidate_edge_id", "plan_id"]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_edge_id", "plan_id", "stratum_id", "score_version", "null_rerun_record_id", "source_score_collection_id", "n_subjects", "score", "status", "reason_code", "null_record_id"],
+      "properties": {
+        "candidate_edge_id": {"dtype": "string", "nullable": false},
+        "plan_id": {"dtype": "string", "nullable": false},
+        "stratum_id": {"dtype": "string", "nullable": false},
+        "score_version": {"dtype": "string", "nullable": false},
+        "null_rerun_record_id": {"dtype": "string", "nullable": false},
+        "source_score_collection_id": {"dtype": "string", "nullable": true},
+        "n_subjects": {"dtype": "integer", "nullable": true, "minimum": 0},
+        "score": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "structural_zero", "not_estimable", "failed"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "null_record_id": {"dtype": "string", "nullable": false}
+      }
+    }
+  }
+}

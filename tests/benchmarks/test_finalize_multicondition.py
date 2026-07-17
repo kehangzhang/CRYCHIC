@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -375,6 +376,149 @@ def _fixture(root: Path) -> Path:
     return spec
 
 
+def _molecular_lr_crosswalk() -> pd.DataFrame:
+    molecular_ids = {"I1": "molecular-a", "I2": "molecular-a", "I3": "molecular-b"}
+    return pd.DataFrame(
+        [
+            {
+                "resource_id": "fixture-common",
+                "resource_version": "2026-07-12",
+                "resource_manifest_digest": "d" * 64,
+                "resource_bundle_content_id": "fixture-bundle-content",
+                "interaction_id": interaction,
+                "source_interaction_id": f"source-{interaction}",
+                "mapping_status": "mapped",
+                "reason_code": None,
+                "molecular_lr_equivalence_id": molecular_ids[interaction],
+                "mechanistic_variant_id": f"variant-{interaction}",
+                "molecular_lr_equivalence_universe_id": "fixture-molecular-universe",
+                "molecular_lr_axis_id": "fixture-molecular-axis",
+                "mechanistic_variant_axis_id": "fixture-variant-axis",
+                "mapping_axis_id": "fixture-mapping-axis",
+            }
+            for _, _, interaction, _, _ in EDGES
+        ]
+    )
+
+
+def _bind_molecular_lr_crosswalk(
+    root: Path,
+    run: dict[str, Any],
+    *,
+    table: pd.DataFrame | None = None,
+    name: str = "molecular_lr_crosswalk",
+    manifest_output_sha256: str | None = None,
+) -> tuple[Path, Path]:
+    crosswalk = _molecular_lr_crosswalk() if table is None else table
+    crosswalk_path = root / f"{name}.tsv"
+    crosswalk.to_csv(crosswalk_path, sep="\t", index=False)
+    crosswalk_sha256 = _sha256(crosswalk_path)
+    first = crosswalk.iloc[0]
+    manifest = {
+        "schema_version": module.MOLECULAR_LR_CROSSWALK_MANIFEST_SCHEMA_VERSION,
+        "output": {
+            "sha256": manifest_output_sha256 or crosswalk_sha256,
+            "rows": len(crosswalk),
+        },
+        "resource": {
+            "resource_id": first["resource_id"],
+            "resource_version": first["resource_version"],
+            "resource_manifest_digest": first["resource_manifest_digest"],
+            "resource_bundle_content_id": first["resource_bundle_content_id"],
+        },
+        "axes": {
+            "molecular_lr_equivalence_universe_id": first[
+                "molecular_lr_equivalence_universe_id"
+            ],
+            "molecular_lr_axis_id": first["molecular_lr_axis_id"],
+            "mechanistic_variant_axis_id": first["mechanistic_variant_axis_id"],
+            "mapping_axis_id": first["mapping_axis_id"],
+        },
+    }
+    manifest_path = root / f"{name}.manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    run["molecular_lr_crosswalk"] = {
+        "path": crosswalk_path.name,
+        "sha256": crosswalk_sha256,
+        "manifest": {
+            "path": manifest_path.name,
+            "sha256": _sha256(manifest_path),
+        },
+    }
+    return crosswalk_path, manifest_path
+
+
+def _bind_effect_contract(
+    root: Path,
+    dataset: dict[str, Any],
+    sample_design: pd.DataFrame,
+    effect_models: list[dict[str, object]],
+    *,
+    name: str,
+) -> Path:
+    path = root / name
+    sample_design.to_csv(path, sep="\t", index=False)
+    dataset["sample_design"] = {
+        "path": path.name,
+        "sha256": _sha256(path),
+    }
+    dataset["effect_models"] = effect_models
+    return path
+
+
+def _paired_effect_sample_design() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "sample_id": f"{subject}_{condition}",
+                "subject_id": subject,
+                "condition": condition,
+            }
+            for subject in ("p1", "p2", "p3")
+            for condition in ("Normal", "Tumor")
+        ]
+    )
+
+
+def _unpaired_effect_sample_design(*, confounded: bool) -> pd.DataFrame:
+    rows: list[dict[str, str]] = []
+    for condition, prefix in (("Ctrl", "c"), ("Case", "t")):
+        for index in range(1, 5):
+            rows.append(
+                {
+                    "sample_id": f"{prefix}{index}_{condition}",
+                    "subject_id": f"{prefix}{index}",
+                    "condition": condition,
+                    "batch": (
+                        "b1"
+                        if confounded and condition == "Ctrl"
+                        else "b2"
+                        if confounded
+                        else f"b{1 + index % 2}"
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _mark_adapter_edge_missing(
+    root: Path,
+    run: dict[str, Any],
+    *,
+    interaction_id: str,
+) -> None:
+    table_path = root / str(run["long_table"])
+    table = pd.read_parquet(table_path)
+    selected = table["interaction_id"].astype(str).eq(interaction_id)
+    table.loc[selected, "status"] = "missing"
+    table.loc[selected, "score"] = np.nan
+    table.to_parquet(table_path, index=False)
+    manifest_path = root / str(run["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["output"]["sha256"] = _sha256(table_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     tmp_path: Path,
 ) -> None:
@@ -384,17 +528,23 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     manifest = module.finalize(spec, output)
 
     assert manifest["guardrails"]["real_data_edge_auroc_reported"] is False
+    assert manifest["guardrails"]["preregistered_track_b_primary_reported"] is False
     assert (
-        manifest["guardrails"]["preregistered_track_b_primary_reported"] is False
-    )
-    assert (
-        manifest["guardrails"]["track_b_proxy_mislabelled_as_native_nichenet"]
-        is False
+        manifest["guardrails"]["track_b_proxy_mislabelled_as_native_nichenet"] is False
     )
     expected = set(module.METRIC_FILES.values())
     assert expected == {path.name for path in (output / "metrics").glob("*.tsv")}
     report_inputs = json.loads((output / "report_inputs.json").read_text())
     assert report_inputs["schema_version"] == module.REPORT_INPUT_SCHEMA_VERSION
+    assert "molecular_lr_crosswalks" not in report_inputs
+    assert manifest["ranking_parameters"]["lr_family_mapping_status"] == (
+        "not_available_in_score_contract"
+    )
+    assert manifest["molecular_lr_crosswalk_bindings"] == []
+    assert "effect_model_sample_designs" not in report_inputs
+    assert "exploratory_effect_models" not in report_inputs
+    assert not (output / "derived/d_common_edge_effects.parquet").exists()
+    assert not (output / "derived/repeated_measures_edge_effects.parquet").exists()
     assert report_inputs["supportive_biology_dataset_aliases"] == {}
     assert report_inputs["dataset_truth_scopes"] == {
         "real_unpaired": "real_data",
@@ -430,9 +580,7 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
 
     stability = pd.read_csv(output / "metrics/stability_summary.tsv", sep="\t")
     assert set(stability["truth_scope"]) == {"real_data", "simulation"}
-    ranking = pd.read_csv(
-        output / "metrics/ranking_agreement_summary.tsv", sep="\t"
-    )
+    ranking = pd.read_csv(output / "metrics/ranking_agreement_summary.tsv", sep="\t")
     unpaired_ranking = ranking[
         ranking["dataset"].eq("real_unpaired") & ranking["method"].eq("m1")
     ]
@@ -450,13 +598,9 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     assert set(track_b_ranking["reason_code"]) == {
         "track_b_ligand_target_program_not_lr_stlr_comparable"
     }
-    unsupported_ranking = ranking[
-        ranking["dataset"].eq("unsupported_design")
-    ]
+    unsupported_ranking = ranking[ranking["dataset"].eq("unsupported_design")]
     assert set(unsupported_ranking["status"]) == {"not_estimable"}
-    assert set(unsupported_ranking["reason_code"]) == {
-        "unsupported_comparison_design"
-    }
+    assert set(unsupported_ranking["reason_code"]) == {"unsupported_comparison_design"}
 
     concordance = pd.read_csv(output / "metrics/concordance_summary.tsv", sep="\t")
     assert set(concordance["truth_scope"]) == {"real_data", "simulation"}
@@ -464,14 +608,12 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     assert set(real_concordance["reason_code"]) == {
         "no_comparable_real_data_lr_method_pair"
     }
-    simulation_concordance = concordance[
-        concordance["truth_scope"].eq("simulation")
-    ]
+    simulation_concordance = concordance[concordance["truth_scope"].eq("simulation")]
     method_pairs = {
         tuple(sorted(pair))
-        for pair in simulation_concordance[
-            ["method_left", "method_right"]
-        ].itertuples(index=False, name=None)
+        for pair in simulation_concordance[["method_left", "method_right"]].itertuples(
+            index=False, name=None
+        )
     }
     assert method_pairs == {("crychic", "m1"), ("crychic", "m2"), ("m1", "m2")}
     semantics = pd.concat(
@@ -523,6 +665,390 @@ def test_finalize_emits_paired_unpaired_track_b_and_ne_outputs(
     )
     report_manifest = json.loads((report_output / "report_manifest.json").read_text())
     assert report_manifest["guardrails"]["real_data_edge_auroc_reported"] is False
+
+
+def test_finalize_applies_checksum_bound_molecular_lr_crosswalk(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    datasets = cast(list[dict[str, Any]], payload["datasets"])
+    runs = cast(list[dict[str, Any]], datasets[1]["adapter_runs"])
+    crosswalk_path, crosswalk_manifest_path = _bind_molecular_lr_crosswalk(
+        tmp_path, runs[0]
+    )
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = tmp_path / "molecular_crosswalk_final"
+    manifest = module.finalize(spec, output)
+
+    agreement = pd.read_csv(
+        output / "metrics/ranking_agreement_summary.tsv", sep="\t"
+    )
+    family = agreement[
+        agreement["dataset"].eq("real_unpaired")
+        & agreement["method"].eq("m1")
+        & agreement["ranking_level"].eq("lr_family")
+    ]
+    assert set(family["status"]) == {"observed"}
+    assert family["reason_code"].isna().all()
+    assert set(family["ranking_universe_size"]) == {2}
+
+    score_index = pd.read_csv(
+        output / "score_tables/score_table_index.tsv", sep="\t"
+    )
+    score_row = score_index[
+        score_index["dataset"].eq("real_unpaired")
+        & score_index["method"].eq("m1")
+    ].iloc[0]
+    assert score_row["molecular_lr_crosswalk_sha256"] == _sha256(crosswalk_path)
+    assert score_row["molecular_lr_crosswalk_manifest_sha256"] == _sha256(
+        crosswalk_manifest_path
+    )
+    score_table = pd.read_parquet(output / str(score_row["output_path"]))
+    assert score_table["molecular_lr_equivalence_id"].notna().all()
+    assert set(score_table["molecular_lr_equivalence_id"]) == {
+        "molecular-a",
+        "molecular-b",
+    }
+
+    assert manifest["ranking_parameters"]["lr_family_mapping_status"] == (
+        "available_for_checksum_bound_score_tables"
+    )
+    assert manifest["ranking_parameters"]["molecular_lr_crosswalk_score_tables"] == 1
+    binding = manifest["molecular_lr_crosswalk_bindings"][0]
+    assert binding["status"] == "applied"
+    assert binding["score_tables_attached"] == 1
+    assert binding["molecular_lr_axis_id"] == "fixture-molecular-axis"
+    report_inputs = json.loads((output / "report_inputs.json").read_text())
+    assert len(report_inputs["molecular_lr_crosswalks"]) == 1
+    assert len(report_inputs["molecular_lr_crosswalk_manifests"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        ("partial", "does not completely map the frozen score universe"),
+        ("unsupported", "does not completely map the frozen score universe"),
+        ("duplicate", "duplicate resource-edge keys"),
+        ("checksum_tamper", "molecular_lr_crosswalk SHA256 mismatch"),
+        ("manifest_tamper", "output.sha256 disagrees with the bound crosswalk"),
+    ],
+)
+def test_finalize_rejects_invalid_molecular_lr_crosswalk_bindings(
+    tmp_path: Path,
+    failure: str,
+    message: str,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    datasets = cast(list[dict[str, Any]], payload["datasets"])
+    runs = cast(list[dict[str, Any]], datasets[0]["adapter_runs"])
+    crosswalk = _molecular_lr_crosswalk()
+    if failure == "partial":
+        crosswalk = crosswalk.iloc[:-1].copy()
+    elif failure == "unsupported":
+        crosswalk.loc[2, "mapping_status"] = "unsupported_direction"
+        crosswalk.loc[2, "reason_code"] = "unsupported_interaction_direction"
+        crosswalk.loc[
+            2, ["molecular_lr_equivalence_id", "mechanistic_variant_id"]
+        ] = None
+    elif failure == "duplicate":
+        crosswalk = pd.concat([crosswalk, crosswalk.iloc[[0]]], ignore_index=True)
+    _bind_molecular_lr_crosswalk(
+        tmp_path,
+        runs[0],
+        table=crosswalk,
+        name=f"crosswalk_{failure}",
+        manifest_output_sha256=("0" * 64 if failure == "manifest_tamper" else None),
+    )
+    if failure == "checksum_tamper":
+        binding = cast(dict[str, Any], runs[0]["molecular_lr_crosswalk"])
+        binding["sha256"] = "0" * 64
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        module.finalize(spec, tmp_path / f"invalid_{failure}")
+
+
+def test_finalize_rejects_crosswalk_without_an_applicable_long_table(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    datasets = cast(list[dict[str, Any]], payload["datasets"])
+    runs = cast(list[dict[str, Any]], datasets[1]["adapter_runs"])
+    failed_run = runs.pop(2)
+    runs.insert(0, failed_run)
+    _bind_molecular_lr_crosswalk(tmp_path, failed_run, name="crosswalk_without_scores")
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="requires an existing adapter long_table"):
+        module.finalize(spec, tmp_path / "invalid_crosswalk_without_scores")
+
+
+def test_finalize_emits_shared_exploratory_effect_models_without_zero_fill(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    datasets = cast(list[dict[str, Any]], payload["datasets"])
+    paired = datasets[0]
+    runs = cast(list[dict[str, Any]], paired["adapter_runs"])
+    _mark_adapter_edge_missing(tmp_path, runs[1], interaction_id="I3")
+    _bind_effect_contract(
+        tmp_path,
+        paired,
+        _paired_effect_sample_design(),
+        [
+            {
+                "id": "paired-d-common",
+                "backend": "d_common",
+                "contrast": "Tumor_vs_Normal",
+                "reference": "Normal",
+                "target": "Tumor",
+                "min_subjects_per_group": 3,
+            },
+            {
+                "id": "paired-repeated",
+                "backend": "repeated_measures",
+                "contrast": "Tumor_vs_Normal",
+                "reference": "Normal",
+                "target": "Tumor",
+                "min_subjects_per_context": 3,
+                "min_subject_clusters": 3,
+            },
+        ],
+        name="paired_sample_design.tsv",
+    )
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = tmp_path / "effect_final"
+    manifest = module.finalize(spec, output)
+
+    d_common = pd.read_parquet(output / "derived/d_common_edge_effects.parquet")
+    repeated = pd.read_parquet(
+        output / "derived/repeated_measures_edge_effects.parquet"
+    )
+    expected_methods = {"crychic", "m1", "m2"}
+    assert set(d_common["method"]) == expected_methods
+    assert set(repeated["method"]) == expected_methods
+    assert d_common["d_common_effect_model_id"].nunique() == 1
+    assert repeated["repeated_measures_design_id"].nunique() == 1
+    missing_common = d_common.loc[
+        d_common["method"].eq("m2") & d_common["interaction_id"].eq("I3")
+    ]
+    assert len(missing_common) == 1
+    assert missing_common.iloc[0]["status"] == "not_estimable"
+    assert pd.isna(missing_common.iloc[0]["effect"])
+    missing_edge = repeated.loc[
+        repeated["method"].eq("m2") & repeated["interaction_id"].eq("I3")
+    ]
+    assert len(missing_edge) == 1
+    assert missing_edge.iloc[0]["status"] == "not_estimable"
+    assert missing_edge.iloc[0]["reason_code"] == ("insufficient_subjects_per_context")
+    assert pd.isna(missing_edge.iloc[0]["effect"])
+    for result in (d_common, repeated):
+        assert result["formal_inference_allowed"].eq(False).all()
+        assert not {"p", "p_value", "q", "q_value"}.intersection(result.columns)
+        assert set(result["score_view_role"]) == {"primary"}
+    legacy = pd.read_parquet(output / "derived/edge_effects.parquet")
+    assert "effect_model_backend" not in legacy
+    assert (
+        manifest["guardrails"]["exploratory_effects_replaced_legacy_edge_effects"]
+        is False
+    )
+    report_inputs = json.loads(
+        (output / "report_inputs.json").read_text(encoding="utf-8")
+    )
+    assert set(report_inputs["exploratory_effect_models"]) == {
+        "d_common",
+        "repeated_measures",
+    }
+
+
+def test_finalize_explicit_cr2_backend_emits_diagnostic_only_effects(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    dataset = cast(list[dict[str, Any]], payload["datasets"])[0]
+    _bind_effect_contract(
+        tmp_path,
+        dataset,
+        _paired_effect_sample_design(),
+        [
+            {
+                "id": "paired-cr2",
+                "backend": "repeated_measures_cr2",
+                "contrast": "Tumor_vs_Normal",
+                "reference": "Normal",
+                "target": "Tumor",
+                "min_subjects_per_context": 3,
+                "min_subject_clusters": 3,
+                "subject_fixed_effects": False,
+            }
+        ],
+        name="paired_cr2_sample_design.tsv",
+    )
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = tmp_path / "cr2_effect_final"
+    manifest = module.finalize(spec, output)
+
+    path = output / "derived/repeated_measures_cr2_edge_effects.parquet"
+    result = pd.read_parquet(path)
+    assert set(result["effect_model_backend"]) == {"repeated_measures_cr2"}
+    assert set(result["status"]) == {"not_estimable"}
+    assert set(result["reason_code"]) == {"insufficient_subject_clusters"}
+    assert result["effect"].isna().all()
+    assert result["standard_error"].isna().all()
+    assert result["n_subject_clusters"].eq(3).all()
+    assert result["formal_backend_eligible"].eq(False).all()
+    assert result["formal_inference_allowed"].eq(False).all()
+    assert not {"p", "p_value", "q", "q_value"}.intersection(result.columns)
+    assert manifest["exploratory_effect_model_outputs"][
+        "repeated_measures_cr2"
+    ] == "derived/repeated_measures_cr2_edge_effects.parquet"
+
+
+def test_cr2_effect_model_config_rejects_non_boolean_subject_fixed_effects() -> None:
+    with pytest.raises(ValueError, match="subject_fixed_effects must be boolean"):
+        module._effect_model_specs(
+            [
+                {
+                    "id": "invalid-cr2",
+                    "backend": "repeated_measures_cr2",
+                    "reference": "control",
+                    "target": "case",
+                    "subject_fixed_effects": "yes",
+                }
+            ],
+            field="datasets[0].effect_models",
+            context_key="condition",
+            comparison={"contrast": "case_vs_control"},
+        )
+
+
+def test_finalize_preserves_typed_ne_for_confounding_and_rank_deficiency(
+    tmp_path: Path,
+) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    dataset = cast(list[dict[str, Any]], payload["datasets"])[1]
+    _bind_effect_contract(
+        tmp_path,
+        dataset,
+        _unpaired_effect_sample_design(confounded=True),
+        [
+            {
+                "id": "confounded-d-common",
+                "backend": "d_common",
+                "contrast": "Case_vs_Ctrl",
+                "reference": "Ctrl",
+                "target": "Case",
+                "batch_keys": ["batch"],
+                "min_subjects_per_group": 3,
+            },
+            {
+                "id": "confounded-repeated",
+                "backend": "repeated_measures",
+                "contrast": "Case_vs_Ctrl",
+                "reference": "Ctrl",
+                "target": "Case",
+                "batch_keys": ["batch"],
+                "min_subjects_per_context": 3,
+                "min_subject_clusters": 6,
+            },
+        ],
+        name="confounded_sample_design.tsv",
+    )
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = tmp_path / "confounded_final"
+    module.finalize(spec, output)
+
+    d_common = pd.read_parquet(output / "derived/d_common_edge_effects.parquet")
+    repeated = pd.read_parquet(
+        output / "derived/repeated_measures_edge_effects.parquet"
+    )
+    assert set(d_common["status"]) == {"not_estimable"}
+    assert set(d_common["reason_code"]) == {
+        "target_not_estimable_after_batch_adjustment"
+    }
+    assert d_common["effect"].isna().all()
+    assert set(repeated["status"]) == {"not_estimable"}
+    assert set(repeated["reason_code"]) == {"rank_deficient_declared_design"}
+    assert repeated["effect"].isna().all()
+
+
+def test_effect_model_role_cannot_claim_primary_release() -> None:
+    with pytest.raises(ValueError, match="role must be exploratory"):
+        module._effect_model_specs(
+            [
+                {
+                    "id": "forged-primary-effect",
+                    "backend": "d_common",
+                    "reference": "control",
+                    "target": "case",
+                    "role": "primary",
+                }
+            ],
+            field="datasets[0].effect_models",
+            context_key="condition",
+            comparison={"contrast": "case_vs_control"},
+        )
+
+
+def test_finalize_rejects_sample_design_checksum_mismatch(tmp_path: Path) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    dataset = cast(list[dict[str, Any]], payload["datasets"])[0]
+    _bind_effect_contract(
+        tmp_path,
+        dataset,
+        _paired_effect_sample_design(),
+        [
+            {
+                "id": "paired-d-common",
+                "backend": "d_common",
+                "reference": "Normal",
+                "target": "Tumor",
+            }
+        ],
+        name="checksum_sample_design.tsv",
+    )
+    binding = cast(dict[str, str], dataset["sample_design"])
+    binding["sha256"] = "0" * 64
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sample_design SHA256 mismatch"):
+        module.finalize(spec, tmp_path / "checksum_invalid")
+
+
+def test_finalize_rejects_inexact_sample_design_coverage(tmp_path: Path) -> None:
+    spec = _fixture(tmp_path)
+    payload = json.loads(spec.read_text(encoding="utf-8"))
+    dataset = cast(list[dict[str, Any]], payload["datasets"])[0]
+    incomplete = _paired_effect_sample_design().iloc[:-1].copy()
+    _bind_effect_contract(
+        tmp_path,
+        dataset,
+        incomplete,
+        [
+            {
+                "id": "paired-d-common",
+                "backend": "d_common",
+                "reference": "Normal",
+                "target": "Tumor",
+            }
+        ],
+        name="incomplete_sample_design.tsv",
+    )
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sample coverage mismatch"):
+        module.finalize(spec, tmp_path / "coverage_invalid")
 
 
 def test_cross_dataset_primary_excludes_synthetic_loso() -> None:
@@ -677,9 +1203,7 @@ def test_common_functional_false_fails_closed_across_rank_endpoints(
     assert set(selected_stability["status"]) == {"not_estimable"}
     assert set(selected_stability["reason_code"]) == {reason}
 
-    ranking = pd.read_csv(
-        output / "metrics/ranking_agreement_summary.tsv", sep="\t"
-    )
+    ranking = pd.read_csv(output / "metrics/ranking_agreement_summary.tsv", sep="\t")
     selected_ranking = ranking[
         ranking["dataset"].eq("real_unpaired") & ranking["method"].eq("m1")
     ]
@@ -693,16 +1217,12 @@ def test_common_functional_false_fails_closed_across_rank_endpoints(
     ]
     assert set(selected_biology["support_status"]) == {"not_estimable"}
     assert set(selected_biology["reason_code"]) == {reason}
-    assert set(selected_biology["evidence_rank_scope"]) == {
-        "within_receiver_macro"
-    }
+    assert set(selected_biology["evidence_rank_scope"]) == {"within_receiver_macro"}
     assert set(selected_biology["source_biology_file"]) == {
         "receiver_scoped_biology.tsv"
     }
 
-    score_index = pd.read_csv(
-        output / "score_tables/score_table_index.tsv", sep="\t"
-    )
+    score_index = pd.read_csv(output / "score_tables/score_table_index.tsv", sep="\t")
     selected_index = score_index[
         score_index["dataset"].eq("real_unpaired") & score_index["method"].eq("m1")
     ]
@@ -756,16 +1276,12 @@ def test_supportive_biology_dataset_alias_preserves_locked_observations(
         truth.read_text().replace("  real_unpaired:\n", "  locked_ms_atlas:\n"),
         encoding="utf-8",
     )
-    payload["supportive_biology_dataset_aliases"] = {
-        "locked_ms_atlas": "real_unpaired"
-    }
+    payload["supportive_biology_dataset_aliases"] = {"locked_ms_atlas": "real_unpaired"}
     spec.write_text(json.dumps(payload), encoding="utf-8")
 
     module.finalize(spec, tmp_path / "aliased")
 
-    biology = pd.read_csv(
-        tmp_path / "aliased/metrics/biology_support.tsv", sep="\t"
-    )
+    biology = pd.read_csv(tmp_path / "aliased/metrics/biology_support.tsv", sep="\t")
     selected = biology[biology["dataset"].eq("real_unpaired")]
     assert set(selected["truth_dataset"]) == {"locked_ms_atlas"}
     assert "m1" in set(selected["method"])
@@ -848,9 +1364,7 @@ def test_biology_evidence_can_add_native_sensitivity_variant(
 
     manifest = module.finalize(spec, tmp_path / "native_biology")
 
-    assert (
-        manifest["guardrails"]["preregistered_track_b_primary_reported"] is False
-    )
+    assert manifest["guardrails"]["preregistered_track_b_primary_reported"] is False
 
     biology = pd.read_csv(
         tmp_path / "native_biology/metrics/biology_support.tsv", sep="\t"
@@ -951,9 +1465,7 @@ def test_readback_only_elapsed_is_excluded_from_method_runtime(tmp_path: Path) -
         "environment": {"threads": 1},
         "output": {"sha256": "b" * 64},
     }
-    current_manifest_path.write_text(
-        json.dumps(current_manifest), encoding="utf-8"
-    )
+    current_manifest_path.write_text(json.dumps(current_manifest), encoding="utf-8")
     long_path = tmp_path / "scores.parquet"
     pd.DataFrame({"value": [1]}).to_parquet(long_path, index=False)
     identity = module.RunIdentity(
@@ -1003,8 +1515,7 @@ def test_readback_only_elapsed_is_excluded_from_method_runtime(tmp_path: Path) -
     assert components.iloc[0]["method_runtime_role"] == "source_pipeline_total"
     assert components.iloc[0]["median_adapter_readback_wall_time_seconds"] == 212.0
     assert (
-        components.iloc[0]["median_source_pipeline_total_wall_time_seconds"]
-        == 7023.0
+        components.iloc[0]["median_source_pipeline_total_wall_time_seconds"] == 7023.0
     )
 
 

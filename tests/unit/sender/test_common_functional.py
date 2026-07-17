@@ -127,6 +127,61 @@ def _contrast() -> ContrastSpec:
     )
 
 
+def _three_context_contrast(*, reverse: bool = False) -> ContrastSpec:
+    weights = {"c": 1.0, "a": -0.5, "b": -0.5}
+    if reverse:
+        weights = {node: -weight for node, weight in weights.items()}
+    return ContrastSpec(
+        name="c-v-a-b" if not reverse else "a-b-v-c",
+        weights=weights,
+        family="three-context-test",
+        mode="balanced",
+    )
+
+
+def _three_context_availability() -> pd.DataFrame:
+    context_ids = {"a": "z-context", "b": "a-context", "c": "m-context"}
+    rows: list[dict[str, object]] = []
+    for subject_index in range(4):
+        subject = f"multi-{subject_index}"
+        values = {
+            "a": 0.15 + 0.01 * subject_index,
+            "b": 0.25 + 0.02 * subject_index,
+            "c": 0.70 + 0.03 * subject_index,
+        }
+        for node, maximum in values.items():
+            for sender, ligand in (("A", maximum), ("B", maximum - 0.05)):
+                rows.append(
+                    {
+                        "sample_id": f"{subject}-{node}-{sender}",
+                        "subject_id": subject,
+                        "condition": node,
+                        "context_id": context_ids[node],
+                        "sender": sender,
+                        "receiver": "R",
+                        "interaction_id": "L_R",
+                        "ligand_availability": ligand,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _fit_three_context(
+    contrast: ContrastSpec | None = None,
+    *,
+    source: pd.DataFrame | None = None,
+) -> ContrastCommonSenderFunctional:
+    table = _three_context_availability() if source is None else source
+    return fit_contrast_common_sender_functional(
+        table,
+        contrast=contrast or _three_context_contrast(),
+        context_keys=("condition",),
+        filter_universe_id="three-context-order-test",
+        frozen_interaction_ids=("L_R",),
+        parameters=ContrastCommonSenderParameters(min_subjects=2),
+    )
+
+
 def _paired_interaction_availability(
     effects: tuple[float, ...],
     *,
@@ -281,6 +336,122 @@ def test_fit_pools_prevalence_across_contexts_and_is_order_stable() -> None:
     assert (
         first.contrast_supports[0].support_id == second.contrast_supports[0].support_id
     )
+
+
+def test_three_node_context_mapping_is_context_id_order_invariant() -> None:
+    functional = _fit_three_context()
+    support = functional.contrast_supports[0]
+
+    assert functional.contrast_context_ids == (
+        ("a", "z-context"),
+        ("b", "a-context"),
+        ("c", "m-context"),
+    )
+    assert functional.contrast_weights == (
+        ("a-context", -0.5),
+        ("m-context", 1.0),
+        ("z-context", -0.5),
+    )
+    assert support.contrast_weights == functional.contrast_weights
+    assert support.subject_effects == pytest.approx((0.50, 0.515, 0.53, 0.545))
+    functional.to_dict()
+
+
+def test_three_node_reordering_preserves_functional_identity() -> None:
+    first_contrast = ContrastSpec(
+        name="c-v-a-b",
+        weights={"a": -0.5, "b": -0.5, "c": 1.0},
+        family="three-context-test",
+        mode="balanced",
+    )
+    reordered_contrast = ContrastSpec(
+        name="c-v-a-b",
+        weights={"c": 1.0, "b": -0.5, "a": -0.5},
+        family="three-context-test",
+        mode="balanced",
+    )
+    source = _three_context_availability()
+    first = _fit_three_context(first_contrast, source=source)
+    reordered = _fit_three_context(
+        reordered_contrast,
+        source=source.sample(frac=1.0, random_state=2027),
+    )
+
+    assert first.contrast.to_dict() == reordered.contrast.to_dict()
+    assert first.contrast_context_ids == reordered.contrast_context_ids
+    assert first.contrast_weights == reordered.contrast_weights
+    assert first.training_availability_digest == (
+        reordered.training_availability_digest
+    )
+    assert first.contrast_supports[0].support_id == (
+        reordered.contrast_supports[0].support_id
+    )
+    assert first.sender_functional_id == reordered.sender_functional_id
+
+
+def test_three_node_reverse_contrast_preserves_mapping_and_flips_direction() -> None:
+    forward = _fit_three_context()
+    reverse = _fit_three_context(_three_context_contrast(reverse=True))
+    forward_support = forward.contrast_supports[0]
+    reverse_support = reverse.contrast_supports[0]
+
+    assert dict(forward.contrast_weights) == {
+        "a-context": -0.5,
+        "m-context": 1.0,
+        "z-context": -0.5,
+    }
+    assert dict(reverse.contrast_weights) == {
+        "a-context": 0.5,
+        "m-context": -1.0,
+        "z-context": 0.5,
+    }
+    assert reverse_support.subject_effects == pytest.approx(
+        tuple(-value for value in forward_support.subject_effects)
+    )
+    assert forward_support.mean_effect is not None
+    assert reverse_support.mean_effect == pytest.approx(-forward_support.mean_effect)
+    assert reverse_support.multiplicity_family_id != (
+        forward_support.multiplicity_family_id
+    )
+    assert reverse.sender_functional_id != forward.sender_functional_id
+
+
+def test_three_node_equal_weight_mapping_tamper_fails_integrity() -> None:
+    functional = _fit_three_context()
+    mapping = dict(functional.contrast_context_ids)
+    mapping["a"], mapping["b"] = mapping["b"], mapping["a"]
+    object.__setattr__(
+        functional,
+        "contrast_context_ids",
+        tuple(sorted(mapping.items())),
+    )
+
+    with pytest.raises(ContractError) as error:
+        functional.to_dict()
+    assert error.value.details.code == (
+        "common_sender_functional_integrity_violation"
+    )
+
+
+def test_two_node_sender_identity_and_effect_parity() -> None:
+    functional = _functional()
+    support = functional.contrast_supports[0]
+
+    assert functional.sender_functional_id == (
+        "contrast_common_sender_functional_595c988d844aab3ddd9df0517c8757e0"
+    )
+    assert functional.training_availability_digest == (
+        "common_sender_training_availability_"
+        "8ea5536d219fa571d1870a102c54fb561319aed0dad977cc55ce71c0848ed1a2"
+    )
+    assert support.support_id == (
+        "interaction_ligand_contrast_support_47d4250eadcb03fb6d3fac26303c95c0"
+    )
+    assert support.multiplicity_family_id == (
+        "interaction_ligand_contrast_multiplicity_family_"
+        "5b69eb5c2c74eb0dbcb6d217f150c8da"
+    )
+    assert support.subject_effects == pytest.approx((-0.2, -0.2))
 
 
 def test_unrelated_third_context_does_not_change_pairwise_functional_id() -> None:

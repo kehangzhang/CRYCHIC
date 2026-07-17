@@ -641,16 +641,19 @@ def load_harmonized_resource(
             f"expected={expected}, observed={observed}"
         )
     table = pd.read_csv(table_path, sep="\t", dtype=str, keep_default_na=False)
-    required = {
-        "harmonized_interaction_id",
-        "ligand",
-        "receptor",
-        "cellchat_source_interaction_id",
-        "cellphonedb_source_interaction_id",
-    }
+    required = {"harmonized_interaction_id", "ligand", "receptor"}
     missing = required.difference(table.columns)
     if missing or table.empty:
         raise ValueError(f"harmonized resource is invalid: missing={sorted(missing)}")
+    source_columns = [
+        column
+        for column in table.columns
+        if column.endswith("_source_interaction_id")
+    ]
+    if not source_columns:
+        raise ValueError("harmonized resource has no source interaction columns")
+    if table.loc[:, source_columns].astype(str).eq("").all(axis=1).any():
+        raise ValueError("harmonized resource contains a row with no source evidence")
     if table.duplicated(["ligand", "receptor"]).any():
         raise ValueError("harmonized resource contains duplicate ligand-receptor pairs")
     return table, manifest

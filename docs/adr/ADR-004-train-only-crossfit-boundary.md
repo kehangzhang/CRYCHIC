@@ -2,16 +2,16 @@
 
 - Status: Accepted
 - Date: 2026-07-13
-- Implementation status: Partial; the public orchestrator verifies the frozen
-  interaction/common-sender stages and exact planned receiver-row coverage for
-  a typed design/response/precision/incremental/family-common chain. A trusted
-  registered autonomous resource plus estimable paired subject-blocked tuning
-  can now produce officially observed incremental children. Held-out
-  family-common applications are connected behind that gate but remain
-  noncertifying diagnostics. The source-agnostic receiver-program parent is
-  connected as a diagnostic-only component and remains excluded from integrated
-  edge evidence. Independent/mixed inner tuning and full-pipeline inference
-  remain absent.
+- Implementation status: Partial but descriptive OOF-certifiable; the public
+  orchestrator verifies the frozen interaction/common-sender stages and exact
+  planned receiver-row coverage for a typed
+  design/response/precision/incremental/family-common chain. A trusted
+  registered autonomous resource plus estimable subject-blocked tuning can now
+  produce officially observed incremental children. A strict certification
+  audit and authoritative v3 receiver registry cover every planned child before
+  persisted rows can claim complete descriptive OOF. Formal full-pipeline
+  inference remains absent; the source-agnostic receiver-program parent remains
+  diagnostic-only and excluded from integrated edge evidence.
 
 ## Context
 
@@ -92,10 +92,9 @@ size or rank, support status, or gate identity.
 A fold/contrast may contain multiple receiver models. Its scoring collection
 hashes the sorted receiver child manifest identifiers and explicitly declares
 `common_functional_across_receivers=false`. This is a composition registry, not
-a claim that distinct receiver models are one scoring function. Persisted
-source-key digests validate the emitted rows, while
-`composition_status=partial_emitted_only` makes clear that no planned receiver
-universe or authoritative child model registry is persisted yet.
+a claim that distinct receiver models are one scoring function. Baseline
+source-key digests validate emitted rows; the public cross-fit v3 registry also
+freezes the planned receiver universe and filter-universe lineage.
 
 ## Globally frozen inputs
 

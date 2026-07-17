@@ -1,0 +1,21 @@
+{
+  "schema_version": "crychic-cscc-gain-calibration-smoke-config-v1",
+  "base_smoke_config": {
+    "relative_path": "benchmarks/configs/cscc_paired_gate_smoke.json",
+    "sha256": "f7cb4ce4b6cfc6762a9c636497fb8b4af34a49ad01abc7c96973186f5a50c3b4"
+  },
+  "scope": {
+    "analysis_class": "small_scale_descriptive_gain_calibration_smoke",
+    "formal_inference_allowed": false,
+    "biological_validation_claim_allowed": false,
+    "comparative_method_advantage_claim_allowed": false
+  },
+  "gain_calibration_spec": {
+    "min_inner_folds": 2,
+    "min_subjects": 4,
+    "min_supported_families": 1,
+    "min_subjects_per_family": 4,
+    "min_positive_observations": 4,
+    "min_distinct_positive_gains": 3
+  }
+}

@@ -19,8 +19,12 @@ from pandas.api import types as pd_types
 
 from crychic.core import canonical_json, stable_id
 from crychic.scoring.contracts import (
+    SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
     SCORING_COLLECTION_DIGEST_METHOD,
     SCORING_COLLECTION_EXTENSION_VERSION,
+    SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+    SCORING_COLLECTION_LEGACY_EXTENSION_VERSION,
+    SCORING_COLLECTION_SUPPORTED_VERSIONS,
     ReceiverScoringFunctionalManifest,
     ScoringCollectionDocument,
     ScoringCollectionManifest,
@@ -356,10 +360,30 @@ def edge_evidence_contract() -> ResultExtensionContract:
 
 
 @cache
-def scoring_collections_contract() -> JsonResultExtensionContract:
+def scoring_collections_contract(
+    extension_version: str = SCORING_COLLECTION_EXTENSION_VERSION,
+) -> JsonResultExtensionContract:
     """Resolve the optional receiver scoring-collection extension."""
 
-    schema_filename = "scoring_collections.schema.json"
+    if extension_version not in SCORING_COLLECTION_SUPPORTED_VERSIONS:
+        raise ResultValidationError(
+            "Scoring collection extension version is not supported",
+            code="unsupported_result_extension",
+            field="extension_schema_version",
+            remediation="Use a released scoring collection extension version",
+        )
+    schema_filename = {
+        SCORING_COLLECTION_LEGACY_EXTENSION_VERSION: (
+            "scoring_collections.schema.json"
+        ),
+        SCORING_COLLECTION_DERIVED_REGISTRY_VERSION: (
+            "scoring_collections_v2.schema.json"
+        ),
+        SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION: (
+            "scoring_collections_v3.schema.json"
+        ),
+        SCORING_COLLECTION_EXTENSION_VERSION: "scoring_collections_v4.schema.json",
+    }[extension_version]
     document = load_schema_document(schema_filename)
     properties = document.get("properties")
     if not isinstance(properties, Mapping):
@@ -386,9 +410,21 @@ def scoring_collections_contract() -> JsonResultExtensionContract:
     collection_kind = constant("collection_kind")
     digest_method = constant("digest_method")
     if (
-        version != SCORING_COLLECTION_EXTENSION_VERSION
+        version != extension_version
         or result_version != RESULT_SCHEMA_VERSION
-        or collection_kind != "receiver_partition"
+        or collection_kind
+        != {
+            SCORING_COLLECTION_LEGACY_EXTENSION_VERSION: "receiver_partition",
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION: (
+                "planned_receiver_registry"
+            ),
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION: (
+                "authoritative_planned_receiver_registry"
+            ),
+            SCORING_COLLECTION_EXTENSION_VERSION: (
+                "authoritative_planned_receiver_registry"
+            ),
+        }[extension_version]
         or digest_method != SCORING_COLLECTION_DIGEST_METHOD
     ):
         raise ResultValidationError(
@@ -452,6 +488,17 @@ def validate_scoring_collection_links(
     ] = {}
     for collection in document.collections:
         for child in collection.children:
+            is_emitted = (
+                document.extension_schema_version
+                == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION
+                or child.emission_status == "emitted"
+            )
+            if not is_emitted:
+                continue
+            if child.scoring_functional_id is None:
+                raise _collection_linkage_error(
+                    "An emitted receiver child is missing its scoring functional"
+                )
             if child.scoring_functional_id in functional_children:
                 raise _collection_linkage_error(
                     "A scoring functional is assigned to multiple receiver children"

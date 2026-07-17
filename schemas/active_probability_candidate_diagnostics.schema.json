@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:active-probability-candidate-diagnostics:1.0.0",
+  "title": "CRYCHIC ADR-013 candidate diagnostics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "active_probability_candidate_diagnostics"},
+    "filename": {"const": "active_probability_candidate_diagnostics.parquet"},
+    "primary_key": {"const": ["candidate_edge_id"]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_edge_id", "active_probability_record_id", "point_record_id", "source_score_collection_id", "stratum_id", "score_version", "n_subjects", "point_score", "point_status", "point_reason_code", "active_null_empirical_p_value", "candidate_local_fdr", "candidate_comm_probability", "probability_reason_code", "local_fdr_diagnostic_id", "calibration_gate_id"],
+      "properties": {
+        "candidate_edge_id": {"dtype": "string", "nullable": false},
+        "active_probability_record_id": {"dtype": "string", "nullable": false},
+        "point_record_id": {"dtype": "string", "nullable": false},
+        "source_score_collection_id": {"dtype": "string", "nullable": false},
+        "stratum_id": {"dtype": "string", "nullable": false},
+        "score_version": {"dtype": "string", "nullable": false},
+        "n_subjects": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "point_score": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "point_status": {"dtype": "string", "nullable": false, "enum": ["observed", "structural_zero", "not_estimable", "failed"]},
+        "point_reason_code": {"dtype": "string", "nullable": true},
+        "active_null_empirical_p_value": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "candidate_local_fdr": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "candidate_comm_probability": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "probability_reason_code": {"dtype": "string", "nullable": true},
+        "local_fdr_diagnostic_id": {"dtype": "string", "nullable": false},
+        "calibration_gate_id": {"dtype": "string", "nullable": true}
+      }
+    }
+  }
+}

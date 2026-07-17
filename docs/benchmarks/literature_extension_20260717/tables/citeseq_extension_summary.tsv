@@ -1,0 +1,15 @@
+dataset	species	cells	clusters	regime	universe	status	methods_evaluated	crychic_auroc	crychic_auroc_rank	crychic_average_precision	crychic_ap_rank	note
+5k_pbmc	human	5527	8	H-common	resource_fixed	observed	11	0.548635	1	0.108965	1	原4数据集
+5k_pbmc_nextgem	human	3832	8	H-common	resource_fixed	observed	11	0.465043	6	0.070353	11	原4数据集
+malt_10k	human	7877	10	H-common	resource_fixed	observed	11	0.590926	1	0.174180	1	原4数据集
+pbmc_10k	human	9815	7	H-common	resource_fixed	observed	11	0.641593	1	0.174635	1	原4数据集
+cbmc_seuratdata	human	7713	12	H-common	resource_fixed	not_evaluable	0					14个ADT truth受体与冻结human H-common重叠为0
+sln_111	mouse	15802	28	H-common	resource_fixed	observed	9	0.626157	1	0.199296	4	mouse LIANA-CellChat common 705 LR
+sln_208	mouse	15049	28	H-common	resource_fixed	observed	9	0.541101	2	0.121625	1	mouse LIANA-CellChat common 705 LR
+5k_pbmc	human	5527	8	native	independent	observed	11	0.571556	2	0.078727	7	原4数据集
+5k_pbmc_nextgem	human	3832	8	native	independent	observed	11	0.551225	3	0.090946	11	原4数据集
+malt_10k	human	7877	10	native	independent	observed	11	0.586984	11	0.146943	5	原4数据集
+pbmc_10k	human	9815	7	native	independent	observed	11	0.592878	10	0.195766	4	原4数据集
+cbmc_seuratdata	human	7713	12	native	independent	observed	11	0.590751	8	0.279514	4	新增；native非最佳
+sln_111	mouse	15802	28	native	independent	observed	9	0.735496	1	0.407434	1	mouse LIANA native 4015 LR；CellPhoneDB跳过
+sln_208	mouse	15049	28	native	independent	observed	9	0.722678	1	0.358910	1	mouse LIANA native 4015 LR；CellPhoneDB跳过

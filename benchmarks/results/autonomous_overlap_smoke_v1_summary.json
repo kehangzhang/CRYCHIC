@@ -1,7 +1,7 @@
 {
   "artifact": {
-    "canonical_sha256": "681eeb78b29a5d0b55496307665a923610416b77eac7b13a4ecfa35fe3219735",
-    "file_sha256": "889170826280bf991e5427c39d78dd8013aefee94a61d7d8cbfa9c113bec6cf6",
+    "canonical_sha256": "0c1259c34d666c66b947de33c68b205b216be2c8054d7d2ab46528f13661f638",
+    "file_sha256": "b822072b03ee96123861cd75173c80027677514efdf8eb6c670911850f1c964e",
     "path": "benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
     "size_bytes": 4332,
     "tracked": false
@@ -21,22 +21,22 @@
     "algorithm_contract": "sample_keyed_autonomous_projected_incremental_v7",
     "source_sha256": {
       "benchmarks/simulation/run_autonomous_overlap_smoke.py": "6a41d71f3ff4687c93192e687afd39734ba32f0387540a31c3286aa370686dd3",
-      "src/crychic/attribution/__init__.py": "f18950219625cc130ed1c911c9714c4e9c5023dc16ff1f80fc34b46f4821c6aa",
+      "src/crychic/attribution/__init__.py": "f04969c98c8d194357e81dd2f06384aee846d739d9751746fe29be5b244575bb",
       "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
       "src/crychic/attribution/solver.py": "159e2099d9fbd8320706ea45db9647fee5d71b214b829ea54c74664c71992935",
-      "src/crychic/attribution/tuning.py": "11e142a4ceea7f17ca6c040190c81fd34358db0d7e9683393c004f95451d1ab8",
+      "src/crychic/attribution/tuning.py": "56aea80da9548cad9f8122cf1952599dd264d7574b8f9c8fa7897ed956814489",
       "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
       "src/crychic/core/errors.py": "1683c3ca6f08f7160387a086f2fda7983c0ee15035d008934827035ebd7903cc",
       "src/crychic/core/ids.py": "43cdc62bc23baa8666fabda9103ecc651cd0be67e50fee8a92bd3cf0d86060bf",
-      "src/crychic/resources/__init__.py": "8b20692a085926f8d3eb7315501385678cd0ea5736cc0ee781f8a0f0052925e9",
+      "src/crychic/resources/__init__.py": "5ae8f72ad44ad62857d871b295ae46d20b403b6e2f2c4465c9debcbe3418a267",
       "src/crychic/resources/autonomous_registry.py": "29dd4907cb1b99c258ff85be33e016f703d536c7ddaaed6866180bc412d3c1db",
       "src/crychic/resources/contracts.py": "98d628dda1e821911a23d2188f60d7d1fb8ae9070974ac58a52c5c10f7aeb0e8",
       "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
-      "src/crychic/response/__init__.py": "23b8f1b062d5fc40978fd5f2402186f6dead61e76d27d05f3014226f24846384",
+      "src/crychic/response/__init__.py": "a8fa8fe1490dba5518501ce137487ee890a0c9833da218b6c1bf811bc85b3c1d",
       "src/crychic/response/autonomous.py": "ed21139eaa1a8939db08918d16094a0234a2616decffa3981aeb8dbc5ecbb9cf",
-      "src/crychic/scoring/__init__.py": "7df08227d9fba1282a97f06ebcc69f6a7c97cde7fe6540ae347f207a13248129",
-      "src/crychic/scoring/contracts.py": "5da2f37c2c7dbae5f96549ab8c9761d9f7a66b9a48771b1b7a95c4d81c8ea47c",
-      "src/crychic/scoring/downstream.py": "f4fee7ae12f7902db3d13f0ba575c08259497f99e3a618f9a6383af38eb5fed8"
+      "src/crychic/scoring/__init__.py": "2b0c636270b8f6988a800e79170f9dfaa2456fa3986df023269f011078231b09",
+      "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
+      "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a"
     }
   },
   "results": {

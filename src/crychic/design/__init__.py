@@ -38,6 +38,11 @@ from .frozen_encoder import (
     apply_frozen_design_encoder,
     fit_frozen_design_encoder,
 )
+from .repeated_measures import (
+    FrozenRepeatedMeasuresDesign,
+    RepeatedMeasuresDesignSpec,
+    freeze_repeated_measures_design,
+)
 
 __all__ = [
     "CanonicalContext",
@@ -52,6 +57,8 @@ __all__ = [
     "FrozenCovariateEncoding",
     "FrozenDesignApplication",
     "FrozenDesignEncoder",
+    "FrozenRepeatedMeasuresDesign",
+    "RepeatedMeasuresDesignSpec",
     "SubjectDesign",
     "SubjectDesignAudit",
     "apply_frozen_design_encoder",
@@ -65,6 +72,7 @@ __all__ = [
     "default_design_formula",
     "factorial_interaction_contrast",
     "fit_frozen_design_encoder",
+    "freeze_repeated_measures_design",
     "global_contrasts",
     "global_one_vs_rest",
     "local_contrasts",

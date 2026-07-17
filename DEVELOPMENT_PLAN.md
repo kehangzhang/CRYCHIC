@@ -6,7 +6,7 @@
 | --- | --- |
 | 项目名 | CRYCHIC: Cellular Relational dYnamics for Contextual Hypergraph Inference of Communication |
 | Python 包名 | `crychic` |
-| 文档状态 | 架构与实施基线，尚未开始算法实现 |
+| 文档状态 | 架构与实施基线；当前实现进度以 `docs/methods/suggestion-1-implementation-status.md` 为准 |
 | 编制日期 | 2026-07-12 |
 | 主要需求来源 | 仓库上级目录 `../prompt.md`（1,787 行算法设想） |
 | 规划分支 | `planning/development-blueprint` |
@@ -17,6 +17,10 @@
 命名统一为 `CRYCHIC/crychic`。原文部分 LaTeX 在 Markdown 转换中损坏，
 实现公式前必须在 `docs/methods/` 中恢复、推导并经过统计审阅；不得直接按
 损坏的公式片段编码。
+
+> 实施说明：本文件保留原始架构和决策门基线，不是实时进度看板。当前实现
+> 状态、证据和未完成项见
+> [`suggestion-1-implementation-status.md`](docs/methods/suggestion-1-implementation-status.md)。
 
 本文的状态约定：
 
@@ -824,7 +828,7 @@ sender separation 的方法学增益；所有真实数据结果仍为 explorator
 | V02-02 | estimability-aware subject fold planner | `resampling`, `design` | v0.1 | 每折秩/support、合法 K |
 | V02-03 | fold-scoped leakage barrier | `workflow` | V02-02 | train-only transforms |
 | V02-04 | gated basis 标准化与 sparse contract | `attribution` | V02-01/03 | fold-safe gating |
-| V02-05 | LR cosine clustering/equivalence class | `attribution` | V02-04 | family 与 uncertainty |
+| V02-05 | strict target-profile family + molecular LR equivalence axes | `attribution`, `resources` | V02-04 | family/uncertainty 与跨资源 core ID 分离 |
 | V02-06 | positive elastic-net 无图基线 | `attribution` | V02-04 | sklearn/reference parity |
 | V02-07 | CVXPY graph-fused 原型 | `attribution` | V02-06/design | convex/KKT diagnostics |
 | V02-08 | graph-aware tuning/stability selection | `attribution` | V02-07 | deterministic、无泄漏 |
@@ -1357,8 +1361,8 @@ docs/
 | ADR-007 | independent-count response backend 与 shrinkage statistic | v0.1 |
 | ADR-008 | receiver 与 OOF effect 的 repeated-measure backend、最小 cluster 支持 | v0.3 |
 | ADR-009 | signed response、非负 prior、reverse contrast/双通道语义 | v0.2 |
-| ADR-010 | LR equivalence、graph tuning、G2 primary metric/scenario/margins | v0.2 |
-| ADR-011 | common scoring functional、fold estimability 和所有 train-only transforms | v0.2 |
+| ADR-010 | LR equivalence、graph tuning、G2 primary metric/scenario/margins | v0.2；已接受，见 `docs/adr/ADR-010-graph-fusion-g2-gate.md` |
+| ADR-011 | common scoring functional、fold estimability 和所有 train-only transforms | v0.2；已接受，见 `docs/adr/ADR-011-context-common-scoring-functional.md` |
 | ADR-012 | primary hypothesis universe、filtering、唯一 hierarchical FDR procedure | v0.3 |
 | ADR-013 | active-edge 唯一 null、local-FDR strata/阈值/fallback 与 G3-P | v0.3 |
 | ADR-014 | ExchangeabilityMap、repeated CF 和 full-pipeline nuisance uncertainty | v0.3 |

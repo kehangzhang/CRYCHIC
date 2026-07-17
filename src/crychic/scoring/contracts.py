@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import Counter
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -17,8 +18,22 @@ from crychic.core import canonical_digest, canonical_json, stable_id
 
 CORE_COMPONENTS = ("availability", "downstream", "sender", "prior_quality")
 LEGACY_UNTRACKED_SCORE_VERSION = "geometric_v1_untracked"
-SCORING_COLLECTION_EXTENSION_VERSION = "1.0.0"
+SCORING_COLLECTION_LEGACY_EXTENSION_VERSION = "1.0.0"
+SCORING_COLLECTION_DERIVED_REGISTRY_VERSION = "2.0.0"
+SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION = "3.0.0"
+SCORING_COLLECTION_EXTENSION_VERSION = "4.0.0"
+SCORING_COLLECTION_SUPPORTED_VERSIONS = (
+    SCORING_COLLECTION_LEGACY_EXTENSION_VERSION,
+    SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+    SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+    SCORING_COLLECTION_EXTENSION_VERSION,
+)
 SCORING_COLLECTION_DIGEST_METHOD = "sha256_canonical_csv_v1"
+SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS = "producer_declared_complete"
+SCORING_COLLECTION_DERIVED_PLAN_STATUS = (
+    "derived_from_v2_collections_legacy_compatible"
+)
+SCORING_COLLECTION_UNAVAILABLE_PLAN_STATUS = "unavailable_legacy_v1"
 SCORING_SOURCE_KEY_COLUMNS = (
     "subject_id",
     "sample_id",
@@ -97,30 +112,257 @@ def _sha256_digest(value: object, *, field_name: str) -> str:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PlannedScoringCollectionManifest:
+    """One planned contrast/repeat/fold receiver universe.
+
+    Producer-declared entries are persisted by authoritative v3/v4 documents.
+    Derived entries only expose the weaker scope recoverable from a v2 document;
+    they are never serialized back as authoritative plans.
+    """
+
+    contrast: str
+    repeat_id: str
+    fold_id: str
+    planned_receivers: tuple[str, ...]
+    filter_universe_id: str | None
+    provenance_status: str = SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS
+    contract_version: str = SCORING_COLLECTION_EXTENSION_VERSION
+    plan_manifest_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        contrast = _required_identifier(self.contrast, field_name="contrast")
+        repeat_id = _required_identifier(self.repeat_id, field_name="repeat_id")
+        fold_id = _required_identifier(self.fold_id, field_name="fold_id")
+        planned_receivers = _stable_names(
+            tuple(self.planned_receivers), field_name="planned_receivers"
+        )
+        if self.contract_version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            if (
+                self.provenance_status
+                != SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS
+            ):
+                raise ValueError(
+                    "authoritative planned collections require producer-declared "
+                    "provenance"
+                )
+            filter_universe_id: str | None = _required_identifier(
+                self.filter_universe_id, field_name="filter_universe_id"
+            )
+        elif self.contract_version == SCORING_COLLECTION_DERIVED_REGISTRY_VERSION:
+            if self.provenance_status != SCORING_COLLECTION_DERIVED_PLAN_STATUS:
+                raise ValueError(
+                    "v2 derived planned collections require legacy-compatible "
+                    "provenance"
+                )
+            filter_universe_id = (
+                None
+                if self.filter_universe_id is None
+                else _required_identifier(
+                    self.filter_universe_id, field_name="filter_universe_id"
+                )
+            )
+        else:
+            raise ValueError("unsupported planned collection contract version")
+        object.__setattr__(self, "contrast", contrast)
+        object.__setattr__(self, "repeat_id", repeat_id)
+        object.__setattr__(self, "fold_id", fold_id)
+        object.__setattr__(self, "planned_receivers", planned_receivers)
+        object.__setattr__(self, "filter_universe_id", filter_universe_id)
+        payload = {
+            "contract_version": self.contract_version,
+            "contrast": contrast,
+            "filter_universe_id": filter_universe_id,
+            "fold_id": fold_id,
+            "planned_receivers": list(planned_receivers),
+            "provenance_status": self.provenance_status,
+            "repeat_id": repeat_id,
+        }
+        object.__setattr__(
+            self,
+            "plan_manifest_id",
+            stable_id(
+                "planned_receiver_scoring_collection",
+                payload,
+                schema_version=self.contract_version.split(".", maxsplit=1)[0],
+            ),
+        )
+
+    @property
+    def scope_key(self) -> tuple[str, str, str]:
+        """Return the exact contrast/repeat/fold collection key."""
+
+        return (self.contrast, self.repeat_id, self.fold_id)
+
+    @classmethod
+    def derived_from_v2(
+        cls,
+        collection: ScoringCollectionManifest,
+    ) -> PlannedScoringCollectionManifest:
+        """Expose, without upgrading, the plan recoverable from one v2 collection."""
+
+        if collection.contract_version != SCORING_COLLECTION_DERIVED_REGISTRY_VERSION:
+            raise ValueError("derived plans require a v2 scoring collection")
+        universe_ids = {
+            child.filter_universe_id
+            for child in collection.children
+            if child.filter_universe_id is not None
+        }
+        filter_universe_id = (
+            next(iter(universe_ids)) if len(universe_ids) == 1 else None
+        )
+        return cls(
+            contrast=collection.contrast,
+            repeat_id=collection.repeat_id,
+            fold_id=collection.fold_id,
+            planned_receivers=collection.planned_receivers,
+            filter_universe_id=filter_universe_id,
+            provenance_status=SCORING_COLLECTION_DERIVED_PLAN_STATUS,
+            contract_version=SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+        )
+
+    @classmethod
+    def from_collection(
+        cls,
+        collection: ScoringCollectionManifest,
+        *,
+        filter_universe_id: str,
+    ) -> PlannedScoringCollectionManifest:
+        """Declare the producer-owned plan for one authoritative collection."""
+
+        if collection.contract_version not in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            raise ValueError("authoritative plans require a v3/v4 scoring collection")
+        return cls(
+            contrast=collection.contrast,
+            repeat_id=collection.repeat_id,
+            fold_id=collection.fold_id,
+            planned_receivers=collection.planned_receivers,
+            filter_universe_id=filter_universe_id,
+            contract_version=collection.contract_version,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the canonical authoritative planned-collection representation."""
+
+        if self.contract_version not in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            raise ValueError("derived v2 plans cannot be serialized as authoritative")
+        return {
+            "plan_entry_version": self.contract_version,
+            "plan_manifest_id": self.plan_manifest_id,
+            "contrast": self.contrast,
+            "repeat_id": self.repeat_id,
+            "fold_id": self.fold_id,
+            "planned_receivers": list(self.planned_receivers),
+            "filter_universe_id": self.filter_universe_id,
+            "provenance_status": self.provenance_status,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, object]
+    ) -> PlannedScoringCollectionManifest:
+        """Parse an authoritative plan entry while verifying its stable identity."""
+
+        expected = {
+            "plan_entry_version",
+            "plan_manifest_id",
+            "contrast",
+            "repeat_id",
+            "fold_id",
+            "planned_receivers",
+            "filter_universe_id",
+            "provenance_status",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ValueError("planned scoring collection fields are invalid")
+        raw_receivers = value["planned_receivers"]
+        if not isinstance(raw_receivers, Sequence) or isinstance(raw_receivers, str):
+            raise ValueError("planned scoring collection receivers must be an array")
+        result = cls(
+            contrast=value["contrast"],  # type: ignore[arg-type]
+            repeat_id=value["repeat_id"],  # type: ignore[arg-type]
+            fold_id=value["fold_id"],  # type: ignore[arg-type]
+            planned_receivers=cast(tuple[str, ...], tuple(raw_receivers)),
+            filter_universe_id=value["filter_universe_id"],  # type: ignore[arg-type]
+            provenance_status=value["provenance_status"],  # type: ignore[arg-type]
+            contract_version=value["plan_entry_version"],  # type: ignore[arg-type]
+        )
+        if value["plan_manifest_id"] != result.plan_manifest_id:
+            raise ValueError("planned scoring collection ID does not match its payload")
+        return result
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReceiverScoringFunctionalManifest:
-    """One emitted receiver partition and its verifiable source-score keys."""
+    """One receiver child in either the legacy or authoritative registry contract."""
 
     receiver: str
-    scoring_functional_id: str
-    source_score_key_digest: str
-    source_score_row_count: int
+    scoring_functional_id: str | None
+    source_score_key_digest: str | None = None
+    source_score_row_count: int = 0
     provenance_status: str = "functional_metadata_not_persisted_unverified"
+    contract_version: str = SCORING_COLLECTION_LEGACY_EXTENSION_VERSION
+    receiver_family_model_id: str | None = None
+    receiver_incremental_model_id: str | None = None
+    filter_universe_id: str | None = None
+    score_version: str | None = None
+    functional_status: str | None = None
+    registry_status: str | None = None
+    emission_status: str | None = None
+    reason_code: str | None = None
+    receiver_training_support_id: str | None = None
+    receiver_training_support_status: str | None = None
+    receiver_training_support_reason_code: str | None = None
     child_manifest_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        identifiers = ("receiver", "scoring_functional_id")
-        payload: dict[str, object] = {}
-        for field_name in identifiers:
-            normalized = _required_identifier(
-                getattr(self, field_name), field_name=field_name
-            )
-            object.__setattr__(self, field_name, normalized)
-            payload[field_name] = normalized
+        receiver = _required_identifier(self.receiver, field_name="receiver")
+        object.__setattr__(self, "receiver", receiver)
+        if self.contract_version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            self._validate_legacy(receiver)
+            return
+        if self.contract_version not in {
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            raise ValueError("unsupported receiver child contract version")
+        self._validate_registry(receiver)
+
+    def _validate_legacy(self, receiver: str) -> None:
+        functional_id = _required_identifier(
+            self.scoring_functional_id, field_name="scoring_functional_id"
+        )
+        object.__setattr__(self, "scoring_functional_id", functional_id)
         if self.provenance_status != "functional_metadata_not_persisted_unverified":
             raise ValueError(
                 "provenance_status must declare unverified functional metadata"
             )
-        payload["provenance_status"] = self.provenance_status
+        if any(
+            value is not None
+            for value in (
+                self.receiver_family_model_id,
+                self.receiver_incremental_model_id,
+                self.filter_universe_id,
+                self.score_version,
+                self.functional_status,
+                self.registry_status,
+                self.emission_status,
+                self.reason_code,
+                self.receiver_training_support_id,
+                self.receiver_training_support_status,
+                self.receiver_training_support_reason_code,
+            )
+        ):
+            raise ValueError("legacy receiver children cannot claim registry metadata")
         source_digest = _sha256_digest(
             self.source_score_key_digest,
             field_name="source_score_key_digest",
@@ -132,29 +374,376 @@ class ReceiverScoringFunctionalManifest:
         ):
             raise ValueError("source_score_row_count must be a positive integer")
         object.__setattr__(self, "source_score_key_digest", source_digest)
-        payload.update(
-            {
-                "source_score_key_digest": source_digest,
-                "source_score_row_count": self.source_score_row_count,
-            }
-        )
+        payload = {
+            "receiver": receiver,
+            "scoring_functional_id": functional_id,
+            "provenance_status": self.provenance_status,
+            "source_score_key_digest": source_digest,
+            "source_score_row_count": self.source_score_row_count,
+        }
         object.__setattr__(
             self,
             "child_manifest_id",
             stable_id("receiver_scoring_functional", payload),
         )
 
+    def _validate_registry(self, receiver: str) -> None:
+        if self.provenance_status != "producer_lineage_verified":
+            raise ValueError(
+                "registry provenance_status must be 'producer_lineage_verified'"
+            )
+        is_v4 = self.contract_version == SCORING_COLLECTION_EXTENSION_VERSION
+        support_id: str | None = None
+        support_status: str | None = None
+        support_reason: str | None = None
+        if is_v4:
+            support_id = _required_identifier(
+                self.receiver_training_support_id,
+                field_name="receiver_training_support_id",
+            )
+            if self.receiver_training_support_status not in {
+                "observed",
+                "not_estimable",
+            }:
+                raise ValueError("receiver_training_support_status is invalid")
+            support_status = self.receiver_training_support_status
+            if support_status == "observed":
+                if self.receiver_training_support_reason_code is not None:
+                    raise ValueError(
+                        "observed receiver training support cannot have a reason"
+                    )
+            else:
+                support_reason = _required_identifier(
+                    self.receiver_training_support_reason_code,
+                    field_name="receiver_training_support_reason_code",
+                )
+                if support_reason != "receiver_absent_in_outer_training":
+                    raise ValueError(
+                        "not-estimable receiver training support requires the "
+                        "receiver_absent_in_outer_training reason"
+                    )
+        elif any(
+            value is not None
+            for value in (
+                self.receiver_training_support_id,
+                self.receiver_training_support_status,
+                self.receiver_training_support_reason_code,
+            )
+        ):
+            raise ValueError("v1-v3 receiver children cannot claim v4 support lineage")
+
+        filter_universe_id = _required_identifier(
+            self.filter_universe_id, field_name="filter_universe_id"
+        )
+        object.__setattr__(self, "filter_universe_id", filter_universe_id)
+        model_identifiers: dict[str, str | None] = {}
+        for field_name in (
+            "receiver_family_model_id",
+            "receiver_incremental_model_id",
+        ):
+            raw_value = getattr(self, field_name)
+            if is_v4 and support_status == "not_estimable":
+                if raw_value is not None:
+                    raise ValueError(
+                        "an outer-training-absent receiver cannot claim model lineage"
+                    )
+                model_identifiers[field_name] = None
+            else:
+                model_identifiers[field_name] = _required_identifier(
+                    raw_value, field_name=field_name
+                )
+            object.__setattr__(self, field_name, model_identifiers[field_name])
+        if self.registry_status not in {
+            "functional_registered",
+            "functional_not_produced",
+        }:
+            raise ValueError("registry_status is invalid")
+        if self.emission_status not in {"emitted", "not_emitted"}:
+            raise ValueError("emission_status is invalid")
+        if is_v4 and support_status == "not_estimable" and (
+            self.registry_status != "functional_not_produced"
+            or self.emission_status != "not_emitted"
+        ):
+            raise ValueError(
+                "an outer-training-absent receiver must be unproduced and not emitted"
+            )
+
+        functional_id: str | None
+        score_version: str | None
+        functional_status: str | None
+        reason_code: str | None
+        if self.registry_status == "functional_registered":
+            functional_id = _required_identifier(
+                self.scoring_functional_id, field_name="scoring_functional_id"
+            )
+            score_version = _required_identifier(
+                self.score_version, field_name="score_version"
+            )
+            if self.functional_status not in {"observed", "not_estimable"}:
+                raise ValueError(
+                    "registered children require an observed or not_estimable "
+                    "functional_status"
+                )
+            functional_status = self.functional_status
+            if functional_status == "observed":
+                if self.reason_code is not None:
+                    raise ValueError(
+                        "observed functionals cannot have a reason_code"
+                    )
+                reason_code = None
+            else:
+                reason_code = _required_identifier(
+                    self.reason_code, field_name="reason_code"
+                )
+        else:
+            if any(
+                value is not None
+                for value in (
+                    self.scoring_functional_id,
+                    self.score_version,
+                    self.functional_status,
+                )
+            ):
+                raise ValueError(
+                    "unproduced children cannot claim functional metadata"
+                )
+            functional_id = None
+            score_version = None
+            functional_status = None
+            reason_code = _required_identifier(
+                self.reason_code, field_name="reason_code"
+            )
+        if (
+            is_v4
+            and support_status == "not_estimable"
+            and reason_code != support_reason
+        ):
+            raise ValueError(
+                "outer-training-absent child and support reason codes must match"
+            )
+
+        if self.emission_status == "emitted":
+            if self.registry_status != "functional_registered":
+                raise ValueError("only registered functionals can be emitted")
+            source_digest: str | None = _sha256_digest(
+                self.source_score_key_digest,
+                field_name="source_score_key_digest",
+            )
+            if (
+                isinstance(self.source_score_row_count, bool)
+                or not isinstance(self.source_score_row_count, int)
+                or self.source_score_row_count <= 0
+            ):
+                raise ValueError(
+                    "emitted children require a positive source_score_row_count"
+                )
+        else:
+            if (
+                self.source_score_key_digest is not None
+                or self.source_score_row_count != 0
+            ):
+                raise ValueError(
+                    "non-emitted children require null digest and zero source rows"
+                )
+            source_digest = None
+
+        object.__setattr__(self, "scoring_functional_id", functional_id)
+        object.__setattr__(self, "score_version", score_version)
+        object.__setattr__(self, "functional_status", functional_status)
+        object.__setattr__(self, "reason_code", reason_code)
+        object.__setattr__(self, "receiver_training_support_id", support_id)
+        object.__setattr__(self, "receiver_training_support_status", support_status)
+        object.__setattr__(
+            self,
+            "receiver_training_support_reason_code",
+            support_reason,
+        )
+        object.__setattr__(self, "source_score_key_digest", source_digest)
+        payload: dict[str, object] = {
+            "contract_version": self.contract_version,
+            "emission_status": self.emission_status,
+            "filter_universe_id": filter_universe_id,
+            "functional_status": functional_status,
+            "provenance_status": self.provenance_status,
+            "reason_code": reason_code,
+            "receiver": receiver,
+            "receiver_family_model_id": model_identifiers["receiver_family_model_id"],
+            "receiver_incremental_model_id": model_identifiers[
+                "receiver_incremental_model_id"
+            ],
+            "registry_status": self.registry_status,
+            "score_version": score_version,
+            "scoring_functional_id": functional_id,
+            "source_score_key_digest": source_digest,
+            "source_score_row_count": self.source_score_row_count,
+        }
+        if is_v4:
+            payload.update(
+                {
+                    "receiver_training_support_id": support_id,
+                    "receiver_training_support_status": support_status,
+                    "receiver_training_support_reason_code": support_reason,
+                }
+            )
+        object.__setattr__(
+            self,
+            "child_manifest_id",
+            stable_id(
+                "receiver_scoring_registry_entry",
+                payload,
+                schema_version=self.contract_version.split(".", maxsplit=1)[0],
+            ),
+        )
+
+    @classmethod
+    def registered(
+        cls,
+        *,
+        receiver: str,
+        receiver_family_model_id: str,
+        receiver_incremental_model_id: str,
+        filter_universe_id: str,
+        scoring_functional_id: str,
+        score_version: str,
+        functional_status: str,
+        reason_code: str | None = None,
+        source_score_key_digest: str | None = None,
+        source_score_row_count: int = 0,
+        receiver_training_support_id: str | None = None,
+        receiver_training_support_status: str | None = None,
+        receiver_training_support_reason_code: str | None = None,
+        contract_version: str = SCORING_COLLECTION_EXTENSION_VERSION,
+    ) -> ReceiverScoringFunctionalManifest:
+        """Create one producer-verified functional registry entry."""
+
+        emitted = source_score_key_digest is not None or source_score_row_count != 0
+        return cls(
+            receiver=receiver,
+            scoring_functional_id=scoring_functional_id,
+            source_score_key_digest=source_score_key_digest,
+            source_score_row_count=source_score_row_count,
+            provenance_status="producer_lineage_verified",
+            contract_version=contract_version,
+            receiver_family_model_id=receiver_family_model_id,
+            receiver_incremental_model_id=receiver_incremental_model_id,
+            filter_universe_id=filter_universe_id,
+            score_version=score_version,
+            functional_status=functional_status,
+            registry_status="functional_registered",
+            emission_status="emitted" if emitted else "not_emitted",
+            reason_code=reason_code,
+            receiver_training_support_id=receiver_training_support_id,
+            receiver_training_support_status=receiver_training_support_status,
+            receiver_training_support_reason_code=(
+                receiver_training_support_reason_code
+            ),
+        )
+
+    @classmethod
+    def not_produced(
+        cls,
+        *,
+        receiver: str,
+        receiver_family_model_id: str,
+        receiver_incremental_model_id: str,
+        filter_universe_id: str,
+        reason_code: str,
+        receiver_training_support_id: str | None = None,
+        receiver_training_support_status: str | None = None,
+        receiver_training_support_reason_code: str | None = None,
+        contract_version: str = SCORING_COLLECTION_EXTENSION_VERSION,
+    ) -> ReceiverScoringFunctionalManifest:
+        """Register a planned receiver whose scoring functional was not produced."""
+
+        return cls(
+            receiver=receiver,
+            scoring_functional_id=None,
+            provenance_status="producer_lineage_verified",
+            contract_version=contract_version,
+            receiver_family_model_id=receiver_family_model_id,
+            receiver_incremental_model_id=receiver_incremental_model_id,
+            filter_universe_id=filter_universe_id,
+            registry_status="functional_not_produced",
+            emission_status="not_emitted",
+            reason_code=reason_code,
+            receiver_training_support_id=receiver_training_support_id,
+            receiver_training_support_status=receiver_training_support_status,
+            receiver_training_support_reason_code=(
+                receiver_training_support_reason_code
+            ),
+        )
+
+    @classmethod
+    def training_not_estimable(
+        cls,
+        *,
+        receiver: str,
+        filter_universe_id: str,
+        receiver_training_support_id: str,
+        reason_code: str = "receiver_absent_in_outer_training",
+    ) -> ReceiverScoringFunctionalManifest:
+        """Register a v4 opportunity absent from one outer-training fold."""
+
+        return cls(
+            receiver=receiver,
+            scoring_functional_id=None,
+            provenance_status="producer_lineage_verified",
+            contract_version=SCORING_COLLECTION_EXTENSION_VERSION,
+            receiver_family_model_id=None,
+            receiver_incremental_model_id=None,
+            filter_universe_id=filter_universe_id,
+            registry_status="functional_not_produced",
+            emission_status="not_emitted",
+            reason_code=reason_code,
+            receiver_training_support_id=receiver_training_support_id,
+            receiver_training_support_status="not_estimable",
+            receiver_training_support_reason_code=reason_code,
+        )
+
     def to_dict(self) -> dict[str, object]:
         """Return the canonical child-manifest representation."""
 
-        return {
+        if self.contract_version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            return {
+                "child_manifest_id": self.child_manifest_id,
+                "receiver": self.receiver,
+                "scoring_functional_id": self.scoring_functional_id,
+                "provenance_status": self.provenance_status,
+                "source_score_key_digest": self.source_score_key_digest,
+                "source_score_row_count": self.source_score_row_count,
+            }
+        result: dict[str, object] = {
+            "registry_entry_version": self.contract_version,
             "child_manifest_id": self.child_manifest_id,
             "receiver": self.receiver,
+            "receiver_family_model_id": self.receiver_family_model_id,
+            "receiver_incremental_model_id": self.receiver_incremental_model_id,
+            "filter_universe_id": self.filter_universe_id,
             "scoring_functional_id": self.scoring_functional_id,
+            "score_version": self.score_version,
+            "functional_status": self.functional_status,
+            "registry_status": self.registry_status,
+            "emission_status": self.emission_status,
+            "reason_code": self.reason_code,
             "provenance_status": self.provenance_status,
             "source_score_key_digest": self.source_score_key_digest,
             "source_score_row_count": self.source_score_row_count,
         }
+        if self.contract_version == SCORING_COLLECTION_EXTENSION_VERSION:
+            result.update(
+                {
+                    "receiver_training_support_id": (
+                        self.receiver_training_support_id
+                    ),
+                    "receiver_training_support_status": (
+                        self.receiver_training_support_status
+                    ),
+                    "receiver_training_support_reason_code": (
+                        self.receiver_training_support_reason_code
+                    ),
+                }
+            )
+        return result
 
     @classmethod
     def from_dict(
@@ -162,7 +751,7 @@ class ReceiverScoringFunctionalManifest:
     ) -> ReceiverScoringFunctionalManifest:
         """Parse a child manifest while verifying its derived stable ID."""
 
-        expected = {
+        legacy_expected = {
             "child_manifest_id",
             "receiver",
             "scoring_functional_id",
@@ -170,15 +759,80 @@ class ReceiverScoringFunctionalManifest:
             "source_score_key_digest",
             "source_score_row_count",
         }
-        if not isinstance(value, Mapping) or set(value) != expected:
+        registry_expected = {
+            "registry_entry_version",
+            "child_manifest_id",
+            "receiver",
+            "receiver_family_model_id",
+            "receiver_incremental_model_id",
+            "filter_universe_id",
+            "scoring_functional_id",
+            "score_version",
+            "functional_status",
+            "registry_status",
+            "emission_status",
+            "reason_code",
+            "provenance_status",
+            "source_score_key_digest",
+            "source_score_row_count",
+        }
+        v4_registry_expected = {
+            *registry_expected,
+            "receiver_training_support_id",
+            "receiver_training_support_status",
+            "receiver_training_support_reason_code",
+        }
+        if not isinstance(value, Mapping):
             raise ValueError("receiver child manifest fields are invalid")
-        result = cls(
-            receiver=value["receiver"],  # type: ignore[arg-type]
-            scoring_functional_id=value["scoring_functional_id"],  # type: ignore[arg-type]
-            provenance_status=value["provenance_status"],  # type: ignore[arg-type]
-            source_score_key_digest=value["source_score_key_digest"],  # type: ignore[arg-type]
-            source_score_row_count=value["source_score_row_count"],  # type: ignore[arg-type]
-        )
+        if set(value) == legacy_expected:
+            result = cls(
+                receiver=value["receiver"],  # type: ignore[arg-type]
+                scoring_functional_id=value["scoring_functional_id"],  # type: ignore[arg-type]
+                provenance_status=value["provenance_status"],  # type: ignore[arg-type]
+                source_score_key_digest=value["source_score_key_digest"],  # type: ignore[arg-type]
+                source_score_row_count=value["source_score_row_count"],  # type: ignore[arg-type]
+            )
+        elif (
+            value.get("registry_entry_version")
+            == SCORING_COLLECTION_EXTENSION_VERSION
+            and set(value) == v4_registry_expected
+        ) or (
+            value.get("registry_entry_version")
+            in {
+                SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+                SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            }
+            and set(value) == registry_expected
+        ):
+            result = cls(
+                receiver=value["receiver"],  # type: ignore[arg-type]
+                scoring_functional_id=value["scoring_functional_id"],  # type: ignore[arg-type]
+                source_score_key_digest=value["source_score_key_digest"],  # type: ignore[arg-type]
+                source_score_row_count=value["source_score_row_count"],  # type: ignore[arg-type]
+                provenance_status=value["provenance_status"],  # type: ignore[arg-type]
+                contract_version=value["registry_entry_version"],  # type: ignore[arg-type]
+                receiver_family_model_id=value["receiver_family_model_id"],  # type: ignore[arg-type]
+                receiver_incremental_model_id=value[  # type: ignore[arg-type]
+                    "receiver_incremental_model_id"
+                ],
+                filter_universe_id=value["filter_universe_id"],  # type: ignore[arg-type]
+                score_version=value["score_version"],  # type: ignore[arg-type]
+                functional_status=value["functional_status"],  # type: ignore[arg-type]
+                registry_status=value["registry_status"],  # type: ignore[arg-type]
+                emission_status=value["emission_status"],  # type: ignore[arg-type]
+                reason_code=value["reason_code"],  # type: ignore[arg-type]
+                receiver_training_support_id=value.get(  # type: ignore[arg-type]
+                    "receiver_training_support_id"
+                ),
+                receiver_training_support_status=value.get(  # type: ignore[arg-type]
+                    "receiver_training_support_status"
+                ),
+                receiver_training_support_reason_code=value.get(  # type: ignore[arg-type]
+                    "receiver_training_support_reason_code"
+                ),
+            )
+        else:
+            raise ValueError("receiver child manifest fields are invalid")
         if value["child_manifest_id"] != result.child_manifest_id:
             raise ValueError("receiver child manifest ID does not match its payload")
         return result
@@ -186,12 +840,7 @@ class ReceiverScoringFunctionalManifest:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ScoringCollectionManifest:
-    """Partial emitted receiver partition for one contrast, repeat, and fold.
-
-    This contract deliberately does not claim that receiver children share one
-    scoring functional, nor that emitted children cover a planned receiver
-    universe.
-    """
+    """Receiver-scoped collection for one contrast, repeat, and fold."""
 
     contrast: str
     repeat_id: str
@@ -202,6 +851,10 @@ class ScoringCollectionManifest:
     partition_key: str = "receiver"
     receiver_scope: str = "emitted_sample_scores"
     composition_status: str = "partial_emitted_only"
+    contract_version: str = SCORING_COLLECTION_LEGACY_EXTENSION_VERSION
+    planned_receivers: tuple[str, ...] = ()
+    comparability_scope: str | None = None
+    row_union_policy: str | None = None
     scoring_collection_id: str = field(init=False)
     source_score_key_digest: str = field(init=False)
     source_score_row_count: int = field(init=False)
@@ -217,13 +870,6 @@ class ScoringCollectionManifest:
             )
         if self.partition_key != "receiver":
             raise ValueError("partition_key must be 'receiver'")
-        if self.receiver_scope != "emitted_sample_scores":
-            raise ValueError("receiver_scope must be 'emitted_sample_scores'")
-        if self.composition_status != "partial_emitted_only":
-            raise ValueError("composition_status must be 'partial_emitted_only'")
-        receivers = _stable_names(
-            tuple(self.emitted_receivers), field_name="emitted_receivers"
-        )
         children = tuple(self.children)
         if not children or any(
             not isinstance(child, ReceiverScoringFunctionalManifest)
@@ -233,6 +879,74 @@ class ScoringCollectionManifest:
                 "children must contain ReceiverScoringFunctionalManifest values"
             )
         children = tuple(sorted(children, key=lambda child: child.receiver))
+        if self.contract_version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            self._validate_legacy_collection(contrast, repeat_id, fold_id, children)
+            return
+        if self.contract_version not in {
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            raise ValueError("unsupported scoring collection contract version")
+        self._validate_registry_collection(contrast, repeat_id, fold_id, children)
+
+    def _set_derived(
+        self,
+        *,
+        contrast: str,
+        repeat_id: str,
+        fold_id: str,
+        emitted_receivers: tuple[str, ...],
+        planned_receivers: tuple[str, ...],
+        children: tuple[ReceiverScoringFunctionalManifest, ...],
+        source_digest: str,
+        source_row_count: int,
+        payload: Mapping[str, object],
+    ) -> None:
+        object.__setattr__(self, "contrast", contrast)
+        object.__setattr__(self, "repeat_id", repeat_id)
+        object.__setattr__(self, "fold_id", fold_id)
+        object.__setattr__(self, "emitted_receivers", emitted_receivers)
+        object.__setattr__(self, "planned_receivers", planned_receivers)
+        object.__setattr__(self, "children", children)
+        object.__setattr__(self, "source_score_key_digest", source_digest)
+        object.__setattr__(self, "source_score_row_count", source_row_count)
+        object.__setattr__(
+            self,
+            "scoring_collection_id",
+            stable_id(
+                "scoring_collection",
+                dict(payload),
+                schema_version=self.contract_version.split(".", maxsplit=1)[0],
+            ),
+        )
+
+    def _validate_legacy_collection(
+        self,
+        contrast: str,
+        repeat_id: str,
+        fold_id: str,
+        children: tuple[ReceiverScoringFunctionalManifest, ...],
+    ) -> None:
+        if self.receiver_scope != "emitted_sample_scores":
+            raise ValueError("receiver_scope must be 'emitted_sample_scores'")
+        if self.composition_status != "partial_emitted_only":
+            raise ValueError("composition_status must be 'partial_emitted_only'")
+        if self.planned_receivers or any(
+            value is not None
+            for value in (self.comparability_scope, self.row_union_policy)
+        ):
+            raise ValueError(
+                "legacy collections cannot claim planned registry metadata"
+            )
+        if any(
+            child.contract_version != SCORING_COLLECTION_LEGACY_EXTENSION_VERSION
+            for child in children
+        ):
+            raise ValueError("legacy collections require legacy receiver children")
+        receivers = _stable_names(
+            tuple(self.emitted_receivers), field_name="emitted_receivers"
+        )
         child_receivers = tuple(child.receiver for child in children)
         if child_receivers != receivers:
             raise ValueError(
@@ -271,23 +985,182 @@ class ScoringCollectionManifest:
             "source_score_key_digest": source_digest,
             "source_score_row_count": source_row_count,
         }
-        object.__setattr__(self, "contrast", contrast)
-        object.__setattr__(self, "repeat_id", repeat_id)
-        object.__setattr__(self, "fold_id", fold_id)
-        object.__setattr__(self, "emitted_receivers", receivers)
-        object.__setattr__(self, "children", children)
-        object.__setattr__(self, "source_score_key_digest", source_digest)
-        object.__setattr__(self, "source_score_row_count", source_row_count)
-        object.__setattr__(
-            self,
-            "scoring_collection_id",
-            stable_id("scoring_collection", payload),
+        self._set_derived(
+            contrast=contrast,
+            repeat_id=repeat_id,
+            fold_id=fold_id,
+            emitted_receivers=receivers,
+            planned_receivers=(),
+            children=children,
+            source_digest=source_digest,
+            source_row_count=source_row_count,
+            payload=payload,
+        )
+
+    def _validate_registry_collection(
+        self,
+        contrast: str,
+        repeat_id: str,
+        fold_id: str,
+        children: tuple[ReceiverScoringFunctionalManifest, ...],
+    ) -> None:
+        expected_policy = {
+            "receiver_scope": "planned_receiver_universe",
+            "composition_status": "planned_receiver_exact",
+            "comparability_scope": "within_receiver_across_contexts_only",
+            "row_union_policy": "cross_receiver_row_union_forbidden",
+        }
+        for field_name, expected in expected_policy.items():
+            if getattr(self, field_name) != expected:
+                raise ValueError(
+                    f"{field_name} must be {expected!r} for registry collections"
+                )
+        planned = _stable_names(
+            tuple(self.planned_receivers), field_name="planned_receivers"
+        )
+        raw_emitted = tuple(self.emitted_receivers)
+        if any(
+            not isinstance(value, str) or not value.strip() for value in raw_emitted
+        ):
+            raise ValueError("emitted_receivers must contain non-empty strings")
+        emitted = tuple(sorted(value.strip() for value in raw_emitted))
+        if len(set(emitted)) != len(emitted):
+            raise ValueError("emitted_receivers must contain unique values")
+        if any(
+            child.contract_version != self.contract_version
+            for child in children
+        ):
+            raise ValueError(
+                "registry collections require matching receiver child versions"
+            )
+        child_receivers = tuple(child.receiver for child in children)
+        if child_receivers != planned:
+            raise ValueError(
+                "planned_receivers must exactly match receiver registry children"
+            )
+        derived_emitted = tuple(
+            child.receiver
+            for child in children
+            if child.emission_status == "emitted"
+        )
+        if emitted != derived_emitted:
+            raise ValueError(
+                "emitted_receivers must exactly match emitted registry children"
+            )
+        child_ids = [child.child_manifest_id for child in children]
+        if len(set(child_ids)) != len(child_ids):
+            raise ValueError(
+                "receiver children must have unique child_manifest_id values"
+            )
+        functional_ids = [
+            child.scoring_functional_id
+            for child in children
+            if child.scoring_functional_id is not None
+        ]
+        if len(set(functional_ids)) != len(functional_ids):
+            raise ValueError(
+                "receiver children must have unique scoring_functional_id values"
+            )
+        emitted_children = tuple(
+            child for child in children if child.emission_status == "emitted"
+        )
+        source_row_count = sum(
+            child.source_score_row_count for child in emitted_children
+        )
+        source_digest = canonical_digest(
+            {
+                "digest_method": SCORING_COLLECTION_DIGEST_METHOD,
+                "receiver_children": [
+                    {
+                        "receiver": child.receiver,
+                        "source_score_key_digest": child.source_score_key_digest,
+                        "source_score_row_count": child.source_score_row_count,
+                    }
+                    for child in emitted_children
+                ],
+            }
+        )
+        payload = {
+            "collection_contract_version": self.contract_version,
+            "common_functional_across_receivers": False,
+            "composition_status": self.composition_status,
+            "contrast": contrast,
+            "fold_id": fold_id,
+            "partition_key": "receiver",
+            "receiver_scope": self.receiver_scope,
+            "repeat_id": repeat_id,
+            "planned_receivers": list(planned),
+            "emitted_receivers": list(emitted),
+            "comparability_scope": self.comparability_scope,
+            "row_union_policy": self.row_union_policy,
+            "children": [child.to_dict() for child in children],
+            "source_score_key_digest": source_digest,
+            "source_score_row_count": source_row_count,
+        }
+        self._set_derived(
+            contrast=contrast,
+            repeat_id=repeat_id,
+            fold_id=fold_id,
+            emitted_receivers=emitted,
+            planned_receivers=planned,
+            children=children,
+            source_digest=source_digest,
+            source_row_count=source_row_count,
+            payload=payload,
+        )
+
+    @classmethod
+    def planned_receiver_registry(
+        cls,
+        *,
+        contrast: str,
+        repeat_id: str,
+        fold_id: str,
+        planned_receivers: tuple[str, ...],
+        children: tuple[ReceiverScoringFunctionalManifest, ...],
+        contract_version: str = SCORING_COLLECTION_EXTENSION_VERSION,
+    ) -> ScoringCollectionManifest:
+        """Create an exact planned-receiver collection."""
+
+        emitted = tuple(
+            child.receiver for child in children if child.emission_status == "emitted"
+        )
+        return cls(
+            contrast=contrast,
+            repeat_id=repeat_id,
+            fold_id=fold_id,
+            emitted_receivers=emitted,
+            planned_receivers=planned_receivers,
+            children=children,
+            receiver_scope="planned_receiver_universe",
+            composition_status="planned_receiver_exact",
+            comparability_scope="within_receiver_across_contexts_only",
+            row_union_policy="cross_receiver_row_union_forbidden",
+            contract_version=contract_version,
         )
 
     def to_dict(self) -> dict[str, object]:
         """Return the canonical receiver-collection representation."""
 
+        if self.contract_version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            return {
+                "scoring_collection_id": self.scoring_collection_id,
+                "contrast": self.contrast,
+                "repeat_id": self.repeat_id,
+                "fold_id": self.fold_id,
+                "partition_key": self.partition_key,
+                "receiver_scope": self.receiver_scope,
+                "composition_status": self.composition_status,
+                "common_functional_across_receivers": (
+                    self.common_functional_across_receivers
+                ),
+                "emitted_receivers": list(self.emitted_receivers),
+                "children": [child.to_dict() for child in self.children],
+                "source_score_key_digest": self.source_score_key_digest,
+                "source_score_row_count": self.source_score_row_count,
+            }
         return {
+            "collection_contract_version": self.contract_version,
             "scoring_collection_id": self.scoring_collection_id,
             "contrast": self.contrast,
             "repeat_id": self.repeat_id,
@@ -298,7 +1171,10 @@ class ScoringCollectionManifest:
             "common_functional_across_receivers": (
                 self.common_functional_across_receivers
             ),
+            "planned_receivers": list(self.planned_receivers),
             "emitted_receivers": list(self.emitted_receivers),
+            "comparability_scope": self.comparability_scope,
+            "row_union_policy": self.row_union_policy,
             "children": [child.to_dict() for child in self.children],
             "source_score_key_digest": self.source_score_key_digest,
             "source_score_row_count": self.source_score_row_count,
@@ -308,7 +1184,7 @@ class ScoringCollectionManifest:
     def from_dict(cls, value: Mapping[str, object]) -> ScoringCollectionManifest:
         """Parse a collection while verifying all derived identities."""
 
-        expected = {
+        legacy_expected = {
             "scoring_collection_id",
             "contrast",
             "repeat_id",
@@ -322,17 +1198,34 @@ class ScoringCollectionManifest:
             "source_score_key_digest",
             "source_score_row_count",
         }
-        if not isinstance(value, Mapping) or set(value) != expected:
+        registry_expected = {
+            *legacy_expected,
+            "collection_contract_version",
+            "planned_receivers",
+            "comparability_scope",
+            "row_union_policy",
+        }
+        if not isinstance(value, Mapping) or frozenset(value) not in {
+            frozenset(legacy_expected),
+            frozenset(registry_expected),
+        }:
             raise ValueError("scoring collection manifest fields are invalid")
         raw_receivers = value["emitted_receivers"]
+        raw_planned = value.get("planned_receivers", ())
         raw_children = value["children"]
         if (
             not isinstance(raw_receivers, Sequence)
             or isinstance(raw_receivers, str)
+            or not isinstance(raw_planned, Sequence)
+            or isinstance(raw_planned, str)
             or not isinstance(raw_children, Sequence)
             or isinstance(raw_children, str)
         ):
             raise ValueError("scoring collection receivers and children must be arrays")
+        contract_version = value.get(
+            "collection_contract_version",
+            SCORING_COLLECTION_LEGACY_EXTENSION_VERSION,
+        )
         result = cls(
             contrast=value["contrast"],  # type: ignore[arg-type]
             repeat_id=value["repeat_id"],  # type: ignore[arg-type]
@@ -344,11 +1237,15 @@ class ScoringCollectionManifest:
                 "common_functional_across_receivers"
             ],
             emitted_receivers=cast(tuple[str, ...], tuple(raw_receivers)),
+            planned_receivers=cast(tuple[str, ...], tuple(raw_planned)),
             children=tuple(
                 ReceiverScoringFunctionalManifest.from_dict(child)
                 for child in raw_children
                 if isinstance(child, Mapping)
             ),
+            comparability_scope=value.get("comparability_scope"),  # type: ignore[arg-type]
+            row_union_policy=value.get("row_union_policy"),  # type: ignore[arg-type]
+            contract_version=contract_version,  # type: ignore[arg-type]
         )
         if len(result.children) != len(raw_children):
             raise ValueError("scoring collection children must be objects")
@@ -368,26 +1265,52 @@ class ScoringCollectionDocument:
     """Versioned persisted document containing receiver collections."""
 
     collections: tuple[ScoringCollectionManifest, ...]
-    extension_schema_version: str = SCORING_COLLECTION_EXTENSION_VERSION
+    planned_collections: tuple[PlannedScoringCollectionManifest, ...] | None = None
+    extension_schema_version: str | None = None
     result_schema_version: str = "0.1.0"
-    collection_kind: str = "receiver_partition"
+    collection_kind: str | None = None
     digest_method: str = SCORING_COLLECTION_DIGEST_METHOD
+    registry_id: str | None = field(init=False)
+    planning_status: str = field(init=False)
+    is_authoritative_registry: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.extension_schema_version != SCORING_COLLECTION_EXTENSION_VERSION:
-            raise ValueError("unsupported scoring collection extension version")
-        if self.result_schema_version != "0.1.0":
-            raise ValueError("scoring collections require result schema v0.1.0")
-        if self.collection_kind != "receiver_partition":
-            raise ValueError("collection_kind must be 'receiver_partition'")
-        if self.digest_method != SCORING_COLLECTION_DIGEST_METHOD:
-            raise ValueError("unsupported scoring collection digest method")
         collections = tuple(self.collections)
         if not collections or any(
             not isinstance(collection, ScoringCollectionManifest)
             for collection in collections
         ):
             raise ValueError("scoring collection document must not be empty")
+        versions = {collection.contract_version for collection in collections}
+        if len(versions) != 1:
+            raise ValueError(
+                "scoring collection documents cannot mix contract versions"
+            )
+        inferred_version = next(iter(versions))
+        extension_version = self.extension_schema_version or inferred_version
+        if extension_version not in SCORING_COLLECTION_SUPPORTED_VERSIONS:
+            raise ValueError("unsupported scoring collection extension version")
+        if extension_version != inferred_version:
+            raise ValueError("document and collection contract versions do not match")
+        if self.result_schema_version != "0.1.0":
+            raise ValueError("scoring collections require result schema v0.1.0")
+        expected_kind = {
+            SCORING_COLLECTION_LEGACY_EXTENSION_VERSION: "receiver_partition",
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION: (
+                "planned_receiver_registry"
+            ),
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION: (
+                "authoritative_planned_receiver_registry"
+            ),
+            SCORING_COLLECTION_EXTENSION_VERSION: (
+                "authoritative_planned_receiver_registry"
+            ),
+        }[extension_version]
+        collection_kind = self.collection_kind or expected_kind
+        if collection_kind != expected_kind:
+            raise ValueError(f"collection_kind must be {expected_kind!r}")
+        if self.digest_method != SCORING_COLLECTION_DIGEST_METHOD:
+            raise ValueError("unsupported scoring collection digest method")
         collections = tuple(
             sorted(
                 collections,
@@ -401,27 +1324,263 @@ class ScoringCollectionDocument:
             raise ValueError(
                 "scoring collections must be unique by contrast, repeat, and fold"
             )
+        child_manifest_entries = [
+            (child.child_manifest_id, child)
+            for collection in collections
+            for child in collection.children
+        ]
+        child_manifest_counts = Counter(
+            child_id for child_id, _ in child_manifest_entries
+        )
+        duplicated_child_ids = {
+            child_id for child_id, count in child_manifest_counts.items() if count > 1
+        }
+        if duplicated_child_ids and (
+            extension_version != SCORING_COLLECTION_EXTENSION_VERSION
+            or any(
+                child_id in duplicated_child_ids
+                and child.receiver_training_support_status != "not_estimable"
+                for child_id, child in child_manifest_entries
+            )
+        ):
+            raise ValueError("a receiver child must belong to exactly one collection")
         child_ids = [
             child.scoring_functional_id
             for collection in collections
             for child in collection.children
+            if child.scoring_functional_id is not None
         ]
         if len(set(child_ids)) != len(child_ids):
             raise ValueError(
                 "a receiver child functional must belong to exactly one collection"
             )
+        if extension_version in {
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            planned_by_fold: dict[tuple[str, str], tuple[str, ...]] = {}
+            for collection in collections:
+                key = (collection.repeat_id, collection.fold_id)
+                previous = planned_by_fold.setdefault(key, collection.planned_receivers)
+                if previous != collection.planned_receivers:
+                    raise ValueError(
+                        "planned receiver universe must be exact across contrasts in "
+                        "one repeat/fold"
+                    )
+        if extension_version == SCORING_COLLECTION_EXTENSION_VERSION:
+            run_receiver_axis = collections[0].planned_receivers
+            if any(
+                collection.planned_receivers != run_receiver_axis
+                for collection in collections[1:]
+            ):
+                raise ValueError(
+                    "v4 planned receiver universe must be exact across every fold"
+                )
+            support_by_fold_receiver: dict[
+                tuple[str, str, str], tuple[str | None, str | None, str | None]
+            ] = {}
+            support_scope_by_id: dict[str, tuple[str, str, str]] = {}
+            for collection in collections:
+                for child in collection.children:
+                    support_key = (
+                        collection.repeat_id,
+                        collection.fold_id,
+                        child.receiver,
+                    )
+                    support = (
+                        child.receiver_training_support_id,
+                        child.receiver_training_support_status,
+                        child.receiver_training_support_reason_code,
+                    )
+                    previous_support = support_by_fold_receiver.setdefault(
+                        support_key, support
+                    )
+                    if previous_support != support:
+                        raise ValueError(
+                            "v4 receiver training support must be exact across "
+                            "contrasts in one repeat/fold"
+                        )
+                    support_id = cast(str, child.receiver_training_support_id)
+                    previous_scope = support_scope_by_id.setdefault(
+                        support_id, support_key
+                    )
+                    if previous_scope != support_key:
+                        raise ValueError(
+                            "v4 receiver training support IDs cannot be reused "
+                            "across fold/receiver scopes"
+                        )
+        registry_id: str | None
+        if extension_version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            if self.planned_collections not in (None, ()):
+                raise ValueError("v1 documents cannot claim a planned collection set")
+            planned_collections: tuple[PlannedScoringCollectionManifest, ...] = ()
+            planning_status = SCORING_COLLECTION_UNAVAILABLE_PLAN_STATUS
+            registry_id = None
+        elif extension_version == SCORING_COLLECTION_DERIVED_REGISTRY_VERSION:
+            if self.planned_collections not in (None, ()):
+                raise ValueError(
+                    "v2 documents cannot claim producer-declared collection plans"
+                )
+            planned_collections = tuple(
+                PlannedScoringCollectionManifest.derived_from_v2(collection)
+                for collection in collections
+            )
+            planning_status = SCORING_COLLECTION_DERIVED_PLAN_STATUS
+            registry_id = stable_id(
+                "receiver_scoring_registry",
+                {
+                    "collection_ids": [
+                        collection.scoring_collection_id for collection in collections
+                    ],
+                    "digest_method": self.digest_method,
+                    "extension_schema_version": extension_version,
+                    "result_schema_version": self.result_schema_version,
+                },
+                schema_version="2",
+            )
+        else:
+            raw_plans = self.planned_collections
+            if (
+                raw_plans is None
+                or not raw_plans
+                or any(
+                    not isinstance(plan, PlannedScoringCollectionManifest)
+                    for plan in raw_plans
+                )
+            ):
+                raise ValueError(
+                    "authoritative documents require explicit planned collection "
+                    "manifests"
+                )
+            planned_collections = tuple(
+                sorted(raw_plans, key=lambda plan: plan.scope_key)
+            )
+            if any(
+                plan.contract_version != extension_version
+                or plan.provenance_status
+                != SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS
+                for plan in planned_collections
+            ):
+                raise ValueError(
+                    "authoritative planned collections must use the document version"
+                )
+            planned_keys = [plan.scope_key for plan in planned_collections]
+            if len(set(planned_keys)) != len(planned_keys):
+                raise ValueError(
+                    "planned collections must be unique by contrast, repeat, and fold"
+                )
+            planned_ids = [plan.plan_manifest_id for plan in planned_collections]
+            if len(set(planned_ids)) != len(planned_ids):
+                raise ValueError("planned collections must have unique stable IDs")
+            if set(planned_keys) != set(group_keys):
+                raise ValueError(
+                    "planned collections must exactly cover persisted collections"
+                )
+            contrasts = {plan.contrast for plan in planned_collections}
+            repeat_folds = {
+                (plan.repeat_id, plan.fold_id) for plan in planned_collections
+            }
+            expected_keys = {
+                (contrast, repeat_id, fold_id)
+                for contrast in contrasts
+                for repeat_id, fold_id in repeat_folds
+            }
+            if set(planned_keys) != expected_keys:
+                raise ValueError(
+                    "planned collections must form the complete contrast by "
+                    "repeat/fold opportunity set"
+                )
+            plans_by_key = {plan.scope_key: plan for plan in planned_collections}
+            filter_universe_by_fold: dict[tuple[str, str], str] = {}
+            for collection in collections:
+                collection_key = (
+                    collection.contrast,
+                    collection.repeat_id,
+                    collection.fold_id,
+                )
+                plan = plans_by_key[collection_key]
+                if collection.planned_receivers != plan.planned_receivers:
+                    raise ValueError(
+                        "planned receiver universe does not match its collection"
+                    )
+                child_universes = {
+                    child.filter_universe_id for child in collection.children
+                }
+                if child_universes != {plan.filter_universe_id}:
+                    raise ValueError(
+                        "receiver children must exactly match the planned filter "
+                        "universe"
+                    )
+                fold_key = (collection.repeat_id, collection.fold_id)
+                previous_universe = filter_universe_by_fold.setdefault(
+                    fold_key, cast(str, plan.filter_universe_id)
+                )
+                if previous_universe != plan.filter_universe_id:
+                    raise ValueError(
+                        "filter universe must be exact across contrasts in one "
+                        "repeat/fold"
+                    )
+            planning_status = SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS
+            registry_id = stable_id(
+                "authoritative_receiver_scoring_registry",
+                {
+                    "collection_ids": [
+                        collection.scoring_collection_id for collection in collections
+                    ],
+                    "digest_method": self.digest_method,
+                    "extension_schema_version": extension_version,
+                    "planned_collection_ids": planned_ids,
+                    "planning_status": planning_status,
+                    "result_schema_version": self.result_schema_version,
+                },
+                schema_version=extension_version.split(".", maxsplit=1)[0],
+            )
+        object.__setattr__(self, "extension_schema_version", extension_version)
+        object.__setattr__(self, "collection_kind", collection_kind)
+        object.__setattr__(self, "registry_id", registry_id)
+        object.__setattr__(self, "planning_status", planning_status)
+        object.__setattr__(
+            self,
+            "is_authoritative_registry",
+            extension_version
+            in {
+                SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+                SCORING_COLLECTION_EXTENSION_VERSION,
+            },
+        )
+        object.__setattr__(self, "planned_collections", planned_collections)
         object.__setattr__(self, "collections", collections)
 
     def to_dict(self) -> dict[str, object]:
         """Return a schema-ready versioned collection document."""
 
-        return {
+        result: dict[str, object] = {
             "extension_schema_version": self.extension_schema_version,
             "result_schema_version": self.result_schema_version,
             "collection_kind": self.collection_kind,
             "digest_method": self.digest_method,
             "collections": [collection.to_dict() for collection in self.collections],
         }
+        if self.extension_schema_version in {
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            result["registry_id"] = self.registry_id
+        if self.extension_schema_version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            result["planning_status"] = self.planning_status
+            result["is_authoritative_registry"] = self.is_authoritative_registry
+            result["planned_collections"] = [
+                plan.to_dict() for plan in cast(
+                    tuple[PlannedScoringCollectionManifest, ...],
+                    self.planned_collections,
+                )
+            ]
+        return result
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> ScoringCollectionDocument:
@@ -434,7 +1593,27 @@ class ScoringCollectionDocument:
             "digest_method",
             "collections",
         }
-        if not isinstance(value, Mapping) or set(value) != expected:
+        if not isinstance(value, Mapping):
+            raise ValueError("scoring collection document fields are invalid")
+        version = value.get("extension_schema_version")
+        if version == SCORING_COLLECTION_LEGACY_EXTENSION_VERSION:
+            allowed_fields = expected
+        elif version == SCORING_COLLECTION_DERIVED_REGISTRY_VERSION:
+            allowed_fields = {*expected, "registry_id"}
+        elif version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            allowed_fields = {
+                *expected,
+                "registry_id",
+                "planning_status",
+                "is_authoritative_registry",
+                "planned_collections",
+            }
+        else:
+            raise ValueError("unsupported scoring collection extension version")
+        if set(value) != allowed_fields:
             raise ValueError("scoring collection document fields are invalid")
         raw_collections = value["collections"]
         if not isinstance(raw_collections, Sequence) or isinstance(
@@ -448,13 +1627,51 @@ class ScoringCollectionDocument:
         )
         if len(collections) != len(raw_collections):
             raise ValueError("scoring collections must be objects")
-        return cls(
+        planned_collections: tuple[PlannedScoringCollectionManifest, ...] | None = None
+        if version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        }:
+            raw_plans = value["planned_collections"]
+            if not isinstance(raw_plans, Sequence) or isinstance(raw_plans, str):
+                raise ValueError("planned collections must be an array")
+            planned_collections = tuple(
+                PlannedScoringCollectionManifest.from_dict(plan)
+                for plan in raw_plans
+                if isinstance(plan, Mapping)
+            )
+            if len(planned_collections) != len(raw_plans):
+                raise ValueError("planned collections must be objects")
+        result = cls(
             extension_schema_version=value["extension_schema_version"],  # type: ignore[arg-type]
             result_schema_version=value["result_schema_version"],  # type: ignore[arg-type]
             collection_kind=value["collection_kind"],  # type: ignore[arg-type]
             digest_method=value["digest_method"],  # type: ignore[arg-type]
             collections=collections,
+            planned_collections=planned_collections,
         )
+        if version in {
+            SCORING_COLLECTION_DERIVED_REGISTRY_VERSION,
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        } and value["registry_id"] != result.registry_id:
+            raise ValueError("receiver scoring registry ID does not match its payload")
+        if version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        } and (
+            value["planning_status"] != result.planning_status
+        ):
+            raise ValueError("receiver scoring planning status is invalid")
+        if version in {
+            SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+            SCORING_COLLECTION_EXTENSION_VERSION,
+        } and (
+            value["is_authoritative_registry"] is not True
+            or not result.is_authoritative_registry
+        ):
+            raise ValueError("receiver scoring authority status is invalid")
+        return result
 
 
 def float64_array_digest(values: np.ndarray) -> str:

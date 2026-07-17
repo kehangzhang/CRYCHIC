@@ -94,6 +94,26 @@ _FORBIDDEN_INFERENCE_COLUMNS = {
 }
 
 
+def _canonical_contrast_weights(
+    contrast_weights: tuple[tuple[str, float], ...],
+) -> tuple[tuple[str, float], ...]:
+    """Return one order-invariant context-ID-to-weight mapping."""
+
+    normalized: list[tuple[str, float]] = []
+    for raw_context_id, raw_weight in tuple(contrast_weights):
+        if not isinstance(raw_context_id, str) or not raw_context_id.strip():
+            raise ValueError("contrast context IDs must be non-empty strings")
+        weight = float(raw_weight)
+        if not math.isfinite(weight):
+            raise ValueError("contrast weights must be finite")
+        normalized.append((raw_context_id.strip(), weight))
+    if len(normalized) < 2 or len({item[0] for item in normalized}) != len(
+        normalized
+    ):
+        raise ValueError("contrast weights require unique context IDs")
+    return tuple(sorted(normalized, key=lambda item: item[0]))
+
+
 def _sender_contrast_family_id(
     *,
     receiver: str,
@@ -108,11 +128,12 @@ def _sender_contrast_family_id(
 ) -> str:
     """Return the immutable receiver-wise Holm family identity."""
 
+    canonical_weights = _canonical_contrast_weights(contrast_weights)
     family_id: str = stable_id(
         "interaction_ligand_contrast_multiplicity_family",
         {
             "aggregation_policy": _SENDER_CONTRAST_SUPPORT_POLICY,
-            "contrast_weights": [list(value) for value in contrast_weights],
+            "contrast_weights": [list(value) for value in canonical_weights],
             "candidate_sender_ids_by_interaction": [
                 [interaction_id, list(sender_ids)]
                 for interaction_id, sender_ids in candidate_sender_ids_by_interaction
@@ -1345,12 +1366,10 @@ class ContrastCommonSenderFunctional:
                 field="contrast_context_ids",
                 remediation="Map every contrast context exactly once",
             )
-        contrast_weights = tuple(
-            sorted(
-                (
-                    (context_id, float(self.contrast.weights[node]))
-                    for node, context_id in contrast_contexts
-                )
+        contrast_weights = _canonical_contrast_weights(
+            tuple(
+                (context_id, float(self.contrast.weights[node]))
+                for node, context_id in contrast_contexts
             )
         )
         contrast_manifest_id = stable_id("contrast_manifest", self.contrast.to_dict())
@@ -1707,6 +1726,10 @@ class ContrastCommonSenderFunctional:
             "training_input_digest": training_input_digest,
             "training_subject_ids": list(subjects),
         }
+        if len(contrast_contexts) > 2:
+            payload["contrast_context_ids"] = [
+                [node, context_id] for node, context_id in contrast_contexts
+            ]
         object.__setattr__(self, "contrast_context_ids", contrast_contexts)
         object.__setattr__(self, "context_ids", contexts)
         object.__setattr__(self, "contrast_name", self.contrast.name)

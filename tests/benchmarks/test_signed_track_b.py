@@ -245,6 +245,25 @@ def test_prediction_contract_rejects_scope_drift(
         evaluate_signed_track_b(predictions, truth, expected_seeds=(11, 12))
 
 
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "native_nichenet_claim",
+        "sender_claim",
+        "lr_edge_claim",
+        "supports_active_inhibition_claim",
+        "formal_inference_allowed",
+    ),
+)
+def test_prediction_contract_rejects_forbidden_claims(claim: str) -> None:
+    truth = _truth()
+    predictions = _predictions(truth)
+    predictions[claim] = True
+
+    with pytest.raises(ValueError, match=f"{claim} to false"):
+        evaluate_signed_track_b(predictions, truth, expected_seeds=(11, 12))
+
+
 def test_nonobserved_scores_are_missing_and_carry_reasons() -> None:
     truth = _truth()
     predictions = _predictions(truth)

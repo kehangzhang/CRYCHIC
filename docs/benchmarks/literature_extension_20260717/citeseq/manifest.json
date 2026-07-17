@@ -1,0 +1,62 @@
+{
+  "comparison_contract": {
+    "descriptive_only": [
+      "H-common/independent",
+      "native/independent",
+      "cross-species method means"
+    ],
+    "primary": "H-common/resource_fixed within species resource"
+  },
+  "dataset_count": 7,
+  "datasets": [
+    "5k_pbmc_protein_v3",
+    "5k_pbmc_protein_v3_nextgem",
+    "pbmc_10k_protein_v3",
+    "malt_10k_protein_v3",
+    "cbmc_seuratdata",
+    "sln_111",
+    "sln_208"
+  ],
+  "outputs": {
+    "citeseq/README.md": {
+      "bytes": 4861,
+      "sha256": "6b4ca6f95dbdbdaa08a5668cdc399c8e797b278b34fa28d17a5c902b27cab581"
+    },
+    "citeseq/dataset_inventory.tsv": {
+      "bytes": 2503,
+      "rows": 7,
+      "sha256": "3b033be2b604dcf49d7875bb0324fd98740d2ae57512ce48d81d170603e6baea"
+    },
+    "citeseq/method_summary.tsv": {
+      "bytes": 7436,
+      "rows": 60,
+      "sha256": "3c1b1213c9d8ea4cfbbbc12d76651ce531e1ee1c20775cbe3ba3dde412a53c64"
+    },
+    "citeseq/metrics_by_dataset.tsv": {
+      "bytes": 90938,
+      "rows": 191,
+      "sha256": "d8e067a885f3a61357f2178bb7e81e6b55ec1bb5211a9a1c36123ac756c95cd6"
+    },
+    "citeseq/runtime_memory.tsv": {
+      "bytes": 2983,
+      "rows": 27,
+      "sha256": "67e33ad1adba52816774ff779da1f445484c2013a219e7cb2f5738d9d4323304"
+    },
+    "citeseq/skipped_arms.tsv": {
+      "bytes": 1368,
+      "rows": 14,
+      "sha256": "2e95af3d86add49f1ee78580f2417a96962b219020c24337ea756ae97d6f8ffe"
+    }
+  },
+  "repository_state_at_run": {
+    "commit": "87153a38e7fe377881e1d6cd97715aa4f28beba1",
+    "dirty": true
+  },
+  "schema_version": "crychic-citeseq-publication-v1",
+  "source_manifest": {
+    "bytes": 8184,
+    "path": "reports/citeseq_extended_7datasets/manifest.json",
+    "sha256": "ed20306dbeb9f69d300b66341fe6648da618ec6e1656fa10f9ae97708ccb8f07"
+  },
+  "status": "complete"
+}

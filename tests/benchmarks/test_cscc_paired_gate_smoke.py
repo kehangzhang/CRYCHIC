@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +16,7 @@ from scipy import sparse
 
 from benchmarks import run_cscc_paired_gate_smoke as cscc
 from crychic.core import canonical_digest
+from crychic.design import context_id
 from crychic.resources import (
     GeneNamespace,
     Interaction,
@@ -22,6 +25,7 @@ from crychic.resources import (
     Species,
     TargetPrior,
 )
+from crychic.workflow import CrossFitArtifacts
 
 
 def _definitions() -> list[Mapping[str, object]]:
@@ -83,6 +87,182 @@ def test_config_builds_explicit_two_fold_tumor_minus_normal_spec() -> None:
     assert spec.penalty_tuning_spec is not None
     assert spec.penalty_tuning_spec.lambda1_fractions == (1.0, 0.1)
     assert spec.penalty_tuning_spec.lambda2_fractions == (0.0,)
+    assert spec.spec_id == "subject_crossfit_spec_b909d1c826ac678901355e0f9e52554b"
+    assert spec.gain_calibration_spec is not None
+    assert (
+        spec.gain_calibration_spec.spec_id
+        == "gain_calibration_spec_c7c045a59721cae947c96764883a1ced"
+    )
+
+
+def test_gain_calibration_config_is_strict_base_bound_and_changes_spec_id() -> None:
+    assert (
+        cscc.sha256_file(cscc.DEFAULT_CONFIG) == cscc.EXPECTED_BASE_SMOKE_CONFIG_SHA256
+    )
+    gain_spec = cscc.load_gain_calibration_smoke_config()
+    assert gain_spec.to_dict() == {
+        "spec_id": gain_spec.spec_id,
+        "schema_version": "1.0.0",
+        "min_inner_folds": 2,
+        "min_subjects": 4,
+        "min_supported_families": 1,
+        "min_subjects_per_family": 4,
+        "min_positive_observations": 4,
+        "min_distinct_positive_gains": 3,
+        "percentile_policy": (
+            "positive_subject_family_observation_equal_right_ecdf_"
+            "piecewise_linear_zero_preserving_v1"
+        ),
+    }
+
+    config = cscc.load_smoke_config()
+    _, default_spec = cscc.build_crossfit_spec(config)
+    _, calibrated_spec = cscc.build_crossfit_spec(
+        config,
+        gain_calibration_spec=gain_spec,
+    )
+
+    assert calibrated_spec.gain_calibration_spec == gain_spec
+    assert calibrated_spec.spec_id != default_spec.spec_id
+
+
+def test_gain_calibration_config_rejects_extra_and_wrong_fields(
+    tmp_path: Path,
+) -> None:
+    source = json.loads(
+        cscc.DEFAULT_GAIN_CALIBRATION_CONFIG.read_text(encoding="utf-8")
+    )
+    cases: list[dict[str, object]] = []
+
+    extra = copy.deepcopy(source)
+    extra["unexpected"] = True
+    cases.append(extra)
+
+    wrong_base = copy.deepcopy(source)
+    cast(dict[str, object], wrong_base["base_smoke_config"])["sha256"] = "0" * 64
+    cases.append(wrong_base)
+
+    wrong_scope = copy.deepcopy(source)
+    cast(dict[str, object], wrong_scope["scope"])[
+        "comparative_method_advantage_claim_allowed"
+    ] = True
+    cases.append(wrong_scope)
+
+    wrong_spec = copy.deepcopy(source)
+    cast(dict[str, object], wrong_spec["gain_calibration_spec"])["min_subjects"] = 8
+    cases.append(wrong_spec)
+
+    extra_spec = copy.deepcopy(source)
+    cast(dict[str, object], extra_spec["gain_calibration_spec"])["extra"] = 1
+    cases.append(extra_spec)
+
+    for index, payload in enumerate(cases):
+        path = tmp_path / f"bad-gain-config-{index}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError):
+            cscc.load_gain_calibration_smoke_config(path)
+
+
+def test_gain_calibration_summary_is_descriptive_and_checksum_pinned() -> None:
+    spec = cscc.load_gain_calibration_smoke_config()
+    summary = cscc._gain_calibration_configuration_summary(
+        config_path=cscc.DEFAULT_GAIN_CALIBRATION_CONFIG,
+        workspace_root=cscc.DEFAULT_WORKSPACE_ROOT,
+        spec=spec,
+    )
+
+    assert summary["sha256"] == cscc.sha256_file(cscc.DEFAULT_GAIN_CALIBRATION_CONFIG)
+    assert summary["base_smoke_config_sha256"] == (
+        cscc.EXPECTED_BASE_SMOKE_CONFIG_SHA256
+    )
+    assert summary["gain_calibration_spec"] == spec.to_dict()
+    assert summary["scope"] == {
+        "analysis_class": "small_scale_descriptive_gain_calibration_smoke",
+        "formal_inference_allowed": False,
+        "biological_validation_claim_allowed": False,
+        "comparative_method_advantage_claim_allowed": False,
+    }
+
+
+def test_crossfit_result_output_requires_explicit_gain_config(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires an explicit"):
+        cscc.run_smoke(
+            workspace_root=tmp_path,
+            crossfit_result_output=tmp_path / "result-v5",
+        )
+
+    with pytest.raises(SystemExit):
+        cscc.main(
+            [
+                "--workspace-root",
+                str(tmp_path),
+                "--crossfit-result-output",
+                "result-v5",
+            ]
+        )
+
+    args = cscc.build_parser().parse_args([])
+    assert args.gain_calibration_config is None
+    assert args.crossfit_result_output is None
+
+    changed_base = tmp_path / "changed-base.json"
+    changed_base.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="checksum-bound base config"):
+        cscc.run_smoke(
+            workspace_root=tmp_path,
+            config_path=changed_base,
+            gain_calibration_spec=cscc.load_gain_calibration_smoke_config(),
+        )
+
+
+@pytest.mark.parametrize("schema_version", ["5.0.0", "6.0.0"])
+def test_current_crossfit_result_summary_records_portable_eligibility(
+    tmp_path: Path,
+    schema_version: str,
+) -> None:
+    result_path = tmp_path / f"portable-v{schema_version[0]}"
+    manifest = {
+        "schema_version": schema_version,
+        "crossfit_result_id": "result-1",
+        "certification_status": "uncertified",
+        "complete_pipeline_oof_certified": False,
+        "contrast_common_collections": [
+            {
+                "contrast_common_collection_id": "collection-1",
+                "fold_applications": [
+                    {
+                        "fold_id": "fold-1",
+                        "all_receivers_gain_calibrated": True,
+                        "cross_receiver_percentile_rank_eligible": True,
+                    },
+                    {
+                        "fold_id": "fold-2",
+                        "all_receivers_gain_calibrated": False,
+                        "cross_receiver_percentile_rank_eligible": False,
+                    },
+                ],
+            }
+        ],
+    }
+
+    summary = cscc._crossfit_result_summary(
+        path=result_path,
+        workspace_root=tmp_path,
+        manifest=manifest,
+    )
+
+    assert summary["path"] == f"portable-v{schema_version[0]}"
+    assert summary["crossfit_result_id"] == "result-1"
+    assert summary["schema_version"] == schema_version
+    eligibility = cast(
+        Mapping[str, object],
+        summary["cross_receiver_percentile_rank_eligibility"],
+    )
+    assert eligibility["status"] == "not_eligible"
+    assert eligibility["n_fold_applications"] == 2
+    assert eligibility["n_eligible_fold_applications"] == 1
 
 
 def test_sha256_cell_cap_is_order_independent_and_keeps_full_gene_axis(
@@ -390,9 +570,7 @@ def test_diagnostic_score_summary_is_paired_deidentified_and_noncertifying() -> 
                             "sample_id": f"{subject}_{context}",
                             "subject_id": subject,
                             "context_id": str(
-                                cscc.context_id(
-                                    {"condition": context}, ("condition",)
-                                )
+                                context_id({"condition": context}, ("condition",))
                             ),
                             "sender": "Sender",
                             "receiver": "Receiver",
@@ -416,7 +594,7 @@ def test_diagnostic_score_summary_is_paired_deidentified_and_noncertifying() -> 
         family_common_applications=(application,),
         receiver_incremental_models=(model,),
     )
-    artifacts = cast(cscc.CrossFitArtifacts, SimpleNamespace(folds=(fold,)))
+    artifacts = cast(CrossFitArtifacts, SimpleNamespace(folds=(fold,)))
 
     summary = cscc.compact_diagnostic_score_summary(
         artifacts,
@@ -430,10 +608,11 @@ def test_diagnostic_score_summary_is_paired_deidentified_and_noncertifying() -> 
     )
     assert summary["inferential_fields_available"] == []
     assert summary["raw_sample_and_subject_rows_exported"] is False
-    assert len(cast(list[object], summary["paired_effects"])) == 4
-    assert {row["n_pairs"] for row in summary["paired_effects"]} == {3}
-    assert {row["status"] for row in summary["paired_effects"]} == {"exploratory"}
-    assert all("subject_id" not in row for row in summary["paired_effects"])
+    effects = cast(list[Mapping[str, object]], summary["paired_effects"])
+    assert len(effects) == 4
+    assert {row["n_pairs"] for row in effects} == {3}
+    assert {row["status"] for row in effects} == {"exploratory"}
+    assert all("subject_id" not in row for row in effects)
     assert summary["selected_penalties"] == [
         {
             "fold_id": "fold-1",

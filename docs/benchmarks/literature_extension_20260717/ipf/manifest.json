@@ -1,0 +1,102 @@
+{
+  "cohort": {
+    "cells": 138248,
+    "samples": 56,
+    "studies": 4,
+    "study_sample_counts": {
+      "GSE122960": 4,
+      "GSE128033": 8,
+      "GSE135893": 12,
+      "GSE136831": 32
+    }
+  },
+  "evaluation_attestation": {
+    "common_universe_edges": 960,
+    "evaluation_manifest_aggregate_sha256": "519ddd9153232a1acb7fe84f828810c8eba6d14b84f8d02074bd96e8763dba47",
+    "evaluation_task_manifests": 56,
+    "gold_positive_edges": 53,
+    "operational_pseudo_negative_edges": 907,
+    "primary_aggregation": "patient_equal_weight"
+  },
+  "execution": {
+    "authoritative_ledger": "full_task_ledger.tsv",
+    "elapsed_seconds": 114.94,
+    "hard_memory_fraction": 0.7,
+    "max_workers": 24,
+    "soft_memory_fraction": 0.6,
+    "tasks_by_execution_arm": {
+      "crychic_hcommon": 56,
+      "hcommon_representable": 56,
+      "liana_hcommon": 56
+    },
+    "tasks_complete": 168,
+    "tasks_failed": 0,
+    "tasks_total": 168,
+    "worker_threads": 1
+  },
+  "frozen_input_sha256": {
+    "gold_standard": "3db466062b47160eb04116f4db6d4f157f28659c611afeae2d1fd282342f4f6c",
+    "harmonized_resource": "e24148ad3d6ee0be0d1a71503c98934085072e22fcb46bf3f9a8f315d3424988",
+    "harmonized_resource_manifest": "15f5fb2711616282d95059319d8cdcbe05078c12df22b65bac953aebfae59e98"
+  },
+  "limitations": [
+    "The gold standard is disease-level and not patient-specific.",
+    "The unlabeled complement is an operational pseudo-negative set, not experimentally verified negatives.",
+    "Bootstrap intervals summarize patient heterogeneity and are not paired method-superiority tests.",
+    "CRYCHIC availability-state is a static single-sample arm, not multi-group differential communication analysis."
+  ],
+  "outputs": {
+    "ipf/README.md": {
+      "bytes": 3035,
+      "sha256": "b1022e7a21837ce697633499204380fbfa5a347ea1b481dc34a7c900799b1a2a"
+    },
+    "ipf/cohort_patient_equal.tsv": {
+      "bytes": 21928,
+      "rows": 98,
+      "sha256": "7608699e0958972b85ae654c5939daf772155fe32085e7c96843976fac274ece"
+    },
+    "ipf/metrics_by_study.tsv": {
+      "bytes": 66811,
+      "rows": 390,
+      "sha256": "cc34e6d9ff510816031c8412ab4743cda19dd862c3a8241d321bff4c7d196fe5"
+    },
+    "ipf/patient_bootstrap.tsv": {
+      "bytes": 26935,
+      "rows": 98,
+      "sha256": "2759933ba907bfe15dd2437e14d34508705b1c757c0c2eca0471f57b58131ef9"
+    },
+    "ipf/sample_metrics.tsv": {
+      "bytes": 345381,
+      "rows": 616,
+      "sha256": "b14432f32d08127a6d4389b9cbe84d513d062fb6e70bfd9afcff6903671a05c4"
+    }
+  },
+  "repository_state_at_run": {
+    "dirty_at_generation": true,
+    "git_head": "87153a38e7fe377881e1d6cd97715aa4f28beba1"
+  },
+  "sanitization": {
+    "sample_metrics_dropped_columns": [
+      "evaluation_dir"
+    ]
+  },
+  "schema_version": "crychic-ipf-publication-v1",
+  "source_attestations": {
+    "evaluation_manifest_aggregate_sha256": "519ddd9153232a1acb7fe84f828810c8eba6d14b84f8d02074bd96e8763dba47",
+    "full_task_ledger_sha256": "b90d8347b4062a2c2f7b522ded6d1e3bdf5c2f6f636ed472f14533201e36bf64"
+  },
+  "source_manifests": {
+    "ipf": {
+      "bytes": 4233,
+      "path": "results/ipf/full_cohort/manifest.json",
+      "sha256": "f67cf92af2e192d70bbb839bf343e59773ef578a6537ba10d3219b694a9af79e"
+    },
+    "ipf_summary": {
+      "bytes": 2658,
+      "path": "results/ipf/full_cohort/cohort_summary/manifest.json",
+      "sha256": "f6ac1586f8c28a9c24059feeadf7abaae4ff3aa47245b23510d739209366003a"
+    }
+  },
+  "source_record": "10.5281/zenodo.6497091",
+  "status": "complete"
+}

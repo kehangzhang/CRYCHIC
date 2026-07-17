@@ -164,7 +164,10 @@ FAMILY_SENDER_SCORE_COLUMNS = (
 
 _FUNCTIONAL_PRODUCER = "crychic.family_common_scoring_functional.v2"
 _APPLICATION_PRODUCER = "crychic.family_common_scoring_application.v2"
-_SCORE_VERSION = "family_first_mechanistic_ligand_contrast_gated_softmin_v2"
+FAMILY_COMMON_SCORE_VERSION: str = (
+    "family_first_mechanistic_ligand_contrast_gated_softmin_v2"
+)
+_SCORE_VERSION = FAMILY_COMMON_SCORE_VERSION
 _CERTIFICATION_STATUS = "heldout_family_common_diagnostic_not_oof_certified_v1"
 _SELECTION_FREQUENCY_REASON = "single_heldout_application_no_resampling"
 _RELEASED_MODES = ("ecosystem", "state")
@@ -398,6 +401,12 @@ class FamilyCommonScoringFunctional:
         return tuple(item.interaction_id for item in self.interactions)
 
     @property
+    def autonomous_program_source_id(self) -> str | None:
+        """Return the effective static, learned, or composed nuisance basis ID."""
+
+        return self.autonomous_program_resource_id
+
+    @property
     def is_oof_certified(self) -> bool:
         return False
 
@@ -553,6 +562,7 @@ class FamilyCommonScoringFunctional:
         return {
             "family_common_functional_id": self.family_common_functional_id,
             **self._identity_payload(),
+            "autonomous_program_source_id": self.autonomous_program_source_id,
             "common_across_contexts": True,
             "family_first": True,
             "sender_is_allocation_only": True,
@@ -2355,6 +2365,7 @@ def mark_family_common_scoring_application_not_estimable(
 __all__ = [
     "FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS",
     "FAMILY_COMMON_SCORE_COLUMNS",
+    "FAMILY_COMMON_SCORE_VERSION",
     "FAMILY_HELDOUT_ATTRIBUTION_COLUMNS",
     "FAMILY_MEMBER_SCORE_COLUMNS",
     "FAMILY_SENDER_SCORE_COLUMNS",

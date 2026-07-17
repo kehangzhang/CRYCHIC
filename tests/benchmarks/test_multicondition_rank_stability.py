@@ -5,6 +5,8 @@ from collections.abc import Callable, Sequence
 import numpy as np
 import pandas as pd
 import pandas.testing as pdt
+import pytest
+from benchmarks.metrics.multicondition import MOLECULAR_LR_EQUIVALENCE_COLUMN
 from benchmarks.metrics.multicondition_rank_stability import (
     BOOTSTRAP_REPLICATES,
     CONFIDENCE_LEVEL,
@@ -113,6 +115,24 @@ def _small_parameters(**overrides: object) -> RankStabilityParameters:
     return RankStabilityParameters(**values)  # type: ignore[arg-type]
 
 
+def _with_molecular_lr_axis(
+    table: pd.DataFrame, *, mapping: dict[str, str] | None = None
+) -> pd.DataFrame:
+    result = table.copy()
+    equivalence_mapping = mapping or {
+        "I1": "molecular-a",
+        "I2": "molecular-a",
+        "I3": "molecular-b",
+        "I4": "molecular-c",
+        "I5": "molecular-d",
+        "I6": "molecular-e",
+    }
+    result[MOLECULAR_LR_EQUIVALENCE_COLUMN] = result["interaction_id"].map(
+        equivalence_mapping
+    )
+    return result
+
+
 def test_preregistered_ranking_parameters_match_protocol() -> None:
     parameters = RankStabilityParameters()
 
@@ -168,6 +188,142 @@ def test_paired_rank_stability_is_deterministic_and_persists_design() -> None:
     assert {"rank_availability_frequency", "top_k_frequency"}.issubset(
         first.rank_intervals
     )
+
+
+def test_legacy_score_table_keeps_exact_lr_family_not_estimable_reason() -> None:
+    result = evaluate_multicondition_rank_stability(
+        _score_table(_paired_subject_contexts(), scores=_ordered_scores),
+        reference="Reference",
+        target="Target",
+        design="paired",
+        parameters=_small_parameters(),
+    )
+
+    family = result.agreement[result.agreement["ranking_level"].eq("lr_family")]
+    assert set(family["status"]) == {"not_estimable"}
+    assert set(family["reason_code"]) == {
+        "lr_family_mapping_not_available_in_score_contract"
+    }
+
+
+def test_paired_molecular_lr_axis_merges_source_rows_and_is_estimable() -> None:
+    def reverse_scores(_subject: str, context: str, edge: int) -> float:
+        reference = (6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
+        target = tuple(reversed(reference))
+        return (reference if context == "Reference" else target)[edge]
+
+    table = _with_molecular_lr_axis(
+        _score_table(_paired_subject_contexts(), scores=reverse_scores)
+    )
+
+    result = evaluate_multicondition_rank_stability(
+        table,
+        reference="Reference",
+        target="Target",
+        design="paired",
+        parameters=_small_parameters(),
+    )
+    agreement = result.agreement[
+        result.agreement["ranking_level"].eq("lr_family")
+    ]
+    curve_k1 = result.top_k_curve[
+        result.top_k_curve["ranking_level"].eq("lr_family")
+        & result.top_k_curve["k"].eq(1)
+    ]
+    intervals = result.rank_intervals[
+        result.rank_intervals["ranking_level"].eq("lr_family")
+    ]
+    molecular_a = intervals[
+        intervals[f"item_{MOLECULAR_LR_EQUIVALENCE_COLUMN}"].eq("molecular-a")
+    ].iloc[0]
+
+    assert set(agreement["status"]) == {"observed"}
+    assert agreement["estimate"].tolist() == pytest.approx([1.0, 1.0])
+    assert set(agreement["ranking_universe_size"]) == {5}
+    assert curve_k1.iloc[0]["status"] == "observed"
+    assert curve_k1.iloc[0]["estimate"] == pytest.approx(1.0)
+    assert len(intervals) == 5
+    assert set(intervals["status"]) == {"observed"}
+    assert set(intervals["median_rank"]) == {1.0, 2.0, 3.0, 4.0, 5.0}
+    assert molecular_a["frozen_member_count"] == 2
+    assert molecular_a["minimum_observed_member_count"] == 2
+    assert molecular_a["minimum_member_coverage_fraction"] == 1.0
+    assert molecular_a["rank_availability_frequency"] == 1.0
+    assert molecular_a["median_rank"] == 5.0
+    assert molecular_a["item_semantics"] == (
+        "molecular_lr_equivalence_not_strict_target_family"
+    )
+    assert "molecular LR equivalence molecular-a" in molecular_a["item_label"]
+
+
+def test_molecular_lr_axis_is_stratified_by_receiver_when_requested() -> None:
+    table = _with_molecular_lr_axis(
+        _score_table(_paired_subject_contexts(), scores=_ordered_scores),
+        mapping={
+            "I1": "molecular-shared",
+            "I2": "molecular-r1-b",
+            "I3": "molecular-r1-c",
+            "I4": "molecular-shared",
+            "I5": "molecular-r2-b",
+            "I6": "molecular-r2-c",
+        },
+    )
+
+    result = evaluate_multicondition_rank_stability(
+        table,
+        reference="Reference",
+        target="Target",
+        design="paired",
+        rank_scope="within_receiver_macro",
+        parameters=_small_parameters(),
+    )
+    intervals = result.rank_intervals[
+        result.rank_intervals["ranking_level"].eq("lr_family")
+    ]
+    shared = intervals[
+        intervals[f"item_{MOLECULAR_LR_EQUIVALENCE_COLUMN}"].eq(
+            "molecular-shared"
+        )
+    ]
+
+    assert len(intervals) == 6
+    assert set(shared["receiver_scope"]) == {"R1", "R2"}
+    assert set(shared["item_receiver"]) == {"R1", "R2"}
+    assert set(shared["frozen_member_count"]) == {1}
+
+
+def test_molecular_lr_axis_propagates_missing_frozen_source_member() -> None:
+    def statuses(_subject: str, context: str, edge: int, _replicate: int) -> str:
+        if context == "Target" and edge == 1:
+            return "missing"
+        return "observed"
+
+    table = _with_molecular_lr_axis(
+        _score_table(
+            _paired_subject_contexts(),
+            scores=_ordered_scores,
+            statuses=statuses,
+        )
+    )
+    result = evaluate_multicondition_rank_stability(
+        table,
+        reference="Reference",
+        target="Target",
+        design="paired",
+        parameters=_small_parameters(),
+    )
+    intervals = result.rank_intervals[
+        result.rank_intervals["ranking_level"].eq("lr_family")
+    ]
+    molecular_a = intervals[
+        intervals[f"item_{MOLECULAR_LR_EQUIVALENCE_COLUMN}"].eq("molecular-a")
+    ].iloc[0]
+
+    assert molecular_a["frozen_member_count"] == 2
+    assert molecular_a["minimum_observed_member_count"] == 1
+    assert molecular_a["minimum_member_coverage_fraction"] == 0.5
+    assert molecular_a["rank_availability_frequency"] == 0.0
+    assert molecular_a["status"] == "not_estimable"
 
 
 def test_unpaired_groups_are_resampled_independently() -> None:

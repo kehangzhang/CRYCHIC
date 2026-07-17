@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:extension:bootstrap-support-registry:1.0.0",
+  "title": "CRYCHIC bootstrap-support lineage registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "extension_schema_version", "result_schema_version", "registry_kind", "hypothesis_universe",
+    "resampling_lineage", "bootstrap_plan_ids", "specificity_sources", "selection_sources", "registry_id"
+  ],
+  "properties": {
+    "extension_schema_version": {"const": "1.0.0"},
+    "result_schema_version": {"const": "0.1.0"},
+    "registry_kind": {"const": "frozen_bootstrap_support_lineage_v1"},
+    "hypothesis_universe": {"$ref": "#/$defs/hypothesisUniverse"},
+    "resampling_lineage": {"$ref": "#/$defs/resamplingLineage"},
+    "bootstrap_plan_ids": {"$ref": "#/$defs/nonemptyUniqueStrings"},
+    "specificity_sources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/specificitySource"}
+    },
+    "selection_sources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/selectionSource"}
+    },
+    "registry_id": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "nonemptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "nullableString": {"type": ["string", "null"], "minLength": 1},
+    "declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declaration_id", "hypothesis_id", "hypothesis_key", "endpoint", "contrast_name", "receiver", "family_id", "mode", "role",
+        "multiplicity_family", "parent_key", "filter_stage", "prefilter_policy", "prefilter_status", "filter_reason_code"
+      ],
+      "properties": {
+        "declaration_id": {"type": "string", "minLength": 1},
+        "hypothesis_id": {"type": "string", "minLength": 1},
+        "hypothesis_key": {"type": "string", "minLength": 1},
+        "endpoint": {"type": "string", "minLength": 1},
+        "contrast_name": {"type": "string", "minLength": 1},
+        "receiver": {"type": "string", "minLength": 1},
+        "family_id": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["state", "ecosystem"]},
+        "role": {"enum": ["primary", "secondary"]},
+        "multiplicity_family": {"type": "string", "minLength": 1},
+        "parent_key": {"$ref": "#/$defs/nullableString"},
+        "filter_stage": {"type": "string", "minLength": 1},
+        "prefilter_policy": {"type": "string", "minLength": 1},
+        "prefilter_status": {"enum": ["included", "filtered_pre_fit"]},
+        "filter_reason_code": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "hypothesisUniverse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universe_id", "universe_name", "declaration_ids", "hypothesis_ids", "selection_hypothesis_ids", "specificity_hypothesis_ids", "declarations"
+      ],
+      "properties": {
+        "universe_id": {"type": "string", "minLength": 1},
+        "universe_name": {"type": "string", "minLength": 1},
+        "declaration_ids": {"$ref": "#/$defs/nonemptyUniqueStrings"},
+        "hypothesis_ids": {"$ref": "#/$defs/nonemptyUniqueStrings"},
+        "selection_hypothesis_ids": {"$ref": "#/$defs/nonemptyUniqueStrings"},
+        "specificity_hypothesis_ids": {"$ref": "#/$defs/nonemptyUniqueStrings"},
+        "declarations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/declaration"}
+        }
+      }
+    },
+    "seedLineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_seed", "path", "derived_seed"],
+      "properties": {
+        "root_seed": {"type": "integer", "minimum": 0},
+        "path": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "derived_seed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "resamplingLineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resampling_result_id", "exchangeability_id", "source_input_identity_id", "source_input_digest", "source_snapshot_id",
+        "config_digest", "crossfit_spec_id", "resource_bundle_content_id", "target_prior_content_id", "root_seed_lineage"
+      ],
+      "properties": {
+        "resampling_result_id": {"type": "string", "minLength": 1},
+        "exchangeability_id": {"type": "string", "minLength": 1},
+        "source_input_identity_id": {"type": "string", "minLength": 1},
+        "source_input_digest": {"type": "string", "minLength": 1},
+        "source_snapshot_id": {"type": "string", "minLength": 1},
+        "config_digest": {"type": "string", "minLength": 1},
+        "crossfit_spec_id": {"type": "string", "minLength": 1},
+        "resource_bundle_content_id": {"type": "string", "minLength": 1},
+        "target_prior_content_id": {"type": "string", "minLength": 1},
+        "root_seed_lineage": {"$ref": "#/$defs/seedLineage"}
+      }
+    },
+    "specificitySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id", "hypothesis_id", "target_id", "score_target_id", "bootstrap_source_binding_id", "bootstrap_plan_ids", "workflow_record_ids", "effect_record_ids"
+      ],
+      "properties": {
+        "result_id": {"type": "string", "minLength": 1},
+        "hypothesis_id": {"type": "string", "minLength": 1},
+        "target_id": {"$ref": "#/$defs/nullableString"},
+        "score_target_id": {"$ref": "#/$defs/nullableString"},
+        "bootstrap_source_binding_id": {"$ref": "#/$defs/nullableString"},
+        "bootstrap_plan_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "workflow_record_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "effect_record_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "selectionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id", "hypothesis_id", "target_id", "source_resampled_attribution_collection_id", "source_binding_id", "bootstrap_plan_ids", "event_ids", "numeric_record_ids"
+      ],
+      "properties": {
+        "result_id": {"type": "string", "minLength": 1},
+        "hypothesis_id": {"type": "string", "minLength": 1},
+        "target_id": {"$ref": "#/$defs/nullableString"},
+        "source_resampled_attribution_collection_id": {"$ref": "#/$defs/nullableString"},
+        "source_binding_id": {"$ref": "#/$defs/nullableString"},
+        "bootstrap_plan_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "numeric_record_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

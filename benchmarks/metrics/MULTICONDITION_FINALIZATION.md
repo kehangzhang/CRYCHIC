@@ -50,7 +50,15 @@ accepts a JSON specification with schema
       "adapter_runs": [
         {
           "manifest": "runs/cellchat/manifest.json",
-          "long_table": "runs/cellchat/interactions_long.parquet"
+          "long_table": "runs/cellchat/interactions_long.parquet",
+          "molecular_lr_crosswalk": {
+            "path": "resources/common_molecular_lr_crosswalk.tsv",
+            "sha256": "<lowercase SHA256>",
+            "manifest": {
+              "path": "resources/common_molecular_lr_crosswalk.manifest.json",
+              "sha256": "<lowercase SHA256>"
+            }
+          }
         },
         {
           "manifest": "runs/crychic/manifest.json",
@@ -90,6 +98,43 @@ scopes.
 The locked supportive-biology YAML is required. When biology evidence or
 iteration comparisons are absent, the corresponding report table is still
 emitted with `not_estimable` and a stable `reason_code`.
+
+`adapter_runs[].molecular_lr_crosswalk` is optional and valid only for
+`analysis_track: lr_stlr`. Its table checksum is mandatory. The nested manifest
+is optional, but when present it must use schema
+`crychic-molecular-lr-crosswalk-manifest-v1` and bind all of the following:
+
+```json
+{
+  "schema_version": "crychic-molecular-lr-crosswalk-manifest-v1",
+  "output": {"sha256": "<crosswalk SHA256>", "rows": 123},
+  "resource": {
+    "resource_id": "common-resource",
+    "resource_version": "2026-07-12",
+    "resource_manifest_digest": "<resource digest>",
+    "resource_bundle_content_id": "<bundle content ID>"
+  },
+  "axes": {
+    "molecular_lr_equivalence_universe_id": "<universe ID>",
+    "molecular_lr_axis_id": "<axis ID>",
+    "mechanistic_variant_axis_id": "<variant axis ID>",
+    "mapping_axis_id": "<mapping axis ID>"
+  }
+}
+```
+
+The finalizer requires the complete crosswalk column contract emitted by
+`bundle_molecular_lr_crosswalk`. Resource/version identity must match the
+adapter score table, resource-edge keys must be unique, and every frozen score
+edge must join to a `mapped` molecular equivalence ID. Partial, unsupported,
+duplicate, checksum-mismatched, or manifest-inconsistent mappings abort the
+atomic finalization. A successful join is revalidated as a complete score table
+before rank/stability evaluation. A declared binding with no existing adapter
+long table, or one that reaches no included score view, is also rejected rather
+than retained as unused provenance. The copied crosswalk and manifest are listed
+in `report_inputs.json`, `score_table_index.tsv`, `finalization_manifest.json`,
+and `SHA256SUMS.tsv`. Omitting the binding preserves the historical
+`lr_family_mapping_not_available_in_score_contract` result.
 
 Per-method supportive-biology tables intended for
 `benchmarks.metrics.merge_biology_support` must retain an explicit source

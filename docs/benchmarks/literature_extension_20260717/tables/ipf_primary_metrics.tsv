@@ -1,0 +1,12 @@
+method	auroc	average_precision	balanced_auprc	auroc_rank	average_precision_rank	balanced_auprc_rank	n_patients
+CellPhoneDB composite	0.588123	0.121009	0.583044	1	9	9	56
+CRYCHIC availability-state	0.585464	0.177687	0.651724	2	1	1	56
+SingleCellSignalR LRscore	0.581509	0.129119	0.591687	3	5	5	56
+CellChat composite	0.546216	0.101291	0.545256	4	10	10	56
+Connectome specificity	0.546210	0.142337	0.593228	5	2	2	56
+LIANA specificity consensus	0.546129	0.134085	0.591966	6	4	4	56
+NATMI specificity	0.546017	0.141427	0.592884	7	3	3	56
+logFC specificity	0.545621	0.126948	0.589662	8	6	7	56
+LIANA magnitude consensus	0.545576	0.126513	0.590144	9	7	6	56
+CellPhoneDB p-value	0.544984	0.125599	0.587946	10	8	8	56
+CellChat p-value	0.508704	0.098329	0.541684	11	11	11	56

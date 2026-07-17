@@ -1,0 +1,98 @@
+{
+  "schema_version": "crychic-g2-graph-fusion-benchmark-v1",
+  "benchmark_id": "graph_fusion_g2_primary_v1",
+  "development_status": "preregistered_simulation_gate_graph_fusion_remains_opt_in_until_pass",
+  "public_api": "crychic.attribution.solve_graph_fused_nonnegative_elastic_net",
+  "root_seed": 220207,
+  "profiles": {
+    "default": "smoke",
+    "smoke": {
+      "replicates_per_scenario": 1,
+      "publication_eligible": false
+    },
+    "formal": {
+      "replicates_per_scenario": 200,
+      "publication_eligible": true
+    }
+  },
+  "scenario_manifest": {
+    "topologies": [
+      "chain",
+      "product"
+    ],
+    "signals": [
+      "smooth_gradient",
+      "single_local_jump"
+    ],
+    "snr_levels": [
+      {
+        "name": "low",
+        "value": 1.0
+      },
+      {
+        "name": "high",
+        "value": 3.0
+      }
+    ],
+    "family_collinearity_levels": [
+      {
+        "name": "low",
+        "value": 0.15
+      },
+      {
+        "name": "high",
+        "value": 0.9
+      }
+    ],
+    "scenario_cell_count": 16,
+    "aggregation": "equal_weight_per_scenario_cell"
+  },
+  "simulation": {
+    "context_count": 4,
+    "family_count": 6,
+    "feature_count": 18,
+    "active_coefficient_floor": 1e-12,
+    "response_channel": "positive_rectified",
+    "snr_definition": "pre_rectification_signal_rms_over_gaussian_noise_sd",
+    "family_collinearity_definition": "shared_gamma_mixture_weight",
+    "wrong_topology_policy": "node_order_permutation_0_2_1_3_chain"
+  },
+  "solver": {
+    "lambda1": 0.02,
+    "lambda2": 0.02,
+    "lambda_f": 0.08,
+    "tolerance": 1e-5,
+    "max_iterations": 500
+  },
+  "primary_endpoint": {
+    "unit": "driver_family_x_context",
+    "metric": "driver_family_x_context_macro_auprc",
+    "pairing": "same_scenario_seed_fused_vs_unfused",
+    "aggregation": "paired_seed_within_scenario_then_equal_scenario_cell",
+    "confidence_level": 0.95,
+    "interval_type": "paired_seed_stratified_percentile_bootstrap",
+    "bootstrap_replicates": 2000,
+    "bootstrap_seed": 220208,
+    "minimum_paired_replicates_per_scenario": 200,
+    "improvement_ci_lower_margin": 0.02
+  },
+  "topology_sensitivity": {
+    "controls": [
+      "no_topology",
+      "wrong_topology"
+    ],
+    "comparison": "control_minus_unfused_macro_auprc",
+    "noninferiority_ci_lower_margin": -0.02
+  },
+  "secondary_endpoints": [
+    "driver_family_x_context_macro_auroc",
+    "coefficient_rmse",
+    "biological_edge_jump_localization_auprc"
+  ],
+  "decision_policy": {
+    "insufficient_replicates": "NE",
+    "missing_or_failed_pair": "exclude_pair_then_NE_if_any_cell_below_minimum",
+    "gate_alone_switches_default": false,
+    "failed_gate_status": "graph_fusion_remains_opt_in_experimental"
+  }
+}

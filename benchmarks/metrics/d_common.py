@@ -258,7 +258,7 @@ def _fit_ols(
         return math.nan, math.nan, "insufficient_residual_degrees_of_freedom"
     rank = int(np.linalg.matrix_rank(matrix))
     reduced = np.delete(matrix, effect_column, axis=1)
-    reduced_rank = int(np.linalg.matrix_rank(reduced))
+    reduced_rank = 0 if reduced.shape[1] == 0 else int(np.linalg.matrix_rank(reduced))
     if rank < matrix.shape[1] or rank != reduced_rank + 1:
         return math.nan, math.nan, "target_not_estimable_after_batch_adjustment"
     coefficients, _, _, _ = np.linalg.lstsq(matrix, response, rcond=None)

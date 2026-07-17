@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:result:active-probability:3.0.0",
+  "title": "CRYCHIC independent ADR-013 active-probability artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_schema_version",
+    "artifact_kind",
+    "artifact_id",
+    "status",
+    "release_mode",
+    "comm_probability_release_allowed",
+    "collection_id",
+    "distribution_id",
+    "active_null_id",
+    "active_null_spec_id",
+    "candidate_universe_id",
+    "candidate_universe_policy_id",
+    "score_spec_id",
+    "active_probability_spec_id",
+    "calibration_gate_id",
+    "calibration_gate_status",
+    "calibration_result_artifact_id",
+    "calibration_campaign_artifact_id",
+    "calibration_evidence_id",
+    "calibration_protocol_id",
+    "score_version",
+    "source_score_collection_id",
+    "candidate_edge_ids",
+    "plan_ids",
+    "active_probability_record_ids",
+    "local_fdr_diagnostic_ids",
+    "status_counts",
+    "universe",
+    "active_probability_spec",
+    "calibration_gate",
+    "tables"
+  ],
+  "properties": {
+    "artifact_schema_version": {"const": "3.0.0"},
+    "artifact_kind": {"const": "adr013_active_probability_result"},
+    "artifact_id": {"type": "string", "minLength": 1},
+    "status": {"const": "complete"},
+    "release_mode": {"enum": ["diagnostic_only", "released"]},
+    "comm_probability_release_allowed": {"type": "boolean"},
+    "collection_id": {"type": "string", "minLength": 1},
+    "distribution_id": {"type": "string", "minLength": 1},
+    "active_null_id": {"type": "string", "minLength": 1},
+    "active_null_spec_id": {"type": "string", "minLength": 1},
+    "candidate_universe_id": {"type": "string", "minLength": 1},
+    "candidate_universe_policy_id": {"type": "string", "minLength": 1},
+    "score_spec_id": {"type": "string", "minLength": 1},
+    "active_probability_spec_id": {"type": "string", "minLength": 1},
+    "calibration_gate_id": {"type": ["string", "null"], "minLength": 1},
+    "calibration_gate_status": {"enum": ["passed", "failed", "not_estimable", null]},
+    "calibration_result_artifact_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "calibration_campaign_artifact_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "calibration_evidence_id": {"type": ["string", "null"], "minLength": 1},
+    "calibration_protocol_id": {"type": ["string", "null"], "minLength": 1},
+    "score_version": {"type": "string", "minLength": 1},
+    "source_score_collection_id": {"type": "string", "minLength": 1},
+    "candidate_edge_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "plan_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "active_probability_record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "local_fdr_diagnostic_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "status_counts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {"enum": ["observed", "structural_zero", "not_estimable", "failed"]},
+          {"type": "integer", "minimum": 0}
+        ],
+        "items": false
+      }
+    },
+    "universe": {"type": "object"},
+    "active_probability_spec": {"type": "object"},
+    "calibration_gate": {"type": ["object", "null"]},
+    "tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_probability_candidate_diagnostics",
+        "active_probability_stratum_diagnostics",
+        "active_probability_null_sources"
+      ],
+      "properties": {
+        "active_probabilities": {"$ref": "#/$defs/tableRecord"},
+        "active_probability_candidate_diagnostics": {"$ref": "#/$defs/tableRecord"},
+        "active_probability_stratum_diagnostics": {"$ref": "#/$defs/tableRecord"},
+        "active_probability_null_sources": {"$ref": "#/$defs/tableRecord"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"comm_probability_release_allowed": {"const": true}},
+        "required": ["comm_probability_release_allowed"]
+      },
+      "then": {
+        "properties": {
+          "release_mode": {"const": "released"},
+          "calibration_gate_status": {"const": "passed"},
+          "calibration_gate_id": {"type": "string"},
+          "calibration_result_artifact_id": {"type": "string"},
+          "tables": {"required": ["active_probabilities"]}
+        }
+      },
+      "else": {
+        "properties": {
+          "release_mode": {"const": "diagnostic_only"},
+          "calibration_result_artifact_id": {"type": "null"},
+          "tables": {"not": {"required": ["active_probabilities"]}}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "tableRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "rows", "sha256", "schema"],
+      "properties": {
+        "filename": {"type": "string", "pattern": "^[a-z_]+\\.parquet$"},
+        "rows": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schema": {"type": "string", "pattern": "^[a-z_]+\\.schema\\.json$"}
+      }
+    }
+  }
+}

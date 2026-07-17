@@ -12,6 +12,17 @@ from .contracts import (
     TargetPrior,
     build_interaction_id,
 )
+from .equivalence import (
+    MECHANISTIC_VARIANT_POLICY_ID,
+    MOLECULAR_LR_EQUIVALENCE_POLICY_ID,
+    FrozenMolecularLREquivalenceUniverse,
+    MolecularLREquivalenceClass,
+    MolecularLRMappingRecord,
+    MolecularLRMappingStatus,
+    MolecularLRMechanisticVariant,
+    MolecularLRSourceBundleBinding,
+    freeze_molecular_lr_equivalence_universe,
+)
 from .manifest import (
     ResourceIntegrityError,
     ResourceManifest,
@@ -22,9 +33,17 @@ from .manifest import (
 from .nichenet import load_nichenet_target_prior
 
 __all__ = [
+    "MECHANISTIC_VARIANT_POLICY_ID",
+    "MOLECULAR_LR_EQUIVALENCE_POLICY_ID",
+    "FrozenMolecularLREquivalenceUniverse",
     "GeneNamespace",
     "Interaction",
     "MappingReport",
+    "MolecularLREquivalenceClass",
+    "MolecularLRMappingRecord",
+    "MolecularLRMappingStatus",
+    "MolecularLRMechanisticVariant",
+    "MolecularLRSourceBundleBinding",
     "PriorLink",
     "ResourceBundle",
     "ResourceIntegrityError",
@@ -33,6 +52,7 @@ __all__ = [
     "Species",
     "TargetPrior",
     "build_interaction_id",
+    "freeze_molecular_lr_equivalence_universe",
     "load_cellchat_resource",
     "load_cellphonedb_resource",
     "load_nichenet_target_prior",

@@ -23,7 +23,7 @@ from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
 from benchmarks.metrics.multicondition import paired_edge_effects, validate_score_table
 from crychic import __version__ as crychic_version
 from crychic import load_nichenet_target_prior
-from crychic.attribution import PenaltyTuningSpec
+from crychic.attribution import GainCalibrationSpec, PenaltyTuningSpec
 from crychic.core import CrychicConfig, canonical_digest
 from crychic.design import balanced_contrast, context_id
 from crychic.resources import (
@@ -43,14 +43,37 @@ from crychic.workflow import (
     CrossFitSpec,
     FoldTrainingSpec,
     run_subject_crossfit,
+    write_crossfit_result,
 )
 
 SCHEMA_VERSION = "crychic-cscc-paired-gate-smoke-v2"
 CONFIG_SCHEMA_VERSION = "crychic-cscc-paired-gate-smoke-config-v1"
+GAIN_CALIBRATION_CONFIG_SCHEMA_VERSION = "crychic-cscc-gain-calibration-smoke-config-v1"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKSPACE_ROOT = REPOSITORY_ROOT.parent
 DEFAULT_CONFIG = REPOSITORY_ROOT / "benchmarks/configs/cscc_paired_gate_smoke.json"
+DEFAULT_GAIN_CALIBRATION_CONFIG = (
+    REPOSITORY_ROOT / "benchmarks/configs/cscc_gain_calibration_smoke_v1.json"
+)
 DEFAULT_OUTPUT = Path("benchmark_work/cscc_paired_gate_smoke.json")
+
+EXPECTED_BASE_SMOKE_CONFIG_SHA256 = (
+    "f7cb4ce4b6cfc6762a9c636497fb8b4af34a49ad01abc7c96973186f5a50c3b4"
+)
+_GAIN_CALIBRATION_SMOKE_SCOPE: dict[str, object] = {
+    "analysis_class": "small_scale_descriptive_gain_calibration_smoke",
+    "formal_inference_allowed": False,
+    "biological_validation_claim_allowed": False,
+    "comparative_method_advantage_claim_allowed": False,
+}
+_GAIN_CALIBRATION_SMOKE_VALUES = {
+    "min_inner_folds": 2,
+    "min_subjects": 4,
+    "min_supported_families": 1,
+    "min_subjects_per_family": 4,
+    "min_positive_observations": 4,
+    "min_distinct_positive_gains": 3,
+}
 
 EXPECTED_H5AD_SHA256 = (
     "b15759def47df2c2aa5e1936398c9e57fab92dac6814b77d31839ae50b675b81"
@@ -140,6 +163,109 @@ def _float_value(value: object, *, field: str) -> float:
 def _require_equal(value: object, expected: object, *, field: str) -> None:
     if value != expected:
         raise ValueError(f"{field} changed from the frozen smoke contract")
+
+
+def _require_exact_keys(
+    value: Mapping[str, object],
+    expected: set[str],
+    *,
+    field: str,
+) -> None:
+    observed = set(value)
+    if observed != expected:
+        missing = sorted(expected.difference(observed))
+        unexpected = sorted(observed.difference(expected))
+        raise ValueError(
+            f"{field} fields changed: missing={missing}, unexpected={unexpected}"
+        )
+
+
+def load_gain_calibration_smoke_config(
+    path: str | Path = DEFAULT_GAIN_CALIBRATION_CONFIG,
+) -> GainCalibrationSpec:
+    """Load the separately versioned, base-config-bound descriptive policy."""
+
+    config = dict(
+        _mapping(
+            json.loads(Path(path).read_text(encoding="utf-8")),
+            field="gain_calibration_config",
+        )
+    )
+    _require_exact_keys(
+        config,
+        {
+            "schema_version",
+            "base_smoke_config",
+            "scope",
+            "gain_calibration_spec",
+        },
+        field="gain_calibration_config",
+    )
+    _require_equal(
+        config["schema_version"],
+        GAIN_CALIBRATION_CONFIG_SCHEMA_VERSION,
+        field="gain_calibration_config.schema_version",
+    )
+
+    base = _mapping(
+        config["base_smoke_config"],
+        field="gain_calibration_config.base_smoke_config",
+    )
+    _require_exact_keys(
+        base,
+        {"relative_path", "sha256"},
+        field="gain_calibration_config.base_smoke_config",
+    )
+    _require_equal(
+        base["relative_path"],
+        "benchmarks/configs/cscc_paired_gate_smoke.json",
+        field="gain_calibration_config.base_smoke_config.relative_path",
+    )
+    _require_equal(
+        base["sha256"],
+        EXPECTED_BASE_SMOKE_CONFIG_SHA256,
+        field="gain_calibration_config.base_smoke_config.sha256",
+    )
+    if sha256_file(DEFAULT_CONFIG) != EXPECTED_BASE_SMOKE_CONFIG_SHA256:
+        raise ValueError("base cSCC smoke configuration sha256 changed")
+    load_smoke_config(DEFAULT_CONFIG)
+
+    scope = _mapping(config["scope"], field="gain_calibration_config.scope")
+    _require_exact_keys(
+        scope,
+        set(_GAIN_CALIBRATION_SMOKE_SCOPE),
+        field="gain_calibration_config.scope",
+    )
+    for name, expected in _GAIN_CALIBRATION_SMOKE_SCOPE.items():
+        observed = scope[name]
+        if type(observed) is not type(expected) or observed != expected:
+            raise ValueError(
+                f"gain_calibration_config.scope.{name} changed from the "
+                "descriptive smoke contract"
+            )
+
+    raw_spec = _mapping(
+        config["gain_calibration_spec"],
+        field="gain_calibration_config.gain_calibration_spec",
+    )
+    _require_exact_keys(
+        raw_spec,
+        set(_GAIN_CALIBRATION_SMOKE_VALUES),
+        field="gain_calibration_config.gain_calibration_spec",
+    )
+    values: dict[str, int] = {}
+    for name, expected in _GAIN_CALIBRATION_SMOKE_VALUES.items():
+        observed = _int_value(
+            raw_spec[name],
+            field=f"gain_calibration_config.gain_calibration_spec.{name}",
+        )
+        _require_equal(
+            observed,
+            expected,
+            field=f"gain_calibration_config.gain_calibration_spec.{name}",
+        )
+        values[name] = observed
+    return GainCalibrationSpec(**values)
 
 
 def load_smoke_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, object]:
@@ -749,6 +875,8 @@ def build_smoke_target_prior(
 
 def build_crossfit_spec(
     config: Mapping[str, object],
+    *,
+    gain_calibration_spec: GainCalibrationSpec | None = None,
 ) -> tuple[CrychicConfig, CrossFitSpec]:
     """Build the explicit two-fold Tumor-minus-Normal smoke specification."""
 
@@ -861,6 +989,7 @@ def build_crossfit_spec(
             policy["autonomous_program_use_scope"],
         ),
         penalty_tuning_spec=tuning,
+        gain_calibration_spec=gain_calibration_spec,
     )
     crychic_config = CrychicConfig(
         context_keys=("condition",),
@@ -1314,12 +1443,8 @@ def compact_diagnostic_score_summary(
                     "receptor": str(row.receptor),
                     "effect": _finite_float(row.effect),
                     "median_effect": _finite_float(row.median_effect),
-                    "direction_consistency": _finite_float(
-                        row.direction_consistency
-                    ),
-                    "direction_comparable_pairs": int(
-                        row.direction_comparable_pairs
-                    ),
+                    "direction_consistency": _finite_float(row.direction_consistency),
+                    "direction_comparable_pairs": int(row.direction_comparable_pairs),
                     "n_pairs": int(row.n_pairs),
                     "status": str(row.status),
                     "reason_code": (
@@ -1396,16 +1521,130 @@ def _portable_path(path: Path, workspace_root: Path) -> str:
         return path.name
 
 
+def _gain_calibration_configuration_summary(
+    *,
+    config_path: Path,
+    workspace_root: Path,
+    spec: GainCalibrationSpec,
+) -> dict[str, object]:
+    loaded = load_gain_calibration_smoke_config(config_path)
+    if loaded.spec_id != spec.spec_id:
+        raise ValueError(
+            "explicit gain calibration specification differs from its smoke config"
+        )
+    raw = _mapping(
+        json.loads(config_path.read_text(encoding="utf-8")),
+        field="gain_calibration_config",
+    )
+    return {
+        "path": _portable_path(config_path, workspace_root),
+        "sha256": sha256_file(config_path),
+        "schema_version": GAIN_CALIBRATION_CONFIG_SCHEMA_VERSION,
+        "base_smoke_config_sha256": EXPECTED_BASE_SMOKE_CONFIG_SHA256,
+        "gain_calibration_spec": spec.to_dict(),
+        "scope": dict(_mapping(raw["scope"], field="gain_calibration_config.scope")),
+    }
+
+
+def _crossfit_result_summary(
+    *,
+    path: Path,
+    workspace_root: Path,
+    manifest: Mapping[str, object],
+) -> dict[str, object]:
+    if manifest.get("schema_version") not in {"5.0.0", "6.0.0"}:
+        raise ValueError(
+            "cSCC calibration smoke requires cross-fit result schema v5 or v6"
+        )
+    eligibility: list[dict[str, object]] = []
+    collections = _sequence(
+        manifest.get("contrast_common_collections"),
+        field="crossfit_result.contrast_common_collections",
+    )
+    for raw_collection in collections:
+        collection = _mapping(
+            raw_collection,
+            field="crossfit_result.contrast_common_collections[]",
+        )
+        applications = _sequence(
+            collection.get("fold_applications"),
+            field="crossfit_result.fold_applications",
+        )
+        for raw_application in applications:
+            application = _mapping(
+                raw_application,
+                field="crossfit_result.fold_applications[]",
+            )
+            all_calibrated = application.get("all_receivers_gain_calibrated")
+            rank_eligible = application.get("cross_receiver_percentile_rank_eligible")
+            if type(all_calibrated) is not bool or type(rank_eligible) is not bool:
+                raise ValueError("persisted gain calibration eligibility is invalid")
+            eligibility.append(
+                {
+                    "contrast_common_collection_id": collection.get(
+                        "contrast_common_collection_id"
+                    ),
+                    "fold_id": application.get("fold_id"),
+                    "all_receivers_gain_calibrated": all_calibrated,
+                    "cross_receiver_percentile_rank_eligible": rank_eligible,
+                }
+            )
+    n_eligible = sum(
+        bool(item["cross_receiver_percentile_rank_eligible"]) for item in eligibility
+    )
+    if not eligibility:
+        eligibility_status = "not_available"
+    elif n_eligible == len(eligibility):
+        eligibility_status = "eligible"
+    else:
+        eligibility_status = "not_eligible"
+    return {
+        "path": _portable_path(path, workspace_root),
+        "crossfit_result_id": manifest.get("crossfit_result_id"),
+        "schema_version": manifest.get("schema_version"),
+        "certification_status": manifest.get("certification_status"),
+        "complete_pipeline_oof_certified": manifest.get(
+            "complete_pipeline_oof_certified"
+        ),
+        "cross_receiver_percentile_rank_eligibility": {
+            "status": eligibility_status,
+            "n_fold_applications": len(eligibility),
+            "n_eligible_fold_applications": n_eligible,
+            "fold_applications": eligibility,
+        },
+    }
+
+
 def run_smoke(
     *,
     workspace_root: Path,
     config_path: Path = DEFAULT_CONFIG,
+    gain_calibration_spec: GainCalibrationSpec | None = None,
+    gain_calibration_config_path: Path = DEFAULT_GAIN_CALIBRATION_CONFIG,
+    crossfit_result_output: Path | None = None,
 ) -> dict[str, object]:
-    """Run the bounded real-data algorithm smoke without downstream score export."""
+    """Run the bounded real-data smoke, with optional descriptive v5 output."""
+
+    if crossfit_result_output is not None and gain_calibration_spec is None:
+        raise ValueError(
+            "crossfit_result_output requires an explicit gain_calibration_spec"
+        )
 
     total_started = time.perf_counter()
     workspace_root = workspace_root.resolve()
     config_path = config_path.resolve()
+    gain_calibration_summary = None
+    if gain_calibration_spec is not None:
+        if sha256_file(config_path) != EXPECTED_BASE_SMOKE_CONFIG_SHA256:
+            raise ValueError(
+                "gain calibration smoke requires the checksum-bound base config"
+            )
+        gain_calibration_config_path = gain_calibration_config_path.resolve()
+        gain_calibration_summary = _gain_calibration_configuration_summary(
+            config_path=gain_calibration_config_path,
+            workspace_root=workspace_root,
+            spec=gain_calibration_spec,
+        )
     config = load_smoke_config(config_path)
     dataset = _mapping(config["dataset"], field="dataset")
     harmonized_config = _mapping(
@@ -1542,7 +1781,10 @@ def run_smoke(
         expected_link_digest=str(nichenet_config["expected_selected_link_digest"]),
     )
 
-    crychic_config, spec = build_crossfit_spec(config)
+    crychic_config, spec = build_crossfit_spec(
+        config,
+        gain_calibration_spec=gain_calibration_spec,
+    )
     crossfit_started = time.perf_counter()
     artifacts = run_subject_crossfit(
         adata,
@@ -1580,15 +1822,31 @@ def run_smoke(
         or not_estimable_metrics["n_oof_receiver_coverage_rows"] != 32
     ):
         raise ValueError("cSCC smoke NE grains changed from 4 models and 32 rows")
-    return {
+    configuration_summary: dict[str, object] = {
+        "path": _portable_path(config_path, workspace_root),
+        "sha256": sha256_file(config_path),
+        "crychic_config": crychic_config.to_dict(),
+        "crossfit_spec": spec.to_dict(),
+    }
+    if gain_calibration_summary is not None:
+        configuration_summary["gain_calibration_smoke"] = gain_calibration_summary
+
+    crossfit_result_summary = None
+    if crossfit_result_output is not None:
+        destination = crossfit_result_output
+        if not destination.is_absolute():
+            destination = workspace_root / destination
+        persisted = write_crossfit_result(artifacts, destination)
+        crossfit_result_summary = _crossfit_result_summary(
+            path=persisted.path,
+            workspace_root=workspace_root,
+            manifest=persisted.manifest,
+        )
+
+    result: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "scope": "bounded_real_data_algorithm_smoke_not_biological_validation",
-        "configuration": {
-            "path": _portable_path(config_path, workspace_root),
-            "sha256": sha256_file(config_path),
-            "crychic_config": crychic_config.to_dict(),
-            "crossfit_spec": spec.to_dict(),
-        },
+        "configuration": configuration_summary,
         "input": {
             "path": _portable_path(input_path, workspace_root),
             **input_audit,
@@ -1635,6 +1893,12 @@ def run_smoke(
             "downstream_score_tables": True,
         },
     }
+    if crossfit_result_summary is not None:
+        result["crossfit_result"] = crossfit_result_summary
+        exclusions = cast(dict[str, object], result["output_exclusions"])
+        exclusions["plaintext_subject_ids"] = False
+        exclusions["downstream_score_tables"] = False
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1647,18 +1911,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--gain-calibration-config",
+        type=Path,
+        default=None,
+        help="Enable the separately versioned descriptive gain-calibration smoke.",
+    )
+    parser.add_argument(
+        "--crossfit-result-output",
+        type=Path,
+        default=None,
+        help="Write the validated v5 cross-fit result directory.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.crossfit_result_output is not None and args.gain_calibration_config is None:
+        parser.error("--crossfit-result-output requires --gain-calibration-config")
     workspace_root = args.workspace_root.resolve()
     output = args.output
     if not output.is_absolute():
         output = workspace_root / output
+    gain_calibration_spec = (
+        None
+        if args.gain_calibration_config is None
+        else load_gain_calibration_smoke_config(args.gain_calibration_config)
+    )
     result = run_smoke(
         workspace_root=workspace_root,
         config_path=args.config,
+        gain_calibration_spec=gain_calibration_spec,
+        gain_calibration_config_path=(
+            DEFAULT_GAIN_CALIBRATION_CONFIG
+            if args.gain_calibration_config is None
+            else args.gain_calibration_config
+        ),
+        crossfit_result_output=args.crossfit_result_output,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

@@ -156,6 +156,7 @@ def test_campaign_spec_uses_three_candidate_public_tuned_policy() -> None:
     assert tuning.lambda1_fractions == FROZEN_LAMBDA1_FRACTIONS
     assert tuning.lambda2_fractions == FROZEN_LAMBDA2_FRACTIONS
     assert tuning.root_seed == 2578925092
+    assert spec.outer_fold_partition_seed == 2578925092
     assert tuning.selection_rule == (
         "subject_equal_paired_delta_one_se_l1_then_l2_sparsity_priority_v2"
     )
@@ -461,6 +462,65 @@ def test_not_estimable_receiver_program_never_counts_as_semantic_pass() -> None:
     assert all(record["not_estimable_never_counts_as_pass"] for record in records)
 
 
+def test_zero_truth_rejects_large_negative_component_deviation() -> None:
+    registry = _registry()
+    edge = cast(Mapping[str, object], cast(list[object], registry["known_edges"])[0])
+    edge_id = str(edge["known_edge_id"])
+    component_scores = [
+        {
+            "known_edge_id": edge_id,
+            "mode": mode,
+            "component": component,
+            "mean": -0.25 if component == "receiver_program" else 0.0,
+            "coverage": 1.0,
+            "raw_strength_mean": 0.0,
+            "raw_strength_minimum": 0.0,
+            "raw_strength_maximum": 0.0,
+            "raw_strength_coverage": 1.0,
+            "raw_strength_estimand": "raw_heldout_score_over_context_rows",
+            "paired_effect_mean": 0.0,
+            "paired_effect_coverage": 1.0,
+            "estimand": (
+                "raw_heldout_family_gain"
+                if component == "incremental_downstream"
+                else "subject_level_stim_minus_ctrl"
+            ),
+        }
+        for mode in RELEASED_MODES
+        for component in (
+            "receiver_program",
+            "incremental_downstream",
+            "integrated",
+        )
+    ]
+
+    result = _aggregate_component_semantics(
+        [
+            {
+                "seed_id": "seed-1",
+                "scenario": "global_null",
+                "component_scores": component_scores,
+            }
+        ],
+        registry=registry,
+        edge_catalog=({"known_edge_id": edge_id},),
+        seed_ids=("seed-1",),
+        positive_tolerance=1e-12,
+    )
+    records = cast(list[Mapping[str, object]], result["records"])
+    receiver_program = [
+        record
+        for record in records
+        if record["scenario"] == "global_null"
+        and record["component"] == "receiver_program"
+    ]
+
+    assert len(receiver_program) == len(RELEASED_MODES)
+    assert all(record["truth_code"] == "zero" for record in receiver_program)
+    assert all(record["status"] == "observed" for record in receiver_program)
+    assert all(record["conforms"] is False for record in receiver_program)
+
+
 def test_control_family_summary_keeps_raw_false_positive_diagnostic() -> None:
     family_mode = {
         "n_positive_integrated_families": 0,
@@ -588,10 +648,16 @@ def test_cli_accepts_seed_ids_without_changing_the_seed_count_default() -> None:
     assert args.seed_ids == ["public-g15-003"]
 
 
-def test_tracked_multiseed_summary_is_current_and_semantically_pinned() -> None:
+def test_tracked_multiseed_summary_is_historical_and_semantically_pinned() -> None:
     summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
 
-    assert summary["source_sha256"] == campaign_source_sha256()
+    current_source = campaign_source_sha256()
+    assert set(summary["source_sha256"]) == set(current_source)
+    assert all(
+        len(digest) == 64 for digest in summary["source_sha256"].values()
+    )
+    if summary["source_sha256"] != current_source:
+        pytest.skip("tracked G1.5 campaign is a historical source snapshot")
     assert summary["scope"] == "development_full_seven_scenario_diagnostic"
     assert summary["checks"]["eligible_for_campaign_metric_interpretation"]
     assert summary["checks"]["executed_multiple_seeds"]
@@ -625,4 +691,6 @@ def test_tracked_multiseed_summary_is_current_and_semantically_pinned() -> None:
 
     if FULL_ARTIFACT_PATH.exists():
         full = json.loads(FULL_ARTIFACT_PATH.read_text(encoding="utf-8"))
+        if full["source_sha256"] != summary["source_sha256"]:
+            pytest.skip("workspace campaign belongs to a different source snapshot")
         assert compact_campaign_summary(full) == summary

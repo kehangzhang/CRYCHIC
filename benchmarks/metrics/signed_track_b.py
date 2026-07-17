@@ -206,6 +206,21 @@ def _validate_predictions(
         raise ValueError(f"signed Track-B predictions are missing: {sorted(missing)}")
     if predictions.empty:
         raise ValueError("signed Track-B predictions must not be empty")
+    false_only_claims = (
+        "native_nichenet_claim",
+        "sender_claim",
+        "lr_edge_claim",
+        "supports_active_inhibition_claim",
+        "formal_inference_allowed",
+    )
+    for column in false_only_claims:
+        if column in predictions.columns and any(
+            not isinstance(value, (bool, np.bool_)) or bool(value)
+            for value in predictions[column]
+        ):
+            raise ValueError(
+                f"signed Track-B predictions must set {column} to false"
+            )
     result = predictions.loc[:, sorted(required)].copy()
     _required_strings(
         result,

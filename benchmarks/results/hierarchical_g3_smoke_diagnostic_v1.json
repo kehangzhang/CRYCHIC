@@ -1,0 +1,134 @@
+{
+  "checks": {
+    "all_evaluations_candidate_only": true,
+    "formal_q_values_never_present": true,
+    "g3_gate_constructed": false
+  },
+  "claims": {
+    "formal_fdr_control_established": false,
+    "formal_q_values_released": false,
+    "g3_passed": false,
+    "method_superiority": false
+  },
+  "configuration": {
+    "jobs": 4,
+    "n_active_families_in_mixed_scenarios": 2,
+    "n_children_per_family": 3,
+    "n_primary_families": 8,
+    "repetitions_per_scenario": 200,
+    "seed": 20260715,
+    "total_candidate_evaluations": 800
+  },
+  "metric_definitions": {
+    "primary_fdr": "mean(V_primary/max(R_primary,1))",
+    "primary_type_i_any_false_rejection_probability": "probability of at least one false primary candidate rejection",
+    "selected_family_average_child_fdp": "mean over repetitions of sum selected-family FDP/max(R_primary,1)",
+    "selected_family_average_child_power": "mean child power among selected signal-family events only"
+  },
+  "procedure": {
+    "alpha": 0.05,
+    "calibration_gate_supplied": false,
+    "decision_fields_used": "candidate_only",
+    "denominator_policy": "all_frozen_hypotheses_nonobserved_effective_p_one_v1",
+    "primary_procedure": "benjamini_hochberg_v1",
+    "procedure_id": "hierarchical_fdr_procedure_38dcdc6da83ed52317d2ccdb5dbbff40",
+    "q_value_scope": "selective_fdr_not_pooled_leaf_fdr",
+    "secondary_level_rule": "alpha_times_selected_primary_count_over_primary_count_v1",
+    "secondary_procedure": "benjamini_bogomolov_selected_family_bh_v1"
+  },
+  "provenance": {
+    "source_sha256": {
+      "benchmarks/simulation/hierarchical_g3_smoke.py": "1abd33b3ca522e54119a3c4d65fdb7d5dad10f8d692346649ad941d00587129b",
+      "src/crychic/inference/hierarchical.py": "108417e6bec50459c3f0c9c1c5061350faafe937ed05eb74e51b7d98faa3bcd1",
+      "src/crychic/inference/hypotheses.py": "af40af9906701c2ea5fbfd6811fc26c6c3123ff121b63d318c57e16381255985"
+    }
+  },
+  "scenarios": [
+    {
+      "active_family_end_to_end_child_power": null,
+      "block_correlation": 0.0,
+      "candidate_release_status_counts": {
+        "candidate_only": 200
+      },
+      "dependence": "independent",
+      "formal_q_values_present": false,
+      "mean_secondary_test_level": 0.00021875000000000003,
+      "mean_selected_children": 0.0,
+      "mean_selected_primary_families": 0.035,
+      "primary_fdr": 0.03,
+      "primary_null_rejection_rate": 0.004375,
+      "primary_power": null,
+      "primary_type_i_any_false_rejection_probability": 0.03,
+      "repetitions": 200,
+      "scenario": "global_null_independent",
+      "selected_family_average_child_fdp": 0.0,
+      "selected_family_average_child_power": null,
+      "truth": "global_null"
+    },
+    {
+      "active_family_end_to_end_child_power": null,
+      "block_correlation": 0.45,
+      "candidate_release_status_counts": {
+        "candidate_only": 200
+      },
+      "dependence": "gaussian_copula_equicorrelated_within_family_block",
+      "formal_q_values_present": false,
+      "mean_secondary_test_level": 0.00043749999999999995,
+      "mean_selected_children": 0.005,
+      "mean_selected_primary_families": 0.07,
+      "primary_fdr": 0.06,
+      "primary_null_rejection_rate": 0.00875,
+      "primary_power": null,
+      "primary_type_i_any_false_rejection_probability": 0.06,
+      "repetitions": 200,
+      "scenario": "global_null_positive_block",
+      "selected_family_average_child_fdp": 0.005,
+      "selected_family_average_child_power": null,
+      "truth": "global_null"
+    },
+    {
+      "active_family_end_to_end_child_power": 0.4425,
+      "block_correlation": 0.0,
+      "candidate_release_status_counts": {
+        "candidate_only": 200
+      },
+      "dependence": "independent",
+      "formal_q_values_present": false,
+      "mean_secondary_test_level": 0.0091875,
+      "mean_selected_children": 0.9,
+      "mean_selected_primary_families": 1.47,
+      "primary_fdr": 0.04333333333333333,
+      "primary_null_rejection_rate": 0.02,
+      "primary_power": 0.675,
+      "primary_type_i_any_false_rejection_probability": 0.11,
+      "repetitions": 200,
+      "scenario": "mixed_sparse_independent",
+      "selected_family_average_child_fdp": 0.005,
+      "selected_family_average_child_power": 0.6555555555555556,
+      "truth": "mixed_sparse_signal"
+    },
+    {
+      "active_family_end_to_end_child_power": 0.39,
+      "block_correlation": -0.2,
+      "candidate_release_status_counts": {
+        "candidate_only": 200
+      },
+      "dependence": "gaussian_copula_equicorrelated_within_family_block",
+      "formal_q_values_present": false,
+      "mean_secondary_test_level": 0.009281250000000001,
+      "mean_selected_children": 0.79,
+      "mean_selected_primary_families": 1.485,
+      "primary_fdr": 0.03166666666666666,
+      "primary_null_rejection_rate": 0.014166666666666666,
+      "primary_power": 0.7,
+      "primary_type_i_any_false_rejection_probability": 0.085,
+      "repetitions": 200,
+      "scenario": "mixed_sparse_negative_block",
+      "selected_family_average_child_fdp": 0.0029166666666666664,
+      "selected_family_average_child_power": 0.5571428571428572,
+      "truth": "mixed_sparse_signal"
+    }
+  ],
+  "schema_version": "crychic-hierarchical-g3-smoke-diagnostic-v1",
+  "scope": "small_diagnostic_algorithm_smoke_candidate_decisions_only_not_g3_calibration"
+}

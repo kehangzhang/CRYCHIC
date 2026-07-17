@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:active-probability-stratum-diagnostics:1.0.0",
+  "title": "CRYCHIC ADR-013 local-FDR stratum diagnostics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "active_probability_stratum_diagnostics"},
+    "filename": {"const": "active_probability_stratum_diagnostics.parquet"},
+    "primary_key": {"const": ["local_fdr_diagnostic_id"]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_fdr_diagnostic_id", "stratum_id", "status", "reason_code", "n_candidate_edges", "n_null_plans", "complete_score_matrix", "pi0", "a", "log_likelihood", "projected_gradient_norm", "curvature_minimum_eigenvalue", "n_starts", "n_successful_starts", "log_likelihood_spread"],
+      "properties": {
+        "local_fdr_diagnostic_id": {"dtype": "string", "nullable": false},
+        "stratum_id": {"dtype": "string", "nullable": false},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "not_estimable", "failed"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "n_candidate_edges": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "n_null_plans": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "complete_score_matrix": {"dtype": "boolean", "nullable": false},
+        "pi0": {"dtype": "float", "nullable": true, "minimum": 0.5, "maximum": 1.0},
+        "a": {"dtype": "float", "nullable": true, "minimum": 0.05, "maximum": 0.95},
+        "log_likelihood": {"dtype": "float", "nullable": true},
+        "projected_gradient_norm": {"dtype": "float", "nullable": true, "minimum": 0.0},
+        "curvature_minimum_eigenvalue": {"dtype": "float", "nullable": true},
+        "n_starts": {"dtype": "integer", "nullable": false, "minimum": 1},
+        "n_successful_starts": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "log_likelihood_spread": {"dtype": "float", "nullable": true, "minimum": 0.0}
+      }
+    }
+  }
+}

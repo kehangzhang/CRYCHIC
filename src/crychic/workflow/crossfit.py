@@ -1,10 +1,9 @@
-"""Public subject-blocked orchestration for implemented train/apply stages.
+"""Public subject-blocked orchestration for train/apply scoring stages.
 
 Separate exact-coverage audits verify contrast-common sender rows, the typed
 receiver response/precision/incremental chain, and family-common held-out
-tables. Trusted nuisance resources and paired subject-blocked tuning can make
-individual incremental children official, but these artifacts do not certify
-the complete scoring pipeline.
+tables. A complete trusted and tuned chain can be certified as descriptive
+OOF scoring; formal inference remains a separate full-pipeline calibration.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import numpy as np
 import pandas as pd
@@ -20,10 +19,21 @@ from anndata import AnnData
 from scipy import sparse
 
 from crychic.attribution import (
+    DirectionalContrastPairSpec,
+    FrozenReceiverFamilyLRHypothesisUniverse,
+    FrozenReceiverFamilyOpportunityUniverse,
+    GainCalibrationSpec,
     PenaltyTuningSpec,
     PrecisionTransformResult,
+    ReceiverFamilyTrainingArtifact,
     fit_receiver_family_training_artifacts,
     fit_response_precision,
+    freeze_receiver_family_lr_hypothesis_universe,
+    freeze_receiver_family_opportunity_universe,
+)
+from crychic.attribution.precision import (
+    _raw_vector_digest,
+    fit_repeated_response_precision,
 )
 from crychic.core import (
     ContractError,
@@ -37,7 +47,9 @@ from crychic.design import (
     ContrastSpec,
     FrozenDesignApplication,
     FrozenDesignEncoder,
+    SubjectDesign,
     apply_frozen_design_encoder,
+    audit_subject_design,
     canonical_context,
     default_design_formula,
     fit_frozen_design_encoder,
@@ -58,22 +70,39 @@ from crychic.response import (
     FoldGeneResponseApplication,
     FoldGeneResponseArtifact,
     ReceiverAutonomousProgramResource,
+    RepeatedMeasuresCR2ReceiverEffect,
+    RepeatedMeasuresReceiverEffect,
     apply_fold_gene_response,
     fit_fold_gene_response,
 )
+from crychic.response.repeated_fold import (
+    RepeatedMeasuresFoldResponseApplication,
+    RepeatedMeasuresFoldResponseArtifact,
+    apply_repeated_measures_fold_response,
+    fit_repeated_measures_cr2_fold_response,
+)
 from crychic.scoring import (
     FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS,
+    CrossReceiverCommonScoringApplication,
+    CrossReceiverCommonScoringFunctional,
     FamilyCommonScoringApplication,
     FamilyCommonScoringFunctional,
+    FrozenLatentNuisanceSpec,
+    PlannedScoringCollectionManifest,
     ReceiverFamilyScoringApplication,
     ReceiverFamilyScoringArtifact,
     ReceiverProgramApplication,
     ReceiverProgramTrainingArtifact,
+    ReceiverScoringFunctionalManifest,
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
+    apply_cross_receiver_common_scoring_functional,
     apply_family_common_scoring_functional,
     apply_receiver_family_scoring_artifact,
     apply_receiver_program_training_artifact,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
+    fit_cross_receiver_common_scoring_functional,
     fit_family_common_scoring_functional,
     fit_receiver_family_scoring_artifact,
     fit_receiver_program_training_artifact,
@@ -97,12 +126,24 @@ from .application import (
     TrainingArtifactApplication,
     _apply_training_artifacts_from_prepared,
 )
+from .directional import (
+    DirectionalCrossFitBinding,
+    build_directional_crossfit_binding,
+)
 from .receiver_incremental import (
     ReceiverIncrementalApplication,
     ReceiverIncrementalTrainingArtifact,
+    _autonomous_verification_status,
     _receiver_incremental_feature_scale,
     apply_receiver_incremental_training_artifact,
     fit_receiver_incremental_training_artifact,
+)
+from .receiver_universe import (
+    FrozenReceiverUniverse,
+    ReceiverTrainingSupportRecord,
+    ReceiverTrainingSupportStatus,
+    assess_receiver_training_support,
+    freeze_receiver_universe,
 )
 from .training import (
     FoldTrainingSpec,
@@ -114,8 +155,13 @@ from .training import (
     _input_schema,
     _prepare_raw_fold,
     _PreparedRawFold,
+    _resource_bundle_content_id,
     _sanitized_raw_input_snapshot,
+    _target_prior_content_id,
 )
+
+if TYPE_CHECKING:
+    from .certification import CrossFitOOFCertificationAudit
 
 _STAGE_NAME = "contrast_common_sender_application"
 _RECEIVER_STAGE_NAME = "receiver_incremental_application_diagnostic"
@@ -127,6 +173,14 @@ _REMAINING_PUBLIC_STAGES = (
     "family_attribution",
     "incremental_downstream",
     "subject_blocked_inner_tuning",
+    "selected_penalty_inner_oof_gain_calibration",
+)
+
+_ReceiverResponseArtifact: TypeAlias = (
+    FoldGeneResponseArtifact | RepeatedMeasuresFoldResponseArtifact
+)
+_ReceiverResponseApplication: TypeAlias = (
+    FoldGeneResponseApplication | RepeatedMeasuresFoldResponseApplication
 )
 _CPM_SCALE = 1_000_000.0
 _MAX_SEED = 2**63 - 1
@@ -141,6 +195,135 @@ _FAMILY_EDGE_EVIDENCE_POLICY = (
     "max_sender_local_availability_with_frozen_train_only_ligand_gate_v2"
 )
 _FAMILY_BINDING_PRODUCER = "crychic.family_common_crossfit_binding.v2"
+
+
+def _response_backend_manifest(
+    response: _ReceiverResponseArtifact,
+) -> dict[str, object]:
+    """Build a compact, replayable audit of the response backend and support."""
+
+    response._require_intact()
+    raw_precision = np.asarray(response.raw_precision, dtype=np.float64)
+    supported_indices = np.flatnonzero(
+        np.isfinite(raw_precision) & (raw_precision > 0.0)
+    ).astype(int)
+    supported_index_set = set(supported_indices.tolist())
+    feature_diagnostics: list[dict[str, object]] = []
+    repeated_design_manifest: dict[str, object] | None = None
+    n_backend_eligible_features: int
+    if isinstance(response, RepeatedMeasuresFoldResponseArtifact):
+        repeated_design_manifest = response.repeated_design.to_dict()
+        repeated_effect = response.repeated_effect
+        n_backend_eligible_features = 0
+        if isinstance(repeated_effect, RepeatedMeasuresCR2ReceiverEffect):
+            artifact_kind = "repeated_cr2_fold_response_v1"
+            for index, cr2_effect in enumerate(repeated_effect.feature_effects):
+                formal_backend_eligible = cr2_effect.formal_backend_eligible
+                if formal_backend_eligible:
+                    n_backend_eligible_features += 1
+                feature_diagnostics.append(
+                    {
+                        "backend": cr2_effect.backend,
+                        "cluster_df": cr2_effect.cluster_df,
+                        "effect_id": cr2_effect.effect_id,
+                        "feature_id": cr2_effect.feature_id,
+                        "feature_index": index,
+                        "formal_backend_eligible": formal_backend_eligible,
+                        "n_effective_clusters": cr2_effect.n_effective_clusters,
+                        "precision_supported": index in supported_index_set,
+                        "reason_code": cr2_effect.reason_code,
+                        "status": cr2_effect.status.value,
+                    }
+                )
+        elif isinstance(repeated_effect, RepeatedMeasuresReceiverEffect):
+            artifact_kind = "repeated_cr1_fold_response_v1"
+            for index, cr1_effect in enumerate(repeated_effect.feature_effects):
+                feature_diagnostics.append(
+                    {
+                        "backend": response.method,
+                        "cluster_df": cr1_effect.cluster_df,
+                        "effect_id": cr1_effect.effect_id,
+                        "feature_id": cr1_effect.feature_id,
+                        "feature_index": index,
+                        "formal_backend_eligible": False,
+                        "n_effective_clusters": (
+                            cr1_effect.n_contrast_subject_clusters
+                        ),
+                        "precision_supported": index in supported_index_set,
+                        "reason_code": cr1_effect.reason_code,
+                        "status": cr1_effect.status,
+                    }
+                )
+        else:  # pragma: no cover - artifact integrity owns this closed union
+            raise TypeError("unsupported repeated receiver effect backend")
+    else:
+        artifact_kind = "fold_gene_response_v2"
+        n_backend_eligible_features = len(supported_indices)
+    feature_diagnostics_digest = stable_id(
+        "crossfit_response_feature_diagnostics",
+        {
+            "feature_diagnostics": feature_diagnostics,
+            "feature_ids": list(response.feature_ids),
+            "response_artifact_id": response.artifact_id,
+        },
+        schema_version="1",
+        digest_length=64,
+    )
+    payload: dict[str, object] = {
+        "artifact_kind": artifact_kind,
+        "contrast_name": response.contrast_name,
+        "feature_diagnostics": feature_diagnostics,
+        "feature_diagnostics_digest": feature_diagnostics_digest,
+        "feature_ids": list(response.feature_ids),
+        "fold_id": response.fold_id,
+        "formal_inference_allowed": False,
+        "method": response.method,
+        "n_backend_eligible_features": n_backend_eligible_features,
+        "n_features": len(response.feature_ids),
+        "n_precision_supported_features": len(supported_indices),
+        "precision_parent_raw_digest": _raw_vector_digest(raw_precision),
+        "precision_supported_feature_indices": supported_indices.tolist(),
+        "reason_code": response.reason_code,
+        "receiver": response.receiver,
+        "repeated_design_manifest": repeated_design_manifest,
+        "response_artifact_id": response.artifact_id,
+        "response_identity": response._identity_payload(),
+        "schema_version": "1.0.0",
+        "status": response.status,
+    }
+    return {
+        "response_backend_manifest_id": stable_id(
+            "crossfit_response_backend_manifest",
+            payload,
+            schema_version="1",
+        ),
+        **payload,
+    }
+
+
+def _precision_audit_manifest(
+    precision: PrecisionTransformResult,
+) -> dict[str, object]:
+    """Persist exact precision provenance and its ordered-value digest."""
+
+    provenance = precision.to_dict()
+    payload: dict[str, object] = {
+        "numeric_values_persisted": False,
+        "ordered_values_digest": precision.transformed_precision_digest,
+        "provenance": provenance,
+        "replay_scope": "lineage_and_ordered_value_digest_v1",
+        "schema_version": "1.0.0",
+    }
+    return {
+        "precision_audit_manifest_id": stable_id(
+            "crossfit_precision_audit_manifest",
+            payload,
+            schema_version="1",
+        ),
+        **payload,
+    }
+
+
 _FAMILY_SCORE_MODES = ("state", "ecosystem")
 _COVERAGE_COLUMNS = (
     "subject_id",
@@ -169,6 +352,10 @@ _RECEIVER_COVERAGE_COLUMNS = (
     "contrast_id",
     "contrast_context",
     "receiver",
+    "receiver_universe_id",
+    "receiver_training_support_id",
+    "receiver_training_support_status",
+    "receiver_training_support_reason_code",
     "response_artifact_id",
     "precision_transform_id",
     "incremental_training_artifact_id",
@@ -206,6 +393,17 @@ def _table_cell_token(value: object) -> dict[str, object]:
     }
 
 
+def _optional_table_text(value: object) -> str | None:
+    if (
+        value is None
+        or value is pd.NA
+        or value is pd.NaT
+        or (isinstance(value, (float, np.floating)) and math.isnan(float(value)))
+    ):
+        return None
+    return str(value)
+
+
 def _table_digest(table_name: str, table: pd.DataFrame) -> str:
     rows = [
         [_table_cell_token(value) for value in row]
@@ -235,6 +433,8 @@ class CrossFitSpec:
     """Pre-registered policy for one subject-blocked cross-fit run."""
 
     contrasts: tuple[ContrastSpec, ...]
+    directional_pairs: tuple[DirectionalContrastPairSpec, ...] = ()
+    predeclared_receiver_ids: tuple[str, ...] | None = None
     repeat_index: int = 0
     outer_fold_partition_seed: int | None = None
     training_spec: FoldTrainingSpec = field(default_factory=FoldTrainingSpec)
@@ -246,10 +446,12 @@ class CrossFitSpec:
     family_cosine_threshold: float = 0.95
     downstream_minimum_scale: float = 0.25
     autonomous_program_resource: ReceiverAutonomousProgramResource | None = None
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None = None
     autonomous_program_use_scope: AutonomousProgramUseScope = (
         _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE
     )
     penalty_tuning_spec: PenaltyTuningSpec | None = None
+    gain_calibration_spec: GainCalibrationSpec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -289,6 +491,55 @@ class CrossFitSpec:
         contrasts = tuple(
             contrast for _, contrast in sorted(identified, key=lambda item: item[0])
         )
+        directional_pairs = tuple(self.directional_pairs)
+        if any(
+            not isinstance(pair, DirectionalContrastPairSpec)
+            for pair in directional_pairs
+        ):
+            raise TypeError(
+                "directional_pairs must contain DirectionalContrastPairSpec values"
+            )
+        contrast_ids = {_contrast_id(contrast) for contrast in contrasts}
+        directional_contrast_ids: list[str] = []
+        for pair in directional_pairs:
+            pair._require_intact()
+            pair_contrast_ids = (
+                pair.forward_contrast_id,
+                pair.reverse_contrast_id,
+            )
+            if not set(pair_contrast_ids).issubset(contrast_ids):
+                raise ValueError(
+                    "directional pair contrasts must be registered in contrasts"
+                )
+            directional_contrast_ids.extend(pair_contrast_ids)
+        if len({pair.pair_spec_id for pair in directional_pairs}) != len(
+            directional_pairs
+        ):
+            raise ValueError("directional_pairs must be unique")
+        if len(set(directional_contrast_ids)) != len(directional_contrast_ids):
+            raise ValueError("a contrast may belong to at most one directional pair")
+        directional_pairs = tuple(
+            sorted(directional_pairs, key=lambda pair: pair.pair_spec_id)
+        )
+        predeclared_receivers = self.predeclared_receiver_ids
+        if predeclared_receivers is not None:
+            if type(predeclared_receivers) is not tuple:
+                raise TypeError(
+                    "predeclared_receiver_ids must be a tuple of identifiers"
+                )
+            predeclared_receivers = tuple(predeclared_receivers)
+            if not predeclared_receivers or any(
+                not isinstance(receiver, str)
+                or not receiver
+                or receiver != receiver.strip()
+                for receiver in predeclared_receivers
+            ):
+                raise ValueError(
+                    "predeclared_receiver_ids must contain canonical non-empty IDs"
+                )
+            if len(predeclared_receivers) != len(set(predeclared_receivers)):
+                raise ValueError("predeclared_receiver_ids must be unique")
+            predeclared_receivers = tuple(sorted(predeclared_receivers))
         if not isinstance(self.training_spec, FoldTrainingSpec):
             raise TypeError("training_spec must be a FoldTrainingSpec")
         self.training_spec._require_intact()
@@ -331,6 +582,7 @@ class CrossFitSpec:
         family_threshold = float(self.family_cosine_threshold)
         minimum_scale = float(self.downstream_minimum_scale)
         autonomous_resource = self.autonomous_program_resource
+        latent_nuisance_spec = self.latent_nuisance_spec
         autonomous_use_scope = self.autonomous_program_use_scope
         if not isinstance(autonomous_use_scope, str) or autonomous_use_scope not in {
             "algorithm_diagnostic",
@@ -355,11 +607,27 @@ class CrossFitSpec:
                     "biological_analysis requires a registered biological-reference "
                     "autonomous program resource"
                 )
+        if latent_nuisance_spec is not None:
+            if not isinstance(latent_nuisance_spec, FrozenLatentNuisanceSpec):
+                raise TypeError(
+                    "latent_nuisance_spec must be a FrozenLatentNuisanceSpec"
+                )
+            latent_nuisance_spec._require_intact()
         tuning_spec = self.penalty_tuning_spec
         if tuning_spec is not None:
             if not isinstance(tuning_spec, PenaltyTuningSpec):
                 raise TypeError("penalty_tuning_spec must be a PenaltyTuningSpec")
             tuning_spec._require_intact()
+            gain_calibration_spec = self.gain_calibration_spec
+            if gain_calibration_spec is None:
+                gain_calibration_spec = GainCalibrationSpec()
+            elif not isinstance(gain_calibration_spec, GainCalibrationSpec):
+                raise TypeError("gain_calibration_spec must be a GainCalibrationSpec")
+            gain_calibration_spec._require_intact()
+        else:
+            gain_calibration_spec = self.gain_calibration_spec
+            if gain_calibration_spec is not None:
+                raise ValueError("gain_calibration_spec requires penalty_tuning_spec")
         if not np.isfinite(gate_threshold) or not 0 < gate_threshold <= 1:
             raise ValueError("receptor_gate_threshold must be finite in (0, 1]")
         if not np.isfinite(family_threshold) or not 0 <= family_threshold <= 1:
@@ -380,18 +648,30 @@ class CrossFitSpec:
             "strata_keys": list(strata),
             "training_spec_id": training_spec.spec_id,
         }
+        if directional_pairs:
+            payload["directional_pair_spec_ids"] = [
+                pair.pair_spec_id for pair in directional_pairs
+            ]
+        if predeclared_receivers is not None:
+            payload["predeclared_receiver_ids"] = list(predeclared_receivers)
         if autonomous_resource is not None:
             payload["autonomous_program_resource_id"] = autonomous_resource.artifact_id
+        if latent_nuisance_spec is not None:
+            payload["latent_nuisance_spec_id"] = latent_nuisance_spec.spec_id
         if autonomous_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
             payload["autonomous_program_use_scope"] = autonomous_use_scope
         if tuning_spec is not None:
             payload["penalty_tuning_spec_id"] = tuning_spec.spec_id
+            assert gain_calibration_spec is not None
+            payload["gain_calibration_spec_id"] = gain_calibration_spec.spec_id
         if partition_seed is not None:
             payload["outer_fold_partition_seed"] = partition_seed
         spec_id = stable_id(
             "subject_crossfit_spec", payload, schema_version=self.schema_version
         )
         object.__setattr__(self, "contrasts", contrasts)
+        object.__setattr__(self, "directional_pairs", directional_pairs)
+        object.__setattr__(self, "predeclared_receiver_ids", predeclared_receivers)
         object.__setattr__(self, "training_spec", training_spec)
         object.__setattr__(self, "strata_keys", strata)
         object.__setattr__(self, "allowed_n_splits", allowed)
@@ -399,12 +679,14 @@ class CrossFitSpec:
         object.__setattr__(self, "family_cosine_threshold", family_threshold)
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
+        object.__setattr__(self, "latent_nuisance_spec", latent_nuisance_spec)
         object.__setattr__(
             self,
             "autonomous_program_use_scope",
             autonomous_use_scope,
         )
         object.__setattr__(self, "penalty_tuning_spec", tuning_spec)
+        object.__setattr__(self, "gain_calibration_spec", gain_calibration_spec)
         object.__setattr__(self, "outer_fold_partition_seed", partition_seed)
         object.__setattr__(self, "spec_id", spec_id)
         object.__setattr__(
@@ -439,12 +721,28 @@ class CrossFitSpec:
                 if self.autonomous_program_resource is None
                 else self.autonomous_program_resource.to_dict()
             ),
+            "latent_nuisance_spec": (
+                None
+                if self.latent_nuisance_spec is None
+                else self.latent_nuisance_spec.to_dict()
+            ),
             "penalty_tuning_spec": (
                 None
                 if self.penalty_tuning_spec is None
                 else self.penalty_tuning_spec.to_dict()
             ),
+            "gain_calibration_spec": (
+                None
+                if self.gain_calibration_spec is None
+                else self.gain_calibration_spec.to_dict()
+            ),
         }
+        if self.directional_pairs:
+            result["directional_pairs"] = [
+                pair.to_dict() for pair in self.directional_pairs
+            ]
+        if self.predeclared_receiver_ids is not None:
+            result["predeclared_receiver_ids"] = list(self.predeclared_receiver_ids)
         if self.outer_fold_partition_seed is not None:
             result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
         if self.autonomous_program_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
@@ -457,6 +755,8 @@ class CrossFitSpec:
         try:
             repeated = CrossFitSpec(
                 contrasts=self.contrasts,
+                directional_pairs=self.directional_pairs,
+                predeclared_receiver_ids=self.predeclared_receiver_ids,
                 repeat_index=self.repeat_index,
                 outer_fold_partition_seed=self.outer_fold_partition_seed,
                 training_spec=self.training_spec,
@@ -468,15 +768,21 @@ class CrossFitSpec:
                 family_cosine_threshold=self.family_cosine_threshold,
                 downstream_minimum_scale=self.downstream_minimum_scale,
                 autonomous_program_resource=self.autonomous_program_resource,
+                latent_nuisance_spec=self.latent_nuisance_spec,
                 autonomous_program_use_scope=self.autonomous_program_use_scope,
                 penalty_tuning_spec=self.penalty_tuning_spec,
+                gain_calibration_spec=self.gain_calibration_spec,
                 schema_version=self.schema_version,
             )
             valid = (
                 isinstance(self.contrasts, tuple)
+                and isinstance(self.directional_pairs, tuple)
                 and isinstance(self.strata_keys, tuple)
                 and isinstance(self.allowed_n_splits, tuple)
                 and self.contrasts == repeated.contrasts
+                and tuple(pair.pair_spec_id for pair in self.directional_pairs)
+                == tuple(pair.pair_spec_id for pair in repeated.directional_pairs)
+                and self.predeclared_receiver_ids == repeated.predeclared_receiver_ids
                 and self.repeat_index == repeated.repeat_index
                 and self.outer_fold_partition_seed == repeated.outer_fold_partition_seed
                 and self.training_spec.spec_id == repeated.training_spec.spec_id
@@ -484,6 +790,26 @@ class CrossFitSpec:
                 and self.allowed_n_splits == repeated.allowed_n_splits
                 and self.autonomous_program_use_scope
                 == repeated.autonomous_program_use_scope
+                and (
+                    None
+                    if self.latent_nuisance_spec is None
+                    else self.latent_nuisance_spec.spec_id
+                )
+                == (
+                    None
+                    if repeated.latent_nuisance_spec is None
+                    else repeated.latent_nuisance_spec.spec_id
+                )
+                and (
+                    None
+                    if self.gain_calibration_spec is None
+                    else self.gain_calibration_spec.spec_id
+                )
+                == (
+                    None
+                    if repeated.gain_calibration_spec is None
+                    else repeated.gain_calibration_spec.spec_id
+                )
                 and self.spec_id == repeated.spec_id
                 and self.repeat_id == repeated.repeat_id
             )
@@ -867,20 +1193,28 @@ class CrossFitFoldArtifacts:
     fold_id: str
     training: TrainingArtifacts
     application: TrainingArtifactApplication
+    receiver_training_support: tuple[ReceiverTrainingSupportRecord, ...]
     design_encoders: tuple[FrozenDesignEncoder, ...]
     design_applications: tuple[FrozenDesignApplication, ...]
     receiver_family_models: tuple[ReceiverFamilyScoringArtifact, ...]
     receiver_family_applications: tuple[ReceiverFamilyScoringApplication, ...]
     receiver_program_models: tuple[ReceiverProgramTrainingArtifact, ...]
     receiver_program_applications: tuple[ReceiverProgramApplication, ...]
-    receiver_responses: tuple[FoldGeneResponseArtifact, ...]
+    receiver_responses: tuple[_ReceiverResponseArtifact, ...]
     response_precisions: tuple[PrecisionTransformResult, ...]
     receiver_incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...]
-    receiver_response_applications: tuple[FoldGeneResponseApplication, ...]
+    receiver_response_applications: tuple[_ReceiverResponseApplication, ...]
     receiver_incremental_applications: tuple[ReceiverIncrementalApplication, ...]
     family_common_functionals: tuple[FamilyCommonScoringFunctional, ...]
     family_common_applications: tuple[FamilyCommonScoringApplication, ...]
     family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...]
+    directional_response_bindings: tuple[DirectionalCrossFitBinding, ...] = ()
+    cross_receiver_common_functionals: tuple[
+        CrossReceiverCommonScoringFunctional, ...
+    ] = ()
+    cross_receiver_common_applications: tuple[
+        CrossReceiverCommonScoringApplication, ...
+    ] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.fold_id, str) or not self.fold_id:
@@ -893,6 +1227,41 @@ class CrossFitFoldArtifacts:
         self.application._require_intact()
         if self.application.training_artifact_id != self.training.training_artifact_id:
             raise ValueError("fold application is not bound to its training artifacts")
+        support_records = tuple(self.receiver_training_support)
+        if not support_records or any(
+            not isinstance(record, ReceiverTrainingSupportRecord)
+            for record in support_records
+        ):
+            raise TypeError(
+                "receiver_training_support must contain complete support records"
+            )
+        for record in support_records:
+            record._require_intact()
+        support_receivers = tuple(record.receiver_id for record in support_records)
+        if support_receivers != tuple(sorted(support_receivers)) or len(
+            support_receivers
+        ) != len(set(support_receivers)):
+            raise ValueError(
+                "receiver training-support records must be canonical and unique"
+            )
+        if any(
+            record.outer_fold_id != self.fold_id
+            or record.training_cell_type_ids != self.training.cell_type_ids
+            for record in support_records
+        ):
+            raise ValueError(
+                "receiver training-support records do not match the fold training axis"
+            )
+        observed_support = tuple(
+            record.receiver_id
+            for record in support_records
+            if record.status is ReceiverTrainingSupportStatus.OBSERVED
+        )
+        if observed_support != self.training.cell_type_ids:
+            raise ValueError(
+                "observed receiver support must exactly match training cell types"
+            )
+        object.__setattr__(self, "receiver_training_support", support_records)
         encoders = tuple(self.design_encoders)
         applications = tuple(self.design_applications)
         if not encoders or len(encoders) != len(applications):
@@ -1133,6 +1502,48 @@ class CrossFitFoldArtifacts:
         object.__setattr__(
             self, "receiver_incremental_applications", incremental_applications
         )
+        directional_bindings = tuple(self.directional_response_bindings)
+        if any(
+            not isinstance(binding, DirectionalCrossFitBinding)
+            for binding in directional_bindings
+        ):
+            raise TypeError(
+                "directional_response_bindings must contain "
+                "DirectionalCrossFitBinding values"
+            )
+        response_ids = {response.artifact_id for response in responses}
+        incremental_model_ids = {
+            model.training_artifact_id for model in incremental_models
+        }
+        incremental_application_ids = {
+            application.application_id for application in incremental_applications
+        }
+        directional_keys: list[tuple[str, str]] = []
+        for binding in directional_bindings:
+            binding._require_intact()
+            if (
+                binding.fold_id != self.fold_id
+                or binding.receiver not in self.training.cell_type_ids
+                or binding.training_subject_ids != self.training.training_subject_ids
+                or binding.heldout_subject_ids != self.application.heldout_subject_ids
+                or binding.forward_response_id not in response_ids
+                or binding.reverse_response_id not in response_ids
+                or binding.forward_training_artifact_id not in incremental_model_ids
+                or binding.reverse_training_artifact_id not in incremental_model_ids
+                or binding.forward_application_id not in incremental_application_ids
+                or binding.reverse_application_id not in incremental_application_ids
+            ):
+                raise ValueError(
+                    "directional response binding does not belong to this fold"
+                )
+            directional_keys.append((binding.pair_spec_id, binding.receiver))
+        if len(directional_keys) != len(set(directional_keys)) or len(
+            {binding.binding_id for binding in directional_bindings}
+        ) != len(directional_bindings):
+            raise ValueError(
+                "directional response bindings must be pair/receiver unique"
+            )
+        object.__setattr__(self, "directional_response_bindings", directional_bindings)
         common_functionals = tuple(self.family_common_functionals)
         common_applications = tuple(self.family_common_applications)
         common_bindings = tuple(self.family_common_bindings)
@@ -1237,21 +1648,27 @@ class CrossFitFoldArtifacts:
                     or common_functional.selected_penalty_id
                     != incremental_model.selected_resolved_penalty_id
                     or common_functional.autonomous_program_resource_id
-                    != incremental_model.autonomous_program_resource_id
+                    != incremental_model.autonomous_program_source_id
                     or common_functional.incremental_reason_code
                     != expected_incremental_reason
                 ):
                     raise ValueError(
                         "family-common authoritative training lineage is incompatible"
                     )
-                if common_functional.incremental_functional is not None and (
-                    incremental_model.diagnostic_functional is None
-                    or (
-                        common_functional.incremental_functional
-                        .incremental_functional_id
-                        != incremental_model.diagnostic_functional
-                        .incremental_functional_id
-                    )
+                common_incremental = common_functional.incremental_functional
+                diagnostic_incremental = incremental_model.diagnostic_functional
+                common_incremental_id = (
+                    None
+                    if common_incremental is None
+                    else common_incremental.incremental_functional_id
+                )
+                diagnostic_incremental_id = (
+                    None
+                    if diagnostic_incremental is None
+                    else diagnostic_incremental.incremental_functional_id
+                )
+                if common_incremental_id is not None and (
+                    common_incremental_id != diagnostic_incremental_id
                 ):
                     raise ValueError(
                         "family-common incremental functional is incompatible"
@@ -1334,6 +1751,307 @@ class CrossFitFoldArtifacts:
         object.__setattr__(self, "family_common_functionals", common_functionals)
         object.__setattr__(self, "family_common_applications", common_applications)
         object.__setattr__(self, "family_common_bindings", common_bindings)
+        global_functionals = tuple(self.cross_receiver_common_functionals)
+        global_applications = tuple(self.cross_receiver_common_applications)
+        if bool(global_functionals) != bool(global_applications):
+            raise ValueError(
+                "cross-receiver common functionals and applications must align"
+            )
+        if global_functionals and not common_functionals:
+            raise ValueError(
+                "cross-receiver common scoring must track the family-common stage"
+            )
+        all_receivers_supported = all(
+            record.status is ReceiverTrainingSupportStatus.OBSERVED
+            for record in support_records
+        )
+        if common_functionals and all_receivers_supported and not global_functionals:
+            raise ValueError(
+                "complete receiver support requires cross-receiver common scoring"
+            )
+        if global_functionals and not all_receivers_supported:
+            raise ValueError(
+                "cross-receiver common scoring cannot shrink an incomplete "
+                "receiver axis"
+            )
+        if global_functionals:
+            if len(global_functionals) != len(encoders) or len(
+                global_applications
+            ) != len(encoders):
+                raise ValueError(
+                    "cross-receiver common scoring requires one parent per contrast"
+                )
+            children_by_contrast = {
+                contrast_name: tuple(
+                    sorted(
+                        (
+                            functional
+                            for functional in common_functionals
+                            if functional.contrast_name == contrast_name
+                        ),
+                        key=lambda functional: functional.receiver,
+                    )
+                )
+                for contrast_name in {encoder.contrast.name for encoder in encoders}
+            }
+            applications_by_child = {
+                application.functional.family_common_functional_id: application
+                for application in common_applications
+            }
+            incremental_by_key = {
+                (model.contrast_name, model.receiver): model
+                for model in incremental_models
+            }
+            global_pairs = tuple(
+                sorted(
+                    zip(global_functionals, global_applications, strict=True),
+                    key=lambda pair: pair[0].contrast_manifest_id,
+                )
+            )
+            for global_functional, global_application in global_pairs:
+                children = children_by_contrast.get(global_functional.contrast_name)
+                if children is None:
+                    raise ValueError(
+                        "cross-receiver common parent references an unknown contrast"
+                    )
+                expected_functional = fit_cross_receiver_common_scoring_functional(
+                    children,
+                    planned_receiver_ids=support_receivers,
+                    gain_calibration_artifacts={
+                        child.receiver: incremental_by_key[
+                            (child.contrast_name, child.receiver)
+                        ].gain_calibration_artifact
+                        for child in children
+                    },
+                    spec=global_functional.spec,
+                )
+                if (
+                    expected_functional.global_common_functional_id
+                    != global_functional.global_common_functional_id
+                ):
+                    raise ValueError(
+                        "cross-receiver common functional lineage is incompatible"
+                    )
+                child_applications = tuple(
+                    applications_by_child[functional.family_common_functional_id]
+                    for functional in children
+                )
+                source_sender_applications = tuple(
+                    sender_applications[
+                        (
+                            functional.contrast_name,
+                            functional.receiver,
+                            functional.interaction_ids,
+                        )
+                    ]
+                    for functional in children
+                )
+                expected_application = apply_cross_receiver_common_scoring_functional(
+                    global_functional,
+                    child_applications,
+                    source_sender_applications,
+                )
+                if (
+                    expected_application.application_id
+                    != global_application.application_id
+                    or expected_application.lr_scores_digest
+                    != global_application.lr_scores_digest
+                    or expected_application.sender_scores_digest
+                    != global_application.sender_scores_digest
+                ):
+                    raise ValueError(
+                        "cross-receiver common application lineage is incompatible"
+                    )
+            global_functionals = tuple(pair[0] for pair in global_pairs)
+            global_applications = tuple(pair[1] for pair in global_pairs)
+        object.__setattr__(
+            self, "cross_receiver_common_functionals", global_functionals
+        )
+        object.__setattr__(
+            self, "cross_receiver_common_applications", global_applications
+        )
+
+
+def _receiver_scoring_registry(
+    spec: CrossFitSpec,
+    folds: tuple[CrossFitFoldArtifacts, ...],
+) -> ScoringCollectionDocument:
+    """Derive exact receiver registries from producer-owned fold children."""
+
+    collections: list[ScoringCollectionManifest] = []
+    plans: list[PlannedScoringCollectionManifest] = []
+    for fold in folds:
+        support_by_receiver = {
+            record.receiver_id: record for record in fold.receiver_training_support
+        }
+        planned_receivers = tuple(support_by_receiver)
+        family_models = {
+            (model.contrast_name, model.receiver_family_artifact.receiver): model
+            for model in fold.receiver_family_models
+        }
+        incremental_models = {
+            (model.contrast_name, model.receiver): model
+            for model in fold.receiver_incremental_models
+        }
+        functionals = {
+            (functional.contrast_name, functional.receiver): functional
+            for functional in fold.family_common_functionals
+        }
+        for contrast in spec.contrasts:
+            children: list[ReceiverScoringFunctionalManifest] = []
+            for receiver in planned_receivers:
+                support = support_by_receiver[receiver]
+                key = (contrast.name, receiver)
+                family_model = family_models.get(key)
+                incremental_model = incremental_models.get(key)
+                if support.status is ReceiverTrainingSupportStatus.NOT_ESTIMABLE:
+                    if family_model is not None or incremental_model is not None:
+                        raise ValueError(
+                            "outer-training-absent receiver cannot have model parents"
+                        )
+                    if support.reason_code is None:  # pragma: no cover - invariant
+                        raise RuntimeError(
+                            "not-estimable receiver support requires a reason"
+                        )
+                    children.append(
+                        ReceiverScoringFunctionalManifest.training_not_estimable(
+                            receiver=receiver,
+                            filter_universe_id=(
+                                fold.training.frozen_interaction_universe.filter_universe_id
+                            ),
+                            receiver_training_support_id=(support.support_record_id),
+                            reason_code=support.reason_code,
+                        )
+                    )
+                    continue
+                if family_model is None or incremental_model is None:
+                    raise ValueError(
+                        "planned receiver registry is missing an authoritative model"
+                    )
+                receiver_family = family_model.receiver_family_artifact
+                if (
+                    incremental_model.receiver_family_training_artifact_id
+                    != receiver_family.training_artifact_id
+                    or receiver_family.filter_universe_id
+                    != fold.training.frozen_interaction_universe.filter_universe_id
+                ):
+                    raise ValueError(
+                        "planned receiver registry model universe lineage is invalid"
+                    )
+                functional = functionals.get(key)
+                if functional is None:
+                    if spec.penalty_tuning_spec is not None:
+                        raise ValueError(
+                            "configured family-common scoring did not exactly cover "
+                            "planned receivers"
+                        )
+                    child = ReceiverScoringFunctionalManifest.not_produced(
+                        receiver=receiver,
+                        receiver_family_model_id=receiver_family.training_artifact_id,
+                        receiver_incremental_model_id=(
+                            incremental_model.training_artifact_id
+                        ),
+                        filter_universe_id=receiver_family.filter_universe_id,
+                        reason_code=(
+                            "family_common_functional_not_requested_without_"
+                            "penalty_tuning"
+                        ),
+                        receiver_training_support_id=support.support_record_id,
+                        receiver_training_support_status=support.status.value,
+                        receiver_training_support_reason_code=support.reason_code,
+                    )
+                else:
+                    if (
+                        functional.receiver_family.training_artifact_id
+                        != receiver_family.training_artifact_id
+                        or functional.receiver_incremental_training_artifact_id
+                        != incremental_model.training_artifact_id
+                        or functional.filter_universe_id
+                        != receiver_family.filter_universe_id
+                    ):
+                        raise ValueError(
+                            "planned receiver registry functional lineage is invalid"
+                        )
+                    functional_status = (
+                        "observed"
+                        if functional.incremental_functional is not None
+                        else "not_estimable"
+                    )
+                    child = ReceiverScoringFunctionalManifest.registered(
+                        receiver=receiver,
+                        receiver_family_model_id=receiver_family.training_artifact_id,
+                        receiver_incremental_model_id=(
+                            incremental_model.training_artifact_id
+                        ),
+                        filter_universe_id=functional.filter_universe_id,
+                        scoring_functional_id=(functional.family_common_functional_id),
+                        score_version=functional.score_version,
+                        functional_status=functional_status,
+                        reason_code=(
+                            None
+                            if functional_status == "observed"
+                            else functional.incremental_reason_code
+                        ),
+                        receiver_training_support_id=support.support_record_id,
+                        receiver_training_support_status=support.status.value,
+                        receiver_training_support_reason_code=support.reason_code,
+                    )
+                children.append(child)
+            collection = ScoringCollectionManifest.planned_receiver_registry(
+                contrast=contrast.name,
+                repeat_id=spec.repeat_id,
+                fold_id=fold.fold_id,
+                planned_receivers=planned_receivers,
+                children=tuple(children),
+            )
+            collections.append(collection)
+            plans.append(
+                PlannedScoringCollectionManifest.from_collection(
+                    collection,
+                    filter_universe_id=(
+                        fold.training.frozen_interaction_universe.filter_universe_id
+                    ),
+                )
+            )
+    return ScoringCollectionDocument(
+        collections=tuple(collections), planned_collections=tuple(plans)
+    )
+
+
+def _require_receiver_family_on_root_axis(
+    artifact: ReceiverFamilyTrainingArtifact,
+    universe: FrozenReceiverFamilyOpportunityUniverse,
+) -> None:
+    """Reject any outer-fold family parent outside the frozen run-root axis."""
+
+    if not isinstance(artifact, ReceiverFamilyTrainingArtifact):
+        raise TypeError("artifact must be a ReceiverFamilyTrainingArtifact")
+    if not isinstance(universe, FrozenReceiverFamilyOpportunityUniverse):
+        raise TypeError("universe must be a FrozenReceiverFamilyOpportunityUniverse")
+    artifact._require_producer_owned()
+    universe._require_intact()
+    basis = artifact.family_basis
+    if (
+        artifact.receiver not in universe.receiver_ids
+        or artifact.prior_manifest_digest != universe.prior_manifest_digest
+        or artifact.source_basis.feature_ids != universe.feature_ids
+        or artifact.source_basis.driver_ids != universe.driver_ids
+        or basis.feature_ids != universe.feature_ids
+        or basis.driver_ids != universe.driver_ids
+        or basis.strict_cosine_threshold != universe.cosine_threshold
+        or basis.family_definitions != universe.family_definitions
+        or basis.family_ids != universe.family_ids
+        or artifact.frozen_family_axis_parent_id is not None
+    ):
+        raise ContractError(
+            "Outer-fold receiver family axis differs from the frozen run root",
+            code="crossfit_root_family_axis_mismatch",
+            field="receiver_family_models",
+            remediation=(
+                "Rerun subject cross-fit from the exact target prior, root feature "
+                "axis, receiver universe, and family threshold"
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -1342,6 +2060,9 @@ class CrossFitArtifacts:
 
     spec: CrossFitSpec
     root_input_identity: SanitizedRawInputIdentity
+    receiver_universe: FrozenReceiverUniverse
+    receiver_family_opportunity_universe: FrozenReceiverFamilyOpportunityUniverse
+    directional_lr_hypothesis_universe: FrozenReceiverFamilyLRHypothesisUniverse | None
     fold_plan: SubjectFoldPlan
     folds: tuple[CrossFitFoldArtifacts, ...]
     _oof_coverage: pd.DataFrame = field(repr=False)
@@ -1352,6 +2073,7 @@ class CrossFitArtifacts:
     receiver_coverage_table_digest: str = field(init=False)
     sender_assignment_table_digest: str = field(init=False)
     receiver_coverage_audit_id: str = field(init=False)
+    receiver_scoring_registry_id: str = field(init=False)
     certification_status: str
     crossfit_id: str = field(init=False)
     _producer_marker: str = field(init=False, repr=False)
@@ -1367,6 +2089,11 @@ class CrossFitArtifacts:
         *,
         spec: CrossFitSpec,
         root_input_identity: SanitizedRawInputIdentity,
+        receiver_universe: FrozenReceiverUniverse,
+        receiver_family_opportunity_universe: (FrozenReceiverFamilyOpportunityUniverse),
+        directional_lr_hypothesis_universe: (
+            FrozenReceiverFamilyLRHypothesisUniverse | None
+        ) = None,
         fold_plan: SubjectFoldPlan,
         folds: tuple[CrossFitFoldArtifacts, ...],
         oof_coverage: pd.DataFrame,
@@ -1378,6 +2105,11 @@ class CrossFitArtifacts:
         values: dict[str, object] = {
             "spec": spec,
             "root_input_identity": root_input_identity,
+            "receiver_universe": receiver_universe,
+            "receiver_family_opportunity_universe": (
+                receiver_family_opportunity_universe
+            ),
+            "directional_lr_hypothesis_universe": (directional_lr_hypothesis_universe),
             "fold_plan": fold_plan,
             "folds": folds,
             "_oof_coverage": oof_coverage,
@@ -1403,6 +2135,90 @@ class CrossFitArtifacts:
         if not isinstance(self.root_input_identity, SanitizedRawInputIdentity):
             raise TypeError("root_input_identity must be a SanitizedRawInputIdentity")
         self.root_input_identity._require_intact()
+        if not isinstance(self.receiver_universe, FrozenReceiverUniverse):
+            raise TypeError("receiver_universe must be a FrozenReceiverUniverse")
+        self.receiver_universe._require_intact()
+        if (
+            self.receiver_universe.root_input_identity_id
+            != self.root_input_identity.identity_id
+            or self.receiver_universe.root_input_digest
+            != self.root_input_identity.input_digest
+            or self.receiver_universe.root_config_digest
+            != self.root_input_identity.config_digest
+        ):
+            raise ValueError("receiver universe does not match the root input identity")
+        if (
+            self.spec.predeclared_receiver_ids is not None
+            and self.receiver_universe.receiver_ids
+            != self.spec.predeclared_receiver_ids
+        ):
+            raise ValueError(
+                "receiver universe does not match the predeclared receiver policy"
+            )
+        if not isinstance(
+            self.receiver_family_opportunity_universe,
+            FrozenReceiverFamilyOpportunityUniverse,
+        ):
+            raise TypeError(
+                "receiver_family_opportunity_universe must be a "
+                "FrozenReceiverFamilyOpportunityUniverse"
+            )
+        receiver_family_universe = self.receiver_family_opportunity_universe
+        receiver_family_universe._require_intact()
+        if (
+            receiver_family_universe.receiver_ids != self.receiver_universe.receiver_ids
+            or receiver_family_universe.receiver_universe_id
+            != self.receiver_universe.universe_id
+            or receiver_family_universe.receiver_axis_id
+            != self.receiver_universe.receiver_axis_id
+            or receiver_family_universe.root_input_identity_id
+            != self.root_input_identity.identity_id
+            or receiver_family_universe.root_input_digest
+            != self.root_input_identity.input_digest
+            or receiver_family_universe.cosine_threshold
+            != self.spec.family_cosine_threshold
+        ):
+            raise ValueError(
+                "receiver-family opportunity universe does not match the run root"
+            )
+        directional_lr_universe = self.directional_lr_hypothesis_universe
+        if self.spec.directional_pairs:
+            if not isinstance(
+                directional_lr_universe,
+                FrozenReceiverFamilyLRHypothesisUniverse,
+            ):
+                raise ValueError(
+                    "directional cross-fit is missing its pre-fit LR hypothesis "
+                    "universe"
+                )
+            directional_lr_universe._require_intact()
+            if (
+                directional_lr_universe.receiver_ids
+                != self.receiver_universe.receiver_ids
+                or directional_lr_universe.receiver_universe_id
+                != self.receiver_universe.universe_id
+                or directional_lr_universe.receiver_axis_id
+                != self.receiver_universe.receiver_axis_id
+                or directional_lr_universe.root_input_identity_id
+                != self.root_input_identity.identity_id
+                or directional_lr_universe.root_input_digest
+                != self.root_input_identity.input_digest
+                or directional_lr_universe.receiver_family_universe_id
+                != receiver_family_universe.universe_id
+                or directional_lr_universe.feature_axis_id
+                != receiver_family_universe.feature_axis_id
+                or directional_lr_universe.family_axis_id
+                != receiver_family_universe.family_axis_id
+                or directional_lr_universe._receiver_family_universe
+                is not receiver_family_universe
+            ):
+                raise ValueError(
+                    "directional LR hypothesis universe does not match the run root"
+                )
+        elif directional_lr_universe is not None:
+            raise ValueError(
+                "non-directional cross-fit cannot own a directional LR universe"
+            )
         if not isinstance(self.fold_plan, SubjectFoldPlan):
             raise TypeError("fold_plan must be a SubjectFoldPlan")
         self.fold_plan._require_intact()
@@ -1440,8 +2256,91 @@ class CrossFitArtifacts:
             )
         for item in folds:
             manifest = by_id[item.fold_id]
+            if tuple(
+                record.receiver_id for record in item.receiver_training_support
+            ) != self.receiver_universe.receiver_ids or any(
+                record.receiver_universe_id != self.receiver_universe.universe_id
+                for record in item.receiver_training_support
+            ):
+                raise ValueError(
+                    "fold receiver support does not cover the run-level universe"
+                )
             if item.training.config.digest != self.root_input_identity.config_digest:
                 raise ValueError("fold config does not match the root input identity")
+            if (
+                item.training.target_prior_content_id
+                != receiver_family_universe.prior_content_id
+                or item.training.target_prior.resource_id
+                != receiver_family_universe.prior_resource_id
+                or item.training.target_prior.version
+                != receiver_family_universe.prior_version
+                or item.training.target_prior.manifest_digest
+                != receiver_family_universe.prior_manifest_digest
+            ):
+                raise ValueError(
+                    "fold target prior does not match the root family universe"
+                )
+            family_parent_ids: dict[str, set[str]] = {}
+            for scoring_model in item.receiver_family_models:
+                receiver_family = scoring_model.receiver_family_artifact
+                _require_receiver_family_on_root_axis(
+                    receiver_family,
+                    receiver_family_universe,
+                )
+                family_parent_ids.setdefault(receiver_family.receiver, set()).add(
+                    receiver_family.training_artifact_id
+                )
+            supported_receivers = {
+                record.receiver_id
+                for record in item.receiver_training_support
+                if record.status is ReceiverTrainingSupportStatus.OBSERVED
+            }
+            if set(family_parent_ids) != supported_receivers or any(
+                len(parent_ids) != 1 for parent_ids in family_parent_ids.values()
+            ):
+                raise ValueError(
+                    "fold receiver-family parents do not exactly cover supported "
+                    "run receivers"
+                )
+            if directional_lr_universe is not None:
+                expected_driver_mapping = tuple(
+                    sorted(
+                        (membership.interaction_id, membership.driver_id)
+                        for membership in directional_lr_universe.memberships
+                    )
+                )
+                if (
+                    item.training.resource_bundle_content_id
+                    != directional_lr_universe.resource_bundle_content_id
+                    or item.training.target_prior_content_id
+                    != directional_lr_universe.target_prior_content_id
+                    or item.training.resource_bundle.manifest_digest
+                    != directional_lr_universe.resource_manifest_digest
+                    or item.training.target_prior.manifest_digest
+                    != directional_lr_universe.target_prior_manifest_digest
+                ):
+                    raise ValueError(
+                        "fold resources do not match the pre-fit directional LR "
+                        "hypothesis universe"
+                    )
+                for scoring_model in item.receiver_family_models:
+                    receiver_family = scoring_model.receiver_family_artifact
+                    feature_axis_id = stable_id(
+                        "root_feature_axis",
+                        {"feature_ids": list(receiver_family.family_basis.feature_ids)},
+                        schema_version="1",
+                    )
+                    if (
+                        receiver_family.family_basis.family_ids
+                        != directional_lr_universe.family_ids
+                        or receiver_family.driver_by_interaction
+                        != expected_driver_mapping
+                        or feature_axis_id != directional_lr_universe.feature_axis_id
+                    ):
+                        raise ValueError(
+                            "fold receiver-family model does not preserve the "
+                            "pre-fit directional LR axis"
+                        )
             if item.training.training_input_digest != (
                 self.root_input_identity.scope_digest(manifest.train_subject_ids)
             ):
@@ -1473,10 +2372,10 @@ class CrossFitArtifacts:
             if any(
                 model.autonomous_program_resource_id != expected_autonomous_id
                 or model.autonomous_program_verification_status
-                != (
-                    None
-                    if self.spec.autonomous_program_resource is None
-                    else self.spec.autonomous_program_resource.verification_status
+                != _autonomous_verification_status(
+                    self.spec.autonomous_program_resource,
+                    self.spec.latent_nuisance_spec,
+                    model.latent_nuisance_artifact,
                 )
                 for model in item.receiver_incremental_models
             ):
@@ -1496,6 +2395,32 @@ class CrossFitArtifacts:
                 raise ValueError(
                     "receiver incremental models do not match the cross-fit "
                     "penalty tuning policy"
+                )
+            expected_latent_nuisance_spec_id = (
+                None
+                if self.spec.latent_nuisance_spec is None
+                else self.spec.latent_nuisance_spec.spec_id
+            )
+            if any(
+                model.latent_nuisance_spec_id != expected_latent_nuisance_spec_id
+                for model in item.receiver_incremental_models
+            ):
+                raise ValueError(
+                    "receiver incremental models do not match the cross-fit "
+                    "latent nuisance policy"
+                )
+            expected_gain_calibration_spec_id = (
+                None
+                if self.spec.gain_calibration_spec is None
+                else self.spec.gain_calibration_spec.spec_id
+            )
+            if any(
+                model.gain_calibration_spec_id != expected_gain_calibration_spec_id
+                for model in item.receiver_incremental_models
+            ):
+                raise ValueError(
+                    "receiver incremental models do not match the cross-fit gain "
+                    "calibration policy"
                 )
             inner_partition_base = _inner_tuning_partition_base_lineage(
                 self.spec,
@@ -1545,6 +2470,20 @@ class CrossFitArtifacts:
             ):
                 raise ValueError(
                     "family-common scoring chains do not match the cross-fit policy"
+                )
+            expected_directional_keys = {
+                (pair.pair_spec_id, receiver)
+                for pair in self.spec.directional_pairs
+                for receiver in item.training.cell_type_ids
+            }
+            observed_directional_keys = {
+                (binding.pair_spec_id, binding.receiver)
+                for binding in item.directional_response_bindings
+            }
+            if observed_directional_keys != expected_directional_keys:
+                raise ValueError(
+                    "directional response bindings do not exactly cover the "
+                    "cross-fit pair/receiver policy"
                 )
         coverage = self._oof_coverage.copy(deep=True)
         if tuple(coverage.columns) != _COVERAGE_COLUMNS:
@@ -1598,6 +2537,9 @@ class CrossFitArtifacts:
             tuple[str, str, str, str], tuple[object, ...]
         ] = {}
         for item in folds:
+            support_by_receiver = {
+                record.receiver_id: record for record in item.receiver_training_support
+            }
             for (
                 response,
                 precision,
@@ -1612,6 +2554,11 @@ class CrossFitArtifacts:
                 item.receiver_incremental_applications,
                 strict=True,
             ):
+                support = support_by_receiver[response.receiver]
+                if support.status is not ReceiverTrainingSupportStatus.OBSERVED:
+                    raise ValueError(
+                        "receiver model is bound to non-observed training support"
+                    )
                 encoder, design_application = next(
                     (encoder, application)
                     for encoder, application in zip(
@@ -1646,6 +2593,10 @@ class CrossFitArtifacts:
                                 == context_id
                             )
                         ),
+                        support.receiver_universe_id,
+                        support.support_record_id,
+                        support.status.value,
+                        support.reason_code,
                         response.artifact_id,
                         precision.precision_transform_id,
                         incremental_model.training_artifact_id,
@@ -1657,6 +2608,52 @@ class CrossFitArtifacts:
                         incremental_application.official_incremental_status,
                         incremental_application.reason_code,
                     )
+            for support in item.receiver_training_support:
+                if support.status is not ReceiverTrainingSupportStatus.NOT_ESTIMABLE:
+                    continue
+                for encoder, design_application in zip(
+                    item.design_encoders,
+                    item.design_applications,
+                    strict=True,
+                ):
+                    contrast_id = _contrast_id(encoder.contrast)
+                    context_by_id = {
+                        node_context_fields(node, encoder.context_keys)[0]: node
+                        for node in encoder.contrast.weights
+                    }
+                    for sample_id, subject_id, context_id in zip(
+                        design_application.sample_ids,
+                        design_application.sample_subject_ids,
+                        design_application.sample_context_ids,
+                        strict=True,
+                    ):
+                        if context_id not in context_by_id:
+                            continue
+                        key = (
+                            item.fold_id,
+                            sample_id,
+                            contrast_id,
+                            support.receiver_id,
+                        )
+                        expected_grain.add(key)
+                        expected_parent_by_grain[key] = (
+                            subject_id,
+                            canonical_json(context_by_id[context_id]),
+                            support.receiver_universe_id,
+                            support.support_record_id,
+                            support.status.value,
+                            support.reason_code,
+                            None,
+                            None,
+                            None,
+                            None,
+                            design_application.application_id,
+                            None,
+                            "not_estimable",
+                            support.reason_code,
+                            "not_estimable",
+                            support.reason_code,
+                        )
         observed_grain = {
             tuple(map(str, values))
             for values in receiver_coverage.loc[:, grain].itertuples(
@@ -1676,20 +2673,20 @@ class CrossFitArtifacts:
             observed = (
                 str(row.subject_id),
                 canonical_json(row.contrast_context),
-                str(row.response_artifact_id),
-                str(row.precision_transform_id),
-                str(row.incremental_training_artifact_id),
-                str(row.response_application_id),
+                str(row.receiver_universe_id),
+                str(row.receiver_training_support_id),
+                str(row.receiver_training_support_status),
+                _optional_table_text(row.receiver_training_support_reason_code),
+                _optional_table_text(row.response_artifact_id),
+                _optional_table_text(row.precision_transform_id),
+                _optional_table_text(row.incremental_training_artifact_id),
+                _optional_table_text(row.response_application_id),
                 str(row.design_application_id),
-                str(row.incremental_application_id),
+                _optional_table_text(row.incremental_application_id),
                 str(row.diagnostic_status),
-                (
-                    None
-                    if pd.isna(row.diagnostic_reason_code)
-                    else str(row.diagnostic_reason_code)
-                ),
+                _optional_table_text(row.diagnostic_reason_code),
                 str(row.official_incremental_status),
-                None if pd.isna(row.reason_code) else str(row.reason_code),
+                _optional_table_text(row.reason_code),
             )
             if observed != expected:
                 raise ValueError(
@@ -1762,11 +2759,33 @@ class CrossFitArtifacts:
         sender_assignment_table_digest = _table_digest(
             "oof_sender_assignments", assignments
         )
+        receiver_registry = _receiver_scoring_registry(self.spec, folds)
+        if receiver_registry.registry_id is None:  # pragma: no cover - v2 constructor
+            raise RuntimeError("cross-fit receiver registry is missing its identity")
         payload = {
             "coverage_audit_id": self.coverage_audit.audit_id,
             "coverage_table_digest": coverage_table_digest,
             "receiver_coverage_audit_id": receiver_audit_id,
             "receiver_coverage_table_digest": receiver_coverage_table_digest,
+            "receiver_scoring_registry_id": receiver_registry.registry_id,
+            "receiver_universe_id": self.receiver_universe.universe_id,
+            "receiver_axis_id": self.receiver_universe.receiver_axis_id,
+            "receiver_family_opportunity_universe_id": (
+                receiver_family_universe.universe_id
+            ),
+            "family_axis_id": receiver_family_universe.family_axis_id,
+            "receiver_family_opportunity_axis_id": (
+                receiver_family_universe.opportunity_axis_id
+            ),
+            **(
+                {
+                    "directional_lr_hypothesis_universe_id": (
+                        directional_lr_universe.universe_id
+                    )
+                }
+                if directional_lr_universe is not None
+                else {}
+            ),
             "fold_applications": [
                 {
                     "fold_id": item.fold_id,
@@ -1776,6 +2795,10 @@ class CrossFitArtifacts:
                     ),
                     "training_application_id": item.application.application_id,
                     "training_artifact_id": item.training.training_artifact_id,
+                    "receiver_training_support_ids": [
+                        record.support_record_id
+                        for record in item.receiver_training_support
+                    ],
                     "design_encoder_ids": [
                         encoder.encoder_id for encoder in item.design_encoders
                     ],
@@ -1825,6 +2848,16 @@ class CrossFitArtifacts:
                         application.application_id
                         for application in item.receiver_incremental_applications
                     ],
+                    **(
+                        {
+                            "directional_response_binding_ids": [
+                                binding.binding_id
+                                for binding in item.directional_response_bindings
+                            ]
+                        }
+                        if item.directional_response_bindings
+                        else {}
+                    ),
                     "family_common_functional_ids": [
                         functional.family_common_functional_id
                         for functional in item.family_common_functionals
@@ -1835,6 +2868,14 @@ class CrossFitArtifacts:
                     ],
                     "family_common_binding_ids": [
                         binding.binding_id for binding in item.family_common_bindings
+                    ],
+                    "cross_receiver_common_functional_ids": [
+                        functional.global_common_functional_id
+                        for functional in item.cross_receiver_common_functionals
+                    ],
+                    "cross_receiver_common_application_ids": [
+                        application.application_id
+                        for application in item.cross_receiver_common_applications
                     ],
                 }
                 for item in sorted(folds, key=lambda value: value.fold_id)
@@ -1861,6 +2902,9 @@ class CrossFitArtifacts:
             self, "sender_assignment_table_digest", sender_assignment_table_digest
         )
         object.__setattr__(self, "receiver_coverage_audit_id", receiver_audit_id)
+        object.__setattr__(
+            self, "receiver_scoring_registry_id", receiver_registry.registry_id
+        )
         object.__setattr__(self, "crossfit_id", stable_id("subject_crossfit", payload))
 
     @property
@@ -1888,11 +2932,39 @@ class CrossFitArtifacts:
 
         return self._oof_sender_assignments.copy(deep=True)
 
+    @property
+    def receiver_scoring_registry(self) -> ScoringCollectionDocument:
+        """Return the exact producer-derived planned receiver registry."""
+
+        self._require_intact()
+        registry = _receiver_scoring_registry(self.spec, self.folds)
+        if registry.registry_id != self.receiver_scoring_registry_id:
+            raise ContractError(
+                "Receiver scoring registry identity changed",
+                code="receiver_scoring_registry_integrity_violation",
+                field="receiver_scoring_registry_id",
+                remediation="Rerun subject cross-fit from intact raw inputs",
+            )
+        return registry
+
+    @property
+    def scoring_collections(self) -> tuple[ScoringCollectionManifest, ...]:
+        """Return exact planned receiver collections for every contrast/fold."""
+
+        return tuple(self.receiver_scoring_registry.collections)
+
     def _require_intact(self) -> None:
         try:
             repeated = CrossFitArtifacts._from_workflow(
                 spec=self.spec,
                 root_input_identity=self.root_input_identity,
+                receiver_universe=self.receiver_universe,
+                receiver_family_opportunity_universe=(
+                    self.receiver_family_opportunity_universe
+                ),
+                directional_lr_hypothesis_universe=(
+                    self.directional_lr_hypothesis_universe
+                ),
                 fold_plan=self.fold_plan,
                 folds=self.folds,
                 oof_coverage=self._oof_coverage,
@@ -1905,9 +2977,25 @@ class CrossFitArtifacts:
                 and self.certification_status == _STAGE_STATUS
                 and repeated.root_input_identity.identity_id
                 == self.root_input_identity.identity_id
+                and repeated.receiver_universe.universe_id
+                == self.receiver_universe.universe_id
+                and repeated.receiver_family_opportunity_universe.universe_id
+                == self.receiver_family_opportunity_universe.universe_id
+                and (
+                    None
+                    if repeated.directional_lr_hypothesis_universe is None
+                    else repeated.directional_lr_hypothesis_universe.universe_id
+                )
+                == (
+                    None
+                    if self.directional_lr_hypothesis_universe is None
+                    else self.directional_lr_hypothesis_universe.universe_id
+                )
                 and repeated.crossfit_id == self.crossfit_id
                 and repeated.receiver_coverage_audit_id
                 == self.receiver_coverage_audit_id
+                and repeated.receiver_scoring_registry_id
+                == self.receiver_scoring_registry_id
                 and repeated.coverage_table_digest == self.coverage_table_digest
                 and repeated.receiver_coverage_table_digest
                 == self.receiver_coverage_table_digest
@@ -1944,15 +3032,24 @@ class CrossFitArtifacts:
         return True
 
     @property
-    def is_oof_certified(self) -> bool:
-        """Return false until all scoring and downstream stages are cross-fitted."""
+    def oof_certification_audit(self) -> CrossFitOOFCertificationAudit:
+        """Recompute the complete descriptive OOF readiness ledger."""
 
-        return False
+        from .certification import audit_crossfit_oof_readiness
+
+        return audit_crossfit_oof_readiness(self)
+
+    @property
+    def is_oof_certified(self) -> bool:
+        """Whether every planned descriptive train/apply chain is OOF-ready."""
+
+        return bool(self.oof_certification_audit.is_oof_descriptive_certified)
 
     def to_manifest(self) -> dict[str, object]:
         """Return an auditable summary without embedding tabular payloads."""
 
         self._require_intact()
+        oof_certification = self.oof_certification_audit
         common_functionals = tuple(
             functional
             for fold in self.folds
@@ -1971,6 +3068,28 @@ class CrossFitArtifacts:
             for fold in self.folds
             for application in fold.receiver_program_applications
         )
+        receiver_incremental_models = tuple(
+            model for fold in self.folds for model in fold.receiver_incremental_models
+        )
+        directional_bindings = tuple(
+            binding
+            for fold in self.folds
+            for binding in fold.directional_response_bindings
+        )
+        directional_contrast_ids = {
+            contrast_id
+            for pair in self.spec.directional_pairs
+            for contrast_id in (
+                pair.forward_contrast_id,
+                pair.reverse_contrast_id,
+            )
+        }
+        calibration_statuses = [
+            "missing"
+            if model.gain_calibration_artifact is None
+            else model.gain_calibration_artifact.status
+            for model in receiver_incremental_models
+        ]
         functional_statuses = [
             "observed"
             if functional.incremental_functional is not None
@@ -1995,11 +3114,33 @@ class CrossFitArtifacts:
                 for stage in remaining_stages
                 if stage not in completed_candidate_stages
             ]
-        if (
-            self.spec.autonomous_program_resource is None
-            or not self.spec.autonomous_program_resource.is_manifest_verified_trusted
-        ):
+            if calibration_statuses and set(calibration_statuses) == {"observed"}:
+                remaining_stages = [
+                    stage
+                    for stage in remaining_stages
+                    if stage != "selected_penalty_inner_oof_gain_calibration"
+                ]
+        approved_nuisance_policy = bool(
+            (
+                self.spec.latent_nuisance_spec is None
+                and self.spec.autonomous_program_resource is not None
+                and self.spec.autonomous_program_resource.is_manifest_verified_trusted
+            )
+            or (
+                self.spec.latent_nuisance_spec is not None
+                and (
+                    self.spec.autonomous_program_resource is None
+                    or (
+                        self.spec.autonomous_program_resource.is_manifest_verified_trusted
+                    )
+                )
+            )
+        )
+        if not approved_nuisance_policy:
             remaining_stages.insert(-1, "receiver_autonomous_nuisance")
+        if oof_certification.complete:
+            remaining_stages = []
+        receiver_registry = _receiver_scoring_registry(self.spec, self.folds)
         return {
             "crossfit_id": self.crossfit_id,
             "certification_status": self.certification_status,
@@ -2014,6 +3155,10 @@ class CrossFitArtifacts:
             "family_common_application_status_counts": {
                 status: application_statuses.count(status)
                 for status in sorted(set(application_statuses))
+            },
+            "gain_calibration_status_counts": {
+                status: calibration_statuses.count(status)
+                for status in sorted(set(calibration_statuses))
             },
             "receiver_program_training_status_counts": {
                 status: sum(model.status == status for model in receiver_program_models)
@@ -2036,21 +3181,138 @@ class CrossFitArtifacts:
             "n_family_common_crossfit_bindings": sum(
                 len(fold.family_common_bindings) for fold in self.folds
             ),
-            "complete_pipeline_oof_certified": self.is_oof_certified,
+            **(
+                {
+                    "directional_pair_stage_connected": True,
+                    "n_directional_response_bindings": len(directional_bindings),
+                    "n_directional_receiver_pair_opportunities": (
+                        len(self.spec.directional_pairs)
+                        * len(self.receiver_universe.receiver_ids)
+                        * len(self.folds)
+                    ),
+                    "n_directional_receiver_pair_absent_training": (
+                        len(self.spec.directional_pairs)
+                        * sum(
+                            record.status is ReceiverTrainingSupportStatus.NOT_ESTIMABLE
+                            for fold in self.folds
+                            for record in fold.receiver_training_support
+                        )
+                    ),
+                    "directional_receiver_universe_id": (
+                        self.receiver_universe.universe_id
+                    ),
+                    "directional_receiver_axis_id": (
+                        self.receiver_universe.receiver_axis_id
+                    ),
+                    "directional_binding_status_counts": {
+                        status: sum(
+                            binding.status == status for binding in directional_bindings
+                        )
+                        for status in sorted(
+                            {binding.status for binding in directional_bindings}
+                        )
+                    },
+                    "directional_registry_complete": len(directional_bindings)
+                    == sum(
+                        len(self.spec.directional_pairs)
+                        * len(self.receiver_universe.receiver_ids)
+                        for fold in self.folds
+                    ),
+                    "directional_supported_binding_registry_complete": (
+                        len(directional_bindings)
+                        == sum(
+                            len(self.spec.directional_pairs)
+                            * sum(
+                                record.status is ReceiverTrainingSupportStatus.OBSERVED
+                                for record in fold.receiver_training_support
+                            )
+                            for fold in self.folds
+                        )
+                    ),
+                    "directional_diagnostic_complete": (
+                        len(directional_bindings)
+                        == len(self.spec.directional_pairs)
+                        * len(self.receiver_universe.receiver_ids)
+                        * len(self.folds)
+                        and all(
+                            binding.status == "observed"
+                            for binding in directional_bindings
+                        )
+                    ),
+                    "directional_formal_inference_allowed": False,
+                }
+                if self.spec.directional_pairs
+                else {}
+            ),
+            "n_cross_receiver_common_functionals": sum(
+                len(fold.cross_receiver_common_functionals) for fold in self.folds
+            ),
+            "n_cross_receiver_common_applications": sum(
+                len(fold.cross_receiver_common_applications) for fold in self.folds
+            ),
+            "complete_pipeline_oof_certified": oof_certification.complete,
+            "oof_certification_audit_id": oof_certification.audit_id,
+            "oof_certification_audit": oof_certification.to_dict(),
             "family_edge_evidence_policy": _FAMILY_EDGE_EVIDENCE_POLICY,
             "oof_audit_scope": _STAGE_NAME,
             "spec": self.spec.to_dict(),
             "root_input_identity": self.root_input_identity.to_dict(),
+            "receiver_universe": self.receiver_universe.to_dict(),
+            "receiver_family_opportunity_universe_id": (
+                self.receiver_family_opportunity_universe.universe_id
+            ),
+            "family_axis_id": self.receiver_family_opportunity_universe.family_axis_id,
+            "receiver_family_opportunity_axis_id": (
+                self.receiver_family_opportunity_universe.opportunity_axis_id
+            ),
+            "receiver_family_opportunity_universe": (
+                self.receiver_family_opportunity_universe.to_dict()
+            ),
+            **(
+                {
+                    "directional_lr_hypothesis_universe": (
+                        self.directional_lr_hypothesis_universe.to_dict()
+                    )
+                }
+                if self.directional_lr_hypothesis_universe is not None
+                else {}
+            ),
             "fold_plan": self.fold_plan.to_dict(),
             "coverage_audit": self.coverage_audit.to_dict(),
             "coverage_table_digest": self.coverage_table_digest,
             "receiver_coverage_audit_id": self.receiver_coverage_audit_id,
+            "receiver_scoring_registry_id": self.receiver_scoring_registry_id,
+            "receiver_scoring_registry": receiver_registry.to_dict(),
             "receiver_coverage_table_digest": self.receiver_coverage_table_digest,
             "sender_assignment_table_digest": self.sender_assignment_table_digest,
             "fold_artifacts": [
                 {
                     "fold_id": item.fold_id,
                     "training_artifact_id": item.training.training_artifact_id,
+                    "receiver_training_support": [
+                        record.to_dict() for record in item.receiver_training_support
+                    ],
+                    **(
+                        {
+                            "directional_design_applications": [
+                                {
+                                    "contrast_id": _contrast_id(encoder.contrast),
+                                    "contrast_name": encoder.contrast.name,
+                                    "encoder": encoder.to_dict(),
+                                    "application": application.to_dict(),
+                                }
+                                for encoder, application in zip(
+                                    item.design_encoders,
+                                    item.design_applications,
+                                    strict=True,
+                                )
+                                if _contrast_id(encoder.contrast)
+                                in directional_contrast_ids
+                            ]
+                        }
+                        if directional_contrast_ids
+                        else {}
+                    ),
                     "heldout_input_digest": item.application.heldout_input_digest,
                     "heldout_excluded_cell_type_ids": list(
                         item.application.excluded_cell_type_ids
@@ -2077,7 +3339,31 @@ class CrossFitArtifacts:
                             "contrast_name": model.contrast_name,
                             "response_artifact_id": response.artifact_id,
                             "precision_transform_id": precision.precision_transform_id,
+                            "response_backend_manifest": (
+                                _response_backend_manifest(response)
+                            ),
+                            "precision_audit_manifest": (
+                                _precision_audit_manifest(precision)
+                            ),
                             "training_artifact_id": model.training_artifact_id,
+                            "autonomous_program_resource_id": (
+                                model.autonomous_program_resource_id
+                            ),
+                            "autonomous_program_source_id": (
+                                model.autonomous_program_source_id
+                            ),
+                            "autonomous_program_verification_status": (
+                                model.autonomous_program_verification_status
+                            ),
+                            "latent_nuisance_spec_id": (model.latent_nuisance_spec_id),
+                            "latent_nuisance_artifact_id": (
+                                model.latent_nuisance_artifact_id
+                            ),
+                            "latent_nuisance_artifact": (
+                                None
+                                if model.latent_nuisance_artifact is None
+                                else model.latent_nuisance_artifact.to_dict()
+                            ),
                             "penalty_tuning_spec_id": model.penalty_tuning_spec_id,
                             "inner_fold_plan_id": (
                                 None
@@ -2088,6 +3374,24 @@ class CrossFitArtifacts:
                                 None
                                 if model.penalty_tuning_artifact is None
                                 else model.penalty_tuning_artifact.tuning_id
+                            ),
+                            "gain_calibration_spec_id": (
+                                model.gain_calibration_spec_id
+                            ),
+                            "gain_calibration_artifact_id": (
+                                None
+                                if model.gain_calibration_artifact is None
+                                else model.gain_calibration_artifact.artifact_id
+                            ),
+                            "gain_calibration_status": (
+                                "missing"
+                                if model.gain_calibration_artifact is None
+                                else model.gain_calibration_artifact.status
+                            ),
+                            "gain_calibration_reason_code": (
+                                None
+                                if model.gain_calibration_artifact is None
+                                else model.gain_calibration_artifact.reason_code
                             ),
                             "selected_penalty_candidate_id": (
                                 model.selected_penalty_candidate_id
@@ -2124,6 +3428,16 @@ class CrossFitArtifacts:
                             strict=True,
                         )
                     ],
+                    **(
+                        {
+                            "directional_response_bindings": [
+                                binding.to_dict()
+                                for binding in item.directional_response_bindings
+                            ]
+                        }
+                        if item.directional_response_bindings
+                        else {}
+                    ),
                     "receiver_program_artifacts": [
                         {
                             "receiver": model.receiver,
@@ -2147,24 +3461,21 @@ class CrossFitArtifacts:
                                 None
                                 if model.downstream_functional is None
                                 else (
-                                    model.downstream_functional
-                                    .reference_row_manifest_id
+                                    model.downstream_functional.reference_row_manifest_id
                                 )
                             ),
                             "reference_subject_summary_digest": (
                                 None
                                 if model.downstream_functional is None
                                 else (
-                                    model.downstream_functional
-                                    .reference_subject_summary_digest
+                                    model.downstream_functional.reference_subject_summary_digest
                                 )
                             ),
                             "reference_summary_method": (
                                 None
                                 if model.downstream_functional is None
                                 else (
-                                    model.downstream_functional
-                                    .reference_summary_method
+                                    model.downstream_functional.reference_summary_method
                                 )
                             ),
                             "center_method": (
@@ -2210,12 +3521,14 @@ class CrossFitArtifacts:
                             "autonomous_program_resource_id": (
                                 functional.autonomous_program_resource_id
                             ),
+                            "autonomous_program_source_id": (
+                                functional.autonomous_program_source_id
+                            ),
                             "receiver_program_training_artifact_id": (
                                 None
                                 if functional.receiver_program_artifact is None
                                 else (
-                                    functional.receiver_program_artifact
-                                    .training_artifact_id
+                                    functional.receiver_program_artifact.training_artifact_id
                                 )
                             ),
                             "receiver_program_training_status": (
@@ -2267,6 +3580,56 @@ class CrossFitArtifacts:
                             item.family_common_functionals,
                             item.family_common_applications,
                             item.family_common_bindings,
+                            strict=True,
+                        )
+                    ],
+                    "cross_receiver_common_scoring_artifacts": [
+                        {
+                            "contrast_name": functional.contrast_name,
+                            "contrast_manifest_id": functional.contrast_manifest_id,
+                            "functional_id": (functional.global_common_functional_id),
+                            "application_id": application.application_id,
+                            "receiver_ids": list(functional.receiver_ids),
+                            "child_functional_ids": list(
+                                functional.child_functional_ids
+                            ),
+                            "score_version": functional.score_version,
+                            "estimand": functional.to_dict()["estimand"],
+                            "functional_spec_id": functional.spec.spec_id,
+                            "functional_schema_version": (
+                                functional.spec.schema_version
+                            ),
+                            "calibration_policy": functional.to_dict()[
+                                "calibration_policy"
+                            ],
+                            "scale_policy": functional.to_dict()["scale_policy"],
+                            "sender_policy": functional.to_dict()["sender_policy"],
+                            "softmin_power": functional.spec.softmin_power,
+                            "epsilon": functional.spec.epsilon,
+                            "receiver_gain_calibration_bindings": (
+                                functional.to_dict()[
+                                    "receiver_gain_calibration_bindings"
+                                ]
+                            ),
+                            "all_receivers_gain_calibrated": (
+                                functional.all_receivers_gain_calibrated
+                            ),
+                            "cross_receiver_percentile_rank_eligible": (
+                                functional.cross_receiver_percentile_rank_eligible
+                            ),
+                            "lr_scores_digest": application.lr_scores_digest,
+                            "sender_scores_digest": application.sender_scores_digest,
+                            "n_lr_rows": application.table_row_counts[0],
+                            "n_sender_rows": application.table_row_counts[1],
+                            "common_functional_across_receivers": False,
+                            "receiver_balanced_descriptive_collection": True,
+                            "training_only_receiver_calibration": True,
+                            "receiver_scale_amplification": False,
+                            "formal_inference_allowed": False,
+                        }
+                        for functional, application in zip(
+                            item.cross_receiver_common_functionals,
+                            item.cross_receiver_common_applications,
                             strict=True,
                         )
                     ],
@@ -2484,7 +3847,32 @@ def _training_receiver_families(
     target_prior: TargetPrior,
     spec: CrossFitSpec,
     fold_id: str,
+    receiver_family_opportunity_universe: FrozenReceiverFamilyOpportunityUniverse,
+    directional_lr_hypothesis_universe: (
+        FrozenReceiverFamilyLRHypothesisUniverse | None
+    ) = None,
 ) -> tuple[ReceiverFamilyScoringArtifact, ...]:
+    receiver_family_opportunity_universe._require_intact()
+    if (
+        target_prior.resource_id
+        != receiver_family_opportunity_universe.prior_resource_id
+        or target_prior.version != receiver_family_opportunity_universe.prior_version
+        or target_prior.manifest_digest
+        != receiver_family_opportunity_universe.prior_manifest_digest
+        or _target_prior_content_id(target_prior)
+        != receiver_family_opportunity_universe.prior_content_id
+        or target_prior.driver_ids != receiver_family_opportunity_universe.driver_ids
+        or prepared.aggregate.feature_ids
+        != receiver_family_opportunity_universe.feature_ids
+        or spec.family_cosine_threshold
+        != receiver_family_opportunity_universe.cosine_threshold
+    ):
+        raise ContractError(
+            "Receiver-family fitting inputs differ from the frozen run root",
+            code="crossfit_root_family_axis_mismatch",
+            field="target_prior,feature_ids,family_cosine_threshold",
+            remediation="Use the exact run-root family opportunity universe",
+        )
     availability = _fit_interaction_universe(
         prepared,
         resource_bundle,
@@ -2497,21 +3885,44 @@ def _training_receiver_families(
         raise RuntimeError(
             "receiver-family training did not reproduce the fold interaction universe"
         )
-    mapping = _interaction_driver_mapping(resource_bundle, target_prior)
+    if directional_lr_hypothesis_universe is None:
+        mapping = _interaction_driver_mapping(resource_bundle, target_prior)
+    else:
+        directional_lr_hypothesis_universe._require_intact()
+        if (
+            directional_lr_hypothesis_universe.resource_bundle_content_id
+            != _resource_bundle_content_id(resource_bundle)
+            or directional_lr_hypothesis_universe.target_prior_content_id
+            != _target_prior_content_id(target_prior)
+        ):
+            raise ContractError(
+                "Directional receiver-family fitting received resources outside "
+                "its frozen LR hypothesis universe",
+                code="directional_lr_hypothesis_universe_resource_mismatch",
+                field="resource_bundle,target_prior",
+                remediation="Use the run-root resources frozen before fold planning",
+            )
+        mapping = {
+            membership.interaction_id: membership.driver_id
+            for membership in directional_lr_hypothesis_universe.memberships
+        }
     receivers = prepared.cell_type_ids
-    receiver_families = {
-        artifact.receiver: artifact
-        for artifact in fit_receiver_family_training_artifacts(
-            availability,
-            target_prior,
-            receivers=receivers,
-            fold_id=fold_id,
-            feature_ids=prepared.aggregate.feature_ids,
-            driver_by_interaction=mapping,
-            receptor_gate_threshold=spec.receptor_gate_threshold,
-            cosine_threshold=spec.family_cosine_threshold,
+    family_artifacts = fit_receiver_family_training_artifacts(
+        availability,
+        target_prior,
+        receivers=receivers,
+        fold_id=fold_id,
+        feature_ids=prepared.aggregate.feature_ids,
+        driver_by_interaction=mapping,
+        receptor_gate_threshold=spec.receptor_gate_threshold,
+        cosine_threshold=spec.family_cosine_threshold,
+    )
+    for artifact in family_artifacts:
+        _require_receiver_family_on_root_axis(
+            artifact,
+            receiver_family_opportunity_universe,
         )
-    }
+    receiver_families = {artifact.receiver: artifact for artifact in family_artifacts}
     models: list[ReceiverFamilyScoringArtifact] = []
     for contrast in spec.contrasts:
         reference_contexts = {
@@ -2820,55 +4231,107 @@ def _apply_receiver_programs(
     return tuple(applications)
 
 
+def _encoder_subject_design(encoder: FrozenDesignEncoder) -> SubjectDesign:
+    context_ids = tuple(
+        node_context_fields(node, encoder.context_keys)[0]
+        for node in encoder.contrast.weights
+    )
+    metadata = pd.DataFrame(
+        {
+            "subject_id": encoder.training_sample_subject_ids,
+            "context_id": encoder.training_sample_context_ids,
+        }
+    )
+    return audit_subject_design(
+        metadata,
+        context_ids,
+        context_key="context_id",
+        subject_key="subject_id",
+    ).design
+
+
 def _fit_receiver_incremental_chains(
     models: tuple[ReceiverFamilyScoringArtifact, ...],
     *,
     aggregate: PseudobulkDataset,
     design_encoders: tuple[FrozenDesignEncoder, ...],
+    training_metadata: pd.DataFrame,
     training_input_digest: str,
     fold_id: str,
     minimum_scale: float,
     min_subjects_per_context: int,
     autonomous_program_resource: ReceiverAutonomousProgramResource | None,
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None,
     penalty_tuning_spec: PenaltyTuningSpec | None,
+    gain_calibration_spec: GainCalibrationSpec | None,
     inner_partition_seed_lineage: SeedLineage | None,
 ) -> tuple[
-    tuple[FoldGeneResponseArtifact, ...],
+    tuple[_ReceiverResponseArtifact, ...],
     tuple[PrecisionTransformResult, ...],
     tuple[ReceiverIncrementalTrainingArtifact, ...],
 ]:
     encoder_by_name = {encoder.contrast.name: encoder for encoder in design_encoders}
-    responses: list[FoldGeneResponseArtifact] = []
+    responses: list[_ReceiverResponseArtifact] = []
     precisions: list[PrecisionTransformResult] = []
     incremental_models: list[ReceiverIncrementalTrainingArtifact] = []
     for model in models:
         encoder = encoder_by_name[model.contrast_name]
-        response = fit_fold_gene_response(
-            aggregate,
-            encoder,
-            receiver=model.receiver_family_artifact.receiver,
-            fold_id=fold_id,
-            training_input_digest=training_input_digest,
-            min_subjects_per_context=max(2, min_subjects_per_context),
-        )
+        subject_design = _encoder_subject_design(encoder)
+        if subject_design in {
+            SubjectDesign.MIXED,
+            SubjectDesign.REPEATED_MULTI_CONTEXT,
+        }:
+            response: _ReceiverResponseArtifact = (
+                fit_repeated_measures_cr2_fold_response(
+                    aggregate,
+                    encoder,
+                    training_metadata,
+                    receiver=model.receiver_family_artifact.receiver,
+                    fold_id=fold_id,
+                    training_input_digest=training_input_digest,
+                    min_subjects_per_context=max(2, min_subjects_per_context),
+                    min_subject_clusters=max(6, min_subjects_per_context),
+                )
+            )
+        else:
+            response = fit_fold_gene_response(
+                aggregate,
+                encoder,
+                receiver=model.receiver_family_artifact.receiver,
+                fold_id=fold_id,
+                training_input_digest=training_input_digest,
+                min_subjects_per_context=max(2, min_subjects_per_context),
+            )
         feature_scale = (
             None
-            if response.status != "ok"
+            if response.status
+            != (
+                response.observed_status
+                if isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+                else "ok"
+            )
             else _receiver_incremental_feature_scale(
                 encoder,
                 response,
                 minimum_scale=minimum_scale,
             )
         )
-        precision = fit_response_precision(response, feature_scale=feature_scale)
+        if isinstance(response, RepeatedMeasuresFoldResponseArtifact):
+            precision = fit_repeated_response_precision(
+                response, feature_scale=feature_scale
+            )
+        else:
+            precision = fit_response_precision(response, feature_scale=feature_scale)
         incremental_model = fit_receiver_incremental_training_artifact(
             encoder,
             response,
             precision,
             model.receiver_family_artifact,
             autonomous_program_resource,
+            latent_nuisance_spec=latent_nuisance_spec,
             minimum_scale=minimum_scale,
             penalty_tuning_spec=penalty_tuning_spec,
+            gain_calibration_spec=gain_calibration_spec,
             inner_partition_seed_lineage=_receiver_inner_partition_lineage(
                 inner_partition_seed_lineage,
                 receiver=response.receiver,
@@ -2882,14 +4345,14 @@ def _fit_receiver_incremental_chains(
 
 
 def _apply_receiver_incremental_chains(
-    responses: tuple[FoldGeneResponseArtifact, ...],
+    responses: tuple[_ReceiverResponseArtifact, ...],
     incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
     *,
     aggregate: PseudobulkDataset,
     design_encoders: tuple[FrozenDesignEncoder, ...],
     design_applications: tuple[FrozenDesignApplication, ...],
 ) -> tuple[
-    tuple[FoldGeneResponseApplication, ...],
+    tuple[_ReceiverResponseApplication, ...],
     tuple[ReceiverIncrementalApplication, ...],
 ]:
     design_by_name = {
@@ -2898,19 +4361,81 @@ def _apply_receiver_incremental_chains(
             design_encoders, design_applications, strict=True
         )
     }
-    response_applications: list[FoldGeneResponseApplication] = []
+    response_applications: list[_ReceiverResponseApplication] = []
     incremental_applications: list[ReceiverIncrementalApplication] = []
     for response, model in zip(responses, incremental_models, strict=True):
         design_application = design_by_name[response.contrast_name]
-        response_application = apply_fold_gene_response(
-            aggregate, response, design_application
-        )
+        if isinstance(response, RepeatedMeasuresFoldResponseArtifact):
+            response_application: _ReceiverResponseApplication = (
+                apply_repeated_measures_fold_response(
+                    aggregate, response, design_application
+                )
+            )
+        else:
+            response_application = apply_fold_gene_response(
+                aggregate, response, design_application
+            )
         incremental_application = apply_receiver_incremental_training_artifact(
             model, response_application, design_application
         )
         response_applications.append(response_application)
         incremental_applications.append(incremental_application)
     return tuple(response_applications), tuple(incremental_applications)
+
+
+def _build_directional_response_bindings(
+    pair_specs: tuple[DirectionalContrastPairSpec, ...],
+    responses: tuple[_ReceiverResponseArtifact, ...],
+    incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
+    incremental_applications: tuple[ReceiverIncrementalApplication, ...],
+    *,
+    receiver_ids: tuple[str, ...],
+) -> tuple[DirectionalCrossFitBinding, ...]:
+    """Bind exact forward/reverse chains by contrast name and receiver."""
+
+    if not pair_specs:
+        return ()
+    responses_by_key = {
+        (response.contrast_name, response.receiver): response for response in responses
+    }
+    models_by_key = {
+        (model.contrast_name, model.receiver): model for model in incremental_models
+    }
+    applications_by_key = {
+        (model.contrast_name, model.receiver): application
+        for model, application in zip(
+            incremental_models, incremental_applications, strict=True
+        )
+    }
+    bindings: list[DirectionalCrossFitBinding] = []
+    for pair_spec in pair_specs:
+        for receiver in sorted(receiver_ids):
+            forward_key = (pair_spec.forward_contrast.name, receiver)
+            reverse_key = (pair_spec.reverse_contrast.name, receiver)
+            try:
+                binding = build_directional_crossfit_binding(
+                    pair_spec,
+                    responses_by_key[forward_key],
+                    responses_by_key[reverse_key],
+                    models_by_key[forward_key],
+                    models_by_key[reverse_key],
+                    applications_by_key[forward_key],
+                    applications_by_key[reverse_key],
+                )
+            except KeyError as error:  # pragma: no cover - fold coverage invariant
+                raise RuntimeError(
+                    "directional pair is missing a planned receiver parent chain"
+                ) from error
+            bindings.append(binding)
+    return tuple(
+        sorted(
+            bindings,
+            key=lambda binding: (
+                binding.pair_spec_id,
+                binding.receiver,
+            ),
+        )
+    )
 
 
 def _maximum_observed(values: pd.Series) -> float | None:
@@ -3179,7 +4704,7 @@ def _fit_family_common_chains(
                 tuning_manifest_id=tuning.tuning_id,
                 selected_penalty_id=(incremental_model.selected_resolved_penalty_id),
                 autonomous_program_resource_id=(
-                    incremental_model.autonomous_program_resource_id
+                    incremental_model.autonomous_program_source_id
                 ),
                 receiver_program_artifact=receiver_program,
             )
@@ -3194,7 +4719,7 @@ def _fit_family_common_chains(
                 tuning_manifest_id=tuning.tuning_id,
                 selected_penalty_id=(incremental_model.selected_resolved_penalty_id),
                 autonomous_program_resource_id=(
-                    incremental_model.autonomous_program_resource_id
+                    incremental_model.autonomous_program_source_id
                 ),
                 reason_code=(
                     incremental_model.diagnostic_reason_code
@@ -3206,6 +4731,56 @@ def _fit_family_common_chains(
             )
         functionals.append(functional)
     return tuple(functionals)
+
+
+def _fit_cross_receiver_common_chains(
+    functionals: tuple[FamilyCommonScoringFunctional, ...],
+    incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
+    *,
+    planned_receiver_ids: tuple[str, ...],
+) -> tuple[CrossReceiverCommonScoringFunctional, ...]:
+    """Build one global parent per contrast from complete receiver children."""
+
+    by_contrast: dict[str, list[FamilyCommonScoringFunctional]] = {}
+    for functional in functionals:
+        by_contrast.setdefault(functional.contrast_name, []).append(functional)
+    models_by_key = {
+        (model.contrast_name, model.receiver): model for model in incremental_models
+    }
+    functional_keys = {
+        (functional.contrast_name, functional.receiver) for functional in functionals
+    }
+    if len(models_by_key) != len(incremental_models) or set(models_by_key) != (
+        functional_keys
+    ):
+        raise ValueError(
+            "cross-receiver common scoring requires one incremental model per child"
+        )
+    result: list[CrossReceiverCommonScoringFunctional] = []
+    for contrast_name, children in sorted(by_contrast.items()):
+        calibration_artifacts = {}
+        for child in children:
+            model = models_by_key[(contrast_name, child.receiver)]
+            if (
+                model.training_artifact_id
+                != child.receiver_incremental_training_artifact_id
+            ):
+                raise ValueError(
+                    "cross-receiver gain calibration parent does not match its child"
+                )
+            calibration_artifacts[child.receiver] = model.gain_calibration_artifact
+        result.append(
+            fit_cross_receiver_common_scoring_functional(
+                children,
+                planned_receiver_ids=planned_receiver_ids,
+                gain_calibration_artifacts=calibration_artifacts,
+            )
+        )
+    if sum(len(functional.child_functionals) for functional in result) != len(
+        functionals
+    ):
+        raise RuntimeError("cross-receiver common parents do not cover every child")
+    return tuple(sorted(result, key=lambda item: item.contrast_manifest_id))
 
 
 def _apply_family_common_chains(
@@ -3220,6 +4795,7 @@ def _apply_family_common_chains(
 ) -> tuple[
     tuple[FamilyCommonScoringApplication, ...],
     tuple[_FamilyCommonCrossFitBinding, ...],
+    tuple[CommonSenderApplication, ...],
 ]:
     design_by_contrast = {
         encoder.contrast.name: application
@@ -3229,6 +4805,7 @@ def _apply_family_common_chains(
     }
     applications: list[FamilyCommonScoringApplication] = []
     bindings: list[_FamilyCommonCrossFitBinding] = []
+    aligned_sender_applications: list[CommonSenderApplication] = []
     sender_applications: dict[
         tuple[str, str, tuple[str, ...]], CommonSenderApplication
     ] = {}
@@ -3286,6 +4863,7 @@ def _apply_family_common_chains(
                 receiver_program_application=receiver_program_application,
             )
         applications.append(application)
+        aligned_sender_applications.append(sender_application)
         bindings.append(
             _FamilyCommonCrossFitBinding._from_workflow(
                 functional,
@@ -3295,7 +4873,49 @@ def _apply_family_common_chains(
                 sender_application,
             )
         )
-    return tuple(applications), tuple(bindings)
+    return (
+        tuple(applications),
+        tuple(bindings),
+        tuple(aligned_sender_applications),
+    )
+
+
+def _apply_cross_receiver_common_chains(
+    functionals: tuple[CrossReceiverCommonScoringFunctional, ...],
+    child_applications: tuple[FamilyCommonScoringApplication, ...],
+    sender_applications: tuple[CommonSenderApplication, ...],
+) -> tuple[CrossReceiverCommonScoringApplication, ...]:
+    """Apply every global parent to its exact receiver child applications."""
+
+    child_by_functional_id = {
+        application.functional.family_common_functional_id: application
+        for application in child_applications
+    }
+    sender_by_receiver_contrast = {
+        (
+            str(next(iter(set(application.table["receiver"].astype(str))))),
+            application.functional.contrast_name,
+        ): application
+        for application in sender_applications
+    }
+    result: list[CrossReceiverCommonScoringApplication] = []
+    for functional in functionals:
+        children = tuple(
+            child_by_functional_id[child.family_common_functional_id]
+            for child in functional.child_functionals
+        )
+        senders = tuple(
+            sender_by_receiver_contrast[(receiver, functional.contrast_name)]
+            for receiver in functional.receiver_ids
+        )
+        result.append(
+            apply_cross_receiver_common_scoring_functional(
+                functional,
+                children,
+                senders,
+            )
+        )
+    return tuple(result)
 
 
 def _fold_coverage_rows(
@@ -3351,11 +4971,12 @@ def _receiver_coverage_rows(
     fold_id: str,
     design_encoders: tuple[FrozenDesignEncoder, ...],
     design_applications: tuple[FrozenDesignApplication, ...],
-    responses: tuple[FoldGeneResponseArtifact, ...],
+    responses: tuple[_ReceiverResponseArtifact, ...],
     precisions: tuple[PrecisionTransformResult, ...],
     incremental_models: tuple[ReceiverIncrementalTrainingArtifact, ...],
-    response_applications: tuple[FoldGeneResponseApplication, ...],
+    response_applications: tuple[_ReceiverResponseApplication, ...],
     incremental_applications: tuple[ReceiverIncrementalApplication, ...],
+    receiver_training_support: tuple[ReceiverTrainingSupportRecord, ...],
 ) -> list[dict[str, object]]:
     encoder_by_name = {
         encoder.contrast.name: (encoder, application)
@@ -3364,6 +4985,9 @@ def _receiver_coverage_rows(
         )
     }
     rows: list[dict[str, object]] = []
+    support_by_receiver = {
+        record.receiver_id: record for record in receiver_training_support
+    }
     for response, precision, model, response_application, application in zip(
         responses,
         precisions,
@@ -3373,6 +4997,9 @@ def _receiver_coverage_rows(
         strict=True,
     ):
         encoder, design_application = encoder_by_name[response.contrast_name]
+        support = support_by_receiver[response.receiver]
+        if support.status is not ReceiverTrainingSupportStatus.OBSERVED:
+            raise ValueError("receiver model has a non-observed training support row")
         context_by_id = {
             node_context_fields(node, encoder.context_keys)[0]: node
             for node in encoder.contrast.weights
@@ -3393,6 +5020,10 @@ def _receiver_coverage_rows(
                     "contrast_id": _contrast_id(encoder.contrast),
                     "contrast_context": context_by_id[context_id],
                     "receiver": response.receiver,
+                    "receiver_universe_id": support.receiver_universe_id,
+                    "receiver_training_support_id": support.support_record_id,
+                    "receiver_training_support_status": support.status.value,
+                    "receiver_training_support_reason_code": support.reason_code,
                     "response_artifact_id": response.artifact_id,
                     "precision_transform_id": precision.precision_transform_id,
                     "incremental_training_artifact_id": model.training_artifact_id,
@@ -3408,6 +5039,49 @@ def _receiver_coverage_rows(
                     "stage": _RECEIVER_STAGE_NAME,
                 }
             )
+    for support in receiver_training_support:
+        if support.status is not ReceiverTrainingSupportStatus.NOT_ESTIMABLE:
+            continue
+        if support.reason_code is None:  # pragma: no cover - support invariant
+            raise RuntimeError("not-estimable receiver support requires a reason")
+        for encoder, design_application in encoder_by_name.values():
+            context_by_id = {
+                node_context_fields(node, encoder.context_keys)[0]: node
+                for node in encoder.contrast.weights
+            }
+            for sample_id, subject_id, context_id in zip(
+                design_application.sample_ids,
+                design_application.sample_subject_ids,
+                design_application.sample_context_ids,
+                strict=True,
+            ):
+                if context_id not in context_by_id:
+                    continue
+                rows.append(
+                    {
+                        "subject_id": subject_id,
+                        "sample_id": sample_id,
+                        "fold_id": fold_id,
+                        "contrast_id": _contrast_id(encoder.contrast),
+                        "contrast_context": context_by_id[context_id],
+                        "receiver": support.receiver_id,
+                        "receiver_universe_id": support.receiver_universe_id,
+                        "receiver_training_support_id": support.support_record_id,
+                        "receiver_training_support_status": support.status.value,
+                        "receiver_training_support_reason_code": support.reason_code,
+                        "response_artifact_id": None,
+                        "precision_transform_id": None,
+                        "incremental_training_artifact_id": None,
+                        "response_application_id": None,
+                        "design_application_id": design_application.application_id,
+                        "incremental_application_id": None,
+                        "diagnostic_status": "not_estimable",
+                        "diagnostic_reason_code": support.reason_code,
+                        "official_incremental_status": "not_estimable",
+                        "reason_code": support.reason_code,
+                        "stage": _RECEIVER_STAGE_NAME,
+                    }
+                )
     return rows
 
 
@@ -3474,6 +5148,7 @@ def _run_subject_crossfit(
     target_prior: TargetPrior,
     *,
     spec: CrossFitSpec,
+    _receiver_axis_source: FrozenReceiverUniverse | None = None,
 ) -> CrossFitArtifacts:
     """Run subject-blocked train/apply and verify the current sender audit scope.
 
@@ -3496,6 +5171,22 @@ def _run_subject_crossfit(
     if not isinstance(spec, CrossFitSpec):
         raise TypeError("spec must be a CrossFitSpec")
     spec._require_intact()
+    if _receiver_axis_source is not None:
+        if not isinstance(_receiver_axis_source, FrozenReceiverUniverse):
+            raise TypeError("_receiver_axis_source must be a FrozenReceiverUniverse")
+        _receiver_axis_source._require_intact()
+        if (
+            spec.predeclared_receiver_ids is not None
+            and spec.predeclared_receiver_ids != _receiver_axis_source.receiver_ids
+        ):
+            raise ContractError(
+                "Cross-fit receiver declaration differs from the reused source axis",
+                code="crossfit_receiver_axis_source_mismatch",
+                field="predeclared_receiver_ids",
+                remediation=(
+                    "Use the exact source receiver IDs for every resampled child"
+                ),
+            )
     if spec.autonomous_program_resource is not None and (
         spec.autonomous_program_resource.species is not resource_bundle.species
         or spec.autonomous_program_resource.gene_namespace
@@ -3512,6 +5203,54 @@ def _run_subject_crossfit(
             "cannot certify train-only preprocessing"
         )
     sanitized = adata
+    observed_root_cell_types = tuple(
+        sorted(sanitized.obs[config.cell_type_key].astype(str).unique())
+    )
+    receiver_universe = freeze_receiver_universe(
+        root_input_identity,
+        observed_root_cell_types,
+        predeclared_receiver_ids=(
+            spec.predeclared_receiver_ids
+            if _receiver_axis_source is None
+            else _receiver_axis_source.receiver_ids
+        ),
+    )
+    if (
+        _receiver_axis_source is not None
+        and receiver_universe.receiver_axis_id != _receiver_axis_source.receiver_axis_id
+    ):
+        raise ContractError(
+            "Resampled cross-fit did not preserve the frozen receiver axis",
+            code="crossfit_receiver_axis_reuse_mismatch",
+            field="receiver_axis_id",
+            remediation="Rerun the child with the complete source receiver axis",
+        )
+    receiver_family_opportunity_universe = freeze_receiver_family_opportunity_universe(
+        target_prior,
+        feature_ids=validated.feature_ids,
+        receiver_ids=receiver_universe.receiver_ids,
+        receiver_universe_id=receiver_universe.universe_id,
+        receiver_axis_id=receiver_universe.receiver_axis_id,
+        prior_content_id=_target_prior_content_id(target_prior),
+        root_input_identity_id=root_input_identity.identity_id,
+        root_input_digest=root_input_identity.input_digest,
+        cosine_threshold=spec.family_cosine_threshold,
+    )
+    directional_lr_hypothesis_universe: (
+        FrozenReceiverFamilyLRHypothesisUniverse | None
+    ) = None
+    if spec.directional_pairs:
+        directional_lr_hypothesis_universe = (
+            freeze_receiver_family_lr_hypothesis_universe(
+                receiver_family_opportunity_universe,
+                resource_bundle,
+                target_prior,
+                resource_bundle_content_id=(
+                    _resource_bundle_content_id(resource_bundle)
+                ),
+                target_prior_content_id=_target_prior_content_id(target_prior),
+            )
+        )
     invalid_strata = set(spec.strata_keys).difference(config.covariates)
     if invalid_strata:
         raise ValueError(
@@ -3579,6 +5318,11 @@ def _run_subject_crossfit(
             target_prior,
             spec=spec.training_spec,
         )
+        receiver_training_support = assess_receiver_training_support(
+            receiver_universe,
+            outer_fold_id=fold.fold_id,
+            training_cell_type_ids=training.cell_type_ids,
+        )
         prepared_heldout = _prepare_raw_fold(
             heldout_scope,
             config,
@@ -3630,6 +5374,8 @@ def _run_subject_crossfit(
             target_prior=target_prior,
             spec=spec,
             fold_id=fold.fold_id,
+            receiver_family_opportunity_universe=(receiver_family_opportunity_universe),
+            directional_lr_hypothesis_universe=(directional_lr_hypothesis_universe),
         )
         receiver_family_applications = _apply_receiver_families(
             receiver_family_models,
@@ -3656,12 +5402,15 @@ def _run_subject_crossfit(
             receiver_family_models,
             aggregate=training_aggregate,
             design_encoders=design_encoders,
+            training_metadata=training_metadata,
             training_input_digest=prepared_training.input_digest,
             fold_id=fold.fold_id,
             minimum_scale=spec.downstream_minimum_scale,
             min_subjects_per_context=spec.min_train_subjects_per_context,
             autonomous_program_resource=spec.autonomous_program_resource,
+            latent_nuisance_spec=spec.latent_nuisance_spec,
             penalty_tuning_spec=spec.penalty_tuning_spec,
+            gain_calibration_spec=spec.gain_calibration_spec,
             inner_partition_seed_lineage=(
                 _inner_tuning_partition_base_lineage(spec, fold)
             ),
@@ -3676,6 +5425,13 @@ def _run_subject_crossfit(
             design_encoders=design_encoders,
             design_applications=design_applications,
         )
+        directional_response_bindings = _build_directional_response_bindings(
+            spec.directional_pairs,
+            receiver_responses,
+            receiver_incremental_models,
+            receiver_incremental_applications,
+            receiver_ids=training.cell_type_ids,
+        )
         observed_contrasts = {
             _contrast_id(functional.contrast)
             for functional in training.sender_functionals
@@ -3688,6 +5444,12 @@ def _run_subject_crossfit(
             family_common_functionals: tuple[FamilyCommonScoringFunctional, ...] = ()
             family_common_applications: tuple[FamilyCommonScoringApplication, ...] = ()
             family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...] = ()
+            cross_receiver_common_functionals: tuple[
+                CrossReceiverCommonScoringFunctional, ...
+            ] = ()
+            cross_receiver_common_applications: tuple[
+                CrossReceiverCommonScoringApplication, ...
+            ] = ()
         else:
             family_common_functionals = _fit_family_common_chains(
                 receiver_family_models,
@@ -3695,9 +5457,23 @@ def _run_subject_crossfit(
                 receiver_incremental_models,
                 sender_functionals=training.sender_functionals,
             )
+            all_receivers_supported = all(
+                record.status is ReceiverTrainingSupportStatus.OBSERVED
+                for record in receiver_training_support
+            )
+            cross_receiver_common_functionals = (
+                _fit_cross_receiver_common_chains(
+                    family_common_functionals,
+                    receiver_incremental_models,
+                    planned_receiver_ids=receiver_universe.receiver_ids,
+                )
+                if all_receivers_supported
+                else ()
+            )
             (
                 family_common_applications,
                 family_common_bindings,
+                family_common_sender_applications,
             ) = _apply_family_common_chains(
                 family_common_functionals,
                 receiver_program_applications,
@@ -3707,11 +5483,21 @@ def _run_subject_crossfit(
                 design_applications=design_applications,
                 availability=application.availability.sample_interactions,
             )
+            cross_receiver_common_applications = (
+                _apply_cross_receiver_common_chains(
+                    cross_receiver_common_functionals,
+                    family_common_applications,
+                    family_common_sender_applications,
+                )
+                if cross_receiver_common_functionals
+                else ()
+            )
         fold_artifacts.append(
             CrossFitFoldArtifacts(
                 fold_id=fold.fold_id,
                 training=training,
                 application=application,
+                receiver_training_support=receiver_training_support,
                 design_encoders=design_encoders,
                 design_applications=design_applications,
                 receiver_family_models=receiver_family_models,
@@ -3726,6 +5512,9 @@ def _run_subject_crossfit(
                 family_common_functionals=family_common_functionals,
                 family_common_applications=family_common_applications,
                 family_common_bindings=family_common_bindings,
+                directional_response_bindings=directional_response_bindings,
+                cross_receiver_common_functionals=(cross_receiver_common_functionals),
+                cross_receiver_common_applications=(cross_receiver_common_applications),
             )
         )
         coverage_rows.extend(
@@ -3749,6 +5538,7 @@ def _run_subject_crossfit(
                 incremental_models=receiver_incremental_models,
                 response_applications=receiver_response_applications,
                 incremental_applications=receiver_incremental_applications,
+                receiver_training_support=receiver_training_support,
             )
         )
         sender_parts.extend(
@@ -3786,6 +5576,9 @@ def _run_subject_crossfit(
     return CrossFitArtifacts._from_workflow(
         spec=spec,
         root_input_identity=root_input_identity,
+        receiver_universe=receiver_universe,
+        receiver_family_opportunity_universe=(receiver_family_opportunity_universe),
+        directional_lr_hypothesis_universe=(directional_lr_hypothesis_universe),
         fold_plan=fold_plan,
         folds=tuple(fold_artifacts),
         oof_coverage=coverage,

@@ -24,6 +24,7 @@ from benchmarks.metrics.multicondition import (
     COMPARISON_ELIGIBLE_STATUSES,
     EDGE_KEYS,
     METHOD_IDENTITY_KEYS,
+    MOLECULAR_LR_EQUIVALENCE_COLUMN,
     validate_score_table,
 )
 
@@ -158,10 +159,19 @@ class _BootstrapResults:
 
 def _level_keys(level: RankLevel, rank_scope: RankScope) -> tuple[str, ...]:
     if level == "lr_family":
-        return ()
+        molecular_keys = (MOLECULAR_LR_EQUIVALENCE_COLUMN,)
+        return (
+            ("receiver", *molecular_keys)
+            if rank_scope == "within_receiver_macro"
+            else molecular_keys
+        )
     if level == "lr":
-        base = ("interaction_id", "ligand", "receptor")
-        return ("receiver", *base) if rank_scope == "within_receiver_macro" else base
+        lr_keys = ("interaction_id", "ligand", "receptor")
+        return (
+            ("receiver", *lr_keys)
+            if rank_scope == "within_receiver_macro"
+            else lr_keys
+        )
     if level == "sender":
         return (
             ("receiver", "sender")
@@ -183,6 +193,11 @@ def _json_id(kind: str, values: Mapping[str, object]) -> str:
 def _item_label(level: RankLevel, values: Mapping[str, object]) -> str:
     receiver = str(values.get("receiver", ""))
     receiver_prefix = f"{receiver} | " if receiver else ""
+    if level == "lr_family":
+        return (
+            f"{receiver_prefix}molecular LR equivalence "
+            f"{values[MOLECULAR_LR_EQUIVALENCE_COLUMN]}"
+        )
     if level == "lr":
         return f"{receiver_prefix}{values['ligand']} - {values['receptor']}"
     if level == "sender":
@@ -326,6 +341,20 @@ def _subject_edge_data(
             reference_subjects=(),
             target_subjects=(),
         )
+    if MOLECULAR_LR_EQUIVALENCE_COLUMN in working.columns:
+        mapping_columns = [*EDGE_KEYS, MOLECULAR_LR_EQUIVALENCE_COLUMN]
+        edge_mapping = working.loc[:, mapping_columns].drop_duplicates()
+        if edge_mapping.duplicated(list(EDGE_KEYS), keep=False).any():
+            raise ValueError(
+                "each source edge must map to exactly one "
+                "molecular_lr_equivalence_id within a ranking identity"
+            )
+        edge_metadata = edge_metadata.merge(
+            edge_mapping,
+            on=list(EDGE_KEYS),
+            how="left",
+            validate="one_to_one",
+        )
     edge_metadata["edge_id"] = [
         _json_id("edge", dict(zip(EDGE_KEYS, edge, strict=True)))
         for edge in edge_metadata.loc[:, EDGE_KEYS].itertuples(index=False, name=None)
@@ -412,19 +441,22 @@ def _level_data(
         values = {key: str(value) for key, value in zip(keys, key_values, strict=True)}
         member_index = members.index.to_numpy(dtype=int)
         item_id = _json_id(level, values)
-        records.append(
-            {
-                "item_id": item_id,
-                "item_label": _item_label(level, values),
-                "receiver_scope": (
-                    str(values.get("receiver", "__global__"))
-                    if rank_scope == "within_receiver_macro"
-                    else "__global__"
-                ),
-                "frozen_member_count": len(member_index),
-                **{f"item_{key}": value for key, value in values.items()},
-            }
-        )
+        record: dict[str, object] = {
+            "item_id": item_id,
+            "item_label": _item_label(level, values),
+            "receiver_scope": (
+                str(values.get("receiver", "__global__"))
+                if rank_scope == "within_receiver_macro"
+                else "__global__"
+            ),
+            "frozen_member_count": len(member_index),
+            **{f"item_{key}": value for key, value in values.items()},
+        }
+        if level == "lr_family":
+            record["item_semantics"] = (
+                "molecular_lr_equivalence_not_strict_target_family"
+            )
+        records.append(record)
         member_indexes.append(member_index)
     order = np.argsort([str(record["item_id"]) for record in records], kind="stable")
     records = [records[index] for index in order]
@@ -1211,7 +1243,10 @@ def evaluate_multicondition_rank_stability(
             paired_subjects=paired_count,
         )
         for level in cast(tuple[RankLevel, ...], RANKING_LEVELS):
-            if level == "lr_family":
+            if (
+                level == "lr_family"
+                and MOLECULAR_LR_EQUIVALENCE_COLUMN not in group.columns
+            ):
                 ne = _not_estimable_for_design(
                     identity,
                     reason_code="lr_family_mapping_not_available_in_score_contract",

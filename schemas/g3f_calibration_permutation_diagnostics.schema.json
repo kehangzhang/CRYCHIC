@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3f-calibration-permutation-diagnostics:1.0.0",
+  "title": "CRYCHIC producer-derived G3-F permutation diagnostics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3f_calibration_permutation_diagnostics"},
+    "filename": {"const": "g3f_calibration_permutation_diagnostics.parquet"},
+    "primary_key": {"const": ["diagnostic_id"]},
+    "logical_key": {"const": ["dependence_structure"]},
+    "foreign_keys": {"const": [{"columns": ["protocol_id"], "references": "manifest.protocol_id"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["diagnostic_id", "protocol_id", "dependence_structure", "status", "reason_code", "n_replicates", "p_values_json", "ks_distance", "dkw_limit"],
+      "properties": {
+        "diagnostic_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "dependence_structure": {"dtype": "string", "nullable": false, "enum": ["independent_hypotheses", "positive_within_family_block", "negative_within_family_block"]},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "not_estimable"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "n_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "p_values_json": {"dtype": "string", "nullable": false, "encoding": "canonical_json"},
+        "ks_distance": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "dkw_limit": {"dtype": "float", "nullable": true, "minimum": 0.0}
+      }
+    }
+  }
+}

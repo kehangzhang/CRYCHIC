@@ -11,6 +11,7 @@ import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, cast
 
 import numpy as np
@@ -55,6 +56,26 @@ _EVALUATION_VERIFICATION_STATUSES = frozenset(
     {_CALLER_RECORDED_EVALUATION, _VERIFIED_EVALUATION}
 )
 _WORKFLOW_SUBJECT_BLOCKED_PRODUCER_TOKEN = object()
+
+
+class PenaltyValidationLossEstimand(StrEnum):
+    """Validation loss unit carried by each candidate/fold evaluation."""
+
+    CALLER_RECORDED_SUBJECT = "caller_recorded_subject_validation_loss_v1"
+    PAIRED_SUBJECT_CONTRAST = "paired_subject_contrast_prediction_loss_v1"
+    INDEPENDENT_SUBJECT_PREDICTION = (
+        "independent_subject_full_prediction_loss_v1"
+    )
+    MIXED_SUBJECT_PREDICTION = "mixed_subject_equal_full_prediction_loss_v1"
+
+
+def _validation_loss_estimand(
+    value: PenaltyValidationLossEstimand | str,
+) -> PenaltyValidationLossEstimand:
+    try:
+        return PenaltyValidationLossEstimand(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("validation_loss_estimand is not supported") from error
 
 
 def _name(value: str, *, field_name: str) -> str:
@@ -729,6 +750,7 @@ class PenaltyFoldEvaluation:
     inner_fold_manifest_id: str | None
     inner_training_subject_ids: tuple[str, ...]
     validation_subject_ids: tuple[str, ...]
+    validation_loss_estimand: PenaltyValidationLossEstimand
     subject_losses: np.ndarray
     subject_losses_digest: str
     scale_resolution_id: str | None
@@ -764,6 +786,7 @@ class PenaltyFoldEvaluation:
             "status": self.status,
             "subject_losses_digest": self.subject_losses_digest,
             "training_functional_id": self.training_functional_id,
+            "validation_loss_estimand": self.validation_loss_estimand.value,
             "validation_subject_ids": list(self.validation_subject_ids),
             "verification_status": self.verification_status,
         }
@@ -775,6 +798,9 @@ class PenaltyFoldEvaluation:
             validation_subjects = _names(
                 self.validation_subject_ids,
                 field_name="validation_subject_ids",
+            )
+            validation_loss_estimand = _validation_loss_estimand(
+                self.validation_loss_estimand
             )
             verified = self.verification_status == _VERIFIED_EVALUATION
             if verified:
@@ -862,6 +888,7 @@ class PenaltyFoldEvaluation:
                 and self.status in _STATUSES
                 and observed == (self.reason_code is None)
                 and tuple(validation_subjects) == self.validation_subject_ids
+                and validation_loss_estimand is self.validation_loss_estimand
                 and tuple(training_subjects) == self.inner_training_subject_ids
                 and losses.ndim == 1
                 and _is_immutable_byte_backed(self.subject_losses)
@@ -908,6 +935,9 @@ def record_penalty_fold_evaluation(
     inner_fold_id: str,
     validation_subject_ids: Sequence[str],
     subject_losses: np.ndarray | None = None,
+    validation_loss_estimand: PenaltyValidationLossEstimand | str = (
+        PenaltyValidationLossEstimand.CALLER_RECORDED_SUBJECT
+    ),
     status: str = _OBSERVED,
     reason_code: str | None = None,
 ) -> PenaltyFoldEvaluation:
@@ -921,6 +951,7 @@ def record_penalty_fold_evaluation(
         validation_subject_ids, field_name="validation_subject_ids"
     )
     subjects = tuple(sorted(supplied_subjects))
+    loss_estimand = _validation_loss_estimand(validation_loss_estimand)
     if status not in _STATUSES:
         raise ValueError(f"status must be one of {sorted(_STATUSES)}")
     if status == _OBSERVED:
@@ -950,6 +981,7 @@ def record_penalty_fold_evaluation(
         "inner_fold_manifest_id": None,
         "inner_training_subject_ids": (),
         "validation_subject_ids": subjects,
+        "validation_loss_estimand": loss_estimand,
         "subject_losses": frozen_losses,
         "subject_losses_digest": _array_digest(frozen_losses),
         "scale_resolution_id": None,
@@ -983,6 +1015,7 @@ def _record_subject_blocked_penalty_fold_evaluation(
     inner_fold_manifest_id: str,
     training_subject_ids: Sequence[str],
     validation_subject_ids: Sequence[str],
+    validation_loss_estimand: PenaltyValidationLossEstimand | str,
     subject_losses: np.ndarray | None = None,
     scale_resolution_id: str | None = None,
     resolved_penalty_id: str | None = None,
@@ -1017,6 +1050,11 @@ def _record_subject_blocked_penalty_fold_evaluation(
         validation_subject_ids, field_name="validation_subject_ids"
     )
     validation_subjects = tuple(sorted(supplied_validation))
+    loss_estimand = _validation_loss_estimand(validation_loss_estimand)
+    if loss_estimand is PenaltyValidationLossEstimand.CALLER_RECORDED_SUBJECT:
+        raise ValueError(
+            "verified evaluations require a workflow-defined validation loss estimand"
+        )
     if set(training_subjects).intersection(validation_subjects):
         raise ValueError("inner training and validation subjects must be disjoint")
     if status not in _STATUSES:
@@ -1102,6 +1140,7 @@ def _record_subject_blocked_penalty_fold_evaluation(
         "inner_fold_manifest_id": manifest_id,
         "inner_training_subject_ids": training_subjects,
         "validation_subject_ids": validation_subjects,
+        "validation_loss_estimand": loss_estimand,
         "subject_losses": losses,
         "subject_losses_digest": _array_digest(losses),
         **parent_values,
@@ -1431,6 +1470,7 @@ class PenaltyTuningArtifact:
     spec: PenaltyTuningSpec
     tuning_scope_id: str
     inner_fold_plan_id: str | None
+    validation_loss_estimand: PenaltyValidationLossEstimand | None
     training_subject_ids: tuple[str, ...]
     inner_fold_ids: tuple[str, ...]
     evaluations: tuple[PenaltyFoldEvaluation, ...]
@@ -1495,6 +1535,11 @@ class PenaltyTuningArtifact:
             "summary_ids": [item.summary_id for item in self.summaries],
             "training_subject_ids": list(self.training_subject_ids),
             "tuning_scope_id": self.tuning_scope_id,
+            "validation_loss_estimand": (
+                None
+                if self.validation_loss_estimand is None
+                else self.validation_loss_estimand.value
+            ),
         }
 
     def _require_intact(self) -> None:
@@ -1510,6 +1555,7 @@ class PenaltyTuningArtifact:
                     training_subject_ids=self.training_subject_ids,
                     reason_code=cast(str, self.reason_code),
                     inner_fold_plan_id=self.inner_fold_plan_id,
+                    validation_loss_estimand=self.validation_loss_estimand,
                 )
             else:
                 repeated = select_penalty_candidate(
@@ -1595,6 +1641,14 @@ def select_penalty_candidate(
         raise TypeError("evaluations must contain PenaltyFoldEvaluation values")
     for result in results:
         result._require_intact()
+    validation_loss_estimands = {
+        result.validation_loss_estimand for result in results
+    }
+    if len(validation_loss_estimands) != 1:
+        raise ValueError(
+            "all candidate/fold evaluations must use one validation loss estimand"
+        )
+    validation_loss_estimand = next(iter(validation_loss_estimands))
     verification_statuses = {result.verification_status for result in results}
     if len(verification_statuses) != 1:
         raise ValueError(
@@ -1724,6 +1778,7 @@ def select_penalty_candidate(
         "spec": spec,
         "tuning_scope_id": scope,
         "inner_fold_plan_id": plan_id,
+        "validation_loss_estimand": validation_loss_estimand,
         "training_subject_ids": subjects,
         "inner_fold_ids": folds,
         "evaluations": results,
@@ -1763,6 +1818,7 @@ def not_estimable_penalty_tuning(
     training_subject_ids: Sequence[str],
     reason_code: str,
     inner_fold_plan_id: str | None = None,
+    validation_loss_estimand: PenaltyValidationLossEstimand | str | None = None,
 ) -> PenaltyTuningArtifact:
     """Create a typed tuning artifact when inner-fold production cannot start."""
 
@@ -1785,11 +1841,17 @@ def not_estimable_penalty_tuning(
         if inner_fold_plan_id is None
         else _name(inner_fold_plan_id, field_name="inner_fold_plan_id")
     )
+    loss_estimand = (
+        None
+        if validation_loss_estimand is None
+        else _validation_loss_estimand(validation_loss_estimand)
+    )
     self = object.__new__(PenaltyTuningArtifact)
     values: dict[str, Any] = {
         "spec": spec,
         "tuning_scope_id": scope,
         "inner_fold_plan_id": plan_id,
+        "validation_loss_estimand": loss_estimand,
         "training_subject_ids": subjects,
         "inner_fold_ids": (),
         "evaluations": (),

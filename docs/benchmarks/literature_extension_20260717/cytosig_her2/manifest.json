@@ -1,0 +1,52 @@
+{
+  "dataset_id": "GSE176078_Wu2021_HER2",
+  "excluded_source_artifact_sha256": {
+    "crychic_scores_parquet": "ad1e9fba506ed5bb1e39f97f4e90586fd722839d7256951d37655d6e5c4c2448",
+    "liana_scores_parquet": "a83f60340e8205c6d0d552a5b7087ed3fa09605266b246bdb54b82fef92d68fa",
+    "official_source_xlsx": "4d2848bc91a7082a36bd90bf4d5c9d0136eee23d748af055c0717af62f231b5a",
+    "prepared_h5ad": "f13153c1ddebba798635f841bc51a080abedcceb9cd53cb0269717024e30df69"
+  },
+  "limitations": [
+    "The current union includes CRYCHIC and is dominated by its broader returned STLR coverage; it is a protocol extension, not the historical paper union.",
+    "Current LIANA 1.7.3 consensus is not the paper's frozen LIANA 0.0.5 OmniPath snapshot.",
+    "Current LIANA run used 100 permutations; the paper used 1000.",
+    "Crosstalk is unavailable in the current Python LIANA score table.",
+    "Balanced AUPRC uses a NumPy RNG and a clean mean of 100 scalar metrics, not the released R threshold-row weighting quirk."
+  ],
+  "outputs": {
+    "cytosig_her2/README.md": {
+      "bytes": 3547,
+      "sha256": "446e96ccd453769472a34cd6ab0088cddc980dba9cd08eb3cb893c5d8604aa2c"
+    },
+    "cytosig_her2/fisher_rank_curves.tsv": {
+      "bytes": 90892,
+      "rows": 336,
+      "sha256": "11c38873aa8edb1e1a4455cc80b1cd80929da90c7820cacfcb7e6531a670706e"
+    },
+    "cytosig_her2/ranking_metrics.tsv": {
+      "bytes": 13157,
+      "rows": 48,
+      "sha256": "9fde7fa5fcde8e0bbdc9f49feaa6a969fced13185815902cb1c25c91f9d5b104"
+    },
+    "cytosig_her2/score_inventory.tsv": {
+      "bytes": 1366,
+      "rows": 12,
+      "sha256": "86623089b8751e751e25563c43fce7848a49ecfc3ebab9a5f7d47d9280d69c1b"
+    }
+  },
+  "schema_version": "crychic-cytosig-her2-publication-v1",
+  "source_manifests": {
+    "her2_evaluation": {
+      "bytes": 3615,
+      "path": "cytokine/her2/evaluation/manifest.json",
+      "sha256": "2eb467610cb6fa4e7326fdb4546c2df931a22ce776164bcd51a26e0414750a22"
+    },
+    "her2_preparation": {
+      "bytes": 5887,
+      "path": "cytokine/her2/prepared/manifest.json",
+      "sha256": "4f35aab9ce191c2830b13975c71067b8b34bb9d5ae3745d08a72dc047ecae90e"
+    }
+  },
+  "status": "complete",
+  "truth_status": "reconstructed_clean_activity_truth_not_historical_exact"
+}

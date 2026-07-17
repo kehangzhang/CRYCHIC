@@ -158,18 +158,16 @@ def cluster_driver_families(
         )
     n_drivers = len(basis.driver_ids)
     disjoint = _DisjointSet(n_drivers)
-    cosine = sparse.coo_matrix(
-        basis.normalized_profiles.T @ basis.normalized_profiles
-    )
+    cosine = sparse.coo_matrix(basis.normalized_profiles.T @ basis.normalized_profiles)
     pairwise_similarity: dict[tuple[int, int], float] = {}
-    for left, right, raw_value in zip(
-        cosine.row, cosine.col, cosine.data, strict=True
-    ):
+    for left, right, raw_value in zip(cosine.row, cosine.col, cosine.data, strict=True):
         if left >= right:
             continue
         value = min(1.0, max(0.0, float(raw_value)))
-        pairwise_similarity[(int(left), int(right))] = value
         if value + _COSINE_TOLERANCE >= cosine_threshold:
+            # Complete-link only distinguishes passing pairs from failures;
+            # omitted sub-threshold similarities already resolve to zero.
+            pairwise_similarity[(int(left), int(right))] = value
             disjoint.union(int(left), int(right))
 
     if cosine_threshold <= _COSINE_TOLERANCE and n_drivers:

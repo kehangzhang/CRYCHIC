@@ -84,18 +84,38 @@ packages = ["src/crychic"]
 "schemas/config.schema.json" = "crychic/schemas/config.schema.json"
 "schemas/provenance.schema.json" = "crychic/schemas/provenance.schema.json"
 "schemas/run_manifest.schema.json" = "crychic/schemas/run_manifest.schema.json"
+"schemas/bootstrap_support.schema.json" = "crychic/schemas/bootstrap_support.schema.json"
 "schemas/edge_evidence.schema.json" = "crychic/schemas/edge_evidence.schema.json"
+"schemas/selection_frequency.schema.json" = "crychic/schemas/selection_frequency.schema.json"
 "schemas/scoring_collections.schema.json" = "crychic/schemas/scoring_collections.schema.json"
+"schemas/scoring_collections_v2.schema.json" = "crychic/schemas/scoring_collections_v2.schema.json"
+"schemas/scoring_collections_v3.schema.json" = "crychic/schemas/scoring_collections_v3.schema.json"
+"schemas/scoring_collections_v4.schema.json" = "crychic/schemas/scoring_collections_v4.schema.json"
 "schemas/interactions.schema.json" = "crychic/schemas/interactions.schema.json"
 "schemas/differential.schema.json" = "crychic/schemas/differential.schema.json"
 "schemas/responses.schema.json" = "crychic/schemas/responses.schema.json"
 "schemas/sample_scores.schema.json" = "crychic/schemas/sample_scores.schema.json"
 "schemas/signatures.schema.json" = "crychic/schemas/signatures.schema.json"
+"schemas/specificity_support.schema.json" = "crychic/schemas/specificity_support.schema.json"
+"schemas/active_probability_result.schema.json" = "crychic/schemas/active_probability_result.schema.json"
+"schemas/active_probabilities.schema.json" = "crychic/schemas/active_probabilities.schema.json"
+"schemas/active_probability_candidate_diagnostics.schema.json" = "crychic/schemas/active_probability_candidate_diagnostics.schema.json"
+"schemas/active_probability_stratum_diagnostics.schema.json" = "crychic/schemas/active_probability_stratum_diagnostics.schema.json"
+"schemas/active_probability_null_sources.schema.json" = "crychic/schemas/active_probability_null_sources.schema.json"
+"schemas/g3p_calibration_result.schema.json" = "crychic/schemas/g3p_calibration_result.schema.json"
+"schemas/g3p_calibration_replicates.schema.json" = "crychic/schemas/g3p_calibration_replicates.schema.json"
+"schemas/g3p_calibration_candidates.schema.json" = "crychic/schemas/g3p_calibration_candidates.schema.json"
+"schemas/g3p_calibration_scenarios.schema.json" = "crychic/schemas/g3p_calibration_scenarios.schema.json"
+"schemas/g3f_calibration_result.schema.json" = "crychic/schemas/g3f_calibration_result.schema.json"
+"schemas/g3f_calibration_replicates.schema.json" = "crychic/schemas/g3f_calibration_replicates.schema.json"
+"schemas/g3f_calibration_hypotheses.schema.json" = "crychic/schemas/g3f_calibration_hypotheses.schema.json"
+"schemas/g3f_calibration_scenarios.schema.json" = "crychic/schemas/g3f_calibration_scenarios.schema.json"
+"schemas/g3f_calibration_permutation_diagnostics.schema.json" = "crychic/schemas/g3f_calibration_permutation_diagnostics.schema.json"
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
 minversion = "8.0"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.coverage.run]

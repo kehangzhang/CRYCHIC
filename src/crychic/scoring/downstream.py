@@ -25,6 +25,11 @@ from crychic.response import (
 from crychic.response.autonomous import _precision_weighted_span_residual
 
 from .contracts import float64_array_digest
+from .latent_nuisance import (
+    FoldLatentNuisanceArtifact,
+    FrozenLatentNuisanceSpec,
+    fit_fold_latent_nuisance,
+)
 
 _MAD_GAUSSIAN_CONSISTENCY = 1.4826
 INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT = (
@@ -42,7 +47,11 @@ _UNIDENTIFIABLE_FAMILY_REASON = (
 )
 _PAIRED_LOSS_DESIGN = "fully_paired_subject_contrasts_v1"
 _INDEPENDENT_LOSS_DESIGN = "independent_subject_pseudocontrasts_v1"
-_LOSS_DESIGNS = frozenset({_PAIRED_LOSS_DESIGN, _INDEPENDENT_LOSS_DESIGN})
+_MIXED_LOSS_DESIGN = "mixed_subject_equal_full_prediction_loss_v1"
+_LOSS_DESIGNS = frozenset(
+    {_PAIRED_LOSS_DESIGN, _INDEPENDENT_LOSS_DESIGN, _MIXED_LOSS_DESIGN}
+)
+_WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN = object()
 _POSITIVE_GAIN_DENOMINATOR = "positive_receiver_null_loss_ratio_v1"
 _STRUCTURAL_ZERO_GAIN = "zero_receiver_contrast_structural_zero_v1"
 _NOT_ESTIMABLE_GAIN = "not_estimable"
@@ -50,6 +59,21 @@ _REFERENCE_SUMMARY_METHOD = "technical_row_mean_then_context_equal_subject_mean_
 _REFERENCE_CENTER_METHOD = "reference_subject_equal_feature_median_v2"
 _REFERENCE_SCALE_METHOD = "reference_subject_equal_scaled_mad_floor_v2"
 _DOWNSTREAM_APPLICATION_PRODUCER = "crychic.scoring.downstream_application.v2"
+_AUTONOMOUS_SOURCE_NONE = "formula_only_v1"
+_AUTONOMOUS_SOURCE_STATIC = "static_resource_v1"
+_AUTONOMOUS_SOURCE_LEARNED = "fold_learned_control_feature_latent_v1"
+_AUTONOMOUS_SOURCE_HYBRID = "static_plus_fold_learned_control_feature_latent_v1"
+
+
+class _LatentNuisanceNotEstimableError(ValueError):
+    """Carry the typed failed latent artifact through workflow error handling."""
+
+    def __init__(self, artifact: FoldLatentNuisanceArtifact) -> None:
+        artifact._require_intact()
+        if artifact.status != "not_estimable" or not artifact.reason_code:
+            raise ValueError("latent nuisance failure requires a typed NE artifact")
+        self.artifact = artifact
+        super().__init__(artifact.reason_code)
 
 
 def _names(values: tuple[str, ...], *, field_name: str) -> tuple[str, ...]:
@@ -1110,6 +1134,8 @@ def _subject_loss_design(
         return _PAIRED_LOSS_DESIGN
     if all(len(values) == 1 for values in contexts_by_subject.values()):
         return _INDEPENDENT_LOSS_DESIGN
+    if all(values for values in contexts_by_subject.values()):
+        return _MIXED_LOSS_DESIGN
     return None
 
 
@@ -1263,6 +1289,10 @@ class IncrementalDownstreamFunctional:
     autonomous_program_ids: tuple[str, ...]
     autonomous_basis_id: str | None
     autonomous_basis: np.ndarray
+    autonomous_basis_source: str
+    latent_nuisance_spec_id: str | None
+    latent_nuisance_artifact_id: str | None
+    latent_nuisance_artifact: FoldLatentNuisanceArtifact | None
     basis_coordinate_transform: str
     basis_coordinate_transform_id: str
     raw_input_family_basis_id: str
@@ -1324,6 +1354,8 @@ class IncrementalDownstreamFunctional:
         autonomous_program_ids: tuple[str, ...],
         autonomous_basis_id: str | None,
         autonomous_basis: np.ndarray,
+        autonomous_basis_source: str,
+        latent_nuisance_artifact: FoldLatentNuisanceArtifact | None,
         basis_coordinate_transform: str,
         basis_coordinate_transform_id: str,
         raw_input_family_basis_id: str,
@@ -1394,6 +1426,37 @@ class IncrementalDownstreamFunctional:
             raise ValueError(
                 "autonomous_basis_id is required exactly when programs are present"
             )
+        allowed_sources = {
+            _AUTONOMOUS_SOURCE_NONE,
+            _AUTONOMOUS_SOURCE_STATIC,
+            _AUTONOMOUS_SOURCE_LEARNED,
+            _AUTONOMOUS_SOURCE_HYBRID,
+        }
+        if autonomous_basis_source not in allowed_sources:
+            raise ValueError("autonomous_basis_source is not supported")
+        if (not program_ids) != (
+            autonomous_basis_source == _AUTONOMOUS_SOURCE_NONE
+        ):
+            raise ValueError("autonomous basis source does not match program presence")
+        latent_artifact = latent_nuisance_artifact
+        if latent_artifact is None:
+            if autonomous_basis_source in {
+                _AUTONOMOUS_SOURCE_LEARNED,
+                _AUTONOMOUS_SOURCE_HYBRID,
+            }:
+                raise ValueError("learned autonomous basis requires its artifact")
+            latent_spec_id = None
+            latent_artifact_id = None
+        else:
+            latent_artifact._require_intact()
+            if (
+                latent_artifact.status != "observed"
+                or autonomous_basis_source
+                not in {_AUTONOMOUS_SOURCE_LEARNED, _AUTONOMOUS_SOURCE_HYBRID}
+            ):
+                raise ValueError("latent nuisance artifact is not an observed parent")
+            latent_spec_id = latent_artifact.spec_id
+            latent_artifact_id = latent_artifact.artifact_id
         samples = _names(training_sample_ids, field_name="training_sample_ids")
         sample_subjects = _aligned_names(
             training_sample_subject_ids,
@@ -1411,7 +1474,9 @@ class IncrementalDownstreamFunctional:
         if loss_design not in _LOSS_DESIGNS:
             raise ValueError("loss_design is not a supported subject allocation")
         context_weight_shape = (
-            (0,) if loss_design == _PAIRED_LOSS_DESIGN else (len(contexts),)
+            (len(contexts),)
+            if loss_design == _INDEPENDENT_LOSS_DESIGN
+            else (0,)
         )
         frozen_context_weights = _readonly_array(
             loss_context_weights,
@@ -1494,6 +1559,75 @@ class IncrementalDownstreamFunctional:
         )
         if program_ids and np.linalg.matrix_rank(autonomous) != len(program_ids):
             raise ValueError("autonomous_basis must have full column rank")
+        if latent_artifact is not None:
+            expected_scope = (
+                receiver,
+                contrast_name,
+                fold_id,
+                features,
+                samples,
+                sample_subjects,
+                sample_contexts,
+                subjects,
+            )
+            observed_scope = (
+                latent_artifact.receiver,
+                latent_artifact.contrast_name,
+                latent_artifact.fold_id,
+                latent_artifact.feature_ids,
+                latent_artifact.training_sample_ids,
+                latent_artifact.training_sample_subject_ids,
+                latent_artifact.training_sample_context_ids,
+                latent_artifact.training_subject_ids,
+            )
+            if observed_scope != expected_scope:
+                raise ValueError("latent nuisance artifact is outside training scope")
+            expected_source = (
+                _AUTONOMOUS_SOURCE_HYBRID
+                if latent_artifact.static_program_ids
+                else _AUTONOMOUS_SOURCE_LEARNED
+            )
+            expected_program_ids = (
+                *latent_artifact.static_program_ids,
+                *latent_artifact.program_ids,
+            )
+            expected_basis = np.column_stack(
+                (
+                    latent_artifact.static_coordinate_basis,
+                    latent_artifact.coordinate_basis,
+                )
+            )
+            if (
+                not latent_artifact.program_ids
+                or autonomous_basis_source != expected_source
+                or program_ids != expected_program_ids
+                or not np.allclose(
+                    autonomous,
+                    expected_basis,
+                    rtol=1e-12,
+                    atol=1e-12,
+                )
+            ):
+                raise ValueError("latent nuisance basis does not match its artifact")
+            expected_basis_id = (
+                latent_artifact.artifact_id
+                if not latent_artifact.static_program_ids
+                else stable_id(
+                    "composed_autonomous_program_basis",
+                    {
+                        "feature_ids": list(features),
+                        "latent_nuisance_artifact_id": latent_artifact.artifact_id,
+                        "program_ids": list(program_ids),
+                        "static_program_resource_id": (
+                            latent_artifact.static_coordinate_basis_id
+                        ),
+                        "coordinate_basis_digest": _dense_input_digest(autonomous),
+                    },
+                    schema_version="1",
+                )
+            )
+            if autonomous_basis_id != expected_basis_id:
+                raise ValueError("latent nuisance basis identity does not match")
         basis = sparse.csc_matrix(family_basis, dtype=np.float64).copy()
         if basis.shape != (n_features, n_families):
             raise ValueError("family_basis shape must equal features x families")
@@ -1571,6 +1705,10 @@ class IncrementalDownstreamFunctional:
             "autonomous_program_ids": program_ids,
             "autonomous_basis_id": autonomous_basis_id,
             "autonomous_basis": autonomous,
+            "autonomous_basis_source": autonomous_basis_source,
+            "latent_nuisance_spec_id": latent_spec_id,
+            "latent_nuisance_artifact_id": latent_artifact_id,
+            "latent_nuisance_artifact": latent_artifact,
             "basis_coordinate_transform": basis_coordinate_transform,
             "basis_coordinate_transform_id": basis_coordinate_transform_id,
             "raw_input_family_basis_id": raw_input_family_basis_id,
@@ -1597,9 +1735,13 @@ class IncrementalDownstreamFunctional:
             "identity_scope": "sample_keyed_factorized_v4",
             "family_gain_estimand": _FAMILY_GAIN_ESTIMAND,
             "certification_status": (
-                "autonomous_program_projected_partial_not_oof_certified"
-                if program_ids
-                else "formula_nuisance_incremental_diagnostic_only"
+                "fold_learned_autonomous_projected_partial_not_oof_certified_v1"
+                if latent_artifact is not None
+                else (
+                    "autonomous_program_projected_partial_not_oof_certified"
+                    if program_ids
+                    else "formula_nuisance_incremental_diagnostic_only"
+                )
             ),
             "_producer_marker": _INCREMENTAL_PRODUCER_MARKER,
         }
@@ -1623,7 +1765,7 @@ class IncrementalDownstreamFunctional:
         return False
 
     def _identity_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "algorithm": _INCREMENTAL_METHOD,
             "center_digest": float64_array_digest(self.feature_center),
             "autonomous_basis_digest": float64_array_digest(self.autonomous_basis),
@@ -1693,11 +1835,39 @@ class IncrementalDownstreamFunctional:
             "training_subject_ids": list(self.training_subject_ids),
             "resolved_penalty_id": self.resolved_penalty_id,
         }
+        if self.latent_nuisance_spec_id is not None:
+            payload.update(
+                {
+                    "autonomous_basis_source": self.autonomous_basis_source,
+                    "latent_nuisance_spec_id": self.latent_nuisance_spec_id,
+                    "latent_nuisance_artifact_id": (
+                        self.latent_nuisance_artifact_id
+                    ),
+                }
+            )
+        return payload
 
     def _require_intact(self) -> None:
         if self._producer_marker != _INCREMENTAL_PRODUCER_MARKER:
             raise TypeError("incremental downstream functional is not producer-owned")
         try:
+            if self.latent_nuisance_artifact is not None:
+                self.latent_nuisance_artifact._require_intact()
+                if (
+                    self.latent_nuisance_artifact.spec_id
+                    != self.latent_nuisance_spec_id
+                    or self.latent_nuisance_artifact.artifact_id
+                    != self.latent_nuisance_artifact_id
+                ):
+                    raise ValueError("latent nuisance lineage changed")
+            elif any(
+                value is not None
+                for value in (
+                    self.latent_nuisance_spec_id,
+                    self.latent_nuisance_artifact_id,
+                )
+            ):
+                raise ValueError("latent nuisance lineage is incomplete")
             expected = stable_id(
                 "incremental_downstream_functional",
                 self._identity_payload(),
@@ -1722,7 +1892,7 @@ class IncrementalDownstreamFunctional:
         """Return learned-artifact provenance without materializing coefficients."""
 
         self._require_intact()
-        return {
+        result: dict[str, object] = {
             "incremental_functional_id": self.incremental_functional_id,
             "receiver": self.receiver,
             "contrast_name": self.contrast_name,
@@ -1781,6 +1951,22 @@ class IncrementalDownstreamFunctional:
             "certification_status": self.certification_status,
             "is_oof_certified": self.is_oof_certified,
         }
+        if self.latent_nuisance_spec_id is not None:
+            result.update(
+                {
+                    "autonomous_basis_source": self.autonomous_basis_source,
+                    "latent_nuisance_spec_id": self.latent_nuisance_spec_id,
+                    "latent_nuisance_artifact_id": (
+                        self.latent_nuisance_artifact_id
+                    ),
+                    "latent_nuisance_artifact": (
+                        None
+                        if self.latent_nuisance_artifact is None
+                        else self.latent_nuisance_artifact.to_dict()
+                    ),
+                }
+            )
+        return result
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -2032,13 +2218,21 @@ class IncrementalDownstreamApplication:
         heldout_subjects = tuple(sorted(set(sample_subjects)))
         if subjects != heldout_subjects:
             raise ValueError("subject_ids must equal the held-out row subject universe")
-        loss_aggregation = (
-            "mean_technical_within_subject_context_then_frozen_regressor_"
-            "contrast_then_equal_subject_mean_v4"
-            if functional.loss_design == _PAIRED_LOSS_DESIGN
-            else "mean_technical_within_subject_context_then_frozen_independent_"
-            "pseudocontrast_then_equal_subject_mean_v1"
-        )
+        if functional.loss_design == _PAIRED_LOSS_DESIGN:
+            loss_aggregation = (
+                "mean_technical_within_subject_context_then_frozen_regressor_"
+                "contrast_then_equal_subject_mean_v4"
+            )
+        elif functional.loss_design == _INDEPENDENT_LOSS_DESIGN:
+            loss_aggregation = (
+                "mean_technical_within_subject_context_then_frozen_independent_"
+                "pseudocontrast_then_equal_subject_mean_v1"
+            )
+        else:
+            loss_aggregation = (
+                "mean_technical_within_subject_context_then_equal_observed_context_"
+                "full_prediction_loss_then_equal_subject_mean_v1"
+            )
         self = object.__new__(cls)
         attributes: dict[str, Any] = {
             "incremental_functional_id": functional.incremental_functional_id,
@@ -2240,7 +2434,7 @@ def _project_feature_values(
     return result
 
 
-def fit_incremental_downstream_functional(
+def _fit_incremental_downstream_functional(
     response_matrix: np.ndarray,
     *,
     row_manifest: DownstreamRowManifest,
@@ -2259,6 +2453,8 @@ def fit_incremental_downstream_functional(
     training_subject_ids: tuple[str, ...],
     family_basis: sparse.spmatrix | np.ndarray,
     autonomous_program_resource: ReceiverAutonomousProgramResource | None = None,
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None = None,
+    latent_control_exclusion_basis: sparse.spmatrix | np.ndarray | None = None,
     identifiability_tolerance: float = 1e-6,
     precision_weights: np.ndarray | None = None,
     minimum_scale: float = 0.25,
@@ -2266,8 +2462,10 @@ def fit_incremental_downstream_functional(
     lambda1: float = 0.0,
     lambda2: float = 0.0,
     penalty_candidate: RelativePenaltyCandidate | None = None,
+    loss_design_override: str | None = None,
+    _loss_design_producer_token: object | None = None,
 ) -> IncrementalDownstreamFunctional:
-    """Fit sample-keyed nuisance and non-negative LR-family response models."""
+    """Fit the model with an optional workflow-frozen validation estimand."""
 
     features = _names(feature_ids, field_name="feature_ids")
     families = _names(family_ids, field_name="family_ids")
@@ -2311,20 +2509,31 @@ def fit_incremental_downstream_functional(
         raise ValueError("minimum_scale must be finite and positive")
     if not math.isfinite(null_loss_floor) or null_loss_floor <= 0:
         raise ValueError("null_loss_floor must be finite and positive")
-    loss_design = _subject_loss_design(canonical.subject_ids, canonical.context_ids)
+    observed_loss_design = _subject_loss_design(
+        canonical.subject_ids, canonical.context_ids
+    )
+    if loss_design_override is None:
+        loss_design = observed_loss_design
+    else:
+        if (
+            _loss_design_producer_token
+            is not _WORKFLOW_MIXED_LOSS_DESIGN_PRODUCER_TOKEN
+        ):
+            raise TypeError("loss_design_override is workflow-producer-owned")
+        if loss_design_override != _MIXED_LOSS_DESIGN:
+            raise ValueError("loss_design_override must freeze the mixed loss estimand")
+        loss_design = loss_design_override
     if loss_design is None:
-        raise ValueError(
-            "incremental training requires fully paired or independent subjects"
-        )
+        raise ValueError("incremental training requires a supported subject allocation")
     loss_context_weights = (
-        np.empty(0, dtype=np.float64)
-        if loss_design == _PAIRED_LOSS_DESIGN
-        else _independent_context_contrast_weights(
+        _independent_context_contrast_weights(
             regressor,
             subject_ids=canonical.subject_ids,
             context_ids=canonical.context_ids,
             contrast_floor=null_loss_floor,
         )
+        if loss_design == _INDEPENDENT_LOSS_DESIGN
+        else np.empty(0, dtype=np.float64)
     )
     reference_by_subject = _subject_reference_summary(
         response,
@@ -2375,6 +2584,19 @@ def fit_incremental_downstream_functional(
         n_families=len(families),
     )
     raw_input_family_basis_id = _matrix_digest(raw_input_family_basis)
+    if latent_control_exclusion_basis is None:
+        control_exclusion_basis = raw_input_family_basis
+    else:
+        exclusion_shape = latent_control_exclusion_basis.shape
+        if len(exclusion_shape) != 2 or exclusion_shape[1] < 1:
+            raise ValueError(
+                "latent_control_exclusion_basis must contain at least one family"
+            )
+        control_exclusion_basis = _canonical_family_basis(
+            latent_control_exclusion_basis,
+            n_features=n_features,
+            n_families=int(exclusion_shape[1]),
+        )
     original_basis = _normalize_family_basis(
         raw_input_family_basis,
         n_features=n_features,
@@ -2382,10 +2604,16 @@ def fit_incremental_downstream_functional(
     )
     normalized_raw_family_basis_id = _matrix_digest(original_basis)
     original_family_basis_id = raw_input_family_basis_id
+    if latent_nuisance_spec is not None:
+        if not isinstance(latent_nuisance_spec, FrozenLatentNuisanceSpec):
+            raise TypeError(
+                "latent_nuisance_spec must be a FrozenLatentNuisanceSpec"
+            )
+        latent_nuisance_spec._require_intact()
     if autonomous_program_resource is None:
-        autonomous_program_ids: tuple[str, ...] = ()
-        autonomous_basis_id: str | None = None
-        raw_programs = np.empty((n_features, 0), dtype=np.float64)
+        static_program_ids: tuple[str, ...] = ()
+        static_basis_id: str | None = None
+        static_raw_programs = np.empty((n_features, 0), dtype=np.float64)
     else:
         if not isinstance(
             autonomous_program_resource, ReceiverAutonomousProgramResource
@@ -2395,9 +2623,11 @@ def fit_incremental_downstream_functional(
                 "ReceiverAutonomousProgramResource"
             )
         autonomous_program_resource._require_producer_owned()
-        autonomous_program_ids = autonomous_program_resource.program_ids
-        autonomous_basis_id = autonomous_program_resource.artifact_id
-        raw_programs = autonomous_program_resource.matrix_for_features(features)
+        static_program_ids = autonomous_program_resource.program_ids
+        static_basis_id = autonomous_program_resource.artifact_id
+        static_raw_programs = autonomous_program_resource.matrix_for_features(
+            features
+        )
 
     coordinate_family_basis = sparse.csc_matrix(
         sparse.diags(1.0 / scale, format="csc") @ original_basis
@@ -2405,7 +2635,70 @@ def fit_incremental_downstream_functional(
     coordinate_family_basis.sum_duplicates()
     coordinate_family_basis.sort_indices()
     coordinate_family_basis_id = _matrix_digest(coordinate_family_basis)
-    programs = raw_programs / scale[:, np.newaxis]
+    static_programs = static_raw_programs / scale[:, np.newaxis]
+    latent_artifact: FoldLatentNuisanceArtifact | None = None
+    if latent_nuisance_spec is None:
+        programs = static_programs
+        autonomous_program_ids = static_program_ids
+        autonomous_basis_id = static_basis_id
+        autonomous_basis_source = (
+            _AUTONOMOUS_SOURCE_NONE
+            if not static_program_ids
+            else _AUTONOMOUS_SOURCE_STATIC
+        )
+    else:
+        latent_artifact = fit_fold_latent_nuisance(
+            response,
+            feature_ids=features,
+            family_basis=control_exclusion_basis,
+            nuisance_matrix=nuisance,
+            sample_ids=canonical.sample_ids,
+            subject_ids=canonical.subject_ids,
+            context_ids=canonical.context_ids,
+            training_weights=training_weights,
+            feature_center=center,
+            feature_scale=scale,
+            precision_weights=precision,
+            fold_id=fold_id,
+            receiver=receiver,
+            contrast_name=contrast_name,
+            spec=latent_nuisance_spec,
+            static_coordinate_basis=(
+                None if not static_program_ids else static_programs
+            ),
+            static_coordinate_basis_id=static_basis_id,
+            static_program_ids=static_program_ids,
+        )
+        if latent_artifact.status != "observed":
+            raise _LatentNuisanceNotEstimableError(latent_artifact)
+        programs = np.column_stack(
+            (static_programs, latent_artifact.coordinate_basis)
+        )
+        autonomous_program_ids = (
+            *static_program_ids,
+            *latent_artifact.program_ids,
+        )
+        autonomous_basis_source = (
+            _AUTONOMOUS_SOURCE_LEARNED
+            if not static_program_ids
+            else _AUTONOMOUS_SOURCE_HYBRID
+        )
+        autonomous_basis_id = (
+            latent_artifact.artifact_id
+            if not static_program_ids
+            else stable_id(
+                "composed_autonomous_program_basis",
+                {
+                    "feature_ids": list(features),
+                    "latent_nuisance_artifact_id": latent_artifact.artifact_id,
+                    "program_ids": list(autonomous_program_ids),
+                    "static_program_resource_id": static_basis_id,
+                    "coordinate_basis_digest": _dense_input_digest(programs),
+                },
+                schema_version="1",
+            )
+        )
+    raw_programs = scale[:, np.newaxis] * programs
     basis_coordinate_transform_id = stable_id(
         "downstream_basis_coordinate_transform",
         {
@@ -2424,7 +2717,7 @@ def fit_incremental_downstream_functional(
         schema_version="1",
     )
 
-    if autonomous_program_resource is None:
+    if not autonomous_program_ids:
         coordinate_norms = np.sqrt(
             np.asarray(coordinate_family_basis.power(2).sum(axis=0)).ravel()
         )
@@ -2663,6 +2956,8 @@ def fit_incremental_downstream_functional(
         autonomous_program_ids=tuple(autonomous_program_ids),
         autonomous_basis_id=autonomous_basis_id,
         autonomous_basis=programs,
+        autonomous_basis_source=autonomous_basis_source,
+        latent_nuisance_artifact=latent_artifact,
         basis_coordinate_transform=_BASIS_COORDINATE_TRANSFORM,
         basis_coordinate_transform_id=basis_coordinate_transform_id,
         raw_input_family_basis_id=raw_input_family_basis_id,
@@ -2688,6 +2983,67 @@ def fit_incremental_downstream_functional(
         resolved_penalty_id=resolved_penalty_id,
         lambda1=lambda1,
         lambda2=lambda2,
+    )
+
+
+def fit_incremental_downstream_functional(
+    response_matrix: np.ndarray,
+    *,
+    row_manifest: DownstreamRowManifest,
+    design_sample_ids: tuple[str, ...],
+    reference_mask: np.ndarray,
+    nuisance_matrix: np.ndarray,
+    context_regressor: np.ndarray,
+    receiver: str,
+    contrast_name: str,
+    fold_id: str,
+    context_regressor_id: str,
+    nuisance_design_id: str,
+    feature_ids: tuple[str, ...],
+    family_ids: tuple[str, ...],
+    nuisance_column_ids: tuple[str, ...],
+    training_subject_ids: tuple[str, ...],
+    family_basis: sparse.spmatrix | np.ndarray,
+    autonomous_program_resource: ReceiverAutonomousProgramResource | None = None,
+    latent_nuisance_spec: FrozenLatentNuisanceSpec | None = None,
+    latent_control_exclusion_basis: sparse.spmatrix | np.ndarray | None = None,
+    identifiability_tolerance: float = 1e-6,
+    precision_weights: np.ndarray | None = None,
+    minimum_scale: float = 0.25,
+    null_loss_floor: float = 1e-8,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    penalty_candidate: RelativePenaltyCandidate | None = None,
+) -> IncrementalDownstreamFunctional:
+    """Fit sample-keyed nuisance and non-negative LR-family response models."""
+
+    return _fit_incremental_downstream_functional(
+        response_matrix,
+        row_manifest=row_manifest,
+        design_sample_ids=design_sample_ids,
+        reference_mask=reference_mask,
+        nuisance_matrix=nuisance_matrix,
+        context_regressor=context_regressor,
+        receiver=receiver,
+        contrast_name=contrast_name,
+        fold_id=fold_id,
+        context_regressor_id=context_regressor_id,
+        nuisance_design_id=nuisance_design_id,
+        feature_ids=feature_ids,
+        family_ids=family_ids,
+        nuisance_column_ids=nuisance_column_ids,
+        training_subject_ids=training_subject_ids,
+        family_basis=family_basis,
+        autonomous_program_resource=autonomous_program_resource,
+        latent_nuisance_spec=latent_nuisance_spec,
+        latent_control_exclusion_basis=latent_control_exclusion_basis,
+        identifiability_tolerance=identifiability_tolerance,
+        precision_weights=precision_weights,
+        minimum_scale=minimum_scale,
+        null_loss_floor=null_loss_floor,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        penalty_candidate=penalty_candidate,
     )
 
 
@@ -2735,8 +3091,47 @@ def _subject_context_prediction_losses(
     if len(contexts) < 2:
         return None
     observed_loss_design = _subject_loss_design(sample_subject_ids, sample_context_ids)
-    if observed_loss_design != loss_design:
+    if loss_design != _MIXED_LOSS_DESIGN and observed_loss_design != loss_design:
         return None
+    if loss_design == _MIXED_LOSS_DESIGN:
+        if np.asarray(frozen_context_weights).size:
+            raise ValueError("mixed full-prediction loss cannot retain context weights")
+        mixed_subject_losses: list[float] = []
+        for subject in subjects:
+            subject_contexts = tuple(
+                context
+                for context in contexts
+                if any(
+                    row_subject == subject and row_context == context
+                    for row_subject, row_context in zip(
+                        sample_subject_ids,
+                        sample_context_ids,
+                        strict=True,
+                    )
+                )
+            )
+            if not subject_contexts:
+                return None
+            context_losses: list[float] = []
+            for context in subject_contexts:
+                mask = np.asarray(
+                    [
+                        row_subject == subject and row_context == context
+                        for row_subject, row_context in zip(
+                            sample_subject_ids,
+                            sample_context_ids,
+                            strict=True,
+                        )
+                    ],
+                    dtype=bool,
+                )
+                mean_residual = np.mean(residual[mask], axis=0)
+                context_losses.append(
+                    float(np.sum(np.square(mean_residual) * precision))
+                )
+            mixed_subject_losses.append(float(np.mean(context_losses)))
+        subject_loss_array = np.asarray(mixed_subject_losses, dtype=np.float64)
+        return subjects, subject_loss_array, float(np.mean(subject_loss_array))
     if loss_design == _INDEPENDENT_LOSS_DESIGN:
         weights = np.asarray(frozen_context_weights, dtype=np.float64)
         if (
@@ -3044,7 +3439,11 @@ def apply_incremental_downstream_functional(
             reason_code=(
                 "paired_contrast_loss_required"
                 if functional.loss_design == _PAIRED_LOSS_DESIGN
-                else "independent_context_loss_required"
+                else (
+                    "independent_context_loss_required"
+                    if functional.loss_design == _INDEPENDENT_LOSS_DESIGN
+                    else "mixed_subject_full_prediction_loss_required"
+                )
             ),
             canonical=canonical,
             heldout_row_manifest_id=row_manifest.manifest_id,

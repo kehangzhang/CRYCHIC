@@ -19,9 +19,30 @@ import crychic.sender.common as common_sender_module
 import crychic.workflow.crossfit as crossfit_module
 import crychic.workflow.repeated_crossfit as repeated_crossfit_module
 import crychic.workflow.training as training_module
-from crychic.attribution import PenaltyTuningSpec
-from crychic.core import ContractError, CrychicConfig, SeedLineage
+from crychic import Crychic, fit_crossfit_family_effect
+from crychic.attribution import (
+    DirectionalContrastPairSpec,
+    GainCalibrationSpec,
+    PenaltyTuningSpec,
+    PenaltyValidationLossEstimand,
+    freeze_receiver_family_opportunity_universe,
+)
+from crychic.core import (
+    ContractError,
+    CrychicConfig,
+    SeedLineage,
+    canonical_digest,
+    canonical_json,
+    stable_id,
+)
 from crychic.design import balanced_contrast
+from crychic.inference import (
+    FullPipelineEffectDistributionSpec,
+    HypothesisDeclaration,
+    HypothesisRole,
+    SpecificityDirection,
+    freeze_hypothesis_universe,
+)
 from crychic.resampling import SubjectFoldPlan
 from crychic.resources import (
     GeneNamespace,
@@ -41,7 +62,15 @@ from crychic.response import (
     build_receiver_autonomous_program_resource,
     load_receiver_autonomous_program_resource,
 )
+from crychic.response.repeated_fold import RepeatedMeasuresFoldResponseArtifact
+from crychic.results import ResultValidationError, ResultWriteError
 from crychic.scoring import (
+    SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+    FrozenLatentNuisanceSpec,
+    PlannedScoringCollectionManifest,
+    ReceiverScoringFunctionalManifest,
+    ScoringCollectionDocument,
+    ScoringCollectionManifest,
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
     mark_receiver_program_application_not_estimable,
@@ -49,12 +78,29 @@ from crychic.scoring import (
 from crychic.sender import CommonSenderApplication, ContrastCommonSenderParameters
 from crychic.workflow import (
     CrossFitArtifacts,
+    CrossFitResult,
     CrossFitSpec,
+    FamilyEffectTarget,
     FoldTrainingSpec,
+    FullPipelineResamplingStatus,
     RepeatedCrossFitDiagnostics,
     RepeatedCrossFitSpec,
+    adapt_crossfit_active_edge_point_records,
+    build_family_effect_oof_spec,
+    build_frozen_family_effect_target,
+    freeze_crossfit_active_edge_universe,
+    recommended_crossfit_spec,
+    run_full_pipeline_resampling,
     run_repeated_subject_crossfit,
     run_subject_crossfit,
+    summarize_family_effect_full_pipeline,
+    write_crossfit_result,
+)
+from crychic.workflow.certification import (
+    CROSSFIT_OOF_DESCRIPTIVE_SCOPE,
+    CrossFitOOFCertificationAudit,
+    CrossFitOOFRequirementRecord,
+    audit_crossfit_oof_readiness,
 )
 
 
@@ -242,14 +288,14 @@ def _adata(
     return adata
 
 
-def _independent_adata() -> AnnData:
+def _independent_adata(n_subjects_per_context: int = 4) -> AnnData:
     genes = ("L1", "R1", "L2", "R2", "T1", "T2")
     rows: list[list[int]] = []
     metadata: list[dict[str, str]] = []
     obs_names: list[str] = []
     allocations = tuple(
-        [(f"control-{index}", "control") for index in range(4)]
-        + [(f"stim-{index}", "stim") for index in range(4)]
+        [(f"control-{index}", "control") for index in range(n_subjects_per_context)]
+        + [(f"stim-{index}", "stim") for index in range(n_subjects_per_context)]
     )
     for subject_index, (subject, condition) in enumerate(allocations):
         high = 70 + 3 * subject_index
@@ -272,6 +318,102 @@ def _independent_adata() -> AnnData:
                     }
                 )
                 obs_names.append(f"{subject}-{cell_type}-{cell_index}")
+    counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
+    adata = AnnData(
+        X=sparse.csr_matrix(counts.shape, dtype=np.float64),
+        obs=pd.DataFrame(metadata, index=obs_names),
+        var=pd.DataFrame(index=genes),
+    )
+    adata.layers["counts"] = counts
+    return adata
+
+
+def _mixed_adata(*, n_paired: int = 8, n_single_per_context: int = 4) -> AnnData:
+    genes = ("L1", "R1", "L2", "R2", "T1", "T2")
+    rows: list[list[int]] = []
+    metadata: list[dict[str, str]] = []
+    obs_names: list[str] = []
+    allocations = [
+        *((f"paired-{index}", ("control", "stim")) for index in range(n_paired)),
+        *(
+            (f"control-only-{index}", ("control",))
+            for index in range(n_single_per_context)
+        ),
+        *((f"stim-only-{index}", ("stim",)) for index in range(n_single_per_context)),
+    ]
+    for subject_index, (subject, conditions) in enumerate(allocations):
+        for condition in conditions:
+            sample = f"sample-{subject}-{condition}"
+            condition_shift = 16 if condition == "stim" else 0
+            target_one = 4 + subject_index % 7 + condition_shift
+            target_two = 3 + (2 * subject_index) % 9 + condition_shift // 2
+            high = 70 + 3 * (subject_index % 5)
+            low = 2 + subject_index % 4
+            for cell_type, profile in (
+                ("Sender", [high, 0, low, 0, 1, 1]),
+                ("Receiver", [0, high, 0, low, target_one, target_two]),
+            ):
+                for cell_index in range(3):
+                    rows.append(profile)
+                    metadata.append(
+                        {
+                            "sample_id": sample,
+                            "subject_id": subject,
+                            "cell_type": cell_type,
+                            "condition": condition,
+                        }
+                    )
+                    obs_names.append(f"{subject}-{condition}-{cell_type}-{cell_index}")
+    counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
+    adata = AnnData(
+        X=sparse.csr_matrix(counts.shape, dtype=np.float64),
+        obs=pd.DataFrame(metadata, index=obs_names),
+        var=pd.DataFrame(index=genes),
+    )
+    adata.layers["counts"] = counts
+    return adata
+
+
+def _repeated_multi_context_adata() -> AnnData:
+    genes = ("L1", "R1", "L2", "R2", "T1", "T2")
+    rows: list[list[int]] = []
+    metadata: list[dict[str, str]] = []
+    obs_names: list[str] = []
+    patterns = (
+        ("a", "b", "c"),
+        ("a", "b"),
+        ("b", "c"),
+        ("a", "c"),
+    )
+    allocations = [
+        (f"pattern-{pattern_index}-{subject_index}", contexts)
+        for pattern_index, contexts in enumerate(patterns)
+        for subject_index in range(4)
+    ]
+    context_shift = {"a": 0, "b": 7, "c": 18}
+    for subject_index, (subject, contexts) in enumerate(allocations):
+        for condition in contexts:
+            sample = f"sample-{subject}-{condition}"
+            shift = context_shift[condition]
+            target_one = 5 + subject_index % 6 + shift
+            target_two = 3 + (2 * subject_index) % 7 + shift // 2
+            high = 70 + 2 * (subject_index % 7)
+            low = 2 + subject_index % 5
+            for cell_type, profile in (
+                ("Sender", [high, 0, low, 0, 1, 1]),
+                ("Receiver", [0, high, 0, low, target_one, target_two]),
+            ):
+                for cell_index in range(3):
+                    rows.append(profile)
+                    metadata.append(
+                        {
+                            "sample_id": sample,
+                            "subject_id": subject,
+                            "cell_type": cell_type,
+                            "condition": condition,
+                        }
+                    )
+                    obs_names.append(f"{subject}-{condition}-{cell_type}-{cell_index}")
     counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
     adata = AnnData(
         X=sparse.csr_matrix(counts.shape, dtype=np.float64),
@@ -309,6 +451,685 @@ def _spec() -> CrossFitSpec:
     )
 
 
+def _directional_spec() -> CrossFitSpec:
+    base = _spec()
+    forward = balanced_contrast(
+        ("stim",),
+        ("control",),
+        name="stim_vs_control",
+        family="treatment",
+    )
+    reverse = balanced_contrast(
+        ("control",),
+        ("stim",),
+        name="control_vs_stim",
+        family="treatment",
+    )
+    pair = DirectionalContrastPairSpec(
+        forward_contrast=forward,
+        reverse_contrast=reverse,
+    )
+    return CrossFitSpec(
+        contrasts=(reverse, forward),
+        directional_pairs=(pair,),
+        training_spec=replace(base.training_spec, sender_contrasts=None),
+        allowed_n_splits=base.allowed_n_splits,
+    )
+
+
+def test_directional_crossfit_spec_is_order_invariant_and_opt_in() -> None:
+    base = _spec()
+    explicit_default = replace(base, directional_pairs=())
+    directional = _directional_spec()
+    reversed_input = replace(
+        directional,
+        contrasts=tuple(reversed(directional.contrasts)),
+        directional_pairs=tuple(reversed(directional.directional_pairs)),
+    )
+
+    assert explicit_default.spec_id == base.spec_id
+    assert "directional_pairs" not in base.to_dict()
+    assert directional.spec_id == reversed_input.spec_id
+    assert directional.spec_id != base.spec_id
+    assert directional.to_dict()["directional_pairs"] == [
+        directional.directional_pairs[0].to_dict()
+    ]
+
+    forward = directional.directional_pairs[0].forward_contrast
+    with pytest.raises(ValueError, match="registered in contrasts"):
+        CrossFitSpec(
+            contrasts=(forward,),
+            directional_pairs=directional.directional_pairs,
+            training_spec=replace(base.training_spec, sender_contrasts=None),
+            allowed_n_splits=(2,),
+        )
+    with pytest.raises(ValueError, match="at most one directional pair"):
+        opposite_pair = DirectionalContrastPairSpec(
+            forward_contrast=directional.directional_pairs[0].reverse_contrast,
+            reverse_contrast=directional.directional_pairs[0].forward_contrast,
+        )
+        CrossFitSpec(
+            contrasts=directional.contrasts,
+            directional_pairs=(
+                directional.directional_pairs[0],
+                opposite_pair,
+            ),
+            training_spec=replace(base.training_spec, sender_contrasts=None),
+            allowed_n_splits=(2,),
+        )
+
+
+def test_directional_crossfit_emits_exact_typed_binding_registry(
+    tmp_path: Path,
+) -> None:
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+
+    pair = result.spec.directional_pairs[0]
+    expected = {
+        (fold.fold_id, pair.pair_spec_id, receiver)
+        for fold in result.folds
+        for receiver in fold.training.cell_type_ids
+    }
+    observed = {
+        (fold.fold_id, binding.pair_spec_id, binding.receiver)
+        for fold in result.folds
+        for binding in fold.directional_response_bindings
+    }
+    assert observed == expected
+    assert all(
+        binding.forward_channel_name == "increased_activation_compatible"
+        and binding.reverse_channel_name == "reduced_activation_compatible"
+        and binding.supports_active_inhibition_claim is False
+        and binding.paired_score_comparison_allowed is False
+        and binding.formal_inference_allowed is False
+        for fold in result.folds
+        for binding in fold.directional_response_bindings
+    )
+    bindings = tuple(
+        binding
+        for fold in result.folds
+        for binding in fold.directional_response_bindings
+    )
+    assert [binding.status for binding in bindings].count("observed") == 2
+    assert [binding.status for binding in bindings].count("not_estimable") == 2
+    assert all(
+        (binding.response_pair is not None) == (binding.status == "observed")
+        for binding in bindings
+    )
+    manifest = result.to_manifest()
+    assert manifest["directional_pair_stage_connected"] is True
+    assert manifest["directional_registry_complete"] is True
+    assert manifest["directional_supported_binding_registry_complete"] is True
+    assert manifest["n_directional_receiver_pair_absent_training"] == 0
+    assert manifest["n_directional_receiver_pair_opportunities"] == len(expected)
+    assert manifest["n_directional_response_bindings"] == len(expected)
+    assert manifest["directional_binding_status_counts"] == {
+        "not_estimable": 2,
+        "observed": 2,
+    }
+    assert manifest["directional_diagnostic_complete"] is False
+    assert all(
+        len(item["directional_response_bindings"])
+        == len(result.spec.directional_pairs) * len(fold.training.cell_type_ids)
+        for item, fold in zip(manifest["fold_artifacts"], result.folds, strict=True)
+    )
+
+    persisted = write_crossfit_result(result, tmp_path / "directional-crossfit")
+    loaded = CrossFitResult.load(persisted.path)
+    registry = loaded.read_directional_channel_registry()
+    opportunities = loaded.read_directional_opportunities()
+    assert loaded.manifest["schema_version"] == "9.0.0"
+    assert len(registry) == 2 * len(expected)
+    assert len(opportunities) == 2 * len(expected)
+    assert set(registry["channel_role"]) == {"forward", "reverse"}
+    assert set(opportunities["receiver_training_support_status"]) == {"observed"}
+    assert opportunities["channel_opportunity_id"].is_unique
+    assert opportunities.groupby("pair_opportunity_id").size().eq(2).all()
+    assert registry["status"].value_counts().to_dict() == {
+        "observed": 4,
+        "not_estimable": 4,
+    }
+    assert len(
+        loaded.query_directional_channels(channel="increased_activation_compatible")
+    ) == len(expected)
+    assert loaded.read_semantic_integrated_lr_scores().empty
+    assert loaded.read_semantic_differential_effects().empty
+    semantic_statuses = {
+        row[0]: (row[1], row[2])
+        for row in cast(
+            list[list[object]],
+            loaded.semantic_score_manifest["view_statuses"],
+        )
+    }
+    assert semantic_statuses["integrated_lr_score"] == (
+        "not_produced",
+        "directional_contrasts_require_dedicated_integrated_lr_collection",
+    )
+    assert (
+        semantic_statuses["differential_effect"]
+        == semantic_statuses["integrated_lr_score"]
+    )
+
+
+def test_directional_manifest_does_not_hide_absent_receiver_opportunities(
+    tmp_path: Path,
+) -> None:
+    adata = _adata()
+    heldout_only = adata.obs["subject_id"].eq("p1") & adata.obs["cell_type"].eq(
+        "Sender"
+    )
+    adata.obs.loc[heldout_only, "cell_type"] = "Novel"
+
+    result = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+    manifest = result.to_manifest()
+
+    supported = sum(
+        record.status == "observed"
+        for fold in result.folds
+        for record in fold.receiver_training_support
+    )
+    absent = sum(
+        record.status == "not_estimable"
+        for fold in result.folds
+        for record in fold.receiver_training_support
+    )
+    n_pairs = len(result.spec.directional_pairs)
+    assert manifest["n_directional_response_bindings"] == n_pairs * supported
+    assert manifest["n_directional_receiver_pair_absent_training"] == (n_pairs * absent)
+    assert manifest["n_directional_receiver_pair_opportunities"] == (
+        n_pairs * len(result.receiver_universe.receiver_ids) * len(result.folds)
+    )
+    assert manifest["directional_supported_binding_registry_complete"] is True
+    assert manifest["directional_registry_complete"] is False
+    assert manifest["directional_diagnostic_complete"] is False
+
+    persisted = write_crossfit_result(
+        result,
+        tmp_path / "directional-absent-receiver-opportunities",
+    )
+    loaded = CrossFitResult.load(persisted.path)
+    opportunities = loaded.read_directional_opportunities()
+    expected_keys = {
+        (pair.pair_spec_id, fold.fold_id, receiver, role)
+        for pair in result.spec.directional_pairs
+        for fold in result.folds
+        for receiver in result.receiver_universe.receiver_ids
+        for role in ("forward", "reverse")
+    }
+    observed_keys = set(
+        opportunities[
+            ["pair_spec_id", "fold_id", "receiver", "channel_role"]
+        ].itertuples(index=False, name=None)
+    )
+    assert observed_keys == expected_keys
+    assert (
+        len(opportunities) == 2 * manifest["n_directional_receiver_pair_opportunities"]
+    )
+    assert opportunities["channel_opportunity_id"].is_unique
+    assert opportunities.groupby("pair_opportunity_id").size().eq(2).all()
+
+    absent_rows = loaded.query_directional_opportunities(
+        receiver_training_support_status="not_estimable"
+    )
+    assert len(absent_rows) == 2 * n_pairs * absent
+    assert set(absent_rows["channel_role"]) == {"forward", "reverse"}
+    assert set(absent_rows["status"]) == {"not_estimable"}
+    assert set(absent_rows["reason_code"]) == {"receiver_absent_in_outer_training"}
+    assert set(absent_rows["receiver_training_support_reason_code"]) == {
+        "receiver_absent_in_outer_training"
+    }
+    assert (
+        absent_rows[
+            [
+                "binding_id",
+                "response_id",
+                "training_artifact_id",
+                "application_id",
+                "response_pair_id",
+                "response_channel_id",
+            ]
+        ]
+        .isna()
+        .all(axis=None)
+    )
+    assert (
+        absent_rows[
+            [
+                "pair_opportunity_id",
+                "channel_opportunity_id",
+                "receiver_training_support_id",
+                "channel",
+                "contrast_id",
+                "contrast",
+            ]
+        ]
+        .notna()
+        .all(axis=None)
+    )
+    assert "structural_zero" not in set(opportunities["status"])
+
+
+def test_directional_mixed_cr2_partial_features_are_typed_not_estimable() -> None:
+    result = run_subject_crossfit(
+        _mixed_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+
+    responses = [
+        response
+        for fold in result.folds
+        for response in fold.receiver_responses
+        if response.receiver == "Receiver"
+    ]
+    bindings = [
+        binding
+        for fold in result.folds
+        for binding in fold.directional_response_bindings
+        if binding.receiver == "Receiver"
+    ]
+    assert responses
+    assert all(
+        isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+        and response.status == "ok"
+        and response.cr2_backend_eligible
+        and np.isnan(response.effect).any()
+        for response in responses
+    )
+    assert bindings
+    assert all(
+        binding.status == "not_estimable"
+        and binding.response_pair is None
+        and binding.reason_code
+        == (
+            "directional_components_not_estimable["
+            "forward_response:partial_feature_response_not_supported_by_"
+            "directional_pair;"
+            "reverse_response:partial_feature_response_not_supported_by_"
+            "directional_pair]"
+        )
+        for binding in bindings
+    )
+
+
+def test_root_family_universe_is_prefit_and_bound_for_ordinary_crossfit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    crossfit_identity_payloads: list[dict[str, object]] = []
+    original_freeze = crossfit_module.freeze_receiver_family_opportunity_universe
+    original_plan = crossfit_module.plan_subject_folds
+    original_fit = crossfit_module._fit_training_artifacts_from_prepared
+    original_stable_id = crossfit_module.stable_id
+
+    def tracked_freeze(*args, **kwargs):
+        events.append("freeze_root_family_universe")
+        return original_freeze(*args, **kwargs)
+
+    def tracked_plan(*args, **kwargs):
+        events.append("plan_subject_folds")
+        return original_plan(*args, **kwargs)
+
+    def tracked_fit(*args, **kwargs):
+        events.append("fit_training_fold")
+        return original_fit(*args, **kwargs)
+
+    def tracked_stable_id(kind, payload, *args, **kwargs):
+        result = original_stable_id(kind, payload, *args, **kwargs)
+        if kind == "subject_crossfit":
+            crossfit_identity_payloads.append(payload)
+        return result
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "freeze_receiver_family_opportunity_universe",
+        tracked_freeze,
+    )
+    monkeypatch.setattr(crossfit_module, "plan_subject_folds", tracked_plan)
+    monkeypatch.setattr(
+        crossfit_module,
+        "_fit_training_artifacts_from_prepared",
+        tracked_fit,
+    )
+    monkeypatch.setattr(crossfit_module, "stable_id", tracked_stable_id)
+
+    result = _run(_adata())
+    universe = result.receiver_family_opportunity_universe
+    assert events.count("freeze_root_family_universe") == 1
+    assert events.index("freeze_root_family_universe") < events.index(
+        "plan_subject_folds"
+    )
+    assert events.index("plan_subject_folds") < events.index("fit_training_fold")
+    assert universe.receiver_ids == result.receiver_universe.receiver_ids
+    assert universe.receiver_universe_id == result.receiver_universe.universe_id
+    assert len(universe.opportunity_ids) == (
+        len(universe.receiver_ids) * len(universe.family_ids)
+    )
+
+    manifest = result.to_manifest()
+    assert manifest["receiver_family_opportunity_universe"] == universe.to_dict()
+    assert manifest["receiver_family_opportunity_universe_id"] == universe.universe_id
+    assert manifest["family_axis_id"] == universe.family_axis_id
+    assert manifest["receiver_family_opportunity_axis_id"] == (
+        universe.opportunity_axis_id
+    )
+    assert crossfit_identity_payloads
+    assert all(
+        payload["receiver_family_opportunity_universe_id"] == universe.universe_id
+        and payload["family_axis_id"] == universe.family_axis_id
+        and payload["receiver_family_opportunity_axis_id"]
+        == universe.opportunity_axis_id
+        for payload in crossfit_identity_payloads
+    )
+    for fold in result.folds:
+        supported = {
+            record.receiver_id
+            for record in fold.receiver_training_support
+            if record.status == "observed"
+        }
+        parents = {
+            model.receiver_family_artifact.receiver: model.receiver_family_artifact
+            for model in fold.receiver_family_models
+        }
+        assert set(parents) == supported
+        for parent in parents.values():
+            assert parent.prior_manifest_digest == universe.prior_manifest_digest
+            assert parent.source_basis.feature_ids == universe.feature_ids
+            assert parent.source_basis.driver_ids == universe.driver_ids
+            assert parent.family_basis.feature_ids == universe.feature_ids
+            assert parent.family_basis.family_definitions == universe.family_definitions
+            assert parent.family_basis.family_ids == universe.family_ids
+            assert (
+                parent.family_basis.strict_cosine_threshold == universe.cosine_threshold
+            )
+
+
+def test_directional_lr_universe_is_prefit_and_bound_to_crossfit_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    crossfit_identity_payloads: list[dict[str, object]] = []
+    original_family_freeze = crossfit_module.freeze_receiver_family_opportunity_universe
+    original_freeze = crossfit_module.freeze_receiver_family_lr_hypothesis_universe
+    original_plan = crossfit_module.plan_subject_folds
+    original_fit = crossfit_module._fit_training_artifacts_from_prepared
+    original_stable_id = crossfit_module.stable_id
+
+    def tracked_family_freeze(*args, **kwargs):
+        events.append("freeze_root_family_universe")
+        return original_family_freeze(*args, **kwargs)
+
+    def tracked_freeze(*args, **kwargs):
+        events.append("freeze_directional_lr_universe")
+        return original_freeze(*args, **kwargs)
+
+    def tracked_plan(*args, **kwargs):
+        events.append("plan_subject_folds")
+        return original_plan(*args, **kwargs)
+
+    def tracked_fit(*args, **kwargs):
+        events.append("fit_training_fold")
+        return original_fit(*args, **kwargs)
+
+    def tracked_stable_id(kind, payload, *args, **kwargs):
+        result = original_stable_id(kind, payload, *args, **kwargs)
+        if kind == "subject_crossfit":
+            crossfit_identity_payloads.append(payload)
+        return result
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "freeze_receiver_family_opportunity_universe",
+        tracked_family_freeze,
+    )
+    monkeypatch.setattr(
+        crossfit_module,
+        "freeze_receiver_family_lr_hypothesis_universe",
+        tracked_freeze,
+    )
+    monkeypatch.setattr(crossfit_module, "plan_subject_folds", tracked_plan)
+    monkeypatch.setattr(
+        crossfit_module,
+        "_fit_training_artifacts_from_prepared",
+        tracked_fit,
+    )
+    monkeypatch.setattr(crossfit_module, "stable_id", tracked_stable_id)
+
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+    universe = result.directional_lr_hypothesis_universe
+    assert universe is not None
+    root_family_universe = result.receiver_family_opportunity_universe
+    assert universe._receiver_family_universe is root_family_universe
+    assert events.index("freeze_root_family_universe") < events.index(
+        "freeze_directional_lr_universe"
+    )
+    assert events.index("freeze_directional_lr_universe") < events.index(
+        "plan_subject_folds"
+    )
+    assert events.index("plan_subject_folds") < events.index("fit_training_fold")
+
+    manifest = result.to_manifest()
+    assert manifest["receiver_family_opportunity_universe"] == (
+        root_family_universe.to_dict()
+    )
+    assert manifest["directional_lr_hypothesis_universe"] == universe.to_dict()
+    assert manifest["directional_lr_hypothesis_universe"]["universe_id"] == (
+        universe.universe_id
+    )
+    assert crossfit_identity_payloads
+    assert all(
+        payload["directional_lr_hypothesis_universe_id"] == universe.universe_id
+        for payload in crossfit_identity_payloads
+    )
+    raw_folds = cast(list[dict[str, object]], manifest["fold_artifacts"])
+    raw_by_fold = {str(record["fold_id"]): record for record in raw_folds}
+    directional_contrast_ids = {
+        contrast_id
+        for pair in result.spec.directional_pairs
+        for contrast_id in (pair.forward_contrast_id, pair.reverse_contrast_id)
+    }
+    for fold in result.folds:
+        expected_designs = [
+            {
+                "contrast_id": crossfit_module._contrast_id(encoder.contrast),
+                "contrast_name": encoder.contrast.name,
+                "encoder": encoder.to_dict(),
+                "application": application.to_dict(),
+            }
+            for encoder, application in zip(
+                fold.design_encoders,
+                fold.design_applications,
+                strict=True,
+            )
+            if crossfit_module._contrast_id(encoder.contrast)
+            in directional_contrast_ids
+        ]
+        assert raw_by_fold[fold.fold_id]["directional_design_applications"] == (
+            expected_designs
+        )
+
+
+def test_nondirectional_crossfit_omits_directional_lr_universe_everywhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossfit_identity_payloads: list[dict[str, object]] = []
+    original_stable_id = crossfit_module.stable_id
+
+    def tracked_stable_id(kind, payload, *args, **kwargs):
+        result = original_stable_id(kind, payload, *args, **kwargs)
+        if kind == "subject_crossfit":
+            crossfit_identity_payloads.append(payload)
+        return result
+
+    monkeypatch.setattr(crossfit_module, "stable_id", tracked_stable_id)
+    result = _run(_adata())
+    manifest = result.to_manifest()
+
+    assert manifest["receiver_family_opportunity_universe"] == (
+        result.receiver_family_opportunity_universe.to_dict()
+    )
+    assert result.directional_lr_hypothesis_universe is None
+    assert "directional_lr_hypothesis_universe" not in manifest
+    assert all(
+        "directional_design_applications" not in fold
+        for fold in cast(list[dict[str, object]], manifest["fold_artifacts"])
+    )
+    assert crossfit_identity_payloads
+    assert all(
+        "directional_lr_hypothesis_universe_id" not in payload
+        for payload in crossfit_identity_payloads
+    )
+    assert all(
+        payload["receiver_family_opportunity_universe_id"]
+        == result.receiver_family_opportunity_universe.universe_id
+        for payload in crossfit_identity_payloads
+    )
+
+
+def test_ordinary_crossfit_rejects_root_family_universe_tampering() -> None:
+    result = _run(_adata())
+    object.__setattr__(
+        result.receiver_family_opportunity_universe,
+        "family_axis_id",
+        "poisoned-family-axis",
+    )
+
+    with pytest.raises(ContractError) as caught:
+        result.to_manifest()
+    assert caught.value.details.code == "crossfit_artifact_integrity_violation"
+
+
+def test_directional_crossfit_from_workflow_requires_prefit_lr_universe() -> None:
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+
+    with pytest.raises(ValueError, match="missing its pre-fit LR hypothesis universe"):
+        CrossFitArtifacts._from_workflow(
+            spec=result.spec,
+            root_input_identity=result.root_input_identity,
+            receiver_universe=result.receiver_universe,
+            receiver_family_opportunity_universe=(
+                result.receiver_family_opportunity_universe
+            ),
+            fold_plan=result.fold_plan,
+            folds=result.folds,
+            oof_coverage=result.oof_coverage,
+            oof_receiver_coverage=result.oof_receiver_coverage,
+            oof_sender_assignments=result.oof_sender_assignments,
+            coverage_audit=result.coverage_audit,
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper_target",
+    ("receiver", "resource", "prior", "family", "mapping"),
+)
+def test_directional_crossfit_rejects_lr_universe_parent_tampering(
+    tamper_target: str,
+) -> None:
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+    universe = result.directional_lr_hypothesis_universe
+    assert universe is not None
+
+    if tamper_target == "receiver":
+        object.__setattr__(universe, "receiver_ids", ("POISON",))
+    elif tamper_target == "resource":
+        object.__setattr__(
+            universe._resource_bundle,
+            "manifest_digest",
+            "poisoned-resource-manifest",
+        )
+    elif tamper_target == "prior":
+        object.__setattr__(
+            universe._target_prior,
+            "manifest_digest",
+            "poisoned-prior-manifest",
+        )
+    elif tamper_target == "family":
+        object.__setattr__(
+            universe._receiver_family_universe,
+            "family_axis_id",
+            "poisoned-family-axis",
+        )
+    else:
+        object.__setattr__(
+            universe.memberships[0],
+            "driver_id",
+            "POISON",
+        )
+
+    with pytest.raises(ContractError) as caught:
+        result.to_manifest()
+    assert caught.value.details.code == "crossfit_artifact_integrity_violation"
+
+
+def test_directional_fold_family_models_preserve_frozen_lr_axis_exactly() -> None:
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_directional_spec(),
+    )
+    universe = result.directional_lr_hypothesis_universe
+    assert universe is not None
+    expected_mapping = tuple(
+        sorted(
+            (membership.interaction_id, membership.driver_id)
+            for membership in universe.memberships
+        )
+    )
+
+    for fold in result.folds:
+        assert fold.training.resource_bundle_content_id == (
+            universe.resource_bundle_content_id
+        )
+        assert fold.training.target_prior_content_id == universe.target_prior_content_id
+        for model in fold.receiver_family_models:
+            receiver_family = model.receiver_family_artifact
+            assert receiver_family.driver_by_interaction == expected_mapping
+            assert receiver_family.family_basis.family_ids == universe.family_ids
+            assert (
+                stable_id(
+                    "root_feature_axis",
+                    {"feature_ids": list(receiver_family.family_basis.feature_ids)},
+                    schema_version="1",
+                )
+                == universe.feature_axis_id
+            )
+
+
 def _run(adata: AnnData):
     return run_subject_crossfit(
         adata,
@@ -317,6 +1138,504 @@ def _run(adata: AnnData):
         _prior(),
         spec=_spec(),
     )
+
+
+def _persistable_spec() -> CrossFitSpec:
+    base = _spec()
+    resource = build_receiver_autonomous_program_resource(
+        np.asarray([[1.0], [1.0]]),
+        feature_ids=("T1", "T2"),
+        program_ids=("generic_program",),
+        resource_id="crossfit-persistence-autonomous-programs",
+        version="1",
+        manifest_digest="9" * 64,
+        species=Species.HUMAN,
+        gene_namespace=GeneNamespace.HGNC_SYMBOL,
+    )
+    return replace(
+        base,
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0,),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+        ),
+    )
+
+
+def _persistable_run() -> CrossFitArtifacts:
+    return run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_persistable_spec(),
+    )
+
+
+def _as_v3_scoring_registry(
+    current: ScoringCollectionDocument,
+) -> ScoringCollectionDocument:
+    version = SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION
+    collections: list[ScoringCollectionManifest] = []
+    for collection in current.collections:
+        children = tuple(
+            ReceiverScoringFunctionalManifest(
+                receiver=child.receiver,
+                scoring_functional_id=child.scoring_functional_id,
+                source_score_key_digest=child.source_score_key_digest,
+                source_score_row_count=child.source_score_row_count,
+                provenance_status=child.provenance_status,
+                contract_version=version,
+                receiver_family_model_id=child.receiver_family_model_id,
+                receiver_incremental_model_id=child.receiver_incremental_model_id,
+                filter_universe_id=child.filter_universe_id,
+                score_version=child.score_version,
+                functional_status=child.functional_status,
+                registry_status=child.registry_status,
+                emission_status=child.emission_status,
+                reason_code=child.reason_code,
+            )
+            for child in collection.children
+        )
+        collections.append(
+            ScoringCollectionManifest.planned_receiver_registry(
+                contrast=collection.contrast,
+                repeat_id=collection.repeat_id,
+                fold_id=collection.fold_id,
+                planned_receivers=collection.planned_receivers,
+                children=children,
+                contract_version=version,
+            )
+        )
+    planned = tuple(
+        PlannedScoringCollectionManifest.from_collection(
+            collection,
+            filter_universe_id=cast(
+                str,
+                collection.children[0].filter_universe_id,
+            ),
+        )
+        for collection in collections
+    )
+    return ScoringCollectionDocument(
+        collections=tuple(collections),
+        planned_collections=planned,
+        extension_schema_version=version,
+    )
+
+
+def test_crossfit_result_atomic_round_trip_and_corruption_rejection(
+    tmp_path: Path,
+) -> None:
+    artifacts = _persistable_run()
+    destination = tmp_path / "crossfit-result"
+
+    result = write_crossfit_result(artifacts, destination)
+    loaded = CrossFitResult.load(destination)
+    components = loaded.read_components()
+    differential = loaded.read_descriptive_differential()
+
+    assert result.path == destination.resolve()
+    assert result.manifest == loaded.manifest
+    assert result.manifest["crossfit_id"] == artifacts.crossfit_id
+    assert result.manifest["complete_pipeline_oof_certified"] is False
+    assert result.manifest["formal_inference_status"] == (
+        "not_available_descriptive_only"
+    )
+    assert len(result.manifest["applications"]) == sum(
+        len(fold.family_common_applications) for fold in artifacts.folds
+    )
+    assert set(components["component_scope"]) == {
+        "family",
+        "lr_member",
+        "sender_lr_member",
+    }
+    assert (
+        components.loc[
+            components["component_scope"].eq("family"),
+            ["driver_id", "interaction_id", "sender"],
+        ]
+        .isna()
+        .all()
+        .all()
+    )
+    assert (
+        components.loc[components["component_scope"].eq("lr_member"), "interaction_id"]
+        .notna()
+        .all()
+    )
+    assert not components["is_oof_certified"].any()
+    assert not differential["is_oof_certified"].any()
+    assert set(differential["formal_inference_status"]) == {
+        "not_available_descriptive_only"
+    }
+    assert not {
+        "p_value",
+        "q_value",
+        "comm_probability",
+        "posterior",
+        "confidence_interval",
+        "standard_error",
+    }.intersection(differential.columns)
+    assert set(differential["status"]).issubset(
+        {"observed", "not_estimable", "structural_zero"}
+    )
+    assert not tuple(tmp_path.glob(".crossfit-result.tmp-*"))
+
+    with pytest.raises(ResultWriteError) as duplicate_error:
+        write_crossfit_result(artifacts, destination)
+    assert duplicate_error.value.details.code == ("crossfit_result_destination_exists")
+
+    component_path = destination / "family_common_components.parquet"
+    component_path.write_bytes(component_path.read_bytes() + b"corruption")
+    with pytest.raises(ResultValidationError) as corrupted_error:
+        CrossFitResult.load(destination)
+    assert corrupted_error.value.details.code == ("crossfit_result_digest_mismatch")
+
+
+@pytest.mark.parametrize("legacy_version", ("1.0.0", "2.0.0"))
+def test_crossfit_result_legacy_compatibility_is_explicit_and_noncertifying(
+    tmp_path: Path,
+    legacy_version: str,
+) -> None:
+    destination = tmp_path / "legacy-crossfit-result"
+    artifacts = _persistable_run()
+    write_crossfit_result(artifacts, destination)
+    manifest_path = destination / "crossfit_manifest.json"
+    status_path = destination / "_status.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source = manifest["source_crossfit_manifest"]
+    if legacy_version == "1.0.0":
+        source.pop("oof_certification_audit")
+        source.pop("oof_certification_audit_id")
+    else:
+        registry = _as_v3_scoring_registry(artifacts.receiver_scoring_registry)
+        source["receiver_scoring_registry_id"] = registry.registry_id
+        source["receiver_scoring_registry"] = registry.to_dict()
+        current_audit = CrossFitOOFCertificationAudit.from_dict(
+            cast(dict[str, object], source["oof_certification_audit"])
+        )
+        requirements = tuple(
+            (
+                CrossFitOOFRequirementRecord(
+                    requirement_code="authoritative_v3_receiver_registry",
+                    status=requirement.status,
+                    reason_code=requirement.reason_code,
+                    repeat_id=requirement.repeat_id,
+                    fold_id=requirement.fold_id,
+                    contrast=requirement.contrast,
+                    receiver=requirement.receiver,
+                    evidence_ids=(cast(str, registry.registry_id),),
+                )
+                if requirement.requirement_code == "authoritative_v4_receiver_registry"
+                else requirement
+            )
+            for requirement in current_audit.requirement_ledger
+        )
+        legacy_audit = CrossFitOOFCertificationAudit._from_requirements(
+            source_crossfit_id=current_audit.source_crossfit_id,
+            source_registry_id=registry.registry_id,
+            requirements=requirements,
+        )
+        source["oof_certification_audit"] = legacy_audit.to_dict()
+        source["oof_certification_audit_id"] = legacy_audit.audit_id
+    manifest.pop("contrast_common_stage_connected")
+    manifest.pop("contrast_common_collections")
+    manifest.pop("semantic_score_collection")
+    manifest.pop("receiver_universe_id")
+    manifest.pop("receiver_axis_id")
+    for field_name in (
+        "receiver_family_opportunity_universe_id",
+        "family_axis_id",
+        "receiver_family_opportunity_axis_id",
+        "receiver_family_opportunity_universe",
+    ):
+        manifest.pop(field_name)
+        source.pop(field_name)
+    for table_name in (
+        "contrast_common_lr_scores",
+        "contrast_common_sender_lr_scores",
+        "directional_channel_registry",
+        "receiver_training_support",
+        "semantic_availability_scores",
+        "semantic_receiver_program_scores",
+        "semantic_integrated_lr_scores",
+        "semantic_differential_effects",
+    ):
+        table_record = manifest["tables"].pop(table_name)
+        (destination / table_record["filename"]).unlink()
+    manifest["schema_version"] = legacy_version
+    manifest["source_crossfit_manifest_digest"] = canonical_digest(source)
+    for table in manifest["tables"].values():
+        table["schema_version"] = legacy_version
+    manifest["crossfit_result_id"] = stable_id(
+        "crossfit_result",
+        {key: value for key, value in manifest.items() if key != "crossfit_result_id"},
+        schema_version="1",
+    )
+    manifest_path.write_text(f"{canonical_json(manifest)}\n", encoding="utf-8")
+    status = {
+        "schema_version": legacy_version,
+        "status": "complete",
+        "crossfit_result_id": manifest["crossfit_result_id"],
+    }
+    status_path.write_text(
+        f"{canonical_json(status)}\n",
+        encoding="utf-8",
+    )
+
+    loaded = CrossFitResult.load(destination)
+
+    assert loaded.manifest["schema_version"] == legacy_version
+    assert loaded.manifest["complete_pipeline_oof_certified"] is False
+    assert not loaded.read_components()["is_oof_certified"].any()
+
+
+def test_crossfit_result_rejects_status_manifest_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "status-mismatch-crossfit-result"
+    write_crossfit_result(_persistable_run(), destination)
+    status_path = destination / "_status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["crossfit_result_id"] = "crossfit-result-poisoned"
+    status_path.write_text(f"{canonical_json(status)}\n", encoding="utf-8")
+
+    with pytest.raises(ResultValidationError) as error:
+        CrossFitResult.load(destination)
+    assert error.value.details.code == "crossfit_result_status_manifest_mismatch"
+
+
+def test_full_pipeline_bootstrap_smoke_reruns_real_crossfit() -> None:
+    result = run_full_pipeline_resampling(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+        n_bootstraps=1,
+    )
+
+    assert result.status is FullPipelineResamplingStatus.SUCCEEDED
+    assert len(result.records) == 1
+    assert result.records[0].crossfit_id is not None
+    assert result.records[0].child is None
+    assert result.children == ()
+    assert result.to_manifest()["full_pipeline_refit_per_resample"] is True
+
+
+def test_family_effect_adapter_real_crossfit_and_retained_resample_smoke() -> None:
+    point = _persistable_run()
+    first_functional = next(
+        functional
+        for fold in point.folds
+        for functional in fold.family_common_functionals
+    )
+    matching = [
+        functional
+        for fold in point.folds
+        for functional in fold.family_common_functionals
+        if functional.contrast_name == first_functional.contrast_name
+        and functional.receiver == first_functional.receiver
+    ]
+    common_families = set(matching[0].family_ids).intersection(
+        *(set(functional.family_ids) for functional in matching[1:])
+    )
+    target = FamilyEffectTarget(
+        contrast_name=first_functional.contrast_name,
+        receiver=first_functional.receiver,
+        family_id=sorted(common_families)[0],
+        mode="state",
+    )
+    effect_spec = build_family_effect_oof_spec(point, target)
+    point_effect = fit_crossfit_family_effect(point, target, effect_spec)
+    resampling = run_full_pipeline_resampling(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=point.spec,
+        n_bootstraps=1,
+        retain_children=True,
+    )
+    distribution_spec = FullPipelineEffectDistributionSpec(
+        effect_spec=effect_spec,
+        minimum_effect=0.0,
+        specificity_direction=SpecificityDirection.GREATER,
+    )
+
+    distribution = summarize_family_effect_full_pipeline(
+        point,
+        resampling,
+        target,
+        distribution_spec,
+    )
+
+    assert point_effect.spec_id == effect_spec.spec_id
+    assert len(distribution.resample_record_ids) == 1
+    assert distribution.formal_inference_allowed is False
+    assert distribution.standard_error is None
+
+
+def test_real_crossfit_bootstrap_support_object_chain_is_complete() -> None:
+    point = _persistable_run()
+    first_functional = next(
+        functional
+        for fold in point.folds
+        for functional in fold.family_common_functionals
+    )
+    matching = [
+        functional
+        for fold in point.folds
+        for functional in fold.family_common_functionals
+        if functional.contrast_name == first_functional.contrast_name
+        and functional.receiver == first_functional.receiver
+    ]
+    common_families = set(matching[0].family_ids).intersection(
+        *(set(functional.family_ids) for functional in matching[1:])
+    )
+    family_id = sorted(common_families)[0]
+    primary = HypothesisDeclaration(
+        endpoint="driver_family_receiver_context_omnibus_v1",
+        contrast_name=first_functional.contrast_name,
+        receiver=first_functional.receiver,
+        family_id=family_id,
+        mode="state",
+        role=HypothesisRole.PRIMARY,
+        multiplicity_family="integration-primary",
+    )
+    secondary = HypothesisDeclaration(
+        endpoint="family_common_integrated_lr_context_effect_v1",
+        contrast_name=first_functional.contrast_name,
+        receiver=first_functional.receiver,
+        family_id=family_id,
+        mode="state",
+        role=HypothesisRole.SECONDARY,
+        multiplicity_family="integration-secondary",
+        parent_key=primary.hypothesis_key,
+    )
+    universe = freeze_hypothesis_universe(
+        (primary, secondary),
+        universe_name="real-chain-bootstrap-support-v1",
+    )
+    secondary_target = build_frozen_family_effect_target(
+        universe,
+        secondary.hypothesis_id,
+    )
+    distribution_spec = FullPipelineEffectDistributionSpec(
+        effect_spec=build_family_effect_oof_spec(point, secondary_target),
+        minimum_effect=0.0,
+        specificity_direction=SpecificityDirection.GREATER,
+    )
+    resampling = run_full_pipeline_resampling(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=point.spec,
+        n_bootstraps=1,
+        retain_children=True,
+    )
+
+    model = Crychic(
+        _config(),
+        resource_bundle=_bundle(),
+        target_prior=_prior(),
+    )
+    document = model.summarize_bootstrap_support(
+        point,
+        resampling,
+        universe=universe,
+        distribution_specs=(distribution_spec,),
+    )
+
+    assert resampling.status is FullPipelineResamplingStatus.SUCCEEDED
+    assert len(resampling.children) == 1
+    assert document.registry["resampling_lineage"]["resampling_result_id"] == (
+        resampling.result_id
+    )
+    specificity_row = document.specificity_support.iloc[0]
+    selection_row = document.selection_frequency.iloc[0]
+    assert specificity_row["hypothesis_id"] == secondary.hypothesis_id
+    assert specificity_row["status"] == "not_estimable"
+    assert specificity_row["n_bootstrap_total"] == 1
+    assert not specificity_row["specificity_support_release_allowed"]
+    assert selection_row["hypothesis_id"] == primary.hypothesis_id
+    assert selection_row["status"] == "not_estimable"
+    assert selection_row["n_bootstrap_plans_total"] == 1
+    assert not selection_row["selection_frequency_release_allowed"]
+
+
+def test_crossfit_facade_persists_reloadable_descriptive_result(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "facade-crossfit-result"
+    model = Crychic(
+        _config(),
+        resource_bundle=_bundle(),
+        target_prior=_prior(),
+    )
+
+    result = model.fit_crossfit(
+        _adata(),
+        spec=_persistable_spec(),
+        output_dir=destination,
+    )
+
+    assert isinstance(result, CrossFitResult)
+    loaded = CrossFitResult.load(destination)
+    assert loaded.manifest == result.manifest
+    assert loaded.manifest["complete_pipeline_oof_certified"] is False
+    assert loaded.manifest["formal_inference_status"] == (
+        "not_available_descriptive_only"
+    )
+
+    components = loaded.read_components()
+    differential = loaded.read_descriptive_differential()
+    assert not components.empty
+    assert not differential.empty
+    assert not components["is_oof_certified"].any()
+    assert not differential["is_oof_certified"].any()
+    forbidden_inference_fields = {
+        "p_value",
+        "q_value",
+        "comm_probability",
+        "posterior",
+        "confidence_interval",
+        "standard_error",
+    }
+    assert forbidden_inference_fields.isdisjoint(components.columns)
+    assert forbidden_inference_fields.isdisjoint(differential.columns)
+
+
+def test_analyze_default_profile_runs_the_real_crossfit_without_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = Crychic(
+        _config(),
+        resource_bundle=_bundle(),
+        target_prior=_prior(),
+    )
+    base = _spec()
+    spec = recommended_crossfit_spec(
+        contrasts=base.contrasts,
+        training_spec=FoldTrainingSpec(
+            min_cells=1,
+            sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+        ),
+        root_seed=19,
+    )
+
+    def forbidden_legacy(*args: object, **kwargs: object) -> object:
+        raise AssertionError("crossfit_descriptive_v1 must not call legacy fit")
+
+    monkeypatch.setattr(Crychic, "fit", forbidden_legacy)
+    observed = model.analyze(_adata(), spec=spec)
+
+    assert isinstance(observed, CrossFitArtifacts)
+    assert observed.spec.spec_id == spec.spec_id
+    assert observed.fold_plan.folds
 
 
 def test_public_entry_accepts_no_caller_folds_or_fitted_artifacts() -> None:
@@ -371,7 +1690,7 @@ def test_default_outer_partition_policy_preserves_partition_identity() -> None:
         "subject_fold_218f1768ece07284cde48fa7e33efa6a",
         "subject_fold_e713d5365a1199325444c995b43a997c",
     ]
-    assert result.crossfit_id == ("subject_crossfit_e5483448ff6a69e90728d8d19eb23010")
+    assert result.crossfit_id == ("subject_crossfit_7d27607bfaee39ccf29ffba03bd8e8d9")
 
 
 def test_autonomous_program_use_scope_preserves_legacy_and_binds_biology() -> None:
@@ -563,6 +1882,10 @@ def test_explicit_outer_partition_seed_pairs_parameter_sensitivity() -> None:
         CrossFitArtifacts._from_workflow(
             spec=first.spec,
             root_input_identity=first.root_input_identity,
+            receiver_universe=first.receiver_universe,
+            receiver_family_opportunity_universe=(
+                first.receiver_family_opportunity_universe
+            ),
             fold_plan=poisoned_plan,
             folds=first.folds,
             oof_coverage=first.oof_coverage,
@@ -597,10 +1920,17 @@ def test_repeated_crossfit_rejects_valid_children_from_different_root_inputs() -
         spec=replace(base, repeat_index=1),
     )
 
-    with pytest.raises(ValueError, match="does not derive from the root identity"):
+    with pytest.raises(
+        ValueError,
+        match=r"does not derive from the root identity|run-level universe",
+    ):
         CrossFitArtifacts._from_workflow(
             spec=first.spec,
             root_input_identity=second.root_input_identity,
+            receiver_universe=second.receiver_universe,
+            receiver_family_opportunity_universe=(
+                second.receiver_family_opportunity_universe
+            ),
             fold_plan=first.fold_plan,
             folds=first.folds,
             oof_coverage=first.oof_coverage,
@@ -609,6 +1939,17 @@ def test_repeated_crossfit_rejects_valid_children_from_different_root_inputs() -
             coverage_audit=first.coverage_audit,
         )
     with pytest.raises(ValueError, match="bound root input"):
+        root_family_universe = freeze_receiver_family_opportunity_universe(
+            prior,
+            feature_ids=tuple(map(str, first_input.var_names)),
+            receiver_ids=first.receiver_universe.receiver_ids,
+            receiver_universe_id=first.receiver_universe.universe_id,
+            receiver_axis_id=first.receiver_universe.receiver_axis_id,
+            prior_content_id=training_module._target_prior_content_id(prior),
+            root_input_identity_id=first.root_input_identity.identity_id,
+            root_input_digest=first.root_input_identity.input_digest,
+            cosine_threshold=base.family_cosine_threshold,
+        )
         RepeatedCrossFitDiagnostics._from_workflow(
             spec=RepeatedCrossFitSpec(crossfit_spec=base, n_repeats=2),
             repeats=(first, second),
@@ -617,6 +1958,7 @@ def test_repeated_crossfit_rejects_valid_children_from_different_root_inputs() -
                 training_module._resource_bundle_content_id(bundle)
             ),
             target_prior_content_id=training_module._target_prior_content_id(prior),
+            receiver_family_opportunity_universe=root_family_universe,
         )
 
 
@@ -743,6 +2085,25 @@ def test_prepared_fold_derives_scope_digest_without_rehashing_cells(
 
 def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
     result = _run(_adata())
+
+    registry = result.receiver_scoring_registry
+    assert registry.registry_id == result.receiver_scoring_registry_id
+    assert len(registry.collections) == len(result.folds) * len(result.spec.contrasts)
+    folds_by_id = {fold.fold_id: fold for fold in result.folds}
+    for collection in registry.collections:
+        assert collection.planned_receivers == tuple(
+            sorted(folds_by_id[collection.fold_id].training.cell_type_ids)
+        )
+        assert tuple(child.receiver for child in collection.children) == (
+            collection.planned_receivers
+        )
+        assert collection.emitted_receivers == ()
+        assert {child.registry_status for child in collection.children} == {
+            "functional_not_produced"
+        }
+        assert {child.reason_code for child in collection.children} == {
+            "family_common_functional_not_requested_without_penalty_tuning"
+        }
 
     assert result.completed_stage_oof_verified
     assert result.is_oof_certified is False
@@ -1123,7 +2484,227 @@ def test_subject_crossfit_supports_independent_subject_groups() -> None:
     ).any()
 
 
-def test_independent_group_inner_one_se_tuning_fails_closed() -> None:
+def test_subject_crossfit_mixed_design_uses_parented_cr2_response() -> None:
+    result = _run(_mixed_adata())
+    chains = [
+        (response, precision, model, response_application, application)
+        for fold in result.folds
+        for response, precision, model, response_application, application in zip(
+            fold.receiver_responses,
+            fold.response_precisions,
+            fold.receiver_incremental_models,
+            fold.receiver_response_applications,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+
+    assert chains
+    for response, precision, model, response_application, application in chains:
+        assert isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+        assert response.status == "ok"
+        assert response.cr2_backend_eligible
+        assert not response.is_cr1_exploratory
+        assert response.formal_inference_allowed is False
+        assert precision.lineage_mode == (
+            "repeated_measures_cr2_fold_response_parented_v1"
+        )
+        assert precision.method == "repeated_cr2_standardized_inverse_variance_v1"
+        assert precision.response_artifact_id == response.artifact_id
+        assert precision.estimable
+        assert model.diagnostic_functional is not None
+        assert model.diagnostic_functional.loss_design == (
+            "mixed_subject_equal_full_prediction_loss_v1"
+        )
+        assert model.diagnostic_status == "observed"
+        assert model.official_incremental_status == "not_estimable"
+        assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        assert response_application.status == "ok"
+        assert application.diagnostic_status == "observed"
+        assert application.official_incremental_status == "not_estimable"
+        assert application.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        assert not application.is_oof_certified
+
+    registry = result.receiver_scoring_registry
+    assert registry.is_authoritative_registry
+    assert registry.planned_collections
+
+    first_response, first_precision, *_ = chains[0]
+    object.__setattr__(first_precision, "response_artifact_id", "forged-response")
+    with pytest.raises(ContractError) as precision_error:
+        first_precision.require_response_compatible(first_response)
+    assert precision_error.value.details.code == (
+        "precision_transform_integrity_violation"
+    )
+
+    second_response = chains[1][0]
+    object.__setattr__(second_response, "repeated_effect_artifact_id", "forged-effect")
+    with pytest.raises(ContractError) as response_error:
+        second_response.to_dict()
+    assert response_error.value.details.code == (
+        "repeated_fold_response_integrity_violation"
+    )
+
+
+def test_subject_crossfit_mixed_design_runs_subject_blocked_inner_tuning() -> None:
+    spec = replace(
+        _spec(),
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0,),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+            min_inner_train_subjects_per_context=2,
+            min_inner_validation_subjects_per_context=1,
+        ),
+    )
+    result = run_subject_crossfit(
+        _mixed_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+    models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_incremental_models
+        if model.receiver == "Receiver"
+    ]
+
+    assert models
+    for model in models:
+        plan = model.inner_fold_plan
+        tuning = model.penalty_tuning_artifact
+        assert plan is not None
+        assert tuning is not None
+        assert tuning.status == "selected"
+        assert tuning.reason_code is None
+        assert tuning.inner_fold_plan_id == plan.plan_id
+        assert tuning.validation_loss_estimand is (
+            PenaltyValidationLossEstimand.MIXED_SUBJECT_PREDICTION
+        )
+        assert tuning.is_oof_certified
+        assert tuning.training_subject_ids == model.training_subject_ids
+        fold_by_id = {fold.fold_id: fold for fold in plan.folds}
+        for evaluation in tuning.evaluations:
+            inner_fold = fold_by_id[evaluation.inner_fold_id]
+            assert evaluation.inner_fold_manifest_id == inner_fold.fold_id
+            assert evaluation.inner_training_subject_ids == (
+                inner_fold.train_subject_ids
+            )
+            assert evaluation.validation_subject_ids == inner_fold.test_subject_ids
+            assert set(evaluation.inner_training_subject_ids).isdisjoint(
+                evaluation.validation_subject_ids
+            )
+            assert set(evaluation.inner_training_subject_ids).union(
+                evaluation.validation_subject_ids
+            ) == set(model.training_subject_ids)
+            assert evaluation.validation_loss_estimand is (
+                PenaltyValidationLossEstimand.MIXED_SUBJECT_PREDICTION
+            )
+            assert evaluation.training_functional_id is not None
+            assert evaluation.heldout_application_id is not None
+            assert np.all(np.isfinite(evaluation.subject_losses))
+            assert np.all(evaluation.subject_losses >= 0.0)
+        assert model.diagnostic_functional is not None
+        assert model.diagnostic_functional.loss_design == (
+            "mixed_subject_equal_full_prediction_loss_v1"
+        )
+        assert model.diagnostic_status == "observed"
+        assert model.official_incremental_status == "not_estimable"
+        assert model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+
+
+def test_subject_crossfit_mixed_design_fails_closed_below_cluster_minimum() -> None:
+    result = _run(_mixed_adata(n_paired=4, n_single_per_context=2))
+    chains = [
+        (response, precision, model, application)
+        for fold in result.folds
+        for response, precision, model, application in zip(
+            fold.receiver_responses,
+            fold.response_precisions,
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+
+    assert chains
+    assert all(
+        isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+        and response.status == "not_estimable"
+        and not response.is_cr1_exploratory
+        and not response.cr2_backend_eligible
+        and response.reason_code == "insufficient_subject_clusters"
+        and not precision.estimable
+        and precision.method == "repeated_cr2_standardized_inverse_variance_v1"
+        and model.diagnostic_status == "not_estimable"
+        and model.diagnostic_reason_code == "insufficient_subject_clusters"
+        and model.official_incremental_status == "not_estimable"
+        and application.diagnostic_status == "not_estimable"
+        for response, precision, model, application in chains
+    )
+
+
+def test_subject_crossfit_multi_context_repetition_uses_cr2_response() -> None:
+    base = _spec()
+    contrast = balanced_contrast(
+        ("c",),
+        ("a", "b"),
+        name="c_vs_a_b",
+    )
+    spec = replace(
+        base,
+        contrasts=(contrast,),
+        training_spec=replace(
+            base.training_spec,
+            sender_contrasts=(contrast,),
+        ),
+    )
+    result = run_subject_crossfit(
+        _repeated_multi_context_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+    chains = [
+        (response, model, application)
+        for fold in result.folds
+        for response, model, application in zip(
+            fold.receiver_responses,
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+
+    assert chains
+    assert all(
+        isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+        and response.status == "ok"
+        and response.cr2_backend_eligible
+        and not response.is_cr1_exploratory
+        and not response.formal_inference_allowed
+        and response.repeated_design.n_repeated_subject_clusters > 0
+        and len(response.repeated_design.contrast_context_ids) == 3
+        and model.diagnostic_functional is not None
+        and model.diagnostic_functional.loss_design
+        == "mixed_subject_equal_full_prediction_loss_v1"
+        and model.diagnostic_status == "observed"
+        and model.official_incremental_status == "not_estimable"
+        and model.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        and application.diagnostic_status == "observed"
+        and application.official_incremental_status == "not_estimable"
+        and application.reason_code == "receiver_autonomous_nuisance_not_frozen"
+        for response, model, application in chains
+    )
+
+
+def _independent_tuning_crossfit_spec() -> CrossFitSpec:
     base = _spec()
     resource = build_receiver_autonomous_program_resource(
         np.asarray([[1.0], [1.0]]),
@@ -1140,7 +2721,7 @@ def test_independent_group_inner_one_se_tuning_fails_closed() -> None:
         lambda2_fractions=(0.0,),
         inner_allowed_n_splits=(2,),
     )
-    spec = CrossFitSpec(
+    return CrossFitSpec(
         contrasts=base.contrasts,
         training_spec=base.training_spec,
         allowed_n_splits=base.allowed_n_splits,
@@ -1148,8 +2729,14 @@ def test_independent_group_inner_one_se_tuning_fails_closed() -> None:
         penalty_tuning_spec=tuning_spec,
     )
 
+
+def test_independent_group_inner_one_se_tuning_is_subject_blocked() -> None:
     result = run_subject_crossfit(
-        _independent_adata(), _config(), _bundle(), _prior(), spec=spec
+        _independent_adata(8),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_independent_tuning_crossfit_spec(),
     )
 
     receiver_models = [
@@ -1160,13 +2747,63 @@ def test_independent_group_inner_one_se_tuning_fails_closed() -> None:
     ]
     assert receiver_models
     assert all(model.penalty_tuning_artifact is not None for model in receiver_models)
-    assert {
-        model.penalty_tuning_artifact.reason_code
-        for model in receiver_models
-        if model.penalty_tuning_artifact is not None
-    } == {"independent_inner_tuning_one_se_not_supported"}
-    assert all(model.diagnostic_functional is None for model in receiver_models)
-    assert all(model.diagnostic_status == "not_estimable" for model in receiver_models)
+    assert all(model.inner_fold_plan is not None for model in receiver_models)
+    for model in receiver_models:
+        tuning = model.penalty_tuning_artifact
+        assert tuning is not None
+        assert tuning.status == "selected"
+        assert tuning.reason_code is None
+        assert tuning.validation_loss_estimand is (
+            PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+        )
+        assert tuning.is_oof_certified
+        assert tuning.training_subject_ids == model.training_subject_ids
+        for evaluation in tuning.evaluations:
+            assert set(evaluation.inner_training_subject_ids).isdisjoint(
+                evaluation.validation_subject_ids
+            )
+            assert set(evaluation.inner_training_subject_ids).union(
+                evaluation.validation_subject_ids
+            ) == set(model.training_subject_ids)
+            assert evaluation.validation_loss_estimand is (
+                PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+            )
+            assert np.all(np.isfinite(evaluation.subject_losses))
+            assert np.all(evaluation.subject_losses >= 0)
+        assert model.diagnostic_functional is not None
+        assert model.diagnostic_functional.loss_design == (
+            "independent_subject_pseudocontrasts_v1"
+        )
+
+
+def test_independent_group_inner_one_se_low_support_fails_closed() -> None:
+    result = run_subject_crossfit(
+        _independent_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_independent_tuning_crossfit_spec(),
+    )
+
+    receiver_models = [
+        model
+        for fold in result.folds
+        for model in fold.receiver_incremental_models
+        if model.receiver == "Receiver"
+    ]
+    assert receiver_models
+    for model in receiver_models:
+        assert model.inner_fold_plan is None
+        assert model.penalty_tuning_artifact is not None
+        assert model.penalty_tuning_artifact.status == "not_estimable"
+        assert model.penalty_tuning_artifact.reason_code == (
+            "no_estimable_subject_fold_plan"
+        )
+        assert model.penalty_tuning_artifact.validation_loss_estimand is (
+            PenaltyValidationLossEstimand.INDEPENDENT_SUBJECT_PREDICTION
+        )
+        assert model.diagnostic_functional is None
+        assert model.diagnostic_status == "not_estimable"
 
 
 def test_subject_crossfit_caller_declared_autonomous_resource_is_noncertifying() -> (
@@ -1235,6 +2872,28 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
     )
 
     result = run_subject_crossfit(_adata(), _config(), _bundle(), _prior(), spec=spec)
+
+    registry = result.receiver_scoring_registry
+    registered_ids = {
+        child.scoring_functional_id
+        for collection in registry.collections
+        for child in collection.children
+    }
+    expected_ids = {
+        functional.family_common_functional_id
+        for fold in result.folds
+        for functional in fold.family_common_functionals
+    }
+    assert registered_ids == expected_ids
+    assert all(
+        child.registry_status == "functional_registered"
+        and child.receiver_family_model_id
+        and child.receiver_incremental_model_id
+        and child.filter_universe_id
+        and child.score_version
+        for collection in registry.collections
+        for child in collection.children
+    )
 
     models = [
         model for fold in result.folds for model in fold.receiver_incremental_models
@@ -1505,6 +3164,323 @@ def test_trusted_tuned_receiver_is_officially_observed_out_of_fold(
     assert coverage["reason_code"].isna().all()
 
 
+def test_fold_learned_latent_nuisance_runs_through_full_crossfit_chain(
+    tmp_path: Path,
+) -> None:
+    base = _spec()
+    latent_spec = FrozenLatentNuisanceSpec(
+        max_components=1,
+        min_control_features=2,
+        min_training_subjects=2,
+        minimum_explained_fraction=0.01,
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        latent_nuisance_spec=latent_spec,
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0, 0.1),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+        ),
+    )
+
+    result = run_subject_crossfit(
+        _adata(tuple(f"p{index}" for index in range(1, 9))),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+
+    receiver_chains = [
+        (model, application, common_functional, common_application)
+        for fold in result.folds
+        for model, application, common_functional, common_application in zip(
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            fold.family_common_functionals,
+            fold.family_common_applications,
+            strict=True,
+        )
+        if model.receiver == "Receiver"
+    ]
+    assert receiver_chains and len(receiver_chains) == len(result.folds)
+    for model, application, common_functional, common_application in receiver_chains:
+        assert model.latent_nuisance_spec_id == latent_spec.spec_id
+        assert model.latent_nuisance_artifact is not None
+        assert model.latent_nuisance_artifact.status == "observed"
+        assert model.latent_nuisance_artifact.training_subject_ids == (
+            model.training_subject_ids
+        )
+        assert model.autonomous_program_resource_id is None
+        assert model.autonomous_program_source_id == (
+            model.diagnostic_functional.autonomous_basis_id
+            if model.diagnostic_functional is not None
+            else None
+        )
+        assert model.inner_fold_plan is not None
+        assert model.penalty_tuning_artifact is not None
+        assert model.penalty_tuning_artifact.status == "selected"
+        assert model.is_oof_certified
+        assert application.is_oof_certified
+        assert application.official_incremental_status == "observed"
+        assert common_functional.incremental_functional is not None
+        assert common_functional.autonomous_program_resource_id == (
+            model.autonomous_program_source_id
+        )
+        assert common_application.heldout_reason_code is None
+
+    manifest = result.to_manifest()
+    assert "receiver_autonomous_nuisance" not in manifest["remaining_stages"]
+    receiver_records = [
+        record
+        for fold in manifest["fold_artifacts"]
+        for record in fold["receiver_incremental_artifacts"]
+        if record["receiver"] == "Receiver"
+    ]
+    assert receiver_records
+    assert all(
+        record["latent_nuisance_spec_id"] == latent_spec.spec_id
+        and record["latent_nuisance_artifact_id"] is not None
+        and record["latent_nuisance_artifact"]["status"] == "observed"
+        and record["autonomous_program_source_id"] is not None
+        for record in receiver_records
+    )
+    audit = audit_crossfit_oof_readiness(result)
+    nuisance_requirements = [
+        record
+        for record in audit.requirement_ledger
+        if record.requirement_code
+        == "approved_receiver_autonomous_nuisance_policy_present"
+    ]
+    assert len(nuisance_requirements) == 1
+    assert nuisance_requirements[0].satisfied
+    assert latent_spec.spec_id in nuisance_requirements[0].evidence_ids
+    persisted = write_crossfit_result(result, tmp_path / "latent-crossfit")
+    loaded = CrossFitResult.load(persisted.path)
+    loaded_receiver_records = [
+        record
+        for fold in loaded.manifest["source_crossfit_manifest"]["fold_artifacts"]
+        for record in fold["receiver_incremental_artifacts"]
+        if record["receiver"] == "Receiver"
+    ]
+    assert loaded_receiver_records == receiver_records
+    manifest_path = persisted.path / "crossfit_manifest.json"
+    status_path = persisted.path / "_status.json"
+    forged_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    forged_source = forged_manifest["source_crossfit_manifest"]
+    forged_records = [
+        record
+        for fold in forged_source["fold_artifacts"]
+        for record in fold["receiver_incremental_artifacts"]
+        if record["receiver"] == "Receiver"
+    ]
+    forged_records[0]["latent_nuisance_artifact"]["control_feature_ids"][0] = "T1"
+    forged_manifest["source_crossfit_manifest_digest"] = canonical_digest(forged_source)
+    forged_manifest["crossfit_result_id"] = stable_id(
+        "crossfit_result",
+        {
+            key: value
+            for key, value in forged_manifest.items()
+            if key != "crossfit_result_id"
+        },
+        schema_version="1",
+    )
+    manifest_path.write_text(
+        f"{canonical_json(forged_manifest)}\n",
+        encoding="utf-8",
+    )
+    forged_status = json.loads(status_path.read_text(encoding="utf-8"))
+    forged_status["crossfit_result_id"] = forged_manifest["crossfit_result_id"]
+    status_path.write_text(
+        f"{canonical_json(forged_status)}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ResultValidationError) as tamper_error:
+        CrossFitResult.load(persisted.path)
+    assert tamper_error.value.details.code == "invalid_crossfit_result_manifest"
+
+
+def test_trusted_tuned_all_receiver_chains_pass_descriptive_oof_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _spec()
+    resource = _trusted_target_resource(tmp_path, monkeypatch)
+    tuning_spec = PenaltyTuningSpec(
+        lambda1_fractions=(1.0, 0.1),
+        lambda2_fractions=(0.0,),
+        inner_allowed_n_splits=(2,),
+    )
+    spec = CrossFitSpec(
+        contrasts=base.contrasts,
+        training_spec=base.training_spec,
+        allowed_n_splits=(2,),
+        autonomous_program_resource=resource,
+        penalty_tuning_spec=tuning_spec,
+        gain_calibration_spec=GainCalibrationSpec(
+            min_subjects=4,
+            min_supported_families=1,
+            min_subjects_per_family=4,
+            min_positive_observations=4,
+            min_distinct_positive_gains=4,
+        ),
+    )
+    adata = _adata(tuple(f"p{index}" for index in range(1, 9)))
+    counts = np.asarray(adata.layers["counts"].toarray(), dtype=np.int64)
+    sender_mask = adata.obs["cell_type"].astype(str).eq("Sender").to_numpy()
+    counts[sender_mask, 1] = counts[sender_mask, 0]
+    counts[sender_mask, 3] = counts[sender_mask, 2]
+    subject_number = (
+        adata.obs["subject_id"].astype(str).str.removeprefix("p").astype(int).to_numpy()
+    )
+    stim_mask = adata.obs["condition"].astype(str).eq("stim").to_numpy()
+    counts[stim_mask, 4] = 13 + 2 * subject_number[stim_mask]
+    counts[sender_mask & stim_mask, 0] *= 3
+    adata.layers["counts"] = sparse.csr_matrix(counts)
+
+    result = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+    audit = audit_crossfit_oof_readiness(result)
+
+    assert audit.complete
+    assert audit.is_oof_descriptive_certified
+    assert audit.formal_inference_allowed is False
+    assert audit.failed_requirements == ()
+    active_universe = freeze_crossfit_active_edge_universe(
+        result,
+        contrast_id_or_name="stim_vs_control",
+    )
+    active_points = adapt_crossfit_active_edge_point_records(
+        result,
+        active_universe,
+    )
+    assert active_points.active_edge_universe_id == active_universe.universe_id
+    assert tuple(record.candidate_edge_id for record in active_points.records) == (
+        active_universe.candidate_edge_ids
+    )
+    assert len(active_points.records) == len(active_universe.candidates) > 0
+    assert {record.score_version for record in active_points.records} == {
+        active_universe.score_version
+    }
+    assert all(
+        model.status == "observed" and application.status == "observed"
+        for fold in result.folds
+        for model, application in zip(
+            fold.receiver_program_models,
+            fold.receiver_program_applications,
+            strict=True,
+        )
+    )
+    assert all(
+        model.is_oof_certified and application.is_oof_certified
+        for fold in result.folds
+        for model, application in zip(
+            fold.receiver_incremental_models,
+            fold.receiver_incremental_applications,
+            strict=True,
+        )
+    )
+    for fold in result.folds:
+        assert len(fold.cross_receiver_common_functionals) == len(spec.contrasts)
+        assert len(fold.cross_receiver_common_applications) == len(spec.contrasts)
+        global_functional = fold.cross_receiver_common_functionals[0]
+        global_application = fold.cross_receiver_common_applications[0]
+        assert not global_functional.common_functional_across_receivers
+        assert global_functional.receiver_balanced_descriptive_collection
+        assert global_functional.receiver_ids == tuple(
+            sorted(fold.training.cell_type_ids)
+        )
+        assert (
+            tuple(
+                receiver for receiver, _ in global_functional.receiver_gain_calibrations
+            )
+            == global_functional.receiver_ids
+        )
+        assert all(
+            calibration is not None and calibration.is_estimable
+            for _, calibration in global_functional.receiver_gain_calibrations
+        )
+        assert all(
+            calibration is not None
+            and calibration.n_positive_observations == 4
+            and calibration.n_distinct_positive_gains == 4
+            for _, calibration in global_functional.receiver_gain_calibrations
+        )
+        assert global_functional.all_receivers_gain_calibrated
+        assert global_functional.cross_receiver_percentile_rank_eligible
+        assert global_application.functional.global_common_functional_id == (
+            global_functional.global_common_functional_id
+        )
+        lr_scores = global_application.global_lr_scores
+        sender_scores = global_application.global_sender_lr_scores
+        assert set(lr_scores["global_common_functional_id"]) == {
+            global_functional.global_common_functional_id
+        }
+        assert set(sender_scores["global_common_functional_id"]) == {
+            global_functional.global_common_functional_id
+        }
+        assert "within_family_lr_weight" not in lr_scores
+        assert "assignment_weight" in sender_scores
+        assert "normalized_entropy" in sender_scores
+        assert "training_receiver_scale_factor" not in lr_scores
+        assert "training_receiver_scale_factor" not in sender_scores
+        assert "calibrated_family_gain_percentile" in lr_scores
+        assert "gain_calibration_binding_id" in sender_scores
+        observed_lr = lr_scores.loc[lr_scores["status"].eq("observed")]
+        observed_sender = sender_scores.loc[sender_scores["status"].eq("observed")]
+        assert not observed_lr.empty
+        assert not observed_sender.empty
+        assert observed_lr["global_lr_score"].between(0.0, 1.0).all()
+        assert observed_sender["global_sender_lr_score"].between(0.0, 1.0).all()
+        assert (
+            observed_sender["global_sender_lr_score"]
+            <= observed_sender["global_lr_score"] + 1e-12
+        ).all()
+        assert np.allclose(
+            observed_sender["global_sender_lr_score"],
+            observed_sender["global_lr_score"] * observed_sender["assignment_weight"],
+        )
+        sender_group_keys = [
+            "sample_id",
+            "subject_id",
+            "context_id",
+            "receiver",
+            "interaction_id",
+            "mode",
+        ]
+        for _, sender_group in observed_sender.groupby(
+            sender_group_keys, observed=True, sort=False
+        ):
+            assert sender_group["assignment_weight"].sum() == pytest.approx(1.0)
+            assert sender_group["global_sender_lr_score"].sum() == pytest.approx(
+                sender_group["global_lr_score"].iloc[0]
+            )
+
+    persisted = write_crossfit_result(result, tmp_path / "certified-crossfit")
+    assert persisted.manifest["complete_pipeline_oof_certified"] is True
+    assert persisted.manifest["claim_scope"] == CROSSFIT_OOF_DESCRIPTIVE_SCOPE
+    assert persisted.manifest["certification_status"] == (
+        CROSSFIT_OOF_DESCRIPTIVE_SCOPE
+    )
+    assert persisted.manifest["formal_inference_status"] == (
+        "not_available_descriptive_only"
+    )
+    components = persisted.read_components()
+    differential = persisted.read_descriptive_differential()
+    assert components["is_oof_certified"].all()
+    assert differential["is_oof_certified"].all()
+    assert set(components["claim_scope"]) == {CROSSFIT_OOF_DESCRIPTIVE_SCOPE}
+    assert set(differential["claim_scope"]) == {CROSSFIT_OOF_DESCRIPTIVE_SCOPE}
+
+
 def test_explicit_outer_seed_pairs_inner_tuning_parameter_sensitivity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1667,9 +3643,20 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     assert [item.spec.repeat_index for item in result.repeats] == [0, 1]
     assert len({item.spec.repeat_id for item in result.repeats}) == 2
     assert len({item.crossfit_id for item in result.repeats}) == 2
+    assert len({item.receiver_universe.universe_id for item in result.repeats}) == 1
+    assert (
+        len({item.receiver_universe.receiver_axis_id for item in result.repeats}) == 1
+    )
     registry = result.repeat_registry
     assert len(registry) == 2
     assert registry["partition_id"].nunique() == 2
+    assert registry["receiver_universe_id"].nunique() == 1
+    assert registry["receiver_axis_id"].nunique() == 1
+    assert (
+        registry["n_receiver_fold_opportunities"]
+        == registry["n_receivers"] * registry["n_folds"]
+    ).all()
+    assert registry["n_receiver_fold_not_estimable"].ge(0).all()
     assert registry["oof_coverage_complete"].all()
     assert registry["family_common_stage_connected"].all()
     assert result.diagnostic_status == (
@@ -1679,7 +3666,21 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     events = result.family_fold_events
     values = result.subject_family_repeat_values
     stability = result.family_repeat_stability
+    subject_points = result.subject_family_point_estimates
+    family_points = result.family_point_estimates
     assert not events.empty and not values.empty and not stability.empty
+    assert not subject_points.empty and not family_points.empty
+    assert not subject_points.duplicated(
+        ["subject_id", "contrast_name", "receiver", "family_id"]
+    ).any()
+    assert not family_points.duplicated(
+        ["contrast_name", "receiver", "family_id"]
+    ).any()
+    assert set(subject_points["status"]) <= {"observed", "not_estimable"}
+    assert set(family_points["status"]) <= {"observed", "not_estimable"}
+    assert set(family_points["formal_inference_status"]) == {
+        "not_computed_repeated_crossfit_diagnostic_only"
+    }
     assert any("UNMAPPED" in driver_ids for driver_ids in stability["driver_ids"])
     assert not events.duplicated(
         [
@@ -1809,10 +3810,29 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     )
     assert incomplete_row["n_repeats_with_observed_effect"] == 0
     manifest = result.to_manifest()
+    assert manifest["receiver_universe_id"] == (
+        result.repeats[0].receiver_universe.universe_id
+    )
+    assert manifest["receiver_axis_id"] == (
+        result.repeats[0].receiver_universe.receiver_axis_id
+    )
+    assert manifest["receiver_ids"] == list(
+        result.repeats[0].receiver_universe.receiver_ids
+    )
     assert manifest["inferential_fields_available"] == []
     assert manifest["is_inference_eligible"] is False
+    assert manifest["diagnostics_schema_version"] == "3.0.0"
+    assert manifest["repeat_point_estimates_formal_inference_allowed"] is False
+    assert manifest["n_subject_family_point_estimate_rows"] == len(subject_points)
+    assert manifest["n_family_point_estimate_rows"] == len(family_points)
     assert manifest["family_universe_policy"] == (
-        "union_of_observed_fold_family_ids_v1"
+        "root_target_prior_feature_receiver_opportunity_universe_v1"
+    )
+    assert manifest["receiver_family_opportunity_universe_id"] == (
+        result.receiver_family_opportunity_universe.universe_id
+    )
+    assert manifest["receiver_family_opportunity_universe"] == (
+        result.receiver_family_opportunity_universe.to_dict()
     )
     assert manifest["selection_stability_status_counts"]["not_estimable"] > 0
     assert manifest["effect_stability_status_counts"] == {
@@ -1820,6 +3840,38 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     }
     with pytest.raises(TypeError, match="producer-owned"):
         RepeatedCrossFitDiagnostics()
+
+    original_collect_views = repeated_crossfit_module._collect_fold_views
+
+    def omit_registered_view(*args: object, **kwargs: object):
+        views = original_collect_views(*args, **kwargs)
+        views.pop(next(iter(views)))
+        return views
+
+    monkeypatch.setattr(
+        repeated_crossfit_module,
+        "_collect_fold_views",
+        omit_registered_view,
+    )
+    with pytest.raises(ContractError) as registry_error:
+        RepeatedCrossFitDiagnostics._from_workflow(
+            spec=result.spec,
+            repeats=result.repeats,
+            root_input_identity=result.root_input_identity,
+            resource_bundle_content_id=result.resource_bundle_content_id,
+            target_prior_content_id=result.target_prior_content_id,
+            receiver_family_opportunity_universe=(
+                result.receiver_family_opportunity_universe
+            ),
+        )
+    assert registry_error.value.details.code == (
+        "repeated_crossfit_receiver_registry_mismatch"
+    )
+    monkeypatch.setattr(
+        repeated_crossfit_module,
+        "_collect_fold_views",
+        original_collect_views,
+    )
 
     private = object.__getattribute__(result, "_family_repeat_stability")
     private.loc[
@@ -1831,6 +3883,96 @@ def test_repeated_crossfit_refits_complete_children_and_emits_no_inference(
     assert error.value.details.code == (
         "repeated_crossfit_diagnostics_integrity_violation"
     )
+
+
+def test_repeated_crossfit_keeps_rare_receiver_opportunities_across_partitions() -> (
+    None
+):
+    adata = _adata()
+    rare_rows = adata.obs["subject_id"].eq("p1") & adata.obs["cell_type"].eq("Sender")
+    adata.obs.loc[rare_rows, "cell_type"] = "Novel"
+    repeat_spec = RepeatedCrossFitSpec(
+        crossfit_spec=replace(
+            _spec(),
+            predeclared_receiver_ids=("Ghost", "Novel", "Receiver", "Sender"),
+        ),
+        n_repeats=2,
+    )
+
+    result = run_repeated_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=repeat_spec,
+    )
+
+    assert len({repeat.receiver_universe.universe_id for repeat in result.repeats}) == 1
+    assert all(
+        repeat.receiver_universe.receiver_ids
+        == ("Ghost", "Novel", "Receiver", "Sender")
+        for repeat in result.repeats
+    )
+    for repeat in result.repeats:
+        novel_support = tuple(
+            support
+            for fold in repeat.folds
+            for support in fold.receiver_training_support
+            if support.receiver_id == "Novel"
+        )
+        assert len(novel_support) == len(repeat.folds)
+        assert any(
+            support.reason_code == "receiver_absent_in_outer_training"
+            for support in novel_support
+        )
+    registry = result.repeat_registry
+    assert registry["receiver_universe_id"].nunique() == 1
+    assert registry["receiver_axis_id"].nunique() == 1
+    assert registry["n_receiver_fold_not_estimable"].gt(0).all()
+    assert (
+        registry["n_receiver_fold_opportunities"]
+        == registry["n_receivers"] * registry["n_folds"]
+    ).all()
+    root_families = result.receiver_family_opportunity_universe.family_ids
+    ghost_events = result.family_fold_events.loc[
+        result.family_fold_events["receiver"].eq("Ghost")
+    ]
+    ghost_subjects = result.subject_family_repeat_values.loc[
+        result.subject_family_repeat_values["receiver"].eq("Ghost")
+    ]
+    ghost_stability = result.family_repeat_stability.loc[
+        result.family_repeat_stability["receiver"].eq("Ghost")
+    ]
+    ghost_subject_points = result.subject_family_point_estimates.loc[
+        result.subject_family_point_estimates["receiver"].eq("Ghost")
+    ]
+    ghost_family_points = result.family_point_estimates.loc[
+        result.family_point_estimates["receiver"].eq("Ghost")
+    ]
+    n_folds = len(result.repeats[0].fold_plan.folds)
+    n_subjects = len(result.repeats[0].fold_plan.subject_ids)
+    n_contrasts = len(repeat_spec.crossfit_spec.contrasts)
+    assert len(ghost_events) == 2 * n_folds * n_contrasts * len(root_families)
+    assert len(ghost_subjects) == 2 * n_subjects * n_contrasts * len(root_families)
+    assert len(ghost_stability) == n_contrasts * len(root_families)
+    assert len(ghost_subject_points) == n_subjects * n_contrasts * len(root_families)
+    assert len(ghost_family_points) == n_contrasts * len(root_families)
+    assert set(ghost_subject_points["status"]) == {"not_estimable"}
+    assert set(ghost_family_points["status"]) == {"not_estimable"}
+    assert result.diagnostic_status == (
+        "not_estimable_family_common_stage_not_connected"
+    )
+    assert set(ghost_events["family_id"]) == set(root_families)
+    assert set(ghost_events["selection_status"]) == {"not_estimable"}
+    assert set(ghost_events["reason_code"]) == {"receiver_absent_in_outer_training"}
+    assert not ghost_events["family_available"].any()
+    assert not ghost_subjects["family_estimable"].any()
+    receiver_events = result.family_fold_events.loc[
+        result.family_fold_events["receiver"].eq("Receiver")
+    ]
+    assert set(receiver_events["reason_code"]) == {
+        "family_common_functional_not_requested_without_penalty_tuning"
+    }
 
 
 def test_unadjusted_tuned_diagnostic_reaches_noncertified_family_common() -> None:
@@ -1904,6 +4046,10 @@ def test_receiver_coverage_audit_is_order_stable_and_rejects_context_poison() ->
         CrossFitArtifacts._from_workflow(
             spec=result.spec,
             root_input_identity=result.root_input_identity,
+            receiver_universe=result.receiver_universe,
+            receiver_family_opportunity_universe=(
+                result.receiver_family_opportunity_universe
+            ),
             fold_plan=result.fold_plan,
             folds=result.folds,
             oof_coverage=result.oof_coverage,
@@ -2143,6 +4289,16 @@ def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> N
 
     result = _run(adata)
 
+    assert result.receiver_universe.receiver_ids == (
+        "Novel",
+        "Receiver",
+        "Sender",
+    )
+    assert all(
+        tuple(record.receiver_id for record in fold.receiver_training_support)
+        == result.receiver_universe.receiver_ids
+        for fold in result.folds
+    )
     excluded_folds = [
         fold
         for fold in result.folds
@@ -2150,6 +4306,72 @@ def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> N
     ]
     assert excluded_folds
     assert all("Novel" not in fold.training.cell_type_ids for fold in excluded_folds)
+    assert all(
+        next(
+            record
+            for record in fold.receiver_training_support
+            if record.receiver_id == "Novel"
+        ).reason_code
+        == "receiver_absent_in_outer_training"
+        for fold in excluded_folds
+    )
+    assert all(
+        all(
+            model.receiver_family_artifact.receiver != "Novel"
+            for model in fold.receiver_family_models
+        )
+        for fold in excluded_folds
+    )
+    excluded_fold_ids = {fold.fold_id for fold in excluded_folds}
+    novel_coverage = result.oof_receiver_coverage.loc[
+        result.oof_receiver_coverage["fold_id"].isin(excluded_fold_ids)
+        & result.oof_receiver_coverage["receiver"].eq("Novel")
+    ]
+    assert not novel_coverage.empty
+    assert set(novel_coverage["receiver_training_support_status"]) == {"not_estimable"}
+    assert set(novel_coverage["reason_code"]) == {"receiver_absent_in_outer_training"}
+    assert (
+        novel_coverage[
+            [
+                "response_artifact_id",
+                "precision_transform_id",
+                "incremental_training_artifact_id",
+                "response_application_id",
+                "incremental_application_id",
+            ]
+        ]
+        .isna()
+        .all(axis=None)
+    )
+    registry = result.receiver_scoring_registry
+    assert all(
+        collection.planned_receivers == result.receiver_universe.receiver_ids
+        for collection in registry.collections
+    )
+    absent_children = [
+        child
+        for collection in registry.collections
+        if collection.fold_id in excluded_fold_ids
+        for child in collection.children
+        if child.receiver == "Novel"
+    ]
+    assert absent_children
+    assert all(
+        child.receiver_training_support_status == "not_estimable"
+        and child.reason_code == "receiver_absent_in_outer_training"
+        and child.receiver_family_model_id is None
+        and child.receiver_incremental_model_id is None
+        for child in absent_children
+    )
+    absent_failures = [
+        requirement
+        for requirement in result.oof_certification_audit.failed_requirements
+        if requirement.fold_id in excluded_fold_ids and requirement.receiver == "Novel"
+    ]
+    assert absent_failures
+    assert {requirement.reason_code for requirement in absent_failures} == {
+        "receiver_absent_in_outer_training"
+    }
     assert any(
         "Novel" in fold["heldout_excluded_cell_type_ids"]
         for fold in result.to_manifest()["fold_artifacts"]
@@ -2186,6 +4408,170 @@ def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> N
     )
     assert target_fold.application.excluded_cell_type_ids == ("Novel",)
     assert target_fold.application.availability.sample_interactions.empty
+
+
+def test_predeclared_absent_receiver_remains_typed_ne_without_models() -> None:
+    spec = replace(
+        _spec(),
+        predeclared_receiver_ids=("Ghost", "Receiver", "Sender"),
+    )
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+
+    assert result.receiver_universe.receiver_ids == (
+        "Ghost",
+        "Receiver",
+        "Sender",
+    )
+    assert result.receiver_universe.observed_cell_type_ids == (
+        "Receiver",
+        "Sender",
+    )
+    root_family_universe = result.receiver_family_opportunity_universe
+    ghost_opportunities = {
+        family_id: opportunity_id
+        for receiver, family_id, opportunity_id in root_family_universe.opportunity_ids
+        if receiver == "Ghost"
+    }
+    assert set(ghost_opportunities) == set(root_family_universe.family_ids)
+    for fold in result.folds:
+        support = next(
+            record
+            for record in fold.receiver_training_support
+            if record.receiver_id == "Ghost"
+        )
+        assert support.status == "not_estimable"
+        assert support.reason_code == "receiver_absent_in_outer_training"
+        assert all(
+            model.receiver_family_artifact.receiver != "Ghost"
+            for model in fold.receiver_family_models
+        )
+        assert all(
+            binding.receiver != "Ghost"
+            for binding in fold.directional_response_bindings
+        )
+
+    ghost_rows = result.oof_receiver_coverage.loc[
+        result.oof_receiver_coverage["receiver"].eq("Ghost")
+    ]
+    assert len(ghost_rows) == len(
+        result.oof_receiver_coverage.loc[
+            result.oof_receiver_coverage["receiver"].eq("Receiver")
+        ]
+    )
+    assert set(ghost_rows["official_incremental_status"]) == {"not_estimable"}
+    assert set(ghost_rows["reason_code"]) == {"receiver_absent_in_outer_training"}
+
+
+def test_predeclared_absent_receiver_does_not_perturb_observed_receiver_chain() -> None:
+    base_spec = replace(_spec(), outer_fold_partition_seed=20260716)
+    baseline = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=base_spec,
+    )
+    extended = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=replace(
+            base_spec,
+            predeclared_receiver_ids=("Ghost", "Receiver", "Sender"),
+        ),
+    )
+
+    assert extended.root_input_identity == baseline.root_input_identity
+    assert extended.fold_plan.partition_seed_lineage == (
+        baseline.fold_plan.partition_seed_lineage
+    )
+    original_by_test_subjects = {
+        fold.application.heldout_subject_ids: fold for fold in baseline.folds
+    }
+    augmented_by_test_subjects = {
+        fold.application.heldout_subject_ids: fold for fold in extended.folds
+    }
+    assert augmented_by_test_subjects.keys() == original_by_test_subjects.keys()
+    assert extended.receiver_universe.receiver_axis_id != (
+        baseline.receiver_universe.receiver_axis_id
+    )
+    model_lineage = {
+        "diagnostic_functional_id",
+        "fold_id",
+        "precision_transform_id",
+        "receiver_family_training_artifact_id",
+        "response_artifact_id",
+        "training_artifact_id",
+    }
+    application_lineage = {
+        "application_id",
+        "diagnostic_application_id",
+        "diagnostic_functional_id",
+        "response_application_id",
+        "training_artifact_id",
+    }
+    program_lineage = {
+        "application_id",
+        "downstream_application_id",
+        "training_artifact_id",
+    }
+    for test_subjects, original in original_by_test_subjects.items():
+        augmented = augmented_by_test_subjects[test_subjects]
+        assert augmented.training.training_artifact_id == (
+            original.training.training_artifact_id
+        )
+        assert augmented.application.application_id == (
+            original.application.application_id
+        )
+        for before, after in zip(
+            original.receiver_incremental_models,
+            augmented.receiver_incremental_models,
+            strict=True,
+        ):
+            assert {
+                key: value
+                for key, value in before.to_dict().items()
+                if key not in model_lineage
+            } == {
+                key: value
+                for key, value in after.to_dict().items()
+                if key not in model_lineage
+            }
+        for before, after in zip(
+            original.receiver_incremental_applications,
+            augmented.receiver_incremental_applications,
+            strict=True,
+        ):
+            assert {
+                key: value
+                for key, value in before.to_dict().items()
+                if key not in application_lineage
+            } == {
+                key: value
+                for key, value in after.to_dict().items()
+                if key not in application_lineage
+            }
+        for before, after in zip(
+            original.receiver_program_applications,
+            augmented.receiver_program_applications,
+            strict=True,
+        ):
+            assert {
+                key: value
+                for key, value in before.to_dict().items()
+                if key not in program_lineage
+            } == {
+                key: value
+                for key, value in after.to_dict().items()
+                if key not in program_lineage
+            }
 
 
 def test_test_subject_expression_poison_leaves_its_fold_training_id_unchanged() -> None:

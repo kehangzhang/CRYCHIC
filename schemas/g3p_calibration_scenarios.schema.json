@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crychic:schema:table:g3p-calibration-scenarios:1.0.0",
+  "title": "CRYCHIC producer-derived G3-P calibration scenario metrics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_schema_version", "table", "filename", "primary_key", "logical_key", "foreign_keys", "columns"],
+  "properties": {
+    "artifact_schema_version": {"const": "1.0.0"},
+    "table": {"const": "g3p_calibration_scenarios"},
+    "filename": {"const": "g3p_calibration_scenarios.parquet"},
+    "primary_key": {"const": ["scenario_result_id"]},
+    "logical_key": {"const": ["dependence_structure", "non_null_prevalence"]},
+    "foreign_keys": {"const": [{"columns": ["protocol_id"], "references": "manifest.protocol_id"}, {"columns": ["replicate_ids_json"], "references": "g3p_calibration_replicates.replicate_id[]"}]},
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_result_id", "scenario_id", "protocol_id", "dependence_structure", "non_null_prevalence", "status", "reason_code", "n_replicates", "n_observed_replicates", "minimum_eligible_candidates_per_stratum", "replicate_ids_json", "stratum_result_ids_json", "strata_json", "observed_prevalence", "brier_score", "prevalence_only_brier_score", "brier_relative_improvement", "ece", "ece_upper_bound", "calibration_in_the_large", "calibration_slope", "bootstrap_seed", "metric_weighting"],
+      "properties": {
+        "scenario_result_id": {"dtype": "string", "nullable": false},
+        "scenario_id": {"dtype": "string", "nullable": false},
+        "protocol_id": {"dtype": "string", "nullable": false},
+        "dependence_structure": {"dtype": "string", "nullable": false, "enum": ["independent_candidate_edges", "sender_lr_block_correlated_edges", "target_degree_correlated_edges"]},
+        "non_null_prevalence": {"dtype": "float", "nullable": false, "enum": [0.005, 0.01, 0.05, 0.1]},
+        "status": {"dtype": "string", "nullable": false, "enum": ["observed", "not_estimable"]},
+        "reason_code": {"dtype": "string", "nullable": true},
+        "n_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "n_observed_replicates": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "minimum_eligible_candidates_per_stratum": {"dtype": "integer", "nullable": false, "minimum": 0},
+        "replicate_ids_json": {
+          "dtype": "string",
+          "nullable": false,
+          "encoding": "canonical_json",
+          "contentMediaType": "application/json",
+          "contentSchema": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+        },
+        "stratum_result_ids_json": {
+          "dtype": "string",
+          "nullable": false,
+          "encoding": "canonical_json",
+          "contentMediaType": "application/json",
+          "contentSchema": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+        },
+        "strata_json": {
+          "dtype": "string",
+          "nullable": false,
+          "encoding": "canonical_json",
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["stratum_result_id", "scenario_id", "protocol_id", "stratum_id", "status", "reason_code", "n_replicates", "minimum_eligible_candidates", "observed_prevalence", "brier_score", "prevalence_only_brier_score", "brier_relative_improvement", "ece", "ece_upper_bound", "calibration_in_the_large", "calibration_slope", "bootstrap_seed", "metric_weighting"],
+              "properties": {
+                "stratum_result_id": {"type": "string", "minLength": 1},
+                "scenario_id": {"type": "string", "minLength": 1},
+                "protocol_id": {"type": "string", "minLength": 1},
+                "stratum_id": {"type": "string", "minLength": 1},
+                "status": {"enum": ["observed", "not_estimable"]},
+                "reason_code": {"type": ["string", "null"]},
+                "n_replicates": {"type": "integer", "minimum": 0},
+                "minimum_eligible_candidates": {"type": "integer", "minimum": 0},
+                "observed_prevalence": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+                "brier_score": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+                "prevalence_only_brier_score": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+                "brier_relative_improvement": {"type": ["number", "null"]},
+                "ece": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+                "ece_upper_bound": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+                "calibration_in_the_large": {"type": ["number", "null"]},
+                "calibration_slope": {"type": ["number", "null"]},
+                "bootstrap_seed": {"type": ["integer", "null"], "minimum": 0},
+                "metric_weighting": {"const": "candidate_equal_within_replicate_then_replicate_equal_v1"}
+              }
+            }
+          }
+        },
+        "observed_prevalence": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "brier_score": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "prevalence_only_brier_score": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "brier_relative_improvement": {"dtype": "float", "nullable": true},
+        "ece": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "ece_upper_bound": {"dtype": "float", "nullable": true, "minimum": 0.0, "maximum": 1.0},
+        "calibration_in_the_large": {"dtype": "float", "nullable": true},
+        "calibration_slope": {"dtype": "float", "nullable": true},
+        "bootstrap_seed": {"dtype": "integer", "nullable": true, "minimum": 0},
+        "metric_weighting": {"dtype": "string", "nullable": false, "enum": ["candidate_equal_within_replicate_then_replicate_equal_v1"]}
+      }
+    }
+  }
+}

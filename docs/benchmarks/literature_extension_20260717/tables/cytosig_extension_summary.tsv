@@ -1,0 +1,5 @@
+dataset	truth_status	cells	patients	target_cell_types	truth_rows	truth_positive_rows	endpoint	method	auroc	average_precision	balanced_ap	top250_or	top250_q_primary8	rank_or_note
+TNBC_Wu2021	openproblems_frozen_binary_truth_not_reconstructed_43_signature	42512		29	812	166	controlled_unique_ligand_target_max	CRYCHIC availability-state	0.435372	0.218250	0.513174			11/12 AUROC
+TNBC_Wu2021	openproblems_frozen_binary_truth_not_reconstructed_43_signature	42512		29	812	166	paper_union_max_imputed_author_top_vs_total	CRYCHIC availability-state				2.554384	2.948094e-11	3/8 primary arms
+HER2_Wu2021	reconstructed_clean_activity_truth_not_historical_exact	19275	5	25	1375	117	controlled_unique_ligand_target_max	CRYCHIC availability-state	0.638600	0.125084	0.584237			1/12 AUROC
+HER2_Wu2021	reconstructed_clean_activity_truth_not_historical_exact	19275	5	25	1375	117	paper_union_max_imputed_author_top_vs_total	CRYCHIC availability-state				1.979049	2.44e-4	1/8 primary substitute arms
