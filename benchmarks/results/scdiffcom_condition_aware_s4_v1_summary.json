@@ -1,0 +1,85 @@
+{
+  "datasets": {
+    "Kuppe_MI_CTRL_vs_IZ": {
+      "analysis_unit": "condition_level",
+      "analysis_cell_types": 11,
+      "calls_by_condition": {
+        "CTRL": 2714,
+        "IZ": 2996
+      },
+      "condition_specific_calls": 5710,
+      "des": {
+        "expected_pair_coverage_mean": 1.0,
+        "expected_pair_coverage_min": 1.0,
+        "mean": 0.3297989635281187,
+        "median": 0.3316558441558441,
+        "rank_eligible_fraction_mean": 1.0,
+        "rank_eligible_fraction_min": 1.0,
+        "strata": 8
+      },
+      "detected_calls": 9462,
+      "elapsed_seconds": 71.89672422409058,
+      "evaluation_manifest_sha256": "e5e822ec1ec4745190acd35c4891542c3cf5cd26e9a76d0a01c4a948a592fc2c",
+      "matched_interactions": 1936,
+      "peak_memory_percent": 22.406638934968942,
+      "ranking_sha256": "1bbf9d6eebf5372c84a7f0203130836191c5385c22b7aba185218b3fc63120fb",
+      "run_manifest_sha256": "2f7fe95934d8444b10d1d5235cfc424ae01d4cd025f140d72c7f48388954534b",
+      "source_cell_types": 11
+    },
+    "LermaMartin_MS_CA_vs_Ctrl": {
+      "analysis_unit": "condition_level",
+      "analysis_cell_types": 8,
+      "calls_by_condition": {
+        "CA": 1264,
+        "Ctrl": 509
+      },
+      "condition_specific_calls": 1773,
+      "des": {
+        "expected_pair_coverage_mean": 0.7380952380952381,
+        "expected_pair_coverage_min": 0.5,
+        "mean": 0.3747178985230455,
+        "median": 0.2227272727272727,
+        "rank_eligible_fraction_mean": 0.8,
+        "rank_eligible_fraction_min": 0.8,
+        "strata": 8
+      },
+      "detected_calls": 6722,
+      "elapsed_seconds": 57.03773355484009,
+      "evaluation_manifest_sha256": "e583a8b6f7adcf5954b7c265bb0114aa5a0547b19c78ea28cca5eebead4454fc",
+      "excluded_cell_types": {
+        "BC": "absent_in_Ctrl_and_removed_by_scdiffcom_default_min_cells"
+      },
+      "matched_interactions": 2054,
+      "peak_memory_percent": 25.771182755776227,
+      "ranking_sha256": "c6e28485f713c1c4a2682e1cc0bf728d27eaccba3f0ab212350a9add99bb4b12",
+      "run_manifest_sha256": "ad3e51879c342ec6dade62802cac31cf76226b392dae88dfa57ffc22fb7ae7e4",
+      "source_cell_types": 9
+    }
+  },
+  "method": {
+    "git_commit": "7877de254380cfb3a0457d5548969129aeb47137",
+    "id": "scdiffcom",
+    "version": "1.1.1"
+  },
+  "protocol": {
+    "article_doi": "10.1093/nargab/lqaf084",
+    "condition_specific_calls": "GetTableCCI(type='detected', simplified=FALSE), REGULATION UP for target and DOWN for reference",
+    "future_workers": 8,
+    "iterations": 1000,
+    "multiple_testing": "Benjamini-Hochberg threshold 0.05",
+    "normalization_deviation": "default Seurat LogNormalize recomputed from frozen raw counts",
+    "resource": "ConnectomeDB2020_Hou_2020_human_2293_simple_directed_pairs",
+    "seed": 20260717,
+    "seurat5_compatibility": "isolated process-local slot-to-layer API bridge; installed packages unmodified",
+    "supplementary_section": "S4",
+    "threshold_logfc": 0.4054651081081644
+  },
+  "reproducibility": {
+    "parallel_smoke_repeats": 2,
+    "rds_sha256_identical": true,
+    "rankings_sha256_identical": true,
+    "selected_calls_sha256_identical": true
+  },
+  "schema_version": "crychic-scdiffcom-condition-aware-s4-summary-v1",
+  "status": "complete"
+}

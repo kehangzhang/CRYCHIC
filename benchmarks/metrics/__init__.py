@@ -59,8 +59,15 @@ from .signed_track_b import (
     evaluate_signed_track_b,
     signed_track_b_truth_sha256,
 )
+from .spatial_des import (
+    CellPairMode,
+    SpatialDESSpec,
+    SpatialDESTables,
+    evaluate_spatial_des,
+)
 
 __all__ = [
+    "CellPairMode",
     "DCommonSpec",
     "FrozenRepeatedMeasuresDesign",
     "LiteratureGoldStandardResult",
@@ -73,6 +80,8 @@ __all__ = [
     "RepeatedMeasuresFit",
     "RepeatedMeasuresSpec",
     "SignedTrackBTables",
+    "SpatialDESSpec",
+    "SpatialDESTables",
     "StableTier",
     "TopKStabilityPoint",
     "aggregate_loso_primary_endpoint",
@@ -83,6 +92,7 @@ __all__ = [
     "evaluate_literature_gold_standard",
     "evaluate_multicondition_rank_stability",
     "evaluate_signed_track_b",
+    "evaluate_spatial_des",
     "external_long_to_score_table",
     "fit_repeated_measures_contrast",
     "freeze_repeated_measures_design",

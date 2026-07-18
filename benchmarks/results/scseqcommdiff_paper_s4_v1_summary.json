@@ -1,0 +1,229 @@
+{
+  "datasets": {
+    "Kuppe_MI_CTRL_vs_IZ": {
+      "condition_aware": {
+        "analysis_unit": "condition_level",
+        "analysis_cell_types": 11,
+        "des": {
+          "expected_pair_coverage_by_condition": {
+            "CTRL": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "IZ": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "expected_pair_coverage_mean": 1.0,
+          "expected_pair_coverage_min": 1.0,
+          "mean": 0.308173853172828,
+          "median": 0.2931763152102135,
+          "rank_eligible_fraction": 1.0,
+          "strata": 8
+        },
+        "elapsed_seconds": 1945.7575814723969,
+        "evaluation_manifest_sha256": "b2c5f3fcd05a9c99dc792c8e83dc1059efe3a6a56a06926d03c37ae486c785a8",
+        "excluded_cell_types": [],
+        "ranking_sha256": "3416662d365faea0599242a229dc523c0ac7f11138af57433efd2603814c9e9b",
+        "run_manifest_sha256": "c9324733523d871ef3e10ce81d74f205f1582f2d329b0d439feacb145fda306c",
+        "selected_interactions": 10176,
+        "selected_interactions_by_condition": {
+          "CTRL": 2873,
+          "IZ": 7303
+        },
+        "selected_sha256": "a9e8a5631bc49964b25b76708af5e197f47c98a67315b60c048498ed6b274bd0",
+        "source_cell_types": 11
+      },
+      "multi_sample_subject_primary": {
+        "analysis_unit": "subject_id",
+        "analysis_cell_types": 11,
+        "des": {
+          "expected_pair_coverage_by_condition": {
+            "CTRL": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "IZ": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "expected_pair_coverage_mean": 1.0,
+          "expected_pair_coverage_min": 1.0,
+          "mean": 0.2136636228185533,
+          "median": 0.1887096774193549,
+          "rank_eligible_fraction": 1.0,
+          "strata": 8
+        },
+        "elapsed_seconds": 175.67175245285034,
+        "evaluation_manifest_sha256": "a79113baaa065c87082506bc85add997fca4727ea08f67aff0bb164817fff6d9",
+        "excluded_cell_types": [],
+        "ranking_sha256": "964b418136a34fd56d007606f2363f17fabaff82f05a79c8c0e0c35afe4c4430",
+        "run_manifest_sha256": "2956b1908ac657385bdbcd33ffb6115ea4d93d09524e6656fc839318593e446f",
+        "selected_interactions": 4140,
+        "selected_interactions_by_condition": {
+          "CTRL": 2221,
+          "IZ": 1919
+        },
+        "selected_sha256": "f3730967ff4db659c90b5cdd9e447dd92091b3f83123fbb81b74282c1df769ae",
+        "source_cell_types": 11,
+        "units_by_condition": {
+          "CTRL": 4,
+          "IZ": 7
+        }
+      }
+    },
+    "LermaMartin_MS_CA_vs_Ctrl": {
+      "condition_aware": {
+        "analysis_unit": "condition_level",
+        "analysis_cell_types": 8,
+        "des": {
+          "expected_pair_coverage_by_condition": {
+            "chronic_active": [
+              1.0,
+              0.75,
+              0.75,
+              0.6666666666666666
+            ],
+            "control": [
+              1.0,
+              0.5,
+              0.5714285714285714,
+              0.6666666666666666
+            ]
+          },
+          "expected_pair_coverage_mean": 0.7380952380952381,
+          "expected_pair_coverage_min": 0.5,
+          "mean": 0.372893191367456,
+          "median": 0.303030303030303,
+          "rank_eligible_fraction": 0.8,
+          "strata": 8
+        },
+        "elapsed_seconds": 1242.4507777690887,
+        "evaluation_manifest_sha256": "d4e30e13dbe5ae5dcd4688b515cec329ee82b0f12f4e59fcc011233928438f24",
+        "excluded_cell_types": {
+          "BC": "absent_in_Ctrl; excluded by native equal-frame permutation estimability rule"
+        },
+        "ranking_sha256": "fa4d3abfa4f9078370230a46ef483717da6efcdace09100b328f849cf1307d21",
+        "run_manifest_sha256": "191511314187d91ace1c1dc015c8202e54680b42b38dc9da220285060819918f",
+        "selected_interactions": 1571,
+        "selected_interactions_by_condition": {
+          "CA": 957,
+          "Ctrl": 614
+        },
+        "selected_sha256": "119bf9139bb0c2f5d28ded4639dcbcdb6782e65d10c201320aaa3aa189e7f962",
+        "source_cell_types": 9
+      },
+      "multi_sample_subject_primary": {
+        "analysis_unit": "subject_id",
+        "analysis_cell_types": 8,
+        "des": {
+          "expected_pair_coverage_by_condition": {
+            "chronic_active": [
+              1.0,
+              1.0,
+              1.0,
+              0.6666666666666666
+            ],
+            "control": [
+              0.6666666666666666,
+              0.7142857142857143,
+              0.8,
+              0.8333333333333334
+            ]
+          },
+          "expected_pair_coverage_mean": 0.8351190476190475,
+          "expected_pair_coverage_min": 0.6666666666666666,
+          "mean": 0.5317099823800487,
+          "median": 0.6331932773109243,
+          "rank_eligible_fraction": 0.8,
+          "strata": 8
+        },
+        "elapsed_seconds": 124.81017422676086,
+        "evaluation_manifest_sha256": "31da556748eab7de3cc485f45f93b37cea00008d494746807d33e682427ffaea",
+        "excluded_cell_types": {
+          "BC": "fails common native pseudobulk support in Ctrl"
+        },
+        "ranking_sha256": "96d3f6d9dc51daa0f4cc061630c769bb9e054e5258977182ed763b16718149eb",
+        "run_manifest_sha256": "e3d01a7299bddd7d66fb90488904d9e0ae6c005e1e39d92288f0cd9e3112b2ce",
+        "selected_interactions": 1374,
+        "selected_interactions_by_condition": {
+          "CA": 1247,
+          "Ctrl": 127
+        },
+        "selected_sha256": "174e8e6cdda21cd93e22dfb34d4b49aec6b5cf6f629008e3c4bf422196731807",
+        "source_cell_types": 9,
+        "units_by_condition": {
+          "CA": 5,
+          "Ctrl": 6
+        }
+      }
+    }
+  },
+  "failed_attempts": [
+    {
+      "dataset": "LermaMartin_MS_CA_vs_Ctrl",
+      "elapsed_seconds": 93.75551414489746,
+      "manifest_sha256": "a2e418f2395c3044e59249cd56b7d2bd75bf38086456f1819182cbaa354fde8b",
+      "reason": "native pseudobulk builder received no retained Ctrl BC unit and failed while assigning column names",
+      "scenario": "multi_sample_sample_id_unfiltered",
+      "status": "failed"
+    },
+    {
+      "dataset": "LermaMartin_MS_CA_vs_Ctrl",
+      "elapsed_seconds": 364.81191754341125,
+      "manifest_sha256": "0cf680e04659b9a52c33e243e96abf4b994e458d10a258ee65bd10d5e77a8cfd",
+      "reason": "native condition permutation removed BC from one condition and then subtracted unequal score frames",
+      "scenario": "condition_aware_unfiltered",
+      "status": "failed"
+    }
+  ],
+  "method": {
+    "git_commit": "5a29240a237c5520c83ab82527ba55e0e1ceaff5",
+    "id": "scseqcommdiff",
+    "version": "2.0.0",
+    "version_note": "Zenodo DESCRIPTION reports 1.0.0; the complete submitted R implementation is byte-identical to this first 2.0.0 Git commit."
+  },
+  "protocol": {
+    "article_doi": "10.1093/nargab/lqaf084",
+    "condition_aware": {
+      "estimability": "retain a cell type only when both pooled conditions contain at least 2 cells; preserve excluded pairs as not_estimable",
+      "intercellular_test": "1000 condition-label permutations",
+      "intracellular_test": "Wilcoxon",
+      "multiple_testing": "BH q<0.05"
+    },
+    "des": {
+      "cell_pair_direction": "unordered directions collapsed",
+      "expected_top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ],
+      "kuppe_expected_variant": "spatial_neighbor_max",
+      "score": "unweighted positive running-sum analogue"
+    },
+    "intracellular_gate": "max_S_intra>0.5_or_all_NA",
+    "multi_sample_subject_primary": {
+      "estimability": "retain a cell type only when each condition has at least 2 subject units with more than 1 cell; preserve excluded pairs as not_estimable",
+      "intercellular_test": "Wilcoxon",
+      "intracellular_test": "pseudo-Wilcoxon",
+      "multiple_testing": "raw p<0.05"
+    },
+    "ranking": "cardinality of native significant directed LR rows after unordered cell-pair collapse",
+    "resource": "ConnectomeDB2020_Hou_2020_human_2293_simple_directed_pairs",
+    "seed": 20260717,
+    "supplementary_section": "S4"
+  },
+  "schema_version": "crychic-scseqcommdiff-paper-s4-summary-v1",
+  "status": "complete"
+}

@@ -603,7 +603,11 @@ Live producer-owned `CrossFitArtifacts` also support two descriptive post-fit
 views without refitting:
 
 ```python
-artifacts = model.fit_crossfit(adata, spec=crossfit_spec)
+artifacts = model.fit_crossfit(
+    adata,
+    spec=crossfit_spec,
+    n_jobs=2,  # outer folds; default 1 because workers retain fold-local state
+)
 signatures = model.export_crossfit_signatures(
     artifacts, mode="state", entropy_threshold=0.8
 )
@@ -693,5 +697,9 @@ uv run --extra dev python -m build
 - [Trusted/tuned family-common smoke summary](benchmarks/results/family_common_crossfit_smoke_v1_summary.json)
 - [Graph-fusion G2 core smoke summary](benchmarks/results/graph_fusion_g2_smoke_core_v1_summary.json)
 - [Public family-common G1.5 quick summary](benchmarks/results/public_family_common_g15_campaign_v1_summary.json)
+- [Multi-group spatial DES benchmark protocol](docs/benchmarks/multigroup_spatial_20260717/PROTOCOL.md)
+- [Single-group communication tutorial](tutorials/single_sample_communication.ipynb)
+- [Downsample multi-group differential tutorial](tutorials/multigroup_differential_communication.ipynb)
+- [Complete literature benchmark results notebook](tutorials/literature_benchmark_results.ipynb)
 - [Developer subject-crossfit tutorial](tutorials/developer_subject_crossfit.ipynb)
 - [Repository development instructions](AGENTS.md)

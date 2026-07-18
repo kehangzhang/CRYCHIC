@@ -1,0 +1,39 @@
+name: crychic-scseqcommdiff-2.0.0
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.3.3
+  - r-remotes
+  - r-rcpp
+  - r-bh
+  - r-matrix
+  - r-dplyr
+  - r-rlang
+  - r-foreach
+  - r-igraph
+  - r-tidygraph
+  - r-rcolorbrewer
+  - r-htmlwidgets
+  - r-ggplot2
+  - r-scico
+  - r-gridextra
+  - r-gtable
+  - r-psych
+  - r-domc
+  - r-doparallel
+  - r-dorng
+  - r-gtools
+  - r-tictoc
+  - r-bigmemory
+  - r-effsize
+  - r-ggpubr
+  - r-reticulate
+  - r-magick
+  - r-zeallot
+  - bioconductor-topgo
+  - bioconductor-org.hs.eg.db
+  - bioconductor-org.mm.eg.db
+  - bioconductor-mast
+  - bioconductor-omnipathr
+  - bioconductor-clusterprofiler
