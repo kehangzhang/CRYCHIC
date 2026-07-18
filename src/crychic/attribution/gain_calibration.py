@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from crychic.core import ContractError, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 
 if TYPE_CHECKING:
     from crychic.scoring.downstream import (
@@ -208,7 +213,10 @@ class GainCalibrationSpec:
             ),
         )
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             repeated = GainCalibrationSpec(
                 min_inner_folds=self.min_inner_folds,
@@ -233,6 +241,7 @@ class GainCalibrationSpec:
                 field="spec_id",
                 remediation="Recreate the pre-registered calibration specification",
             )
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         self._require_intact()
@@ -398,7 +407,10 @@ class SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact:
             "validation_inner_fold_ids": list(self.validation_inner_fold_ids),
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self.spec._require_intact()
             n_subjects = len(self.training_subject_ids)
@@ -497,7 +509,9 @@ class SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact:
                     "Rebuild calibration from intact selected inner applications"
                 ),
             )
+        record_validation(self)
 
+    @validation_scope()
     def calibrate_gain(self, value: object) -> float | None:
         """Map one unit-interval gain to its train-only positive-gain percentile."""
 
@@ -525,6 +539,7 @@ class SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact:
             )
         )
 
+    @validation_scope()
     def calibrate_gains(self, values: object) -> np.ndarray:
         """Vectorized gain calibration preserving zero and missing values."""
 
@@ -548,6 +563,7 @@ class SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact:
             )
         return cast(np.ndarray, result)
 
+    @validation_scope()
     def to_dict(self) -> dict[str, object]:
         self._require_intact()
         return {
@@ -671,6 +687,7 @@ def _calibration_parent_error(message: str, *, field: str) -> ContractError:
     )
 
 
+@validation_scope()
 def _finalize_selected_penalty_inner_oof_gain_calibration(
     *,
     _producer_token: object,

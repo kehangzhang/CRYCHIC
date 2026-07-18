@@ -25,6 +25,7 @@ from crychic.sender import (
     apply_contrast_common_sender_functional,
     freeze_common_sender_candidate_manifest,
     interaction_ligand_contrast_gate,
+    interaction_ligand_contrast_gates,
 )
 from crychic.sender.contracts import _SENDER_CONTRAST_SUPPORT_PRODUCER_TOKEN
 
@@ -1352,6 +1353,21 @@ def test_absent_interaction_gate_is_not_estimable_without_support_id() -> None:
     assert gate.status is SenderContrastSupportStatus.NOT_ESTIMABLE
     assert gate.reason_code == "interaction_ligand_contrast_support_absent"
     assert gate.support_ids == ()
+
+
+def test_bulk_interaction_gates_match_ordered_single_gate_results() -> None:
+    functional = _fit_paired_interaction((0.4, 0.45, 0.5))
+    queries = (("R", "not-frozen"), ("R", "L_R"), ("R", "L_R"))
+
+    bulk = interaction_ligand_contrast_gates(functional, queries)
+    singles = tuple(
+        interaction_ligand_contrast_gate(functional, receiver, interaction_id)
+        for receiver, interaction_id in queries
+    )
+
+    assert tuple(gate.to_dict() for gate in bulk) == tuple(
+        gate.to_dict() for gate in singles
+    )
 
 
 def test_support_gate_and_functional_reject_forced_mutation() -> None:

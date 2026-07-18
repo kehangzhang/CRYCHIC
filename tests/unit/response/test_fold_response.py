@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
 from scipy import sparse
 
-from crychic.core import ContractError
+from crychic.core import ContractError, stable_id
 from crychic.design import (
     FrozenDesignEncoder,
     apply_frozen_design_encoder,
@@ -19,6 +21,33 @@ from crychic.response import (
     apply_fold_gene_response,
     fit_fold_gene_response,
 )
+from crychic.response.fold import _numeric_digest
+
+
+def test_streaming_numeric_digest_preserves_the_released_identity() -> None:
+    arrays = (
+        np.asarray([], dtype=np.float64),
+        np.asarray([0.0, -0.0, 1.0, -2.5, np.nan], dtype=np.float64),
+        np.arange(12, dtype=np.float64).reshape(3, 4),
+        np.where(
+            np.arange(16_385) == 16_384,
+            np.nan,
+            np.arange(16_385, dtype=np.float64),
+        ),
+    )
+
+    for array in arrays:
+        tokens = [
+            None if math.isnan(float(value)) else float(value).hex()
+            for value in array.flat
+        ]
+        expected = stable_id(
+            "fold_response_array",
+            {"shape": list(array.shape), "float64_tokens": tokens},
+            schema_version="1",
+            digest_length=64,
+        )
+        assert _numeric_digest(array) == expected
 
 
 def _sample_metadata(

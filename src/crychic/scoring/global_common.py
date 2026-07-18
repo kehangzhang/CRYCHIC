@@ -31,6 +31,7 @@ from crychic.attribution.gain_calibration import (
     SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact,
 )
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import validation_scope
 from crychic.sender import (
     CommonSenderApplication,
     CommonSenderApplicationStatus,
@@ -652,6 +653,7 @@ def _gain_calibration_binding_record(
     }
 
 
+@validation_scope()
 def fit_cross_receiver_common_scoring_functional(
     child_functionals: Sequence[FamilyCommonScoringFunctional],
     *,
@@ -1516,6 +1518,7 @@ class CrossReceiverCommonScoringApplication:
         }
 
 
+@validation_scope()
 def apply_cross_receiver_common_scoring_functional(
     functional: CrossReceiverCommonScoringFunctional,
     child_applications: Sequence[FamilyCommonScoringApplication],

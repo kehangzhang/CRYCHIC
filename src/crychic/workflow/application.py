@@ -15,6 +15,11 @@ from crychic.availability import (
     estimate_bundle_availability,
 )
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.sender import (
     CommonSenderApplication,
     apply_contrast_common_sender_functional,
@@ -81,7 +86,10 @@ class TrainingArtifactApplication:
     application_status: str = _APPLICATION_STATUS
     application_id: str = field(init=False)
 
+    @validation_scope()
     def __post_init__(self) -> None:
+        if validation_is_cached(self):
+            return
         if not self.training_artifact_id:
             raise ValueError("training_artifact_id must not be empty")
         subjects = tuple(sorted(self.heldout_subject_ids))
@@ -132,7 +140,8 @@ class TrainingArtifactApplication:
                 raise TypeError(
                     "sender_assignments must contain CommonSenderApplication"
                 )
-            validated = CommonSenderApplication(item.table, item.functional)
+            item._require_intact()
+            validated = item
             assignment_subjects = set(validated.table["subject_id"].astype(str))
             assignment_samples = set(validated.table["sample_id"].astype(str))
             if not assignment_subjects.issubset(subjects) or not (
@@ -165,6 +174,7 @@ class TrainingArtifactApplication:
             "application_id",
             stable_id("training_artifact_application", self._identity_payload()),
         )
+        record_validation(self)
 
     def _identity_payload(self) -> dict[str, object]:
         return {
@@ -204,9 +214,12 @@ class TrainingArtifactApplication:
             "training_artifact_id": self.training_artifact_id,
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
         """Reject mutation of held-out availability or sender assignment children."""
 
+        if validation_is_cached(self):
+            return
         try:
             repeated = TrainingArtifactApplication(
                 training_artifact_id=self.training_artifact_id,
@@ -251,6 +264,7 @@ class TrainingArtifactApplication:
                 field="application_id",
                 remediation="Reapply the intact training artifact to raw held-out data",
             )
+        record_validation(self)
 
     @property
     def is_oof_certified(self) -> bool:

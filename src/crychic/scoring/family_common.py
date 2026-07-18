@@ -19,11 +19,16 @@ from scipy import sparse
 
 from crychic.attribution import ReceiverFamilyTrainingArtifact
 from crychic.core import ContractError, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.sender import (
     CommonSenderApplication,
     ContrastCommonSenderFunctional,
     SenderContrastSupportStatus,
-    interaction_ligand_contrast_gate,
+    interaction_ligand_contrast_gates,
 )
 
 from .contracts import float64_array_digest
@@ -411,6 +416,13 @@ class FamilyCommonScoringFunctional:
         return False
 
     def _identity_payload(self) -> dict[str, object]:
+        interaction_gates = interaction_ligand_contrast_gates(
+            self.sender_functional,
+            tuple(
+                (self.receiver, interaction.interaction_id)
+                for interaction in self.interactions
+            ),
+        )
         return {
             "active_family_ids": list(self.active_family_ids),
             "certification_status": self.certification_status,
@@ -430,12 +442,7 @@ class FamilyCommonScoringFunctional:
             "incremental_reason_code": self.incremental_reason_code,
             "interactions": [item.to_dict() for item in self.interactions],
             "interaction_ligand_contrast_gates": [
-                interaction_ligand_contrast_gate(
-                    self.sender_functional,
-                    self.receiver,
-                    item.interaction_id,
-                ).to_dict()
-                for item in self.interactions
+                gate.to_dict() for gate in interaction_gates
             ],
             "member_allocation_method": _MEMBER_ALLOCATION_METHOD,
             "receiver": self.receiver,
@@ -460,7 +467,10 @@ class FamilyCommonScoringFunctional:
             "autonomous_program_resource_id": self.autonomous_program_resource_id,
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self.receiver_family._require_producer_owned()
             self.sender_functional._require_intact()
@@ -556,6 +566,7 @@ class FamilyCommonScoringFunctional:
                     "Refit from intact receiver, incremental, and sender parents"
                 ),
             ) from error
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         self._require_intact()
@@ -712,6 +723,7 @@ def _frozen_interactions(
     return interactions
 
 
+@validation_scope()
 def fit_family_common_scoring_functional(
     receiver_family: ReceiverFamilyTrainingArtifact,
     incremental_functional: IncrementalDownstreamFunctional,
@@ -815,9 +827,11 @@ def fit_family_common_scoring_functional(
             schema_version="2",
         ),
     )
+    record_validation(self)
     return self
 
 
+@validation_scope()
 def mark_family_common_scoring_not_estimable(
     receiver_family: ReceiverFamilyTrainingArtifact,
     sender_functional: ContrastCommonSenderFunctional,
@@ -937,6 +951,7 @@ def mark_family_common_scoring_not_estimable(
             schema_version="2",
         ),
     )
+    record_validation(self)
     return self
 
 
@@ -1154,14 +1169,19 @@ def _validated_edge_evidence(
             remediation="Apply one common function to the complete held-out contrast",
         )
     expected_interactions = set(functional.interaction_ids)
-    expected_gates = {
-        interaction_id: interaction_ligand_contrast_gate(
-            functional.sender_functional,
-            functional.receiver,
-            interaction_id,
+    expected_gates = dict(
+        zip(
+            functional.interaction_ids,
+            interaction_ligand_contrast_gates(
+                functional.sender_functional,
+                tuple(
+                    (functional.receiver, interaction_id)
+                    for interaction_id in functional.interaction_ids
+                ),
+            ),
+            strict=True,
         )
-        for interaction_id in functional.interaction_ids
-    }
+    )
     for row in table.itertuples(index=False):
         expected_gate = expected_gates.get(str(row.interaction_id))
         if expected_gate is None:
@@ -2049,7 +2069,10 @@ class FamilyCommonScoringApplication:
             "table_row_counts": list(self.table_row_counts),
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self.functional._require_intact()
             observed_digests = (
@@ -2143,6 +2166,7 @@ class FamilyCommonScoringApplication:
                 field="application_id",
                 remediation="Reapply the intact common functional to held-out parents",
             )
+        record_validation(self)
 
     @property
     def family_attribution(self) -> pd.DataFrame:
@@ -2194,6 +2218,7 @@ class FamilyCommonScoringApplication:
         }
 
 
+@validation_scope()
 def apply_family_common_scoring_functional(
     functional: FamilyCommonScoringFunctional,
     incremental_application: IncrementalDownstreamApplication | None,
@@ -2333,6 +2358,7 @@ def apply_family_common_scoring_functional(
             schema_version="2",
         ),
     )
+    record_validation(self)
     return self
 
 

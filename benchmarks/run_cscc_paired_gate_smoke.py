@@ -1226,7 +1226,9 @@ def compact_not_estimable_metrics(
         "crossfit_spec_id": artifacts.spec.spec_id,
         "certification_status": artifacts.certification_status,
         "completed_stage_oof_verified": artifacts.completed_stage_oof_verified,
-        "complete_pipeline_oof_certified": artifacts.is_oof_certified,
+        "complete_pipeline_oof_certified": manifest[
+            "complete_pipeline_oof_certified"
+        ],
         "remaining_stages": manifest["remaining_stages"],
         "n_receiver_models": len(training_models),
         "training_diagnostic_status_counts": _count_values(
@@ -1622,6 +1624,7 @@ def run_smoke(
     gain_calibration_spec: GainCalibrationSpec | None = None,
     gain_calibration_config_path: Path = DEFAULT_GAIN_CALIBRATION_CONFIG,
     crossfit_result_output: Path | None = None,
+    n_jobs: int = 1,
 ) -> dict[str, object]:
     """Run the bounded real-data smoke, with optional descriptive v5 output."""
 
@@ -1792,6 +1795,7 @@ def run_smoke(
         bundle,
         target_prior,
         spec=spec,
+        n_jobs=n_jobs,
     )
     crossfit_elapsed = time.perf_counter() - crossfit_started
     if len(artifacts.folds) != 2:
@@ -1923,6 +1927,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Write the validated v5 cross-fit result directory.",
     )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="Maximum concurrent outer folds; scientific output is unchanged.",
+    )
     return parser
 
 
@@ -1950,6 +1960,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else args.gain_calibration_config
         ),
         crossfit_result_output=args.crossfit_result_output,
+        n_jobs=args.n_jobs,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

@@ -19,6 +19,7 @@ import pandas as pd
 
 from crychic.attribution.gain_calibration import GAIN_CALIBRATION_PERCENTILE_POLICY
 from crychic.core import canonical_digest, canonical_json, stable_id
+from crychic.core._validation import validation_scope
 from crychic.resources import (
     MECHANISTIC_VARIANT_POLICY_ID,
     MOLECULAR_LR_EQUIVALENCE_POLICY_ID,
@@ -10288,6 +10289,7 @@ class CrossFitResult:
         )
 
 
+@validation_scope()
 def write_crossfit_result(
     artifacts: CrossFitArtifacts,
     destination: str | Path,

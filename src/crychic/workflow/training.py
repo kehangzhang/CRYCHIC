@@ -27,6 +27,11 @@ from crychic.availability import (
     estimate_bundle_availability,
 )
 from crychic.core import ContractError, CrychicConfig, canonical_json, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.data import (
     ExpressionTransform,
     InputSchema,
@@ -519,8 +524,9 @@ Aggregate: TypeAlias = PseudobulkDataset | ExploratoryAggregate
 
 @dataclass(frozen=True, slots=True)
 class _PreparedRawFold:
-    validated: ValidatedInput
+    schema: InputSchema
     aggregate: Aggregate
+    sample_metadata: pd.DataFrame
     subject_ids: tuple[str, ...]
     sample_ids: tuple[str, ...]
     cell_type_ids: tuple[str, ...]
@@ -574,7 +580,13 @@ def _input_schema(config: CrychicConfig) -> InputSchema:
 
 def _copy_matrix(matrix: Any) -> Any:
     if sparse.issparse(matrix):
-        return matrix.copy()
+        source = sparse.csr_matrix(matrix)
+        if source.has_canonical_format and source.has_sorted_indices:
+            return source.copy()
+        result = sparse.csr_matrix(matrix, dtype=np.float64).copy()
+        result.sum_duplicates()
+        result.sort_indices()
+        return result
     return np.asarray(matrix).copy()
 
 
@@ -631,9 +643,11 @@ def _feature_id_digest(feature_ids: tuple[str, ...]) -> str:
 def _row_expression_digests(matrix: Any) -> tuple[str, ...]:
     result: list[str] = []
     if sparse.issparse(matrix):
-        canonical = sparse.csr_matrix(matrix, dtype=np.float64).copy()
-        canonical.sum_duplicates()
-        canonical.sort_indices()
+        canonical = sparse.csr_matrix(matrix)
+        if not canonical.has_canonical_format or not canonical.has_sorted_indices:
+            canonical = sparse.csr_matrix(matrix, dtype=np.float64).copy()
+            canonical.sum_duplicates()
+            canonical.sort_indices()
         for row_index in range(canonical.shape[0]):
             start = int(canonical.indptr[row_index])
             stop = int(canonical.indptr[row_index + 1])
@@ -661,9 +675,11 @@ def _matrix_content_digest(matrix: Any) -> str:
     shape = tuple(int(value) for value in matrix.shape)
     digest.update(np.asarray(shape, dtype="<i8").tobytes())
     if sparse.issparse(matrix):
-        canonical = sparse.csr_matrix(matrix, dtype=np.float64).copy()
-        canonical.sum_duplicates()
-        canonical.sort_indices()
+        canonical = sparse.csr_matrix(matrix)
+        if not canonical.has_canonical_format or not canonical.has_sorted_indices:
+            canonical = sparse.csr_matrix(matrix, dtype=np.float64).copy()
+            canonical.sum_duplicates()
+            canonical.sort_indices()
         digest.update(np.asarray(canonical.indptr, dtype="<i8").tobytes())
         digest.update(np.asarray(canonical.indices, dtype="<i8").tobytes())
         digest.update(np.asarray(canonical.data, dtype="<f8").tobytes())
@@ -773,7 +789,10 @@ class SanitizedRawInputIdentity:
             "workflow"
         )
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             payload = {
                 "config_digest": self.config_digest,
@@ -827,6 +846,7 @@ class SanitizedRawInputIdentity:
                 field="identity_id",
                 remediation="Rebuild the identity from the complete raw input",
             )
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         self._require_intact()
@@ -913,7 +933,10 @@ class SanitizedRawInputSnapshot:
             "workflow"
         )
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self.identity._require_intact()
             subjects = tuple(
@@ -978,6 +1001,7 @@ class SanitizedRawInputSnapshot:
                 field="snapshot",
                 remediation="Rebuild the defensive snapshot from raw input",
             )
+        record_validation(self)
 
 
 def _snapshot_metadata_digest(adata: AnnData) -> str:
@@ -1081,7 +1105,7 @@ def _sanitized_raw_input_snapshot(
         ),
     )
     object.__setattr__(self, "_producer_marker", _ROOT_SNAPSHOT_PRODUCER)
-    self._require_intact()
+    record_validation(self)
     return self
 
 
@@ -1220,8 +1244,9 @@ def _prepare_raw_fold(
             raise ValueError("fold samples are outside the root input identity")
         input_digest = root_input_identity.scope_digest(subjects)
     return _PreparedRawFold(
-        validated=validated,
+        schema=validated.schema,
         aggregate=aggregate,
+        sample_metadata=validated.report.sample_metadata.copy(deep=True),
         subject_ids=subjects,
         sample_ids=samples,
         cell_type_ids=observed_cell_types,
@@ -1240,6 +1265,183 @@ def _prepare_raw_fold(
     )
 
 
+def _prepare_validated_root_fold(
+    validated: ValidatedInput,
+    config: CrychicConfig,
+    *,
+    min_cells: int,
+    root_input_identity: SanitizedRawInputIdentity,
+) -> _PreparedRawFold:
+    """Aggregate one immutable sanitized root before subject partitioning."""
+
+    if not isinstance(validated, ValidatedInput) or not validated.is_counts:
+        raise TypeError("validated must be a raw-count ValidatedInput")
+    if not isinstance(config, CrychicConfig):
+        raise TypeError("config must be a CrychicConfig")
+    if not isinstance(root_input_identity, SanitizedRawInputIdentity):
+        raise TypeError("root_input_identity must be SanitizedRawInputIdentity")
+    root_input_identity._require_intact()
+    if root_input_identity.config_digest != config.digest:
+        raise ValueError("root input identity does not match the root fold config")
+    if validated.report.duplicate_genes:
+        raise ValueError("fold training does not support duplicate gene identifiers")
+    sample_metadata = validated.report.sample_metadata.copy(deep=True)
+    subjects = tuple(
+        sorted(sample_metadata[config.subject_key].astype(str).unique())
+    )
+    samples = tuple(sorted(sample_metadata[config.sample_key].astype(str).unique()))
+    if subjects != root_input_identity.subject_ids:
+        raise ValueError("validated root subjects differ from the root input identity")
+    aggregate = aggregate_pseudobulk(validated, min_cells=min_cells)
+    if not isinstance(aggregate, PseudobulkDataset):
+        raise TypeError("subject cross-fit root aggregate must be count pseudobulk")
+    cell_types = tuple(
+        sorted(
+            aggregate.unit_metadata.loc[
+                aggregate.unit_metadata["n_cells"].astype(int) > 0,
+                "cell_type",
+            ]
+            .astype(str)
+            .unique()
+        )
+    )
+    return _PreparedRawFold(
+        schema=validated.schema,
+        aggregate=aggregate,
+        sample_metadata=sample_metadata,
+        subject_ids=subjects,
+        sample_ids=samples,
+        cell_type_ids=cell_types,
+        input_digest=root_input_identity.scope_digest(subjects),
+        config_digest=config.digest,
+        min_cells=min_cells,
+        requested_cell_type_ids=None,
+        excluded_cell_type_ids=(),
+        root_input_identity_id=root_input_identity.identity_id,
+    )
+
+
+def _subset_prepared_raw_fold(
+    root: _PreparedRawFold,
+    config: CrychicConfig,
+    *,
+    subject_ids: tuple[str, ...],
+    min_cells: int,
+    root_input_identity: SanitizedRawInputIdentity,
+    cell_types: tuple[str, ...] | None = None,
+) -> _PreparedRawFold:
+    """Select a physical subject fold from one pre-aggregated raw-count root."""
+
+    if not isinstance(root, _PreparedRawFold):
+        raise TypeError("root must be a _PreparedRawFold")
+    if not isinstance(root.aggregate, PseudobulkDataset):
+        raise TypeError("root aggregate must be a PseudobulkDataset")
+    root.require_compatible(config, min_cells=min_cells, cell_types=None)
+    root_input_identity._require_intact()
+    subjects = tuple(sorted(subject_ids))
+    if not subjects or len(subjects) != len(set(subjects)):
+        raise ValueError("subject_ids must be non-empty and unique")
+    if not set(subjects).issubset(root.subject_ids):
+        raise ValueError("fold subjects are outside the pre-aggregated root")
+    scope_metadata = root.sample_metadata.loc[
+        root.sample_metadata[config.subject_key].astype(str).isin(subjects)
+    ].copy(deep=True)
+    observed_subjects = tuple(
+        sorted(scope_metadata[config.subject_key].astype(str).unique())
+    )
+    if observed_subjects != subjects:
+        raise ValueError("pre-aggregated fold does not cover its subject manifest")
+    samples = tuple(sorted(scope_metadata[config.sample_key].astype(str).unique()))
+
+    root_units = root.aggregate.unit_metadata
+    scope_units = root_units.loc[
+        root_units["sample_id"].astype(str).isin(samples)
+    ].copy(deep=True)
+    observed_cell_types = {
+        str(value)
+        for value in scope_units.loc[
+            scope_units["n_cells"].astype(int) > 0,
+            "cell_type",
+        ]
+    }
+    requested = None if cell_types is None else tuple(sorted(cell_types))
+    selected_cell_types = (
+        tuple(sorted(observed_cell_types)) if requested is None else requested
+    )
+    if not selected_cell_types:
+        raise ValueError("fold contains no selected cell types")
+    excluded_cell_types = (
+        ()
+        if requested is None
+        else tuple(sorted(observed_cell_types.difference(requested)))
+    )
+    units = scope_units.loc[
+        scope_units["cell_type"].astype(str).isin(selected_cell_types)
+    ].copy(deep=True)
+    sample_totals = units.groupby("sample_id", observed=True, sort=False)[
+        "n_cells"
+    ].transform("sum")
+    has_observed_units = bool((sample_totals > 0).any())
+    if has_observed_units:
+        retained_samples = set(units.loc[sample_totals > 0, "sample_id"])
+        units = units.loc[units["sample_id"].isin(retained_samples)].copy(deep=True)
+        scope_metadata = scope_metadata.loc[
+            scope_metadata[config.sample_key].isin(retained_samples)
+        ].copy(deep=True)
+        sample_totals = units.groupby("sample_id", observed=True, sort=False)[
+            "n_cells"
+        ].transform("sum")
+    else:
+        units["state_eligible"] = False
+        units["abundance_eligible"] = False
+        units["missingness_reason"] = MissingnessReason.SAMPLING_ZERO.value
+    units["cell_proportion"] = units["n_cells"].astype(float).div(
+        sample_totals.astype(float).replace(0.0, np.nan)
+    )
+    units = units.sort_values("unit_id", kind="stable", ignore_index=True)
+    matrix_rows = units["matrix_row"].notna()
+    root_matrix_rows = units.loc[matrix_rows, "matrix_row"].astype(int).to_numpy()
+    matrix_unit_ids = tuple(units.loc[matrix_rows, "unit_id"].astype(str))
+    row_by_id = {
+        unit_id: row for row, unit_id in enumerate(matrix_unit_ids)
+    }
+    if has_observed_units:
+        units["matrix_row"] = pd.array(
+            units["unit_id"].map(row_by_id).tolist(),
+            dtype="Int64",
+        )
+    else:
+        units["matrix_row"] = pd.Series(
+            [pd.NA] * len(units),
+            index=units.index,
+            dtype=object,
+        )
+    aggregate = PseudobulkDataset(
+        counts=sparse.csr_matrix(root.aggregate.counts[root_matrix_rows]),
+        detection_fraction=sparse.csr_matrix(
+            root.aggregate.detection_fraction[root_matrix_rows]
+        ),
+        unit_metadata=units,
+        feature_ids=root.aggregate.feature_ids,
+        matrix_unit_ids=matrix_unit_ids,
+        source_location=root.aggregate.source_location,
+    )
+    return _PreparedRawFold(
+        schema=root.schema,
+        aggregate=aggregate,
+        sample_metadata=scope_metadata,
+        subject_ids=subjects,
+        sample_ids=samples,
+        cell_type_ids=selected_cell_types,
+        input_digest=root_input_identity.scope_digest(subjects),
+        config_digest=config.digest,
+        min_cells=min_cells,
+        requested_cell_type_ids=requested,
+        excluded_cell_type_ids=excluded_cell_types,
+        root_input_identity_id=root_input_identity.identity_id,
+    )
+
+
 def _fit_interaction_universe(
     prepared: _PreparedRawFold,
     resource_bundle: ResourceBundle,
@@ -1248,7 +1450,7 @@ def _fit_interaction_universe(
     return estimate_bundle_availability(
         prepared.aggregate,
         resource_bundle,
-        context_keys=prepared.validated.schema.context_keys,
+        context_keys=prepared.schema.context_keys,
         parameters=spec.availability_parameters,
         min_pooled_availability=spec.min_pooled_availability,
         max_interactions=spec.max_interactions,

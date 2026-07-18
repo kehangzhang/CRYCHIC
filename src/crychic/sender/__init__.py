@@ -7,6 +7,7 @@ from .common import (
     fit_contrast_common_sender_functional,
     freeze_common_sender_candidate_manifest,
     interaction_ligand_contrast_gate,
+    interaction_ligand_contrast_gates,
 )
 from .contracts import (
     ASSIGNMENT_GROUP_COLUMNS,
@@ -55,5 +56,6 @@ __all__ = [
     "fit_contrast_common_sender_functional",
     "freeze_common_sender_candidate_manifest",
     "interaction_ligand_contrast_gate",
+    "interaction_ligand_contrast_gates",
     "sender_assignment_id",
 ]

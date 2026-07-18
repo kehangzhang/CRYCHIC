@@ -14,6 +14,11 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.design import ContrastSpec
 
 SENDER_EVIDENCE_COMPONENTS = (
@@ -1068,6 +1073,7 @@ class InteractionLigandContrastSupport:
         }
         for field_name, value in values.items():
             object.__setattr__(self, field_name, value)
+        record_validation(self)
         return self
 
     def _identity_payload(self) -> dict[str, object]:
@@ -1098,7 +1104,10 @@ class InteractionLigandContrastSupport:
             "subject_effects": list(self.subject_effects),
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             repeated = InteractionLigandContrastSupport._from_training(
                 _producer_token=_SENDER_CONTRAST_SUPPORT_PRODUCER_TOKEN,
@@ -1146,6 +1155,7 @@ class InteractionLigandContrastSupport:
                 field="support_id",
                 remediation="Refit support from outer-training availability",
             )
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         """Return the immutable raw and receiver-family-adjusted evidence."""
@@ -1754,10 +1764,14 @@ class ContrastCommonSenderFunctional:
                 schema_version=self.schema_version,
             ),
         )
+        record_validation(self)
 
+    @validation_scope()
     def _require_intact(self) -> None:
         """Reject forced mutation of the frozen sender functional."""
 
+        if validation_is_cached(self):
+            return
         try:
             self.parameters._require_intact()
             for prior in self.candidate_priors:
@@ -1819,6 +1833,7 @@ class ContrastCommonSenderFunctional:
                 field="sender_functional_id",
                 remediation="Refit the sender functional from training availability",
             )
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         """Return the complete frozen sender functional manifest."""
@@ -1861,7 +1876,10 @@ class CommonSenderApplication:
     table: pd.DataFrame
     functional: ContrastCommonSenderFunctional
 
+    @validation_scope()
     def __post_init__(self) -> None:
+        if validation_is_cached(self):
+            return
         if not isinstance(self.functional, ContrastCommonSenderFunctional):
             raise TypeError("functional must be ContrastCommonSenderFunctional")
         self.functional._require_intact()
@@ -2173,6 +2191,33 @@ class CommonSenderApplication:
             ignore_index=True,
         )
         object.__setattr__(self, "table", table)
+        record_validation(self)
+
+    @validation_scope()
+    def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
+        try:
+            repeated = CommonSenderApplication(self.table, self.functional)
+            valid = (
+                self.functional is repeated.functional
+                and self.table.equals(repeated.table)
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as error:
+            raise ContractError(
+                "Common sender application failed integrity validation",
+                code="common_sender_application_integrity_violation",
+                field="table",
+                remediation="Reapply the intact sender functional to held-out data",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "Common sender application failed integrity validation",
+                code="common_sender_application_integrity_violation",
+                field="table",
+                remediation="Reapply the intact sender functional to held-out data",
+            )
+        record_validation(self)
 
     @property
     def is_oof_certified(self) -> bool:

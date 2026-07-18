@@ -146,6 +146,160 @@ def _fit_adata(adata: AnnData) -> TrainingArtifacts:
     )
 
 
+def test_root_preaggregation_matches_physical_fold_aggregation() -> None:
+    config = _config()
+    source = _adata(
+        ("train-1", "train-2", "heldout-1", "heldout-2"),
+        first_high=True,
+    )
+    snapshot = training_module._sanitized_raw_input_snapshot(source, config)
+    validated = training_module.validate_anndata(
+        snapshot.adata,
+        training_module._input_schema(config),
+    )
+    root = training_module._prepare_validated_root_fold(
+        validated,
+        config,
+        min_cells=1,
+        root_input_identity=snapshot.identity,
+    )
+
+    for subjects, cell_types in (
+        (("train-1", "train-2"), None),
+        (("heldout-1", "heldout-2"), ("Receiver", "Sender")),
+    ):
+        selected = snapshot.adata.obs[config.subject_key].astype(str).isin(subjects)
+        physical = snapshot.adata[selected.to_numpy()].copy()
+        legacy = training_module._prepare_raw_fold(
+            physical,
+            config,
+            min_cells=1,
+            cell_types=cell_types,
+            root_input_identity=snapshot.identity,
+        )
+        preaggregated = training_module._subset_prepared_raw_fold(
+            root,
+            config,
+            subject_ids=subjects,
+            min_cells=1,
+            cell_types=cell_types,
+            root_input_identity=snapshot.identity,
+        )
+
+        assert preaggregated.subject_ids == legacy.subject_ids
+        assert preaggregated.sample_ids == legacy.sample_ids
+        assert preaggregated.cell_type_ids == legacy.cell_type_ids
+        assert preaggregated.input_digest == legacy.input_digest
+        assert preaggregated.excluded_cell_type_ids == legacy.excluded_cell_type_ids
+        assert preaggregated.aggregate.matrix_unit_ids == (
+            legacy.aggregate.matrix_unit_ids
+        )
+        assert (preaggregated.aggregate.counts != legacy.aggregate.counts).nnz == 0
+        assert (
+            preaggregated.aggregate.detection_fraction
+            != legacy.aggregate.detection_fraction
+        ).nnz == 0
+        pd.testing.assert_frame_equal(
+            preaggregated.aggregate.unit_metadata.reset_index(drop=True),
+            legacy.aggregate.unit_metadata.reset_index(drop=True),
+            check_like=False,
+        )
+
+
+def test_root_preaggregation_matches_all_requested_cell_types_absent() -> None:
+    config = _config()
+    subjects = ("heldout-1", "heldout-2")
+    source = _adata(
+        ("train-1", "train-2", *subjects),
+        first_high=True,
+    )
+    heldout = source.obs[config.subject_key].astype(str).isin(subjects)
+    source.obs.loc[heldout, config.cell_type_key] = "Receiver"
+    snapshot = training_module._sanitized_raw_input_snapshot(source, config)
+    validated = training_module.validate_anndata(
+        snapshot.adata,
+        training_module._input_schema(config),
+    )
+    root = training_module._prepare_validated_root_fold(
+        validated,
+        config,
+        min_cells=1,
+        root_input_identity=snapshot.identity,
+    )
+    selected = snapshot.adata.obs[config.subject_key].astype(str).isin(subjects)
+    physical = snapshot.adata[selected.to_numpy()].copy()
+
+    legacy = training_module._prepare_raw_fold(
+        physical,
+        config,
+        min_cells=1,
+        cell_types=("Sender",),
+        root_input_identity=snapshot.identity,
+    )
+    preaggregated = training_module._subset_prepared_raw_fold(
+        root,
+        config,
+        subject_ids=subjects,
+        min_cells=1,
+        cell_types=("Sender",),
+        root_input_identity=snapshot.identity,
+    )
+
+    assert preaggregated.aggregate.matrix_unit_ids == ()
+    assert not preaggregated.aggregate.unit_metadata["abundance_eligible"].any()
+    assert (preaggregated.aggregate.counts != legacy.aggregate.counts).nnz == 0
+    assert (
+        preaggregated.aggregate.detection_fraction
+        != legacy.aggregate.detection_fraction
+    ).nnz == 0
+    pd.testing.assert_frame_equal(
+        preaggregated.aggregate.unit_metadata.reset_index(drop=True),
+        legacy.aggregate.unit_metadata.reset_index(drop=True),
+        check_like=False,
+    )
+
+
+def test_sparse_root_digests_preserve_released_canonical_identity() -> None:
+    matrix = sparse.csr_matrix(
+        (
+            np.asarray([1, 2, 3, 4]),
+            np.asarray([2, 0, 2, 1]),
+            np.asarray([0, 3, 4]),
+        ),
+        shape=(2, 3),
+    )
+
+    assert training_module._matrix_content_digest(matrix) == (
+        "4ddc234b2cab3cc35d2c2b957a3cc351a27a0d4caaa47a259c8308dd1fc36695"
+    )
+    assert training_module._row_expression_digests(matrix) == (
+        "fcf5b0685151dac89d088166a82a2fab6ae272d77734d2c132726cbbc311d503",
+        "eca88313fc3a94e53f64512a95ff0259dc5b14b257f8d93940a17c1693f84798",
+    )
+
+
+def test_noncanonical_narrow_sparse_counts_are_summed_without_overflow() -> None:
+    narrow = sparse.csr_matrix(
+        (
+            np.asarray([200, 100], dtype=np.uint8),
+            np.asarray([0, 0], dtype=np.int32),
+            np.asarray([0, 2], dtype=np.int32),
+        ),
+        shape=(1, 1),
+    )
+    expected = sparse.csr_matrix(np.asarray([[300.0]], dtype=np.float64))
+
+    copied = training_module._copy_matrix(narrow)
+
+    assert copied.toarray().item() == 300.0
+    assert training_module._matrix_content_digest(narrow) == (
+        training_module._matrix_content_digest(expected)
+    )
+    assert training_module._row_expression_digests(narrow) == (
+        training_module._row_expression_digests(expected)
+    )
+
+
 def test_training_entry_accepts_only_raw_and_preregistered_inputs() -> None:
     parameters = inspect.signature(fit_training_artifacts).parameters
 
@@ -353,7 +507,7 @@ def test_training_artifact_rejects_coordinated_sender_functional_swap() -> None:
     assert error.value.details.code == "training_artifact_integrity_violation"
 
 
-def test_training_stage_receives_only_sanitized_declared_input(
+def test_training_stage_receives_only_declared_fold_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = training_module._fit_interaction_universe
@@ -363,15 +517,17 @@ def test_training_stage_receives_only_sanitized_declared_input(
         resource_bundle: ResourceBundle,
         spec: FoldTrainingSpec,
     ) -> BatchAvailability:
-        sanitized = prepared.validated.adata
-        assert not sanitized.uns
-        assert not sanitized.obsm
-        assert tuple(sanitized.obs.columns) == (
+        assert not hasattr(prepared, "validated")
+        assert tuple(prepared.sample_metadata.columns) == (
             "sample_id",
             "subject_id",
-            "cell_type",
             "condition",
         )
+        assert set(prepared.sample_metadata["subject_id"]) == {"train-1", "train-2"}
+        assert set(prepared.aggregate.unit_metadata["subject_id"]) == {
+            "train-1",
+            "train-2",
+        }
         return original(prepared, resource_bundle, spec)
 
     monkeypatch.setattr(

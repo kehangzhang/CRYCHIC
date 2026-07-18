@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
@@ -11,6 +12,11 @@ import numpy as np
 import pandas as pd
 
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.design import (
     FrozenDesignApplication,
     FrozenDesignEncoder,
@@ -96,16 +102,25 @@ def _numeric_digest(values: np.ndarray) -> str:
     array = np.asarray(values, dtype="<f8", order="C").copy(order="C")
     if np.any(np.isinf(array)):
         raise ValueError("response digest arrays cannot contain infinity")
-    tokens = [
-        None if math.isnan(float(value)) else float(value).hex() for value in array.flat
-    ]
-    digest: str = stable_id(
-        "fold_response_array",
-        {"shape": list(array.shape), "float64_tokens": tokens},
-        schema_version="1",
-        digest_length=64,
-    )
-    return digest
+    digest = hashlib.sha256()
+    digest.update(b'{"components":{"float64_tokens":[')
+    flattened = array.ravel(order="C")
+    chunk_size = 16_384
+    for start in range(0, flattened.size, chunk_size):
+        chunk = flattened[start : start + chunk_size]
+        tokens = [
+            "null"
+            if math.isnan(numeric := float(value))
+            else f'"{numeric.hex()}"'
+            for value in chunk
+        ]
+        if start:
+            digest.update(b",")
+        digest.update(",".join(tokens).encode("ascii"))
+    digest.update(b'],"shape":[')
+    digest.update(",".join(str(size) for size in array.shape).encode("ascii"))
+    digest.update(b']},"kind":"fold_response_array","schema_version":"1"}')
+    return f"fold_response_array_{digest.hexdigest()}"
 
 
 def _row_payload(
@@ -746,6 +761,7 @@ class FoldGeneResponseArtifact:
                 schema_version=_TRAINING_SCHEMA_VERSION,
             ),
         )
+        record_validation(self)
         return self
 
     def _identity_payload(self) -> dict[str, object]:
@@ -781,7 +797,10 @@ class FoldGeneResponseArtifact:
             "value_scale": self.value_scale,
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             samples = _names(self.sample_ids, field_name="sample_ids", allow_empty=True)
             sample_subjects = _aligned_names(
@@ -971,6 +990,7 @@ class FoldGeneResponseArtifact:
                 field="artifact_id",
                 remediation="Refit the receiver response inside its training fold",
             )
+        record_validation(self)
 
     def require_compatible(self, encoder: FrozenDesignEncoder) -> None:
         """Validate exact frozen-design parentage before downstream use."""
@@ -1171,6 +1191,7 @@ class FoldGeneResponseApplication:
                 schema_version="1",
             ),
         )
+        record_validation(self)
         return self
 
     def _identity_payload(self) -> dict[str, object]:
@@ -1189,7 +1210,10 @@ class FoldGeneResponseApplication:
             "value_scale": self.value_scale,
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             samples = _names(self.sample_ids, field_name="sample_ids")
             sample_subjects = _aligned_names(
@@ -1277,6 +1301,7 @@ class FoldGeneResponseApplication:
                 field="application_id",
                 remediation="Reapply the training response to held-out data",
             )
+        record_validation(self)
 
     def require_compatible(
         self,

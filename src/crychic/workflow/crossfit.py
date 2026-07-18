@@ -57,6 +57,12 @@ from crychic.core import (
     canonical_json,
     stable_id,
 )
+from crychic.core._validation import (
+    isolated_validation_scope,
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.data import InputMode, validate_anndata
 from crychic.design import (
     ContrastSpec,
@@ -168,10 +174,11 @@ from .training import (
     _fit_interaction_universe,
     _fit_training_artifacts_from_prepared,
     _input_schema,
-    _prepare_raw_fold,
+    _prepare_validated_root_fold,
     _PreparedRawFold,
     _resource_bundle_content_id,
     _sanitized_raw_input_snapshot,
+    _subset_prepared_raw_fold,
     _target_prior_content_id,
 )
 
@@ -1250,7 +1257,10 @@ class CrossFitFoldArtifacts:
         CrossReceiverCommonScoringApplication, ...
     ] = ()
 
+    @validation_scope()
     def __post_init__(self) -> None:
+        if validation_is_cached(self):
+            return
         if not isinstance(self.fold_id, str) or not self.fold_id:
             raise ValueError("fold_id must be a non-empty identifier")
         if not isinstance(self.training, TrainingArtifacts):
@@ -1904,6 +1914,7 @@ class CrossFitFoldArtifacts:
         object.__setattr__(
             self, "cross_receiver_common_applications", global_applications
         )
+        record_validation(self)
 
 
 def _receiver_scoring_registry(
@@ -2135,7 +2146,7 @@ class CrossFitArtifacts:
         oof_sender_assignments: pd.DataFrame,
         coverage_audit: OOFCoverageAudit,
     ) -> CrossFitArtifacts:
-        with _receiver_family_validation_scope():
+        with _receiver_family_validation_scope(), validation_scope():
             self = object.__new__(cls)
             values: dict[str, object] = {
                 "spec": spec,
@@ -2943,6 +2954,7 @@ class CrossFitArtifacts:
             self, "receiver_scoring_registry_id", receiver_registry.registry_id
         )
         object.__setattr__(self, "crossfit_id", stable_id("subject_crossfit", payload))
+        record_validation(self)
 
     @property
     def oof_coverage(self) -> pd.DataFrame:
@@ -2970,6 +2982,7 @@ class CrossFitArtifacts:
         return self._oof_sender_assignments.copy(deep=True)
 
     @property
+    @validation_scope()
     def receiver_scoring_registry(self) -> ScoringCollectionDocument:
         """Return the exact producer-derived planned receiver registry."""
 
@@ -2990,7 +3003,10 @@ class CrossFitArtifacts:
 
         return tuple(self.receiver_scoring_registry.collections)
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             repeated = CrossFitArtifacts._from_workflow(
                 spec=self.spec,
@@ -3061,6 +3077,7 @@ class CrossFitArtifacts:
                 field="crossfit_id",
                 remediation="Rerun subject cross-fit from intact raw inputs",
             )
+        record_validation(self)
 
     @property
     def completed_stage_oof_verified(self) -> bool:
@@ -3069,6 +3086,7 @@ class CrossFitArtifacts:
         return True
 
     @property
+    @validation_scope()
     def oof_certification_audit(self) -> CrossFitOOFCertificationAudit:
         """Recompute the complete descriptive OOF readiness ledger."""
 
@@ -3077,11 +3095,13 @@ class CrossFitArtifacts:
         return audit_crossfit_oof_readiness(self)
 
     @property
+    @validation_scope()
     def is_oof_certified(self) -> bool:
         """Whether every planned descriptive train/apply chain is OOF-ready."""
 
         return bool(self.oof_certification_audit.is_oof_descriptive_certified)
 
+    @validation_scope()
     def to_manifest(self) -> dict[str, object]:
         """Return an auditable summary without embedding tabular payloads."""
 
@@ -3755,7 +3775,7 @@ def _response_expression(
     if not isinstance(aggregate, PseudobulkDataset):
         raise TypeError("public cross-fit receiver expression requires count aggregate")
     metadata = aggregate.unit_metadata.copy(deep=True).reset_index(drop=True)
-    context_keys = tuple(prepared.validated.schema.context_keys)
+    context_keys = tuple(prepared.schema.context_keys)
     context_nodes = metadata["context"].map(
         lambda value: _context_node(pd.Series(dict(value)), context_keys)
     )
@@ -3798,10 +3818,10 @@ def _expected_response_lineage(
 ) -> tuple[tuple[str, str, str], ...]:
     """Return the raw sample metadata lineage for requested graph contexts."""
 
-    schema = prepared.validated.schema
+    schema = prepared.schema
     context_keys = tuple(schema.context_keys)
     rows: list[tuple[str, str, str]] = []
-    for _, row in prepared.validated.report.sample_metadata.iterrows():
+    for _, row in prepared.sample_metadata.iterrows():
         node = _context_node(row, context_keys)
         if node not in contexts:
             continue
@@ -5353,7 +5373,8 @@ def _bounded_fork_map_in_order(
         pid = os.fork()
         if pid == 0:
             try:
-                result = function(item)
+                with isolated_validation_scope():
+                    result = function(item)
                 payload: tuple[str, object] = ("ok", result)
             except BaseException:
                 payload = ("error", traceback.format_exc())
@@ -5428,6 +5449,7 @@ def _bounded_fork_map_in_order(
 @dataclass(frozen=True, slots=True)
 class _CrossFitFoldExecutionContext:
     snapshot: SanitizedRawInputSnapshot
+    root_prepared: _PreparedRawFold
     config: CrychicConfig
     resource_bundle: ResourceBundle
     target_prior: TargetPrior
@@ -5551,7 +5573,6 @@ def _run_crossfit_fold(
     """Fit and apply one outer fold from the shared immutable root snapshot."""
 
     snapshot = context.snapshot
-    sanitized = snapshot.adata
     root_input_identity = snapshot.identity
     config = context.config
     resource_bundle = context.resource_bundle
@@ -5562,19 +5583,10 @@ def _run_crossfit_fold(
     directional_lr_hypothesis_universe = context.directional_lr_hypothesis_universe
     sample_metadata = context.sample_metadata
 
-    training_scope = _physical_subject_scope(
-        sanitized,
-        subject_key=config.subject_key,
-        subject_ids=fold.train_subject_ids,
-    )
-    heldout_scope = _physical_subject_scope(
-        sanitized,
-        subject_key=config.subject_key,
-        subject_ids=fold.test_subject_ids,
-    )
-    prepared_training = _prepare_raw_fold(
-        training_scope,
+    prepared_training = _subset_prepared_raw_fold(
+        context.root_prepared,
         config,
+        subject_ids=fold.train_subject_ids,
         min_cells=spec.training_spec.min_cells,
         root_input_identity=root_input_identity,
     )
@@ -5590,9 +5602,10 @@ def _run_crossfit_fold(
         outer_fold_id=fold.fold_id,
         training_cell_type_ids=training.cell_type_ids,
     )
-    prepared_heldout = _prepare_raw_fold(
-        heldout_scope,
+    prepared_heldout = _subset_prepared_raw_fold(
+        context.root_prepared,
         config,
+        subject_ids=fold.test_subject_ids,
         min_cells=spec.training_spec.min_cells,
         cell_types=training.cell_type_ids,
         root_input_identity=root_input_identity,
@@ -5971,6 +5984,12 @@ def _run_subject_crossfit(
     sender_parts: list[pd.DataFrame] = []
     fold_context = _CrossFitFoldExecutionContext(
         snapshot=snapshot,
+        root_prepared=_prepare_validated_root_fold(
+            validated,
+            config,
+            min_cells=spec.training_spec.min_cells,
+            root_input_identity=root_input_identity,
+        ),
         config=config,
         resource_bundle=resource_bundle,
         target_prior=target_prior,
@@ -5999,7 +6018,7 @@ def _run_subject_crossfit(
             fold_reporter.task_started() if fold_reporter is not None else None
         )
         try:
-            with _receiver_family_validation_scope():
+            with _receiver_family_validation_scope(), validation_scope():
                 return _run_crossfit_fold(fold, context=fold_context)
         finally:
             if fold_reporter is not None and started is not None:
@@ -6058,6 +6077,7 @@ def _run_subject_crossfit(
     )
 
 
+@validation_scope()
 def run_subject_crossfit(
     adata: AnnData,
     config: CrychicConfig,

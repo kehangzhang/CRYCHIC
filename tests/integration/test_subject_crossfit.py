@@ -2373,7 +2373,7 @@ def test_subject_crossfit_runs_real_fit_apply_and_exact_oof_audit() -> None:
 def test_aggregate_context_lineage_requires_complete_training_coverage() -> None:
     config = _config()
     spec = _spec()
-    prepared = crossfit_module._prepare_raw_fold(
+    prepared = training_module._prepare_raw_fold(
         _adata(),
         config,
         min_cells=spec.training_spec.min_cells,
@@ -4312,7 +4312,7 @@ def test_crossfit_fold_rejects_forced_receiver_program_child_replacement() -> No
     )
 
 
-def test_orchestrator_passes_only_disjoint_sanitized_scopes(
+def test_orchestrator_passes_only_disjoint_preaggregated_scopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_fit = crossfit_module._fit_training_artifacts_from_prepared
@@ -4320,18 +4320,30 @@ def test_orchestrator_passes_only_disjoint_sanitized_scopes(
     calls: list[tuple[str, tuple[str, ...]]] = []
 
     def inspected_fit(prepared, *args: object, **kwargs: object):
-        adata = prepared.validated.adata
-        assert not adata.uns
-        assert not adata.obsm
-        subjects = tuple(sorted(adata.obs["subject_id"].astype(str).unique()))
+        assert not hasattr(prepared, "validated")
+        subjects = tuple(
+            sorted(prepared.sample_metadata["subject_id"].astype(str).unique())
+        )
+        aggregate_subjects = tuple(
+            sorted(
+                prepared.aggregate.unit_metadata["subject_id"].astype(str).unique()
+            )
+        )
+        assert aggregate_subjects == subjects
         calls.append(("fit", subjects))
         return original_fit(prepared, *args, **kwargs)
 
     def inspected_apply(artifacts, prepared):
-        adata = prepared.validated.adata
-        assert not adata.uns
-        assert not adata.obsm
-        subjects = tuple(sorted(adata.obs["subject_id"].astype(str).unique()))
+        assert not hasattr(prepared, "validated")
+        subjects = tuple(
+            sorted(prepared.sample_metadata["subject_id"].astype(str).unique())
+        )
+        aggregate_subjects = tuple(
+            sorted(
+                prepared.aggregate.unit_metadata["subject_id"].astype(str).unique()
+            )
+        )
+        assert aggregate_subjects == subjects
         assert not set(subjects).intersection(artifacts.training_subject_ids)
         calls.append(("apply", subjects))
 

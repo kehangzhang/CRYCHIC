@@ -13,6 +13,7 @@ from scipy.stats import t as student_t
 
 from crychic.availability import FrozenInteractionUniverse
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import validation_scope
 from crychic.design import ContrastSpec, canonical_context, plain_context_value
 
 from .contracts import (
@@ -611,6 +612,7 @@ def _fit_interaction_ligand_contrast_supports(
     return tuple(supports)
 
 
+@validation_scope()
 def fit_contrast_common_sender_functional(
     training_availability: pd.DataFrame,
     *,
@@ -781,58 +783,76 @@ def fit_contrast_common_sender_functional(
     )
 
 
+@validation_scope()
+def interaction_ligand_contrast_gates(
+    functional: ContrastCommonSenderFunctional,
+    interactions: Sequence[tuple[str, str]],
+) -> tuple[InteractionLigandContrastGate, ...]:
+    """Return frozen interaction gates after one functional integrity check."""
+
+    if not isinstance(functional, ContrastCommonSenderFunctional):
+        raise TypeError("functional must be ContrastCommonSenderFunctional")
+    functional._require_intact()
+    queries: list[tuple[str, str]] = []
+    for receiver, interaction_id in interactions:
+        if not isinstance(receiver, str) or not receiver.strip():
+            raise ValueError("receiver must be a non-empty identifier")
+        if not isinstance(interaction_id, str) or not interaction_id.strip():
+            raise ValueError("interaction_id must be a non-empty identifier")
+        queries.append((receiver.strip(), interaction_id.strip()))
+    support_by_key = {
+        (support.receiver, support.interaction_id): support
+        for support in functional.contrast_supports
+    }
+    gates: list[InteractionLigandContrastGate] = []
+    for normalized_receiver, normalized_interaction in queries:
+        support = support_by_key.get((normalized_receiver, normalized_interaction))
+        if support is None:
+            gates.append(
+                InteractionLigandContrastGate(
+                    sender_functional_id=functional.sender_functional_id,
+                    receiver=normalized_receiver,
+                    interaction_id=normalized_interaction,
+                    gate=None,
+                    status=SenderContrastSupportStatus.NOT_ESTIMABLE,
+                    reason_code="interaction_ligand_contrast_support_absent",
+                    support_ids=(),
+                )
+            )
+            continue
+        support._require_intact()
+        status = SenderContrastSupportStatus(support.status)
+        gates.append(
+            InteractionLigandContrastGate(
+                sender_functional_id=functional.sender_functional_id,
+                receiver=normalized_receiver,
+                interaction_id=normalized_interaction,
+                gate=(
+                    1.0
+                    if status is SenderContrastSupportStatus.SUPPORTED
+                    else 0.0
+                    if status is SenderContrastSupportStatus.UNSUPPORTED
+                    else None
+                ),
+                status=status,
+                reason_code=support.reason_code,
+                support_ids=(support.support_id,),
+            )
+        )
+    return tuple(gates)
+
+
 def interaction_ligand_contrast_gate(
     functional: ContrastCommonSenderFunctional,
     receiver: str,
     interaction_id: str,
 ) -> InteractionLigandContrastGate:
-    """Return the frozen interaction gate without reading held-out values."""
+    """Return one frozen interaction gate without reading held-out values."""
 
-    if not isinstance(functional, ContrastCommonSenderFunctional):
-        raise TypeError("functional must be ContrastCommonSenderFunctional")
-    functional._require_intact()
-    if not isinstance(receiver, str) or not receiver.strip():
-        raise ValueError("receiver must be a non-empty identifier")
-    if not isinstance(interaction_id, str) or not interaction_id.strip():
-        raise ValueError("interaction_id must be a non-empty identifier")
-    normalized_receiver = receiver.strip()
-    normalized_interaction = interaction_id.strip()
-    support = next(
-        (
-            item
-            for item in functional.contrast_supports
-            if item.receiver == normalized_receiver
-            and item.interaction_id == normalized_interaction
-        ),
-        None,
-    )
-    if support is None:
-        return InteractionLigandContrastGate(
-            sender_functional_id=functional.sender_functional_id,
-            receiver=normalized_receiver,
-            interaction_id=normalized_interaction,
-            gate=None,
-            status=SenderContrastSupportStatus.NOT_ESTIMABLE,
-            reason_code="interaction_ligand_contrast_support_absent",
-            support_ids=(),
-        )
-    support._require_intact()
-    status = SenderContrastSupportStatus(support.status)
-    return InteractionLigandContrastGate(
-        sender_functional_id=functional.sender_functional_id,
-        receiver=normalized_receiver,
-        interaction_id=normalized_interaction,
-        gate=(
-            1.0
-            if status is SenderContrastSupportStatus.SUPPORTED
-            else 0.0
-            if status is SenderContrastSupportStatus.UNSUPPORTED
-            else None
-        ),
-        status=status,
-        reason_code=support.reason_code,
-        support_ids=(support.support_id,),
-    )
+    return interaction_ligand_contrast_gates(
+        functional,
+        ((receiver, interaction_id),),
+    )[0]
 
 
 def _softmax(values: list[float | None], *, temperature: float) -> list[float | None]:
@@ -860,6 +880,7 @@ def _entropy(weights: list[float | None]) -> float | None:
     )
 
 
+@validation_scope()
 def apply_contrast_common_sender_functional(
     functional: ContrastCommonSenderFunctional,
     sample_availability: pd.DataFrame,
@@ -1083,4 +1104,6 @@ __all__ = [
     "allocate_sender_resolved_strength",
     "apply_contrast_common_sender_functional",
     "fit_contrast_common_sender_functional",
+    "interaction_ligand_contrast_gate",
+    "interaction_ligand_contrast_gates",
 ]

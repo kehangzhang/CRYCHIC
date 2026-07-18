@@ -190,6 +190,27 @@ def test_group_indicator_summaries_match_scalar_reference(matrix_kind: str) -> N
     np.testing.assert_array_equal(sizes, np.bincount(codes, minlength=7))
 
 
+def test_sparse_group_summaries_preserve_float_library_sums() -> None:
+    dense = np.asarray(
+        [
+            [0.5, 1.25, 0.0],
+            [2.0, 0.0, 0.25],
+            [0.0, 1.5, 0.5],
+        ],
+        dtype=np.float64,
+    )
+    codes = np.asarray([0, 0, 1], dtype=np.int64)
+
+    totals, detected, medians, sizes = aggregation_module._group_summaries(
+        sparse.csr_matrix(dense), codes, n_groups=2
+    )
+
+    np.testing.assert_allclose(totals.toarray(), [[2.5, 1.25, 0.25], [0.0, 1.5, 0.5]])
+    np.testing.assert_array_equal(detected.toarray(), [[2, 1, 1], [0, 1, 1]])
+    np.testing.assert_allclose(medians, [2.0, 2.0])
+    np.testing.assert_array_equal(sizes, [2, 1])
+
+
 def test_sparse_aggregation_does_not_slice_input_rows_per_group() -> None:
     class NoRowSliceCsr(sparse.csr_matrix):
         def __getitem__(self, key: object) -> object:

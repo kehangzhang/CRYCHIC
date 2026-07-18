@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from crychic.core import ContractError, stable_id
+from crychic.core._validation import validation_scope
 from crychic.scoring import (
     SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS,
     SCORING_COLLECTION_EXTENSION_VERSION,
@@ -1373,6 +1374,7 @@ def _cross_receiver_common_requirement(
     )
 
 
+@validation_scope()
 def audit_crossfit_oof_readiness(
     artifacts: CrossFitArtifacts,
 ) -> CrossFitOOFCertificationAudit:

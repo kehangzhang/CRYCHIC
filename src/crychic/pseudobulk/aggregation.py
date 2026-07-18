@@ -60,11 +60,30 @@ def _group_summaries(
     if sparse.issparse(matrix):
         values = sparse.csr_matrix(matrix)
         totals = sparse.csr_matrix(indicator @ values)
-        binary = values.copy()
-        binary.data = np.greater(binary.data, 0).astype(np.int8, copy=False)
-        binary.eliminate_zeros()
+        binary = sparse.csr_matrix(
+            (
+                np.greater(values.data, 0).astype(np.int8, copy=False),
+                values.indices,
+                values.indptr,
+            ),
+            shape=values.shape,
+            copy=False,
+        )
         detected_counts = sparse.csr_matrix(indicator @ binary)
-        cell_library = np.asarray(values.sum(axis=1)).ravel()
+        row_nnz = np.diff(values.indptr)
+        nonempty = row_nnz > 0
+        library_dtype = (
+            np.float64
+            if np.issubdtype(values.dtype, np.floating)
+            else np.int64
+        )
+        cell_library = np.zeros(values.shape[0], dtype=library_dtype)
+        if bool(nonempty.any()):
+            cell_library[nonempty] = np.add.reduceat(
+                values.data,
+                values.indptr[:-1][nonempty],
+                dtype=library_dtype,
+            )
     else:
         values = np.asarray(matrix)
         totals = sparse.csr_matrix(indicator @ values)
