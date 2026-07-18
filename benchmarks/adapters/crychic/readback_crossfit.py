@@ -42,11 +42,22 @@ _V3_SCHEMA_VERSION = "3.0.0"
 _V4_SCHEMA_VERSION = "4.0.0"
 _V5_SCHEMA_VERSION = "5.0.0"
 _V6_SCHEMA_VERSION = "6.0.0"
+_V7_SCHEMA_VERSION = "7.0.0"
+_V8_SCHEMA_VERSION = "8.0.0"
+_V9_SCHEMA_VERSION = "9.0.0"
 _LEGACY_GAIN_CALIBRATED_SCHEMA_VERSIONS = frozenset(
     {_V4_SCHEMA_VERSION, _V5_SCHEMA_VERSION}
 )
+_CONSERVED_SENDER_SCHEMA_VERSIONS = frozenset(
+    {
+        _V6_SCHEMA_VERSION,
+        _V7_SCHEMA_VERSION,
+        _V8_SCHEMA_VERSION,
+        _V9_SCHEMA_VERSION,
+    }
+)
 _GAIN_CALIBRATED_SCHEMA_VERSIONS = frozenset(
-    {*_LEGACY_GAIN_CALIBRATED_SCHEMA_VERSIONS, _V6_SCHEMA_VERSION}
+    {*_LEGACY_GAIN_CALIBRATED_SCHEMA_VERSIONS, *_CONSERVED_SENDER_SCHEMA_VERSIONS}
 )
 _SUPPORTED_SCHEMA_VERSIONS = frozenset(
     {_V3_SCHEMA_VERSION, *_GAIN_CALIBRATED_SCHEMA_VERSIONS}
@@ -661,7 +672,7 @@ def _application_lineage(
             )
         expected_sender_policy = (
             _V6_SENDER_POLICY
-            if schema_version == _V6_SCHEMA_VERSION
+            if schema_version in _CONSERVED_SENDER_SCHEMA_VERSIONS
             else _V4_SENDER_POLICY
         )
         if (
@@ -672,12 +683,12 @@ def _application_lineage(
             raise ValueError(
                 "gain-calibrated contrast-common calibration policies are invalid"
             )
-        if schema_version == _V6_SCHEMA_VERSION and (
+        if schema_version in _CONSERVED_SENDER_SCHEMA_VERSIONS and (
             score_version != _V6_SCORE_VERSION
             or application.get("functional_schema_version") != "4.0.0"
         ):
             raise ValueError(
-                "v6 conserved-sender score version or functional schema is invalid"
+                "conserved-sender score version or functional schema is invalid"
             )
         for field in ("softmin_power", "epsilon"):
             value = application.get(field)
@@ -777,8 +788,7 @@ def _manifest_lineage(
     schema_version = manifest.get("schema_version")
     if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(
-            "cross-fit benchmark readback requires manifest schema 3.0.0, "
-            "4.0.0, 5.0.0, or 6.0.0"
+            "cross-fit benchmark readback requires manifest schema 3.0.0 through 9.0.0"
         )
     if manifest.get("status") != "complete":
         raise ValueError("cross-fit result manifest is not complete")
@@ -1051,7 +1061,7 @@ def _validate_common_table_lineage(
     sender_grain: bool,
 ) -> pd.DataFrame:
     expected_columns: tuple[str, ...]
-    if schema_version == _V6_SCHEMA_VERSION:
+    if schema_version in _CONSERVED_SENDER_SCHEMA_VERSIONS:
         expected_columns = (
             _V6_CROSSFIT_CONTRAST_COMMON_SENDER_LR_COLUMNS
             if sender_grain
@@ -1665,7 +1675,7 @@ def _validate_sender_lr_parents(
                     raise ValueError(
                         f"sender-LR {observed_name} disagrees with LR parent"
                     )
-    if schema_version == _V6_SCHEMA_VERSION:
+    if schema_version in _CONSERVED_SENDER_SCHEMA_VERSIONS:
         _validate_conserved_sender_formula(bound)
     else:
         _validate_legacy_sender_formula(bound)
@@ -1759,7 +1769,7 @@ def _coerce_result(
         getattr(result_or_path, "read_contrast_common_sender_lr_scores", None)
     ):
         raise TypeError(
-            "result must be a CrossFitResult v3/v4/v5/v6 path or read-only object"
+            "result must be a CrossFitResult v3-v9 path or read-only object"
         )
     return result_or_path
 
@@ -1933,7 +1943,7 @@ def convert_crossfit_result_to_long(
     contrast: str | None = None,
     method_version: str | None = None,
 ) -> tuple[pd.DataFrame, list[dict[str, object]]]:
-    """Convert v3-v6 receiver-balanced OOF rows without expanding candidates.
+    """Convert v3-v9 receiver-balanced OOF rows without expanding candidates.
 
     One benchmark run is emitted per selected contrast-common collection.  The
     exact native sender-edge universe must be identical for every sample in a

@@ -468,6 +468,16 @@ def test_postfit_export_symbols_and_facade_signatures_are_stable() -> None:
         "self",
         "adata",
         "spec",
+        "n_jobs",
+        "resource_bundle",
+        "target_prior",
+        "output_dir",
+    )
+    assert tuple(inspect.signature(crychic.Crychic.fit_crossfit).parameters) == (
+        "self",
+        "adata",
+        "spec",
+        "n_jobs",
         "resource_bundle",
         "target_prior",
         "output_dir",

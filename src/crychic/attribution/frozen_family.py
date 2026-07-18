@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, cast
 
@@ -91,6 +93,31 @@ _RECEPTOR_COLUMNS = {
 }
 
 ReceiverFamilyAxisRefitStatus = Literal["observed", "not_estimable"]
+
+_RECEIVER_FAMILY_VALIDATION_CACHE: ContextVar[dict[int, object] | None] = ContextVar(
+    "crychic_receiver_family_validation_cache", default=None
+)
+
+
+@contextmanager
+def _receiver_family_validation_scope() -> Iterator[None]:
+    """Deduplicate validation of immutable artifacts within one trusted operation."""
+
+    active_cache = _RECEIVER_FAMILY_VALIDATION_CACHE.get()
+    if active_cache is not None:
+        yield
+        return
+    token = _RECEIVER_FAMILY_VALIDATION_CACHE.set({})
+    try:
+        yield
+    finally:
+        _RECEIVER_FAMILY_VALIDATION_CACHE.reset(token)
+
+
+def _record_receiver_family_validation(artifact: object) -> None:
+    cache = _RECEIVER_FAMILY_VALIDATION_CACHE.get()
+    if cache is not None:
+        cache[id(artifact)] = artifact
 
 
 def _canonical_names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
@@ -401,41 +428,39 @@ def _validate_basis_relationship(
     driver_index = {
         driver: index for index, driver in enumerate(source_basis.driver_ids)
     }
-    expected_eligible = np.asarray(
-        [
-            (
-                float(
-                    sparse.linalg.norm(
-                        source_basis.normalized_profiles[:, driver_index[medoid]]
-                    )
-                )
-                > 0
-                and any(
-                    bool(source_basis.receptor_eligible[driver_index[driver]])
-                    for driver in family.driver_ids
-                )
+    medoid_indices = np.fromiter(
+        (driver_index[medoid] for medoid in family_basis.medoid_driver_ids),
+        dtype=np.intp,
+        count=len(family_basis.medoid_driver_ids),
+    )
+    profile_norms = np.asarray(
+        sparse.linalg.norm(source_basis.normalized_profiles, axis=0), dtype=float
+    )
+    family_has_eligible_driver = np.fromiter(
+        (
+            any(
+                bool(source_basis.receptor_eligible[driver_index[driver]])
+                for driver in family.driver_ids
             )
-            for family, medoid in zip(
-                family_basis.family_definitions,
-                family_basis.medoid_driver_ids,
-                strict=True,
-            )
-        ],
+            for family in family_basis.family_definitions
+        ),
         dtype=bool,
+        count=len(family_basis.family_definitions),
+    )
+    expected_eligible = (profile_norms[medoid_indices] > 0) & (
+        family_has_eligible_driver
     )
     if not np.array_equal(family_basis.family_eligible, expected_eligible):
         raise ValueError("family eligibility does not derive from source gates")
-    expected_columns = [
-        (
-            source_basis.normalized_profiles[:, driver_index[medoid]]
-            if eligible
-            else sparse.csc_matrix((len(source_basis.feature_ids), 1), dtype=float)
+    expected_matrix = source_basis.normalized_profiles[:, medoid_indices].tocsc(
+        copy=True
+    )
+    if expected_matrix.nnz and not bool(np.all(expected_eligible)):
+        column_eligible: np.ndarray = np.repeat(
+            expected_eligible, np.diff(expected_matrix.indptr)
         )
-        for medoid, eligible in zip(
-            family_basis.medoid_driver_ids, expected_eligible, strict=True
-        )
-    ]
-    expected_matrix = sparse.hstack(expected_columns, format="csc")
+        expected_matrix.data *= column_eligible
+        expected_matrix.eliminate_zeros()
     difference = (family_basis.matrix - expected_matrix).tocsc()
     if difference.nnz and not np.allclose(difference.data, 0.0, rtol=1e-12, atol=1e-14):
         raise ValueError("family matrix does not match source medoid columns")
@@ -2310,6 +2335,7 @@ class ReceiverFamilyTrainingArtifact:
         }
         for name, value in values.items():
             object.__setattr__(self, name, value)
+        _record_receiver_family_validation(self)
         return self
 
     @property
@@ -2333,6 +2359,9 @@ class ReceiverFamilyTrainingArtifact:
         return False
 
     def _require_producer_owned(self) -> None:
+        validation_cache = _RECEIVER_FAMILY_VALIDATION_CACHE.get()
+        if validation_cache is not None and validation_cache.get(id(self)) is self:
+            return
         if self._producer_marker != _PRODUCER_MARKER:
             raise TypeError("receiver-family artifact was not produced by this module")
         try:
@@ -2436,6 +2465,7 @@ class ReceiverFamilyTrainingArtifact:
                 field="training_artifact_id",
                 remediation="Refit the receiver-family artifact from training data",
             )
+        _record_receiver_family_validation(self)
 
 
 @dataclass(frozen=True, slots=True, init=False)

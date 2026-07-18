@@ -171,6 +171,46 @@ def test_fit_descriptive_rejects_an_untuned_spec_before_running_crossfit(
         model.fit_descriptive(_adata(), spec=untuned)
 
 
+def test_fit_descriptive_forwards_outer_fold_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = Crychic(CrychicConfig(context_keys=("condition",)))
+    spec = recommended_crossfit_spec(contrasts=(_contrast(),), root_seed=7)
+    marker: Any = object()
+    calls: list[tuple[object, ...]] = []
+
+    def crossfit(
+        self: Crychic,
+        supplied: AnnData,
+        *,
+        spec: CrossFitSpec,
+        n_jobs: int,
+        resource_bundle: object,
+        target_prior: object,
+        output_dir: str | Path | None,
+    ) -> Any:
+        calls.append(
+            (
+                self,
+                supplied,
+                spec,
+                n_jobs,
+                resource_bundle,
+                target_prior,
+                output_dir,
+            )
+        )
+        return marker
+
+    monkeypatch.setattr(Crychic, "fit_crossfit", crossfit)
+    adata = _adata()
+
+    observed = model.fit_descriptive(adata, spec=spec, n_jobs=3)
+
+    assert observed is marker
+    assert calls == [(model, adata, spec, 3, None, None, None)]
+
+
 def test_fit_descriptive_requires_an_explicit_outer_partition_seed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

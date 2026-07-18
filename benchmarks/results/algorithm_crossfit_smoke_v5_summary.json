@@ -1,12 +1,12 @@
 {
-  "base_revision": "87153a38e7fe377881e1d6cd97715aa4f28beba1",
+  "base_revision": "c99385b3b48e2b5aa8109a7a4711894e3baa93a5",
   "full_artifact": {
-    "canonical_sha256": "1198422c1c4f4a1940aa41b56e5630c652eb7cee540d3ced92692ed707a31952",
-    "file_sha256": "2903a4134a0b0d232fb516f05302dbc82336f5df2bf7a2182cb068e553d2779c",
+    "canonical_sha256": "92ff61a25a9836590a2bbaa577c9839351aef45c3646bc541e36d477e03bdc94",
+    "file_sha256": "96f88069a808a53d3cf77695596d45f4a2d19a924ce896dd31256d069e079606",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
     "size_bytes": 15182
   },
-  "generated_on": "2026-07-17",
+  "generated_on": "2026-07-18",
   "guardrails": {
     "active_vs_ligand_only_mechanism_claim_allowed": false,
     "biological_claim_allowed": false,
@@ -17,14 +17,14 @@
   },
   "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract after the v7 coordinate, lineage, and factorized-nuisance updates. Active has positive bounded and raw diagnostic gain (0.0510551), while ligand-only has zero bounded gain and negative raw gain (-0.0174719). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
   "process_performance": {
-    "peak_rss_kib": 462024,
-    "wall_clock_seconds": 45.21007471438497
+    "peak_rss_kib": 843304,
+    "wall_clock_seconds": 30.917910812422633
   },
   "records": [
     {
       "crossfit_id": "subject_crossfit_12d9f4d79a8cdce3280158b940e9b6a1",
       "dataset": "synthetic_active",
-      "elapsed_seconds": 22.943923865444958,
+      "elapsed_seconds": 15.854746232740581,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -46,7 +46,7 @@
     {
       "crossfit_id": "subject_crossfit_5162be2290d99abde3b671a707f3b492",
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 22.266150848940015,
+      "elapsed_seconds": 15.063164579682052,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -87,9 +87,9 @@
     "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
     "src/crychic/attribution/families.py": "dd5add5743b70606209c794f5a44dac87335b5d223257b5194811695a73cf0c6",
     "src/crychic/attribution/family_first.py": "2bd129165d7f711258cecc391f33076b19ba8a7b6141f9ecbd767e40d13493bc",
-    "src/crychic/attribution/frozen_family.py": "a057b5bc5cf4a877c981b86db6b6138661f4d7913105538f0471274d03ab5cab",
+    "src/crychic/attribution/frozen_family.py": "b5a2c74289dbaa25b39935204fd90a55d40c063afe221b507018accfe4ed504e",
     "src/crychic/attribution/precision.py": "e5758e41436d33e404fcaf76520ca0bee93be45a6f458dd839c1932e7f0e0fd4",
-    "src/crychic/attribution/solver.py": "159e2099d9fbd8320706ea45db9647fee5d71b214b829ea54c74664c71992935",
+    "src/crychic/attribution/solver.py": "681c036435f3deed69cd100a49f7448c034e9091a7f567a34e4ca38f51428a21",
     "src/crychic/attribution/tuning.py": "56aea80da9548cad9f8122cf1952599dd264d7574b8f9c8fa7897ed956814489",
     "src/crychic/availability/__init__.py": "c87ed1ae2d387e00f80bb597c9702aee1fdcc986e226bd29e47bb336887ed151",
     "src/crychic/availability/contracts.py": "a1f6168389e938424325a9ea44cb4760c1072ff4922bc2934dcb02c26cf8f4bb",
@@ -143,7 +143,7 @@
     "src/crychic/workflow/__init__.py": "03559aa0dc6f227b00e169675f17834cfc156184fec3ece733f75ec1dce8f784",
     "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
     "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "6fc52aac08dd7515dbee0ae1620aa87286cfa730f580d646e0d0894e79d61f22",
+    "src/crychic/workflow/crossfit.py": "7e224114ad87021ff3679dbd319bdbe63be98fb65c510d31af0c979be2984cd9",
     "src/crychic/workflow/receiver_incremental.py": "6f774ba14e9831cb6ddcc0fad87b4b3ff0a9e6bf8e6930037936e621da6aee70",
     "src/crychic/workflow/repeated_crossfit.py": "f6d6837716fff23f10e19880ea238742a6fafcceb7bf53a6cb6d17cfe64d5ef3",
     "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"

@@ -1647,6 +1647,7 @@ def test_public_entry_accepts_no_caller_folds_or_fitted_artifacts() -> None:
         "resource_bundle",
         "target_prior",
         "spec",
+        "n_jobs",
     )
     forbidden = {
         "fold_plan",
@@ -1660,6 +1661,96 @@ def test_public_entry_accepts_no_caller_folds_or_fitted_artifacts() -> None:
     assert forbidden.isdisjoint(inspect.signature(CrossFitSpec).parameters)
     with pytest.raises(TypeError, match="producer-owned"):
         CrossFitArtifacts()
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True, 1.5])
+def test_public_entry_rejects_invalid_outer_fold_jobs_before_snapshot(
+    invalid: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_snapshot(*args: object, **kwargs: object) -> object:
+        raise AssertionError("invalid n_jobs must fail before snapshot construction")
+
+    monkeypatch.setattr(
+        crossfit_module,
+        "_sanitized_raw_input_snapshot",
+        forbidden_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="n_jobs must be an integer >= 1"):
+        run_subject_crossfit(
+            _adata(),
+            _config(),
+            _bundle(),
+            _prior(),
+            spec=_spec(),
+            n_jobs=cast(int, invalid),
+        )
+
+
+def test_outer_fold_parallelism_preserves_identity_tables_and_plan_order() -> None:
+    adata = _adata()
+    serial = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+        n_jobs=1,
+    )
+    parallel = run_subject_crossfit(
+        adata,
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=_spec(),
+        n_jobs=2,
+    )
+
+    assert parallel.crossfit_id == serial.crossfit_id
+    assert parallel.coverage_table_digest == serial.coverage_table_digest
+    assert (
+        parallel.receiver_coverage_table_digest == serial.receiver_coverage_table_digest
+    )
+    assert (
+        parallel.sender_assignment_table_digest == serial.sender_assignment_table_digest
+    )
+    expected_fold_order = tuple(fold.fold_id for fold in serial.fold_plan.folds)
+    assert tuple(fold.fold_id for fold in serial.folds) == expected_fold_order
+    assert tuple(fold.fold_id for fold in parallel.folds) == expected_fold_order
+    pd.testing.assert_frame_equal(parallel.oof_coverage, serial.oof_coverage)
+    pd.testing.assert_frame_equal(
+        parallel.oof_receiver_coverage,
+        serial.oof_receiver_coverage,
+    )
+    pd.testing.assert_frame_equal(
+        parallel.oof_sender_assignments,
+        serial.oof_sender_assignments,
+    )
+
+
+def test_outer_fold_parallel_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_fold(
+        fold: object,
+        *,
+        context: object,
+    ) -> object:
+        del fold, context
+        raise RuntimeError("injected outer fold failure")
+
+    monkeypatch.setattr(crossfit_module, "_run_crossfit_fold", fail_fold)
+
+    with pytest.raises(RuntimeError, match="injected outer fold failure"):
+        run_subject_crossfit(
+            _adata(),
+            _config(),
+            _bundle(),
+            _prior(),
+            spec=_spec(),
+            n_jobs=2,
+        )
 
 
 def test_repeat_index_changes_repeat_identity_not_algorithm_policy() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -65,6 +66,118 @@ def _kkt_violation(
     return 0.0 if violation.size == 0 else float(violation.max())
 
 
+def _try_sklearn_coordinate_descent(
+    design: sparse.csc_matrix,
+    response: np.ndarray,
+    precision: np.ndarray,
+    *,
+    signed_residual_space: bool,
+    lambda1: float,
+    lambda2: float,
+    tolerance: float,
+    kkt_tolerance: float,
+    max_iterations: int,
+) -> ElasticNetSolution | None:
+    """Use sklearn's compiled cyclic coordinate descent when explicitly enabled.
+
+    The weighted objective is mapped exactly to sklearn's elastic-net scaling.
+    A strict KKT check remains the acceptance gate; unsupported or insufficiently
+    converged results return ``None`` and use the reference Python solver.
+    """
+
+    backend = os.environ.get("CRYCHIC_SOLVER_BACKEND", "python").strip().lower()
+    if backend not in {"sklearn", "fast", "auto"}:
+        return None
+    penalty = lambda1 + 2.0 * lambda2
+    if penalty <= 0.0 or design.shape[0] < 1:
+        return None
+    try:
+        from sklearn.linear_model import ElasticNet  # type: ignore[import-untyped]
+    except ImportError:
+        if backend in {"sklearn", "fast"}:
+            return None
+        return None
+    try:
+        sqrt_precision = np.sqrt(precision)
+        weighted_design = sparse.diags(sqrt_precision, format="csc") @ design
+        weighted_response = sqrt_precision * response
+        n_rows = design.shape[0]
+        alpha = penalty / (2.0 * n_rows)
+        l1_ratio = lambda1 / penalty
+        model = ElasticNet(
+            alpha=alpha,
+            l1_ratio=l1_ratio,
+            fit_intercept=False,
+            positive=True,
+            selection="cyclic",
+            tol=max(tolerance * 0.1, 1e-12),
+            max_iter=max_iterations,
+            random_state=0,
+            precompute=False,
+        )
+        model.fit(weighted_design, weighted_response)
+        coefficients = np.asarray(model.coef_, dtype=float)
+        predicted = np.asarray(design @ coefficients, dtype=float).ravel()
+        if (
+            coefficients.shape != (design.shape[1],)
+            or np.any(~np.isfinite(coefficients))
+            or np.any(coefficients < -tolerance)
+            or np.any(~np.isfinite(predicted))
+        ):
+            return None
+        coefficients = np.maximum(coefficients, 0.0)
+        kkt = _kkt_violation(
+            design,
+            response,
+            precision,
+            coefficients,
+            predicted,
+            lambda1,
+            lambda2,
+            active_tolerance=tolerance,
+        )
+        if not math.isfinite(kkt) or kkt > kkt_tolerance:
+            return None
+        initial = _objective(
+            response,
+            np.zeros_like(response),
+            precision,
+            np.zeros_like(coefficients),
+            lambda1,
+            lambda2,
+        )
+        final = _objective(
+            response, predicted, precision, coefficients, lambda1, lambda2
+        )
+        if final.total > initial.total + 1e-10 * max(1.0, abs(initial.total)):
+            return None
+        coefficients.setflags(write=False)
+        predicted.setflags(write=False)
+        diagnostics = SolverDiagnostics(
+            status=SolverStatus.CONVERGED,
+            objective=final,
+            iterations=1,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            kkt_tolerance=kkt_tolerance,
+            max_coordinate_change=0.0,
+            kkt_violation=float(kkt),
+            initialization=(
+                "sklearn_cyclic_coordinate_descent_signed"
+                if signed_residual_space
+                else "sklearn_cyclic_coordinate_descent"
+            ),
+            objective_history=(initial.total, final.total),
+        )
+        return ElasticNetSolution(
+            coefficients=coefficients,
+            predicted=predicted,
+            diagnostics=diagnostics,
+        )
+    except (ArithmeticError, RuntimeError, ValueError):
+        return None
+
+
 def _solve_nonnegative_elastic_net(
     matrix: sparse.spmatrix,
     response: np.ndarray,
@@ -103,9 +216,7 @@ def _solve_nonnegative_elastic_net(
             field="matrix",
             remediation="Retain at least one eligible TargetPrior driver",
         )
-    if np.any(~np.isfinite(y)) or (
-        not signed_residual_space and np.any(y < 0)
-    ):
+    if np.any(~np.isfinite(y)) or (not signed_residual_space and np.any(y < 0)):
         raise ContractError(
             "Elastic-net response must be finite and direction-compatible",
             code="invalid_directional_response",
@@ -184,6 +295,20 @@ def _solve_nonnegative_elastic_net(
             remediation="Allow at least one complete coordinate sweep",
         )
 
+    fast_solution = _try_sklearn_coordinate_descent(
+        design,
+        y,
+        precision,
+        signed_residual_space=signed_residual_space,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        tolerance=tolerance,
+        kkt_tolerance=resolved_kkt_tolerance,
+        max_iterations=max_iterations,
+    )
+    if fast_solution is not None:
+        return fast_solution
+
     coefficients = np.zeros(design.shape[1], dtype=float)
     predicted = np.zeros(design.shape[0], dtype=float)
     residual = y.copy()
@@ -206,9 +331,7 @@ def _solve_nonnegative_elastic_net(
                 new = 0.0
             else:
                 partial_residual = residual[rows] + values * old
-                correlation = float(
-                    np.dot(precision[rows] * values, partial_residual)
-                )
+                correlation = float(np.dot(precision[rows] * values, partial_residual))
                 new = max(0.0, (correlation - 0.5 * lambda1) / denominator)
             if not math.isfinite(new):
                 status = SolverStatus.NUMERICAL_FAILURE
@@ -221,9 +344,7 @@ def _solve_nonnegative_elastic_net(
                 residual[rows] -= values * change
                 max_change = max(max_change, abs(change))
         completed_iterations = iteration
-        current = _objective(
-            y, predicted, precision, coefficients, lambda1, lambda2
-        )
+        current = _objective(y, predicted, precision, coefficients, lambda1, lambda2)
         history.append(current.total)
         if status is SolverStatus.NUMERICAL_FAILURE:
             break

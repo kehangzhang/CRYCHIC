@@ -8,10 +8,24 @@ OOF scoring; formal inference remains a separate full-pipeline calibration.
 
 from __future__ import annotations
 
+import copyreg
+import json
 import math
-from collections.abc import Hashable
+import os
+import pickle
+import shutil
+import signal
+import sys
+import tempfile
+import threading
+import time
+import traceback
+from collections.abc import Callable, Hashable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -31,6 +45,7 @@ from crychic.attribution import (
     freeze_receiver_family_lr_hypothesis_universe,
     freeze_receiver_family_opportunity_universe,
 )
+from crychic.attribution.frozen_family import _receiver_family_validation_scope
 from crychic.attribution.precision import (
     _raw_vector_digest,
     fit_repeated_response_precision,
@@ -175,6 +190,25 @@ _REMAINING_PUBLIC_STAGES = (
     "subject_blocked_inner_tuning",
     "selected_penalty_inner_oof_gain_calibration",
 )
+
+_WorkItemT = TypeVar("_WorkItemT")
+_WorkResultT = TypeVar("_WorkResultT")
+
+
+def _restore_mapping_proxy(
+    value: dict[object, object],
+) -> MappingProxyType[object, object]:
+    return MappingProxyType(value)
+
+
+def _reduce_mapping_proxy(
+    value: MappingProxyType[object, object],
+) -> tuple[
+    Callable[[dict[object, object]], MappingProxyType[object, object]],
+    tuple[dict[object, object]],
+]:
+    return _restore_mapping_proxy, (dict(value),)
+
 
 _ReceiverResponseArtifact: TypeAlias = (
     FoldGeneResponseArtifact | RepeatedMeasuresFoldResponseArtifact
@@ -2101,28 +2135,31 @@ class CrossFitArtifacts:
         oof_sender_assignments: pd.DataFrame,
         coverage_audit: OOFCoverageAudit,
     ) -> CrossFitArtifacts:
-        self = object.__new__(cls)
-        values: dict[str, object] = {
-            "spec": spec,
-            "root_input_identity": root_input_identity,
-            "receiver_universe": receiver_universe,
-            "receiver_family_opportunity_universe": (
-                receiver_family_opportunity_universe
-            ),
-            "directional_lr_hypothesis_universe": (directional_lr_hypothesis_universe),
-            "fold_plan": fold_plan,
-            "folds": folds,
-            "_oof_coverage": oof_coverage,
-            "_oof_receiver_coverage": oof_receiver_coverage,
-            "_oof_sender_assignments": oof_sender_assignments,
-            "coverage_audit": coverage_audit,
-            "certification_status": _STAGE_STATUS,
-            "_producer_marker": _PRODUCER_MARKER,
-        }
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
-        self.__post_init__()
-        return self
+        with _receiver_family_validation_scope():
+            self = object.__new__(cls)
+            values: dict[str, object] = {
+                "spec": spec,
+                "root_input_identity": root_input_identity,
+                "receiver_universe": receiver_universe,
+                "receiver_family_opportunity_universe": (
+                    receiver_family_opportunity_universe
+                ),
+                "directional_lr_hypothesis_universe": (
+                    directional_lr_hypothesis_universe
+                ),
+                "fold_plan": fold_plan,
+                "folds": folds,
+                "_oof_coverage": oof_coverage,
+                "_oof_receiver_coverage": oof_receiver_coverage,
+                "_oof_sender_assignments": oof_sender_assignments,
+                "coverage_audit": coverage_audit,
+                "certification_status": _STAGE_STATUS,
+                "_producer_marker": _PRODUCER_MARKER,
+            }
+            for name, value in values.items():
+                object.__setattr__(self, name, value)
+            self.__post_init__()
+            return self
 
     def __post_init__(self) -> None:
         if self._producer_marker != _PRODUCER_MARKER:
@@ -4271,76 +4308,159 @@ def _fit_receiver_incremental_chains(
     tuple[ReceiverIncrementalTrainingArtifact, ...],
 ]:
     encoder_by_name = {encoder.contrast.name: encoder for encoder in design_encoders}
-    responses: list[_ReceiverResponseArtifact] = []
-    precisions: list[PrecisionTransformResult] = []
-    incremental_models: list[ReceiverIncrementalTrainingArtifact] = []
-    for model in models:
-        encoder = encoder_by_name[model.contrast_name]
-        subject_design = _encoder_subject_design(encoder)
-        if subject_design in {
-            SubjectDesign.MIXED,
-            SubjectDesign.REPEATED_MULTI_CONTEXT,
-        }:
-            response: _ReceiverResponseArtifact = (
-                fit_repeated_measures_cr2_fold_response(
+    receiver_jobs = _configured_jobs("CRYCHIC_RECEIVER_JOBS", default=1)
+    receiver_process_jobs = _configured_jobs("CRYCHIC_RECEIVER_PROCESS_JOBS", default=1)
+    use_process_workers = (
+        receiver_process_jobs > 1
+        and threading.current_thread() is threading.main_thread()
+    )
+    worker_count = receiver_process_jobs if use_process_workers else receiver_jobs
+    reporter = (
+        _ProgressReporter(
+            total=len(models),
+            label=f"fold={fold_id}:receiver_incremental",
+            path=_progress_path_for_fold(fold_id),
+        )
+        if worker_count > 1 or _progress_enabled()
+        else None
+    )
+
+    def fit_one(
+        model: ReceiverFamilyScoringArtifact,
+    ) -> tuple[
+        _ReceiverResponseArtifact,
+        PrecisionTransformResult,
+        ReceiverIncrementalTrainingArtifact,
+    ]:
+        started = (
+            None if reporter is None or use_process_workers else reporter.task_started()
+        )
+        try:
+            encoder = encoder_by_name[model.contrast_name]
+            subject_design = _encoder_subject_design(encoder)
+            if subject_design in {
+                SubjectDesign.MIXED,
+                SubjectDesign.REPEATED_MULTI_CONTEXT,
+            }:
+                response: _ReceiverResponseArtifact = (
+                    fit_repeated_measures_cr2_fold_response(
+                        aggregate,
+                        encoder,
+                        training_metadata,
+                        receiver=model.receiver_family_artifact.receiver,
+                        fold_id=fold_id,
+                        training_input_digest=training_input_digest,
+                        min_subjects_per_context=max(2, min_subjects_per_context),
+                        min_subject_clusters=max(6, min_subjects_per_context),
+                    )
+                )
+            else:
+                response = fit_fold_gene_response(
                     aggregate,
                     encoder,
-                    training_metadata,
                     receiver=model.receiver_family_artifact.receiver,
                     fold_id=fold_id,
                     training_input_digest=training_input_digest,
                     min_subjects_per_context=max(2, min_subjects_per_context),
-                    min_subject_clusters=max(6, min_subjects_per_context),
+                )
+            feature_scale = (
+                None
+                if response.status
+                != (
+                    response.observed_status
+                    if isinstance(response, RepeatedMeasuresFoldResponseArtifact)
+                    else "ok"
+                )
+                else _receiver_incremental_feature_scale(
+                    encoder,
+                    response,
+                    minimum_scale=minimum_scale,
                 )
             )
-        else:
-            response = fit_fold_gene_response(
-                aggregate,
-                encoder,
-                receiver=model.receiver_family_artifact.receiver,
-                fold_id=fold_id,
-                training_input_digest=training_input_digest,
-                min_subjects_per_context=max(2, min_subjects_per_context),
-            )
-        feature_scale = (
-            None
-            if response.status
-            != (
-                response.observed_status
-                if isinstance(response, RepeatedMeasuresFoldResponseArtifact)
-                else "ok"
-            )
-            else _receiver_incremental_feature_scale(
+            if isinstance(response, RepeatedMeasuresFoldResponseArtifact):
+                precision = fit_repeated_response_precision(
+                    response, feature_scale=feature_scale
+                )
+            else:
+                precision = fit_response_precision(
+                    response, feature_scale=feature_scale
+                )
+            incremental_model = fit_receiver_incremental_training_artifact(
                 encoder,
                 response,
+                precision,
+                model.receiver_family_artifact,
+                autonomous_program_resource,
+                latent_nuisance_spec=latent_nuisance_spec,
                 minimum_scale=minimum_scale,
+                penalty_tuning_spec=penalty_tuning_spec,
+                gain_calibration_spec=gain_calibration_spec,
+                inner_partition_seed_lineage=_receiver_inner_partition_lineage(
+                    inner_partition_seed_lineage,
+                    receiver=response.receiver,
+                    contrast_id=_contrast_id(encoder.contrast),
+                ),
             )
+            return response, precision, incremental_model
+        finally:
+            if reporter is not None and started is not None:
+                reporter.task_completed(
+                    started,
+                    detail=model.receiver_family_artifact.receiver,
+                )
+
+    workers = min(worker_count, len(models)) if models else 0
+    if reporter is not None:
+        reporter.event("start")
+    if workers <= 1:
+        fitted = tuple(fit_one(model) for model in models)
+    elif use_process_workers:
+        process_starts: dict[int, float] = {}
+
+        def process_started(index: int) -> None:
+            if reporter is not None:
+                process_starts[index] = reporter.task_started()
+
+        def process_completed(index: int) -> None:
+            if reporter is not None:
+                started_at = process_starts.pop(index, time.perf_counter())
+                reporter.task_completed(
+                    started_at,
+                    detail=models[index].receiver_family_artifact.receiver,
+                )
+
+        fitted = _bounded_fork_map_in_order(
+            fit_one,
+            models,
+            n_jobs=workers,
+            on_start=process_started if reporter is not None else None,
+            on_complete=process_completed if reporter is not None else None,
         )
-        if isinstance(response, RepeatedMeasuresFoldResponseArtifact):
-            precision = fit_repeated_response_precision(
-                response, feature_scale=feature_scale
-            )
-        else:
-            precision = fit_response_precision(response, feature_scale=feature_scale)
-        incremental_model = fit_receiver_incremental_training_artifact(
-            encoder,
-            response,
-            precision,
-            model.receiver_family_artifact,
-            autonomous_program_resource,
-            latent_nuisance_spec=latent_nuisance_spec,
-            minimum_scale=minimum_scale,
-            penalty_tuning_spec=penalty_tuning_spec,
-            gain_calibration_spec=gain_calibration_spec,
-            inner_partition_seed_lineage=_receiver_inner_partition_lineage(
-                inner_partition_seed_lineage,
-                receiver=response.receiver,
-                contrast_id=_contrast_id(encoder.contrast),
-            ),
-        )
-        responses.append(response)
-        precisions.append(precision)
-        incremental_models.append(incremental_model)
+    else:
+        fitted_by_index: dict[
+            int,
+            tuple[
+                _ReceiverResponseArtifact,
+                PrecisionTransformResult,
+                ReceiverIncrementalTrainingArtifact,
+            ],
+        ] = {}
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="crychic-receiver",
+        ) as executor:
+            futures = {
+                executor.submit(fit_one, model): index
+                for index, model in enumerate(models)
+            }
+            for future in futures:
+                fitted_by_index[futures[future]] = future.result()
+        fitted = tuple(fitted_by_index[index] for index in range(len(models)))
+    if reporter is not None:
+        reporter.event("complete")
+    responses = [item[0] for item in fitted]
+    precisions = [item[1] for item in fitted]
+    incremental_models = [item[2] for item in fitted]
     return tuple(responses), tuple(precisions), tuple(incremental_models)
 
 
@@ -5141,6 +5261,559 @@ def _fold_sender_rows(
     return rows
 
 
+def _positive_jobs(value: int, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{field_name} must be an integer >= 1")
+    return value
+
+
+def _bounded_thread_map_in_order(
+    function: Callable[[_WorkItemT], _WorkResultT],
+    items: tuple[_WorkItemT, ...],
+    *,
+    n_jobs: int,
+) -> tuple[_WorkResultT, ...]:
+    """Run at most ``n_jobs`` submitted tasks and restore input order."""
+
+    if not items:
+        return ()
+    workers = min(_positive_jobs(n_jobs, field_name="n_jobs"), len(items))
+    if workers == 1:
+        return tuple(function(item) for item in items)
+
+    completed: dict[int, _WorkResultT] = {}
+    item_iterator = iter(enumerate(items))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="crychic-fold",
+    ) as executor:
+        pending: dict[Future[_WorkResultT], int] = {}
+
+        def submit_next() -> bool:
+            try:
+                index, item = next(item_iterator)
+            except StopIteration:
+                return False
+            pending[executor.submit(function, item)] = index
+            return True
+
+        for _ in range(workers):
+            submit_next()
+        try:
+            while pending:
+                done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+                ordered_done = tuple(sorted(done, key=pending.__getitem__))
+                for future in ordered_done:
+                    index = pending.pop(future)
+                    completed[index] = future.result()
+                for _ in ordered_done:
+                    submit_next()
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+    return tuple(completed[index] for index in range(len(items)))
+
+
+def _bounded_fork_map_in_order(
+    function: Callable[[_WorkItemT], _WorkResultT],
+    items: tuple[_WorkItemT, ...],
+    *,
+    n_jobs: int,
+    on_start: Callable[[int], None] | None = None,
+    on_complete: Callable[[int], None] | None = None,
+) -> tuple[_WorkResultT, ...]:
+    """Run inherited read-only tasks in bounded POSIX fork workers.
+
+    This path is intentionally opt-in. It avoids serializing the large fold
+    snapshot and bypasses the GIL for receiver-level Python work. It is only
+    called from a single-threaded fold worker; callers must fall back to the
+    thread map when the process already owns worker threads.
+    """
+
+    if not items:
+        return ()
+    workers = min(_positive_jobs(n_jobs, field_name="n_jobs"), len(items))
+    if workers == 1:
+        return tuple(function(item) for item in items)
+    if not hasattr(os, "fork"):
+        raise RuntimeError("receiver process workers require POSIX os.fork")
+    # Some immutable contract fields use mappingproxy, which the standard
+    # pickler cannot encode. Register the reducer only for this opt-in child
+    # result channel, then restore the caller's reducer table before return.
+    from types import MappingProxyType
+
+    result_root = Path(tempfile.mkdtemp(prefix="crychic-receiver-fork-"))
+    pending = iter(enumerate(items))
+    active: dict[int, tuple[int, Path]] = {}
+    results: dict[int, _WorkResultT] = {}
+
+    def launch(index: int, item: _WorkItemT) -> None:
+        output = result_root / f"receiver-{index:04d}.pickle"
+        pid = os.fork()
+        if pid == 0:
+            try:
+                result = function(item)
+                payload: tuple[str, object] = ("ok", result)
+            except BaseException:
+                payload = ("error", traceback.format_exc())
+            temporary = output.with_suffix(".tmp")
+            try:
+                with temporary.open("wb") as handle:
+                    pickler = pickle.Pickler(handle, protocol=5)
+                    pickler.dispatch_table = {
+                        **copyreg.dispatch_table,
+                        MappingProxyType: _reduce_mapping_proxy,
+                    }
+                    pickler.dump(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, output)
+            except BaseException:
+                traceback.print_exc(file=sys.stderr)
+                os._exit(70)
+            os._exit(0)
+        active[pid] = (index, output)
+        if on_start is not None:
+            on_start(index)
+
+    try:
+        for _ in range(workers):
+            try:
+                index, item = next(pending)
+            except StopIteration:
+                break
+            launch(index, item)
+        while active:
+            pid, wait_status = os.wait()
+            if pid not in active:
+                continue
+            index, output = active.pop(pid)
+            exit_code = os.waitstatus_to_exitcode(wait_status)
+            if exit_code != 0 or not output.is_file():
+                raise RuntimeError(
+                    f"forked receiver {index} failed with exit code {exit_code}"
+                )
+            with output.open("rb") as handle:
+                status, payload = pickle.load(handle)
+            if status != "ok":
+                raise RuntimeError(
+                    f"forked receiver {index} raised an exception:\n{payload}"
+                )
+            results[index] = payload
+            if on_complete is not None:
+                on_complete(index)
+            try:
+                next_index, next_item = next(pending)
+            except StopIteration:
+                continue
+            launch(next_index, next_item)
+    except BaseException:
+        for pid in active:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        for pid in tuple(active):
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+        raise
+    finally:
+        shutil.rmtree(result_root, ignore_errors=True)
+    return tuple(results[index] for index in range(len(items)))
+
+
+@dataclass(frozen=True, slots=True)
+class _CrossFitFoldExecutionContext:
+    snapshot: SanitizedRawInputSnapshot
+    config: CrychicConfig
+    resource_bundle: ResourceBundle
+    target_prior: TargetPrior
+    spec: CrossFitSpec
+    receiver_universe: FrozenReceiverUniverse
+    receiver_family_opportunity_universe: FrozenReceiverFamilyOpportunityUniverse
+    directional_lr_hypothesis_universe: FrozenReceiverFamilyLRHypothesisUniverse | None
+    sample_metadata: pd.DataFrame
+
+
+@dataclass(frozen=True, slots=True)
+class _CrossFitFoldExecutionResult:
+    artifact: CrossFitFoldArtifacts
+    coverage_rows: tuple[dict[str, object], ...]
+    receiver_coverage_rows: tuple[dict[str, object], ...]
+    sender_parts: tuple[pd.DataFrame, ...]
+
+
+@dataclass(slots=True)
+class _ProgressReporter:
+    """Thread-safe lightweight progress/ETA telemetry for long fold stages."""
+
+    total: int
+    label: str
+    path: Path | None = None
+    started: float = field(default_factory=time.perf_counter)
+    completed: int = 0
+    active: int = 0
+    _last_print: float = field(default=0.0, repr=False)
+    _durations: list[float] = field(default_factory=list, repr=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    def _write(self, payload: dict[str, object]) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.path)
+
+    def event(self, event: str, *, detail: str | None = None) -> None:
+        with self._lock:
+            now = time.perf_counter()
+            elapsed = max(0.0, now - self.started)
+            average = (
+                sum(self._durations) / len(self._durations) if self._durations else None
+            )
+            remaining = max(0, self.total - self.completed)
+            eta = None if average is None else average * remaining
+            payload: dict[str, object] = {
+                "event": event,
+                "label": self.label,
+                "completed": self.completed,
+                "total": self.total,
+                "active_workers": self.active,
+                "elapsed_seconds": elapsed,
+                "eta_seconds": eta,
+                "detail": detail,
+            }
+            self._write(payload)
+            if now - self._last_print >= 5.0 or event in {"start", "complete"}:
+                eta_text = "unknown" if eta is None else f"{eta:.1f}s"
+                print(
+                    f"[crychic] {self.label} {self.completed}/{self.total} "
+                    f"active={self.active} elapsed={elapsed:.1f}s eta={eta_text}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._last_print = now
+
+    def task_started(self) -> float:
+        with self._lock:
+            self.active += 1
+            self.event("task_start")
+            return time.perf_counter()
+
+    def task_completed(self, started: float, *, detail: str | None = None) -> None:
+        with self._lock:
+            self.active = max(0, self.active - 1)
+            self.completed += 1
+            self._durations.append(max(0.0, time.perf_counter() - started))
+            self.event("task_complete", detail=detail)
+
+
+def _configured_jobs(name: str, *, default: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be an integer >= 1") from error
+    return _positive_jobs(value, field_name=name)
+
+
+def _progress_enabled() -> bool:
+    return os.environ.get("CRYCHIC_PROGRESS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _progress_path_for_fold(fold_id: str) -> Path | None:
+    raw = os.environ.get("CRYCHIC_PROGRESS_PATH")
+    if raw is None or not raw.strip():
+        return None
+    path = Path(raw)
+    return path.with_name(f"{path.stem}_{fold_id}{path.suffix or '.json'}")
+
+
+def _run_crossfit_fold(
+    fold: FoldManifest,
+    *,
+    context: _CrossFitFoldExecutionContext,
+) -> _CrossFitFoldExecutionResult:
+    """Fit and apply one outer fold from the shared immutable root snapshot."""
+
+    snapshot = context.snapshot
+    sanitized = snapshot.adata
+    root_input_identity = snapshot.identity
+    config = context.config
+    resource_bundle = context.resource_bundle
+    target_prior = context.target_prior
+    spec = context.spec
+    receiver_universe = context.receiver_universe
+    receiver_family_opportunity_universe = context.receiver_family_opportunity_universe
+    directional_lr_hypothesis_universe = context.directional_lr_hypothesis_universe
+    sample_metadata = context.sample_metadata
+
+    training_scope = _physical_subject_scope(
+        sanitized,
+        subject_key=config.subject_key,
+        subject_ids=fold.train_subject_ids,
+    )
+    heldout_scope = _physical_subject_scope(
+        sanitized,
+        subject_key=config.subject_key,
+        subject_ids=fold.test_subject_ids,
+    )
+    prepared_training = _prepare_raw_fold(
+        training_scope,
+        config,
+        min_cells=spec.training_spec.min_cells,
+        root_input_identity=root_input_identity,
+    )
+    training = _fit_training_artifacts_from_prepared(
+        prepared_training,
+        config,
+        resource_bundle,
+        target_prior,
+        spec=spec.training_spec,
+    )
+    receiver_training_support = assess_receiver_training_support(
+        receiver_universe,
+        outer_fold_id=fold.fold_id,
+        training_cell_type_ids=training.cell_type_ids,
+    )
+    prepared_heldout = _prepare_raw_fold(
+        heldout_scope,
+        config,
+        min_cells=spec.training_spec.min_cells,
+        cell_types=training.cell_type_ids,
+        root_input_identity=root_input_identity,
+    )
+    application = _apply_training_artifacts_from_prepared(
+        training,
+        prepared_heldout,
+    )
+    training_metadata = sample_metadata.loc[
+        sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
+    ]
+    heldout_metadata = sample_metadata.loc[
+        sample_metadata[config.subject_key].astype(str).isin(fold.test_subject_ids)
+    ]
+    design_encoders = tuple(
+        fit_frozen_design_encoder(
+            training_metadata,
+            contrast=contrast,
+            context_keys=config.context_keys,
+            covariates=config.covariates,
+            categorical_covariates=config.categorical_covariates,
+            formula=config.design
+            or default_design_formula(config.context_keys, config.covariates),
+            sample_key=config.sample_key,
+            subject_key=config.subject_key,
+        )
+        for contrast in spec.contrasts
+    )
+    design_applications = tuple(
+        apply_frozen_design_encoder(encoder, heldout_metadata)
+        for encoder in design_encoders
+    )
+    training_aggregate = prepared_training.aggregate
+    heldout_aggregate = prepared_heldout.aggregate
+    if not isinstance(training_aggregate, PseudobulkDataset) or not isinstance(
+        heldout_aggregate, PseudobulkDataset
+    ):
+        raise RuntimeError(
+            "raw-count cross-fitting requires inferential pseudobulk aggregates"
+        )
+    receiver_family_models = _training_receiver_families(
+        prepared=prepared_training,
+        training=training,
+        resource_bundle=resource_bundle,
+        target_prior=target_prior,
+        spec=spec,
+        fold_id=fold.fold_id,
+        receiver_family_opportunity_universe=receiver_family_opportunity_universe,
+        directional_lr_hypothesis_universe=directional_lr_hypothesis_universe,
+    )
+    receiver_family_applications = _apply_receiver_families(
+        receiver_family_models,
+        prepared=prepared_heldout,
+        contrasts=spec.contrasts,
+    )
+    receiver_program_models = _training_receiver_programs(
+        receiver_family_models,
+        prepared=prepared_training,
+        contrasts=spec.contrasts,
+        minimum_scale=spec.downstream_minimum_scale,
+    )
+    receiver_program_applications = _apply_receiver_programs(
+        receiver_program_models,
+        prepared=prepared_heldout,
+        design_encoders=design_encoders,
+        design_applications=design_applications,
+    )
+    (
+        receiver_responses,
+        response_precisions,
+        receiver_incremental_models,
+    ) = _fit_receiver_incremental_chains(
+        receiver_family_models,
+        aggregate=training_aggregate,
+        design_encoders=design_encoders,
+        training_metadata=training_metadata,
+        training_input_digest=prepared_training.input_digest,
+        fold_id=fold.fold_id,
+        minimum_scale=spec.downstream_minimum_scale,
+        min_subjects_per_context=spec.min_train_subjects_per_context,
+        autonomous_program_resource=spec.autonomous_program_resource,
+        latent_nuisance_spec=spec.latent_nuisance_spec,
+        penalty_tuning_spec=spec.penalty_tuning_spec,
+        gain_calibration_spec=spec.gain_calibration_spec,
+        inner_partition_seed_lineage=(_inner_tuning_partition_base_lineage(spec, fold)),
+    )
+    (
+        receiver_response_applications,
+        receiver_incremental_applications,
+    ) = _apply_receiver_incremental_chains(
+        receiver_responses,
+        receiver_incremental_models,
+        aggregate=heldout_aggregate,
+        design_encoders=design_encoders,
+        design_applications=design_applications,
+    )
+    directional_response_bindings = _build_directional_response_bindings(
+        spec.directional_pairs,
+        receiver_responses,
+        receiver_incremental_models,
+        receiver_incremental_applications,
+        receiver_ids=training.cell_type_ids,
+    )
+    observed_contrasts = {
+        _contrast_id(functional.contrast) for functional in training.sender_functionals
+    }
+    if observed_contrasts != set(fold.contrast_ids):
+        raise ValueError(
+            "training sender functionals do not match the planned contrasts"
+        )
+    if spec.penalty_tuning_spec is None:
+        family_common_functionals: tuple[FamilyCommonScoringFunctional, ...] = ()
+        family_common_applications: tuple[FamilyCommonScoringApplication, ...] = ()
+        family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...] = ()
+        cross_receiver_common_functionals: tuple[
+            CrossReceiverCommonScoringFunctional, ...
+        ] = ()
+        cross_receiver_common_applications: tuple[
+            CrossReceiverCommonScoringApplication, ...
+        ] = ()
+    else:
+        family_common_functionals = _fit_family_common_chains(
+            receiver_family_models,
+            receiver_program_models,
+            receiver_incremental_models,
+            sender_functionals=training.sender_functionals,
+        )
+        all_receivers_supported = all(
+            record.status is ReceiverTrainingSupportStatus.OBSERVED
+            for record in receiver_training_support
+        )
+        cross_receiver_common_functionals = (
+            _fit_cross_receiver_common_chains(
+                family_common_functionals,
+                receiver_incremental_models,
+                planned_receiver_ids=receiver_universe.receiver_ids,
+            )
+            if all_receivers_supported
+            else ()
+        )
+        (
+            family_common_applications,
+            family_common_bindings,
+            family_common_sender_applications,
+        ) = _apply_family_common_chains(
+            family_common_functionals,
+            receiver_program_applications,
+            receiver_incremental_applications,
+            training_application=application,
+            design_encoders=design_encoders,
+            design_applications=design_applications,
+            availability=application.availability.sample_interactions,
+        )
+        cross_receiver_common_applications = (
+            _apply_cross_receiver_common_chains(
+                cross_receiver_common_functionals,
+                family_common_applications,
+                family_common_sender_applications,
+            )
+            if cross_receiver_common_functionals
+            else ()
+        )
+    artifact = CrossFitFoldArtifacts(
+        fold_id=fold.fold_id,
+        training=training,
+        application=application,
+        receiver_training_support=receiver_training_support,
+        design_encoders=design_encoders,
+        design_applications=design_applications,
+        receiver_family_models=receiver_family_models,
+        receiver_family_applications=receiver_family_applications,
+        receiver_program_models=receiver_program_models,
+        receiver_program_applications=receiver_program_applications,
+        receiver_responses=receiver_responses,
+        response_precisions=response_precisions,
+        receiver_incremental_models=receiver_incremental_models,
+        receiver_response_applications=receiver_response_applications,
+        receiver_incremental_applications=receiver_incremental_applications,
+        family_common_functionals=family_common_functionals,
+        family_common_applications=family_common_applications,
+        family_common_bindings=family_common_bindings,
+        directional_response_bindings=directional_response_bindings,
+        cross_receiver_common_functionals=cross_receiver_common_functionals,
+        cross_receiver_common_applications=cross_receiver_common_applications,
+    )
+    return _CrossFitFoldExecutionResult(
+        artifact=artifact,
+        coverage_rows=tuple(
+            _fold_coverage_rows(
+                sample_metadata,
+                config=config,
+                fold_id=fold.fold_id,
+                test_subject_ids=fold.test_subject_ids,
+                training=training,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
+            )
+        ),
+        receiver_coverage_rows=tuple(
+            _receiver_coverage_rows(
+                fold_id=fold.fold_id,
+                design_encoders=design_encoders,
+                design_applications=design_applications,
+                responses=receiver_responses,
+                precisions=response_precisions,
+                incremental_models=receiver_incremental_models,
+                response_applications=receiver_response_applications,
+                incremental_applications=receiver_incremental_applications,
+                receiver_training_support=receiver_training_support,
+            )
+        ),
+        sender_parts=tuple(
+            _fold_sender_rows(
+                fold_id=fold.fold_id,
+                training=training,
+                application=application,
+            )
+        ),
+    )
+
+
 def _run_subject_crossfit(
     snapshot: SanitizedRawInputSnapshot,
     config: CrychicConfig,
@@ -5148,6 +5821,7 @@ def _run_subject_crossfit(
     target_prior: TargetPrior,
     *,
     spec: CrossFitSpec,
+    n_jobs: int = 1,
     _receiver_axis_source: FrozenReceiverUniverse | None = None,
 ) -> CrossFitArtifacts:
     """Run subject-blocked train/apply and verify the current sender audit scope.
@@ -5157,6 +5831,7 @@ def _run_subject_crossfit(
     input cannot establish a certified train-only transform boundary.
     """
 
+    jobs = _positive_jobs(n_jobs, field_name="n_jobs")
     if not isinstance(snapshot, SanitizedRawInputSnapshot):
         raise TypeError("snapshot must be a SanitizedRawInputSnapshot")
     snapshot._require_intact()
@@ -5294,261 +5969,56 @@ def _run_subject_crossfit(
     coverage_rows: list[dict[str, object]] = []
     receiver_coverage_rows: list[dict[str, object]] = []
     sender_parts: list[pd.DataFrame] = []
-    for fold in fold_plan:
-        training_scope = _physical_subject_scope(
-            sanitized,
-            subject_key=config.subject_key,
-            subject_ids=fold.train_subject_ids,
-        )
-        heldout_scope = _physical_subject_scope(
-            sanitized,
-            subject_key=config.subject_key,
-            subject_ids=fold.test_subject_ids,
-        )
-        prepared_training = _prepare_raw_fold(
-            training_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            root_input_identity=root_input_identity,
-        )
-        training = _fit_training_artifacts_from_prepared(
-            prepared_training,
-            config,
-            resource_bundle,
-            target_prior,
-            spec=spec.training_spec,
-        )
-        receiver_training_support = assess_receiver_training_support(
-            receiver_universe,
-            outer_fold_id=fold.fold_id,
-            training_cell_type_ids=training.cell_type_ids,
-        )
-        prepared_heldout = _prepare_raw_fold(
-            heldout_scope,
-            config,
-            min_cells=spec.training_spec.min_cells,
-            cell_types=training.cell_type_ids,
-            root_input_identity=root_input_identity,
-        )
-        application = _apply_training_artifacts_from_prepared(
-            training,
-            prepared_heldout,
-        )
-        sample_metadata = validated.report.sample_metadata
-        training_metadata = sample_metadata.loc[
-            sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
-        ]
-        heldout_metadata = sample_metadata.loc[
-            sample_metadata[config.subject_key].astype(str).isin(fold.test_subject_ids)
-        ]
-        design_encoders = tuple(
-            fit_frozen_design_encoder(
-                training_metadata,
-                contrast=contrast,
-                context_keys=config.context_keys,
-                covariates=config.covariates,
-                categorical_covariates=config.categorical_covariates,
-                formula=config.design
-                or default_design_formula(config.context_keys, config.covariates),
-                sample_key=config.sample_key,
-                subject_key=config.subject_key,
-            )
-            for contrast in spec.contrasts
-        )
-        design_applications = tuple(
-            apply_frozen_design_encoder(encoder, heldout_metadata)
-            for encoder in design_encoders
-        )
-        training_aggregate = prepared_training.aggregate
-        heldout_aggregate = prepared_heldout.aggregate
-        if not isinstance(training_aggregate, PseudobulkDataset) or not isinstance(
-            heldout_aggregate, PseudobulkDataset
-        ):
-            raise RuntimeError(
-                "raw-count cross-fitting requires inferential pseudobulk aggregates"
-            )
-        receiver_family_models = _training_receiver_families(
-            prepared=prepared_training,
-            training=training,
-            resource_bundle=resource_bundle,
-            target_prior=target_prior,
-            spec=spec,
-            fold_id=fold.fold_id,
-            receiver_family_opportunity_universe=(receiver_family_opportunity_universe),
-            directional_lr_hypothesis_universe=(directional_lr_hypothesis_universe),
-        )
-        receiver_family_applications = _apply_receiver_families(
-            receiver_family_models,
-            prepared=prepared_heldout,
-            contrasts=spec.contrasts,
-        )
-        receiver_program_models = _training_receiver_programs(
-            receiver_family_models,
-            prepared=prepared_training,
-            contrasts=spec.contrasts,
-            minimum_scale=spec.downstream_minimum_scale,
-        )
-        receiver_program_applications = _apply_receiver_programs(
-            receiver_program_models,
-            prepared=prepared_heldout,
-            design_encoders=design_encoders,
-            design_applications=design_applications,
-        )
-        (
-            receiver_responses,
-            response_precisions,
-            receiver_incremental_models,
-        ) = _fit_receiver_incremental_chains(
-            receiver_family_models,
-            aggregate=training_aggregate,
-            design_encoders=design_encoders,
-            training_metadata=training_metadata,
-            training_input_digest=prepared_training.input_digest,
-            fold_id=fold.fold_id,
-            minimum_scale=spec.downstream_minimum_scale,
-            min_subjects_per_context=spec.min_train_subjects_per_context,
-            autonomous_program_resource=spec.autonomous_program_resource,
-            latent_nuisance_spec=spec.latent_nuisance_spec,
-            penalty_tuning_spec=spec.penalty_tuning_spec,
-            gain_calibration_spec=spec.gain_calibration_spec,
-            inner_partition_seed_lineage=(
-                _inner_tuning_partition_base_lineage(spec, fold)
-            ),
-        )
-        (
-            receiver_response_applications,
-            receiver_incremental_applications,
-        ) = _apply_receiver_incremental_chains(
-            receiver_responses,
-            receiver_incremental_models,
-            aggregate=heldout_aggregate,
-            design_encoders=design_encoders,
-            design_applications=design_applications,
-        )
-        directional_response_bindings = _build_directional_response_bindings(
-            spec.directional_pairs,
-            receiver_responses,
-            receiver_incremental_models,
-            receiver_incremental_applications,
-            receiver_ids=training.cell_type_ids,
-        )
-        observed_contrasts = {
-            _contrast_id(functional.contrast)
-            for functional in training.sender_functionals
-        }
-        if observed_contrasts != set(fold.contrast_ids):
-            raise ValueError(
-                "training sender functionals do not match the planned contrasts"
-            )
-        if spec.penalty_tuning_spec is None:
-            family_common_functionals: tuple[FamilyCommonScoringFunctional, ...] = ()
-            family_common_applications: tuple[FamilyCommonScoringApplication, ...] = ()
-            family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...] = ()
-            cross_receiver_common_functionals: tuple[
-                CrossReceiverCommonScoringFunctional, ...
-            ] = ()
-            cross_receiver_common_applications: tuple[
-                CrossReceiverCommonScoringApplication, ...
-            ] = ()
-        else:
-            family_common_functionals = _fit_family_common_chains(
-                receiver_family_models,
-                receiver_program_models,
-                receiver_incremental_models,
-                sender_functionals=training.sender_functionals,
-            )
-            all_receivers_supported = all(
-                record.status is ReceiverTrainingSupportStatus.OBSERVED
-                for record in receiver_training_support
-            )
-            cross_receiver_common_functionals = (
-                _fit_cross_receiver_common_chains(
-                    family_common_functionals,
-                    receiver_incremental_models,
-                    planned_receiver_ids=receiver_universe.receiver_ids,
-                )
-                if all_receivers_supported
-                else ()
-            )
-            (
-                family_common_applications,
-                family_common_bindings,
-                family_common_sender_applications,
-            ) = _apply_family_common_chains(
-                family_common_functionals,
-                receiver_program_applications,
-                receiver_incremental_applications,
-                training_application=application,
-                design_encoders=design_encoders,
-                design_applications=design_applications,
-                availability=application.availability.sample_interactions,
-            )
-            cross_receiver_common_applications = (
-                _apply_cross_receiver_common_chains(
-                    cross_receiver_common_functionals,
-                    family_common_applications,
-                    family_common_sender_applications,
-                )
-                if cross_receiver_common_functionals
-                else ()
-            )
-        fold_artifacts.append(
-            CrossFitFoldArtifacts(
-                fold_id=fold.fold_id,
-                training=training,
-                application=application,
-                receiver_training_support=receiver_training_support,
-                design_encoders=design_encoders,
-                design_applications=design_applications,
-                receiver_family_models=receiver_family_models,
-                receiver_family_applications=receiver_family_applications,
-                receiver_program_models=receiver_program_models,
-                receiver_program_applications=receiver_program_applications,
-                receiver_responses=receiver_responses,
-                response_precisions=response_precisions,
-                receiver_incremental_models=receiver_incremental_models,
-                receiver_response_applications=receiver_response_applications,
-                receiver_incremental_applications=(receiver_incremental_applications),
-                family_common_functionals=family_common_functionals,
-                family_common_applications=family_common_applications,
-                family_common_bindings=family_common_bindings,
-                directional_response_bindings=directional_response_bindings,
-                cross_receiver_common_functionals=(cross_receiver_common_functionals),
-                cross_receiver_common_applications=(cross_receiver_common_applications),
-            )
-        )
-        coverage_rows.extend(
-            _fold_coverage_rows(
-                validated.report.sample_metadata,
-                config=config,
-                fold_id=fold.fold_id,
-                test_subject_ids=fold.test_subject_ids,
-                training=training,
-                design_encoders=design_encoders,
-                design_applications=design_applications,
-            )
-        )
-        receiver_coverage_rows.extend(
-            _receiver_coverage_rows(
-                fold_id=fold.fold_id,
-                design_encoders=design_encoders,
-                design_applications=design_applications,
-                responses=receiver_responses,
-                precisions=response_precisions,
-                incremental_models=receiver_incremental_models,
-                response_applications=receiver_response_applications,
-                incremental_applications=receiver_incremental_applications,
-                receiver_training_support=receiver_training_support,
-            )
-        )
-        sender_parts.extend(
-            _fold_sender_rows(
-                fold_id=fold.fold_id,
-                training=training,
-                application=application,
-            )
-        )
+    fold_context = _CrossFitFoldExecutionContext(
+        snapshot=snapshot,
+        config=config,
+        resource_bundle=resource_bundle,
+        target_prior=target_prior,
+        spec=spec,
+        receiver_universe=receiver_universe,
+        receiver_family_opportunity_universe=receiver_family_opportunity_universe,
+        directional_lr_hypothesis_universe=directional_lr_hypothesis_universe,
+        sample_metadata=validated.report.sample_metadata,
+    )
 
+    planned_folds = tuple(fold_plan)
+    effective_jobs = min(jobs, len(planned_folds))
+    fold_reporter = (
+        _ProgressReporter(
+            total=len(planned_folds),
+            label="crossfit:outer_folds",
+            path=_progress_path_for_fold("outer"),
+        )
+        if (_progress_enabled() or os.environ.get("CRYCHIC_PROGRESS_PATH"))
+        and planned_folds
+        else None
+    )
+
+    def execute(fold: FoldManifest) -> _CrossFitFoldExecutionResult:
+        started = (
+            fold_reporter.task_started() if fold_reporter is not None else None
+        )
+        try:
+            with _receiver_family_validation_scope():
+                return _run_crossfit_fold(fold, context=fold_context)
+        finally:
+            if fold_reporter is not None and started is not None:
+                fold_reporter.task_completed(started, detail=fold.fold_id)
+
+    if fold_reporter is not None:
+        fold_reporter.event("start")
+    executions = _bounded_thread_map_in_order(
+        execute,
+        planned_folds,
+        n_jobs=effective_jobs,
+    )
+    if fold_reporter is not None:
+        fold_reporter.event("complete")
+    for execution in executions:
+        fold_artifacts.append(execution.artifact)
+        coverage_rows.extend(execution.coverage_rows)
+        receiver_coverage_rows.extend(execution.receiver_coverage_rows)
+        sender_parts.extend(execution.sender_parts)
     coverage = pd.DataFrame(coverage_rows, columns=_COVERAGE_COLUMNS)
     receiver_coverage = pd.DataFrame(
         receiver_coverage_rows, columns=_RECEIVER_COVERAGE_COLUMNS
@@ -5595,15 +6065,24 @@ def run_subject_crossfit(
     target_prior: TargetPrior,
     *,
     spec: CrossFitSpec,
+    n_jobs: int = 1,
 ) -> CrossFitArtifacts:
-    """Run one public subject-blocked cross-fit from complete raw counts."""
+    """Run one public subject-blocked cross-fit from complete raw counts.
 
+    ``n_jobs`` bounds concurrent outer folds over one immutable sanitized input
+    snapshot. It affects execution only, never scientific result identity. Each
+    worker retains fold-local model state, so memory may scale with the effective
+    worker count and the default remains one.
+    """
+
+    jobs = _positive_jobs(n_jobs, field_name="n_jobs")
     return _run_subject_crossfit(
         _sanitized_raw_input_snapshot(adata, config),
         config,
         resource_bundle,
         target_prior,
         spec=spec,
+        n_jobs=jobs,
     )
 
 

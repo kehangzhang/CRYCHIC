@@ -40,6 +40,7 @@ def run_subject_crossfit(
     target_prior: TargetPrior,
     *,
     spec: CrossFitSpec,
+    n_jobs: int = 1,
 ) -> CrossFitArtifacts:
     ...
 ```
@@ -51,6 +52,11 @@ and creates physical, sanitized training and test `AnnData` copies. These
 copies retain only the declared count matrix, required observation columns,
 and variable names; they do not retain `raw`, `uns`, embeddings, or parent
 views.
+
+`n_jobs` bounds outer-fold execution over one immutable sanitized root
+snapshot. It does not enter the fold plan, scientific tables, or `crossfit_id`.
+Every worker retains independent fold-local model state, so memory can scale
+with the effective worker count and the default is one.
 
 An internal training scope derives its subject and sample identifiers from its
 own observations. Every data-driven fit runs inside that scope. Application

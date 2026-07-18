@@ -206,16 +206,18 @@ class Crychic:
         adata: AnnData,
         *,
         spec: CrossFitSpec,
+        n_jobs: int = 1,
         resource_bundle: ResourceBundle | None = None,
         target_prior: TargetPrior | None = None,
         output_dir: str | Path | None = None,
     ) -> CrossFitArtifacts | CrossFitResult:
-        """Run descriptive subject cross-fit with no legacy fallback."""
+        """Run descriptive subject cross-fit with bounded outer-fold workers."""
 
         validate_recommended_crossfit_spec(spec)
         return self.fit_crossfit(
             adata,
             spec=spec,
+            n_jobs=n_jobs,
             resource_bundle=resource_bundle,
             target_prior=target_prior,
             output_dir=output_dir,
@@ -309,6 +311,7 @@ class Crychic:
         adata: AnnData,
         *,
         spec: CrossFitSpec,
+        n_jobs: int = 1,
         resource_bundle: ResourceBundle | None = None,
         target_prior: TargetPrior | None = None,
         output_dir: str | Path | None = None,
@@ -319,6 +322,9 @@ class Crychic:
         effects. It does not itself enable formal p/q values or communication
         probabilities; use the separate exact-parent-bound resampling or active-
         probability workflows, whose release gates remain in force.
+
+        ``n_jobs`` bounds concurrent outer folds. Workers share the immutable
+        sanitized input snapshot but retain independent fold-local model state.
         """
 
         if not isinstance(spec, CrossFitSpec):
@@ -345,6 +351,7 @@ class Crychic:
             bundle,
             prior,
             spec=spec,
+            n_jobs=n_jobs,
         )
         if output_dir is None:
             return artifacts

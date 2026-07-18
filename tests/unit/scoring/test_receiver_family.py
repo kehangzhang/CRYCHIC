@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import crychic.attribution.frozen_family as frozen_family_module
 import crychic.workflow.baseline as baseline_module
 from crychic.attribution import (
     ReceiverFamilyTrainingArtifact,
@@ -1009,6 +1010,42 @@ def test_training_artifact_owns_immutable_basis_buffers() -> None:
             values.setflags(write=True)
 
     artifact._require_producer_owned()
+
+
+def test_training_artifact_validates_all_source_profiles_in_one_sparse_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = _receiver_family()
+    original_norm = frozen_family_module.sparse.linalg.norm
+    calls: list[tuple[tuple[int, int], int | None]] = []
+
+    def counted_norm(
+        matrix: object, *args: object, axis: int | None = None, **kwargs: object
+    ) -> object:
+        calls.append((matrix.shape, axis))  # type: ignore[attr-defined]
+        return original_norm(matrix, *args, axis=axis, **kwargs)
+
+    monkeypatch.setattr(frozen_family_module.sparse.linalg, "norm", counted_norm)
+
+    artifact._require_producer_owned()
+
+    assert calls == [(artifact.source_basis.normalized_profiles.shape, 0)]
+
+
+def test_training_artifact_validation_is_deduplicated_only_within_scope() -> None:
+    artifact = _receiver_family()
+
+    with patch.object(
+        frozen_family_module,
+        "_validate_basis_relationship",
+        wraps=frozen_family_module._validate_basis_relationship,
+    ) as validate:
+        with frozen_family_module._receiver_family_validation_scope():
+            artifact._require_producer_owned()
+            artifact._require_producer_owned()
+        artifact._require_producer_owned()
+
+    assert validate.call_count == 2
 
 
 @pytest.mark.parametrize(

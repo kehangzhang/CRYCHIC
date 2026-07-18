@@ -780,6 +780,31 @@ def test_v6_readback_exports_conserved_global_sender_scores() -> None:
     assert views[0]["global_cross_receiver_endpoint_eligible"] is False
 
 
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "schema_version", ("7.0.0", "8.0.0", "9.0.0")
+)
+def test_v7_to_v9_readback_retains_conserved_sender_contract(
+    schema_version: str,
+) -> None:
+    result = _v6_result()
+    result._manifest["schema_version"] = schema_version
+
+    table, views = convert_crossfit_result_to_long(
+        result,
+        _adata(),
+        dataset_id=f"toy-{schema_version}",
+        method_version="test-version-current",
+    )
+
+    observed = table.loc[table["interaction_id"].eq("interaction-observed")]
+    assert sorted(observed["score"].unique()) == pytest.approx([0.2, 0.6])
+    assert set(table["score_name"]) == {"global_sender_lr_score"}
+    assert views[0]["source_manifest_schema_version"] == schema_version
+    assert views[0]["score_version"] == (
+        "receiver_gain_percentile_mechanistic_conserved_sender_v4"
+    )
+
+
 def test_v6_readback_preserves_lr_zero_and_ne_precedence() -> None:
     result = _v6_result()
     observed = result._sender["interaction_id"].eq("interaction-observed")
