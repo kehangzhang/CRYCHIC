@@ -33,7 +33,11 @@ def test_analysis_notebook_is_valid_v4_and_code_compiles(path: Path) -> None:
         assert isinstance(cell["source"], list)
         if cell["cell_type"] != "code":
             continue
-        compile("".join(cell["source"]), f"{path}:{cell['id']}", "exec")
+        source = "".join(cell["source"])
+        if path in NOTEBOOKS[:2]:
+            assert source.startswith("%%time\n")
+            source = source.removeprefix("%%time\n")
+        compile(source, f"{path}:{cell['id']}", "exec")
         assert not any(
             output.get("output_type") == "error"
             for output in cell.get("outputs", [])
