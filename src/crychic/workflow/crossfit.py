@@ -9,6 +9,7 @@ OOF scoring; formal inference remains a separate full-pipeline calibration.
 from __future__ import annotations
 
 import copyreg
+import hashlib
 import json
 import math
 import os
@@ -448,22 +449,66 @@ def _optional_table_text(value: object) -> str | None:
 
 
 def _table_digest(table_name: str, table: pd.DataFrame) -> str:
-    rows = [
-        [_table_cell_token(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    rows.sort(key=canonical_json)
-    result: str = stable_id(
+    validation_id = stable_id(
         "crossfit_table",
-        {
-            "columns": [str(column) for column in table.columns],
-            "rows": rows,
-            "table_name": table_name,
-        },
+        {},
         schema_version="1",
         digest_length=64,
     )
-    return result
+    id_prefix = validation_id[:-(64 + 1)]
+    template = canonical_json(
+        {
+            "components": {
+                "columns": [str(column) for column in table.columns],
+                "rows": [],
+                "table_name": table_name,
+            },
+            "kind": "crossfit_table",
+            "schema_version": "1",
+        }
+    )
+    prefix, suffix = template.split('"rows":[]', maxsplit=1)
+
+    def encoded_rows():
+        for row in table.itertuples(index=False, name=None):
+            yield json.dumps(
+                [_table_cell_token(value) for value in row],
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+
+    def digest_rows(rows) -> str:
+        digest = hashlib.sha256()
+        digest.update(prefix.encode("ascii"))
+        digest.update(b'"rows":[')
+        for index, row in enumerate(rows):
+            if index:
+                digest.update(b",")
+            digest.update(row.encode("ascii"))
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()}"
+
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(b'"rows":[')
+    previous: str | None = None
+    row_count = 0
+    for row in encoded_rows():
+        if previous is not None and row < previous:
+            break
+        if row_count:
+            digest.update(b",")
+        digest.update(row.encode("ascii"))
+        previous = row
+        row_count += 1
+    else:
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()}"
+    return digest_rows(sorted(encoded_rows()))
 
 
 def _contrast_id(contrast: ContrastSpec) -> str:
