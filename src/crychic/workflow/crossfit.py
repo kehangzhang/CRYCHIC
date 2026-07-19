@@ -50,6 +50,7 @@ from crychic.attribution.precision import (
     _raw_vector_digest,
     fit_repeated_response_precision,
 )
+from crychic.availability import BatchAvailability
 from crychic.core import (
     ContractError,
     CrychicConfig,
@@ -140,7 +141,7 @@ from crychic.sender import (
     ContrastCommonSenderFunctional,
     SenderContrastSupportStatus,
     apply_contrast_common_sender_functional,
-    interaction_ligand_contrast_gate,
+    interaction_ligand_contrast_gates,
 )
 
 from .application import (
@@ -171,8 +172,6 @@ from .training import (
     SanitizedRawInputIdentity,
     SanitizedRawInputSnapshot,
     TrainingArtifacts,
-    _fit_interaction_universe,
-    _fit_training_artifacts_from_prepared,
     _input_schema,
     _prepare_validated_root_fold,
     _PreparedRawFold,
@@ -180,6 +179,9 @@ from .training import (
     _sanitized_raw_input_snapshot,
     _subset_prepared_raw_fold,
     _target_prior_content_id,
+)
+from .training import (
+    _fit_training_result_from_prepared as _fit_training_artifacts_from_prepared,
 )
 
 if TYPE_CHECKING:
@@ -949,13 +951,13 @@ class _FamilyCommonCrossFitBinding:
         training_application: TrainingArtifactApplication,
         edge_evidence: pd.DataFrame,
         sender_application: CommonSenderApplication,
+        *,
+        availability_sample_interactions_digest: str | None = None,
     ) -> _FamilyCommonCrossFitBinding:
         functional._require_intact()
         application._require_intact()
         training_application._require_intact()
-        sender_application = CommonSenderApplication(
-            sender_application.table, sender_application.functional
-        )
+        sender_application._require_intact()
         edge_digest = family_common_edge_evidence_digest(edge_evidence)
         sender_digest = family_common_sender_application_digest(sender_application)
         if (
@@ -970,14 +972,21 @@ class _FamilyCommonCrossFitBinding:
                     "Reapply the common functional to canonical held-out inputs"
                 ),
             )
+        availability_digest = availability_sample_interactions_digest
+        if availability_digest is None:
+            availability_digest = _table_digest(
+                "family_common_source_availability",
+                training_application.availability.sample_interactions,
+            )
+        if not isinstance(availability_digest, str) or not availability_digest:
+            raise ValueError(
+                "availability_sample_interactions_digest must not be empty"
+            )
         values = {
             "family_common_functional_id": (functional.family_common_functional_id),
             "family_common_application_id": application.application_id,
             "training_application_id": training_application.application_id,
-            "availability_sample_interactions_digest": _table_digest(
-                "family_common_source_availability",
-                training_application.availability.sample_interactions,
-            ),
+            "availability_sample_interactions_digest": availability_digest,
             "edge_evidence_policy_id": _FAMILY_EDGE_EVIDENCE_POLICY,
             "edge_evidence_digest": edge_digest,
             "sender_input_digest": sender_digest,
@@ -1602,13 +1611,21 @@ class CrossFitFoldArtifacts:
                 "fold family-common functional/application/input chains must align"
             )
         if common_functionals:
+            for binding in common_bindings:
+                binding._require_intact()
+            availability_digests = {
+                binding.availability_sample_interactions_digest
+                for binding in common_bindings
+            }
+            if len(availability_digests) != 1:
+                raise ValueError(
+                    "family-common bindings must share one held-out availability digest"
+                )
+            availability_digest = next(iter(availability_digests))
             sender_by_contrast = {
                 functional.contrast_name: functional
                 for functional in self.training.sender_functionals
             }
-            sender_applications: dict[
-                tuple[str, str, tuple[str, ...]], CommonSenderApplication
-            ] = {}
             for (
                 family_model,
                 program_model,
@@ -1631,7 +1648,6 @@ class CrossFitFoldArtifacts:
             ):
                 common_functional._require_intact()
                 common_tables = common_application._validated_tables()
-                common_binding._require_intact()
                 expected_key = (
                     family_model.contrast_name,
                     family_model.receiver_family_artifact.receiver,
@@ -1761,36 +1777,28 @@ class CrossFitFoldArtifacts:
                     design_application,
                     common_tables,
                 )
-                edge_evidence = _family_common_edge_evidence(
-                    common_functional,
-                    design_application,
-                    self.application.availability.sample_interactions,
-                )
-                sender_key = (
-                    common_functional.contrast_name,
-                    common_functional.receiver,
-                    common_functional.interaction_ids,
-                )
-                sender_application = sender_applications.get(sender_key)
-                if sender_application is None:
-                    sender_application = _completed_common_sender_application(
-                        common_functional.sender_functional,
-                        design_application,
-                        self.application.availability.sample_interactions,
-                        receiver=common_functional.receiver,
-                        interaction_ids=common_functional.interaction_ids,
-                    )
-                    sender_applications[sender_key] = sender_application
-                expected_binding = _FamilyCommonCrossFitBinding._from_workflow(
-                    common_functional,
-                    common_application,
-                    self.application,
-                    edge_evidence,
-                    sender_application,
-                )
-                if common_binding != expected_binding:
-                    raise ValueError(
-                        "family-common inputs are not bound to held-out availability"
+                if (
+                    common_binding.family_common_functional_id
+                    != common_functional.family_common_functional_id
+                    or common_binding.family_common_application_id
+                    != common_application.application_id
+                    or common_binding.training_application_id
+                    != self.application.application_id
+                    or common_binding.availability_sample_interactions_digest
+                    != availability_digest
+                    or common_binding.edge_evidence_digest
+                    != common_application.edge_evidence_digest
+                    or common_binding.sender_input_digest
+                    != common_application.sender_application_digest
+                ):
+                    raise ContractError(
+                        "Family-common application inputs do not match its "
+                        "cross-fit binding",
+                        code="family_common_crossfit_input_mismatch",
+                        field="application_id",
+                        remediation=(
+                            "Reapply the common functional to canonical held-out inputs"
+                        ),
                     )
         object.__setattr__(self, "family_common_functionals", common_functionals)
         object.__setattr__(self, "family_common_applications", common_applications)
@@ -1846,6 +1854,10 @@ class CrossFitFoldArtifacts:
                 (model.contrast_name, model.receiver): model
                 for model in incremental_models
             }
+            bindings_by_functional_id = {
+                binding.family_common_functional_id: binding
+                for binding in common_bindings
+            }
             global_pairs = tuple(
                 sorted(
                     zip(global_functionals, global_applications, strict=True),
@@ -1880,28 +1892,31 @@ class CrossFitFoldArtifacts:
                     applications_by_child[functional.family_common_functional_id]
                     for functional in children
                 )
-                source_sender_applications = tuple(
-                    sender_applications[
+                expected_sender_digests = tuple(
+                    sorted(
                         (
-                            functional.contrast_name,
                             functional.receiver,
-                            functional.interaction_ids,
+                            bindings_by_functional_id[
+                                functional.family_common_functional_id
+                            ].sender_input_digest,
                         )
-                    ]
-                    for functional in children
+                        for functional in children
+                    )
                 )
-                expected_application = apply_cross_receiver_common_scoring_functional(
-                    global_functional,
-                    child_applications,
-                    source_sender_applications,
-                )
+                global_application._require_intact()
                 if (
-                    expected_application.application_id
-                    != global_application.application_id
-                    or expected_application.lr_scores_digest
-                    != global_application.lr_scores_digest
-                    or expected_application.sender_scores_digest
-                    != global_application.sender_scores_digest
+                    global_application.functional.global_common_functional_id
+                    != global_functional.global_common_functional_id
+                    or tuple(
+                        application.application_id
+                        for application in global_application.child_applications
+                    )
+                    != tuple(
+                        application.application_id
+                        for application in child_applications
+                    )
+                    or global_application.source_sender_application_digests
+                    != expected_sender_digests
                 ):
                     raise ValueError(
                         "cross-receiver common application lineage is incompatible"
@@ -3900,6 +3915,7 @@ def _training_receiver_families(
     *,
     prepared: _PreparedRawFold,
     training: TrainingArtifacts,
+    training_availability: BatchAvailability,
     resource_bundle: ResourceBundle,
     target_prior: TargetPrior,
     spec: CrossFitSpec,
@@ -3930,12 +3946,15 @@ def _training_receiver_families(
             field="target_prior,feature_ids,family_cosine_threshold",
             remediation="Use the exact run-root family opportunity universe",
         )
-    availability = _fit_interaction_universe(
-        prepared,
-        resource_bundle,
-        spec.training_spec,
-    )
+    if not isinstance(training_availability, BatchAvailability):
+        raise TypeError("training_availability must be a BatchAvailability")
+    availability = training_availability
     if (
+        availability.application_subject_ids != training.training_subject_ids
+        or availability.application_subject_ids != prepared.subject_ids
+        or availability.filter_universe_id
+        != training.frozen_interaction_universe.filter_universe_id
+        or
         availability.frozen_interaction_universe.to_dict()
         != training.frozen_interaction_universe.to_dict()
     ):
@@ -4732,26 +4751,31 @@ def _family_common_edge_evidence(
                 _maximum_observed(group["availability_ecosystem"]),
             )
     prevalence: dict[str, float | None] = {}
+    for prior in functional.sender_functional.candidate_priors:
+        if prior.receiver != functional.receiver:
+            continue
+        interaction_id = prior.interaction_id
+        prior_value = prior.prevalence_prior
+        if interaction_id not in prevalence:
+            prevalence[interaction_id] = (
+                None if prior_value is None else float(prior_value)
+            )
+        elif prevalence[interaction_id] is not None:
+            prevalence[interaction_id] = (
+                None
+                if prior_value is None
+                else max(prevalence[interaction_id], float(prior_value))
+            )
     ligand_contrast_gates = {
-        interaction_id: interaction_ligand_contrast_gate(
+        gate.interaction_id: gate
+        for gate in interaction_ligand_contrast_gates(
             functional.sender_functional,
-            functional.receiver,
-            interaction_id,
+            tuple(
+                (functional.receiver, interaction_id)
+                for interaction_id in functional.interaction_ids
+            ),
         )
-        for interaction_id in functional.interaction_ids
     }
-    for interaction_id in functional.interaction_ids:
-        priors = tuple(
-            prior.prevalence_prior
-            for prior in functional.sender_functional.candidate_priors
-            if prior.receiver == functional.receiver
-            and prior.interaction_id == interaction_id
-        )
-        prevalence[interaction_id] = (
-            None
-            if not priors or any(value is None for value in priors)
-            else max(float(value) for value in priors if value is not None)
-        )
 
     rows: list[dict[str, object]] = []
     for sample_id, subject_id, context_id in zip(
@@ -4793,7 +4817,7 @@ def _family_common_edge_evidence(
                         ),
                         "ligand_availability": ligand_availability,
                         "prior_quality": 1.0,
-                        "subject_prevalence": prevalence[interaction_id],
+                        "subject_prevalence": prevalence.get(interaction_id),
                         "resource_evidence": 1.0,
                     }
                 )
@@ -4949,6 +4973,10 @@ def _apply_family_common_chains(
     sender_applications: dict[
         tuple[str, str, tuple[str, ...]], CommonSenderApplication
     ] = {}
+    availability_digest = _table_digest(
+        "family_common_source_availability",
+        training_application.availability.sample_interactions,
+    )
     for functional, receiver_program_application, incremental_application in zip(
         functionals,
         receiver_program_applications,
@@ -5011,6 +5039,7 @@ def _apply_family_common_chains(
                 training_application,
                 edge_evidence,
                 sender_application,
+                availability_sample_interactions_digest=availability_digest,
             )
         )
     return (
@@ -5565,6 +5594,27 @@ def _progress_path_for_fold(fold_id: str) -> Path | None:
     return path.with_name(f"{path.stem}_{fold_id}{path.suffix or '.json'}")
 
 
+def _fold_stage_started(fold_id: str, stage: str) -> float:
+    started = time.perf_counter()
+    if _progress_enabled():
+        print(
+            f"[crychic] fold={fold_id}:{stage} start",
+            file=sys.stderr,
+            flush=True,
+        )
+    return started
+
+
+def _fold_stage_completed(fold_id: str, stage: str, started: float) -> None:
+    if _progress_enabled():
+        elapsed = max(0.0, time.perf_counter() - started)
+        print(
+            f"[crychic] fold={fold_id}:{stage} complete elapsed={elapsed:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _run_crossfit_fold(
     fold: FoldManifest,
     *,
@@ -5583,6 +5633,7 @@ def _run_crossfit_fold(
     directional_lr_hypothesis_universe = context.directional_lr_hypothesis_universe
     sample_metadata = context.sample_metadata
 
+    stage_started = _fold_stage_started(fold.fold_id, "training")
     prepared_training = _subset_prepared_raw_fold(
         context.root_prepared,
         config,
@@ -5590,18 +5641,21 @@ def _run_crossfit_fold(
         min_cells=spec.training_spec.min_cells,
         root_input_identity=root_input_identity,
     )
-    training = _fit_training_artifacts_from_prepared(
+    training_result = _fit_training_artifacts_from_prepared(
         prepared_training,
         config,
         resource_bundle,
         target_prior,
         spec=spec.training_spec,
     )
+    training = training_result.artifacts
+    _fold_stage_completed(fold.fold_id, "training", stage_started)
     receiver_training_support = assess_receiver_training_support(
         receiver_universe,
         outer_fold_id=fold.fold_id,
         training_cell_type_ids=training.cell_type_ids,
     )
+    stage_started = _fold_stage_started(fold.fold_id, "heldout_application")
     prepared_heldout = _subset_prepared_raw_fold(
         context.root_prepared,
         config,
@@ -5638,6 +5692,7 @@ def _run_crossfit_fold(
         apply_frozen_design_encoder(encoder, heldout_metadata)
         for encoder in design_encoders
     )
+    _fold_stage_completed(fold.fold_id, "heldout_application", stage_started)
     training_aggregate = prepared_training.aggregate
     heldout_aggregate = prepared_heldout.aggregate
     if not isinstance(training_aggregate, PseudobulkDataset) or not isinstance(
@@ -5646,9 +5701,11 @@ def _run_crossfit_fold(
         raise RuntimeError(
             "raw-count cross-fitting requires inferential pseudobulk aggregates"
         )
+    stage_started = _fold_stage_started(fold.fold_id, "receiver_family")
     receiver_family_models = _training_receiver_families(
         prepared=prepared_training,
         training=training,
+        training_availability=training_result.training_availability,
         resource_bundle=resource_bundle,
         target_prior=target_prior,
         spec=spec,
@@ -5661,6 +5718,8 @@ def _run_crossfit_fold(
         prepared=prepared_heldout,
         contrasts=spec.contrasts,
     )
+    _fold_stage_completed(fold.fold_id, "receiver_family", stage_started)
+    stage_started = _fold_stage_started(fold.fold_id, "receiver_program")
     receiver_program_models = _training_receiver_programs(
         receiver_family_models,
         prepared=prepared_training,
@@ -5673,6 +5732,8 @@ def _run_crossfit_fold(
         design_encoders=design_encoders,
         design_applications=design_applications,
     )
+    _fold_stage_completed(fold.fold_id, "receiver_program", stage_started)
+    stage_started = _fold_stage_started(fold.fold_id, "receiver_incremental_chain")
     (
         receiver_responses,
         response_precisions,
@@ -5709,6 +5770,9 @@ def _run_crossfit_fold(
         receiver_incremental_applications,
         receiver_ids=training.cell_type_ids,
     )
+    _fold_stage_completed(
+        fold.fold_id, "receiver_incremental_chain", stage_started
+    )
     observed_contrasts = {
         _contrast_id(functional.contrast) for functional in training.sender_functionals
     }
@@ -5727,6 +5791,7 @@ def _run_crossfit_fold(
             CrossReceiverCommonScoringApplication, ...
         ] = ()
     else:
+        stage_started = _fold_stage_started(fold.fold_id, "family_common")
         family_common_functionals = _fit_family_common_chains(
             receiver_family_models,
             receiver_program_models,
@@ -5768,6 +5833,8 @@ def _run_crossfit_fold(
             if cross_receiver_common_functionals
             else ()
         )
+        _fold_stage_completed(fold.fold_id, "family_common", stage_started)
+    stage_started = _fold_stage_started(fold.fold_id, "fold_validation")
     artifact = CrossFitFoldArtifacts(
         fold_id=fold.fold_id,
         training=training,
@@ -5791,7 +5858,9 @@ def _run_crossfit_fold(
         cross_receiver_common_functionals=cross_receiver_common_functionals,
         cross_receiver_common_applications=cross_receiver_common_applications,
     )
-    return _CrossFitFoldExecutionResult(
+    _fold_stage_completed(fold.fold_id, "fold_validation", stage_started)
+    stage_started = _fold_stage_started(fold.fold_id, "coverage")
+    execution_result = _CrossFitFoldExecutionResult(
         artifact=artifact,
         coverage_rows=tuple(
             _fold_coverage_rows(
@@ -5825,6 +5894,8 @@ def _run_crossfit_fold(
             )
         ),
     )
+    _fold_stage_completed(fold.fold_id, "coverage", stage_started)
+    return execution_result
 
 
 def _run_subject_crossfit(

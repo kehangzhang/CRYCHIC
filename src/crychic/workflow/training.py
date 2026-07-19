@@ -519,6 +519,29 @@ class TrainingArtifacts:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _FoldTrainingResult:
+    """Fold-local training artifacts plus their already fitted availability."""
+
+    artifacts: TrainingArtifacts
+    training_availability: BatchAvailability
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.artifacts, TrainingArtifacts):
+            raise TypeError("artifacts must be TrainingArtifacts")
+        if not isinstance(self.training_availability, BatchAvailability):
+            raise TypeError("training_availability must be BatchAvailability")
+        if (
+            self.training_availability.application_subject_ids
+            != self.artifacts.training_subject_ids
+            or self.training_availability.frozen_interaction_universe.to_dict()
+            != self.artifacts.frozen_interaction_universe.to_dict()
+        ):
+            raise ValueError(
+                "fold-local availability does not match its training artifacts"
+            )
+
+
 Aggregate: TypeAlias = PseudobulkDataset | ExploratoryAggregate
 
 
@@ -1484,14 +1507,14 @@ def _planned_sender_contrasts(
     )
 
 
-def _fit_training_artifacts_from_prepared(
+def _fit_training_result_from_prepared(
     prepared: _PreparedRawFold,
     config: CrychicConfig,
     resource_bundle: ResourceBundle,
     target_prior: TargetPrior,
     *,
     spec: FoldTrainingSpec,
-) -> TrainingArtifacts:
+) -> _FoldTrainingResult:
     if not isinstance(prepared, _PreparedRawFold):
         raise TypeError("prepared must be a _PreparedRawFold")
     if not isinstance(config, CrychicConfig):
@@ -1549,7 +1572,7 @@ def _fit_training_artifacts_from_prepared(
             for functional in sender_functionals
         )
     )
-    return TrainingArtifacts._from_training(
+    artifacts = TrainingArtifacts._from_training(
         config=config,
         resource_bundle=resource_bundle,
         target_prior=target_prior,
@@ -1562,6 +1585,29 @@ def _fit_training_artifacts_from_prepared(
         sender_functionals=sender_functionals,
         sender_availability_input_digests=sender_availability_input_digests,
     )
+    return _FoldTrainingResult(
+        artifacts=artifacts,
+        training_availability=availability,
+    )
+
+
+def _fit_training_artifacts_from_prepared(
+    prepared: _PreparedRawFold,
+    config: CrychicConfig,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    *,
+    spec: FoldTrainingSpec,
+) -> TrainingArtifacts:
+    """Compatibility wrapper returning only the persisted training artifacts."""
+
+    return _fit_training_result_from_prepared(
+        prepared,
+        config,
+        resource_bundle,
+        target_prior,
+        spec=spec,
+    ).artifacts
 
 
 def fit_training_artifacts(

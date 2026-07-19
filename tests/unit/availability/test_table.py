@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
+import crychic.availability.table as table_module
 from crychic.availability import (
     AvailabilityParameters,
     BatchAvailability,
@@ -419,6 +420,65 @@ def test_complex_values_preserve_exact_zero_and_missingness() -> None:
     assert np.isnan(result[1])
     assert np.isnan(result[2])
     assert 0.4 < result[3] < 0.8
+
+
+def test_bundle_availability_reuses_identical_entities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _bundle()
+    first = base.interactions[0]
+    second = Interaction(
+        interaction_id="i2",
+        source_interaction_id="L_R_second",
+        ligand_name=first.ligand_name,
+        receptor_name=first.receptor_name,
+        ligand_subunits=first.ligand_subunits,
+        receptor_subunits=first.receptor_subunits,
+        ligand_is_complex=False,
+        receptor_is_complex=False,
+        direction=first.direction,
+        source=first.source,
+        version=first.version,
+        species=first.species,
+        gene_namespace=first.gene_namespace,
+        pathway=first.pathway,
+    )
+    bundle = ResourceBundle(
+        resource_id=base.resource_id,
+        version=base.version,
+        species=base.species,
+        gene_namespace=base.gene_namespace,
+        interactions=(first, second),
+        mapping_report=MappingReport(2, 2, 2),
+        manifest_digest=base.manifest_digest,
+        source_files=base.source_files,
+        license=base.license,
+        citation=base.citation,
+    )
+    original = table_module._entity_values
+    calls: list[tuple[int, ...]] = []
+
+    def counted_entity_values(
+        gene_values: np.ndarray,
+        indices: tuple[int, ...] | list[int],
+        *,
+        power: float,
+        epsilon: float,
+    ) -> np.ndarray:
+        calls.append(tuple(indices))
+        return original(gene_values, indices, power=power, epsilon=epsilon)
+
+    monkeypatch.setattr(table_module, "_entity_values", counted_entity_values)
+
+    result = estimate_bundle_availability(
+        _aggregate(),
+        bundle,
+        context_keys=("condition",),
+        min_pooled_availability=0.0,
+    )
+
+    assert len(result.frozen_interaction_universe.interaction_ids) == 2
+    assert len(calls) == 2
 
 
 def test_state_score_does_not_require_abundance_eligibility() -> None:

@@ -137,10 +137,24 @@ def _frozen_candidate_sender_manifest(
             field="interaction_id",
             remediation="Apply the exact training-fold interaction universe",
         )
+    candidate_rows = table.loc[
+        :, ["receiver", "interaction_id", "sender"]
+    ].drop_duplicates()
+    senders_by_receiver: dict[str, set[str]] = {}
+    senders_by_candidate: dict[tuple[str, str], set[str]] = {}
+    for receiver, interaction_id, sender in candidate_rows.itertuples(
+        index=False, name=None
+    ):
+        receiver_id = str(receiver)
+        interaction = str(interaction_id)
+        sender_id = str(sender)
+        senders_by_receiver.setdefault(receiver_id, set()).add(sender_id)
+        senders_by_candidate.setdefault((receiver_id, interaction), set()).add(
+            sender_id
+        )
     manifest: list[tuple[str, str, tuple[str, ...]]] = []
-    for receiver in sorted(set(table["receiver"].astype(str))):
-        receiver_rows = table.loc[table["receiver"].eq(receiver)]
-        receiver_senders = tuple(sorted(set(receiver_rows["sender"].astype(str))))
+    for receiver in sorted(senders_by_receiver):
+        receiver_senders = tuple(sorted(senders_by_receiver[receiver]))
         if not receiver_senders:
             raise ContractError(
                 "every frozen receiver must have at least one candidate sender",
@@ -150,14 +164,7 @@ def _frozen_candidate_sender_manifest(
             )
         for interaction_id in frozen_interaction_ids:
             local_senders = tuple(
-                sorted(
-                    set(
-                        receiver_rows.loc[
-                            receiver_rows["interaction_id"].eq(interaction_id),
-                            "sender",
-                        ].astype(str)
-                    )
-                )
+                sorted(senders_by_candidate.get((receiver, interaction_id), ()))
             )
             manifest.append(
                 (
@@ -287,11 +294,33 @@ def _training_availability_digest(
         list(_TRAINING_DIGEST_COLUMNS[:-1]), kind="stable", ignore_index=True
     )
     row_digest = hashlib.sha256()
+    encoded_tokens: dict[str, bytes] = {}
+    digest_buffer = bytearray()
+    flush_bytes = 1 << 20
+
+    def encoded_token(value: str) -> bytes:
+        token = encoded_tokens.get(value)
+        if token is None:
+            token = canonical_json(value).encode("ascii")
+            encoded_tokens[value] = token
+        return token
+
     for row in canonical.itertuples(index=False, name=None):
         ligand = row[-1]
-        canonical_row = [*row[:-1], None if pd.isna(ligand) else float(ligand).hex()]
-        row_digest.update(canonical_json(canonical_row).encode("ascii"))
-        row_digest.update(b"\n")
+        ligand_token = (
+            b"null"
+            if pd.isna(ligand)
+            else encoded_token(float(ligand).hex())
+        )
+        digest_buffer.extend(b"[")
+        digest_buffer.extend(b",".join(encoded_token(value) for value in row[:-1]))
+        digest_buffer.extend(b",")
+        digest_buffer.extend(ligand_token)
+        digest_buffer.extend(b"]\n")
+        if len(digest_buffer) >= flush_bytes:
+            row_digest.update(digest_buffer)
+            digest_buffer.clear()
+    row_digest.update(digest_buffer)
     canonical_weights = _canonical_contrast_weights(contrast_weights)
     payload: dict[str, object] = {
         "candidate_sender_manifest": [
@@ -432,23 +461,23 @@ def _fit_interaction_ligand_contrast_supports(
         .max(min_count=1)
         .reset_index()
     )
+    by_interaction: dict[
+        tuple[str, str], dict[tuple[str, str], float]
+    ] = {}
+    for row in interaction_context.itertuples(index=False):
+        if pd.isna(row.ligand_availability):
+            continue
+        key = (str(row.receiver), str(row.interaction_id))
+        by_interaction.setdefault(key, {})[
+            (str(row.subject_id), str(row.context_id))
+        ] = float(cast(Any, row.ligand_availability))
     raw_supports: list[_RawInteractionContrast] = []
     interaction_keys = tuple(
         (receiver, interaction_id)
         for receiver, interaction_id, _ in candidate_sender_manifest
     )
     for receiver, interaction_id in interaction_keys:
-        local = interaction_context.loc[
-            interaction_context["receiver"].eq(receiver)
-            & interaction_context["interaction_id"].eq(interaction_id)
-        ]
-        by_subject_context = {
-            (str(row.subject_id), str(row.context_id)): float(
-                cast(Any, row.ligand_availability)
-            )
-            for row in local.itertuples(index=False)
-            if not pd.isna(row.ligand_availability)
-        }
+        by_subject_context = by_interaction.get((receiver, interaction_id), {})
         complete_subjects: list[str] = []
         effects: list[float] = []
         for subject_id in training_subject_ids:
@@ -713,19 +742,37 @@ def fit_contrast_common_sender_functional(
     )
     subjects = tuple(sorted(table["subject_id"].unique()))
     denominator = len(subjects)
+    subject_means = table.groupby(
+        ["receiver", "interaction_id", "sender", "subject_id"],
+        observed=True,
+        sort=True,
+    )["ligand_availability"].mean()
+    candidate_levels = ["receiver", "interaction_id", "sender"]
+    observed_subjects = subject_means.notna().groupby(
+        level=candidate_levels,
+        observed=True,
+        sort=True,
+    ).sum()
+    above_threshold = subject_means.gt(resolved.prevalence_threshold).groupby(
+        level=candidate_levels,
+        observed=True,
+        sort=True,
+    ).sum()
+    prevalence_stats = {
+        cast(tuple[str, str, str], key): (int(n_subjects), int(n_above))
+        for key, n_subjects, n_above in zip(
+            observed_subjects.index,
+            observed_subjects.to_numpy(),
+            above_threshold.to_numpy(),
+            strict=True,
+        )
+    }
     priors: list[SenderPrevalencePrior] = []
     for receiver, interaction_id, sender_ids in candidate_sender_manifest:
         for sender in sender_ids:
-            group = table.loc[
-                table["receiver"].eq(receiver)
-                & table["interaction_id"].eq(interaction_id)
-                & table["sender"].eq(sender)
-            ]
-            subject_values = group.groupby("subject_id", observed=True)[
-                "ligand_availability"
-            ].mean()
-            observed = subject_values.dropna()
-            n_subjects = len(observed)
+            n_subjects, n_above = prevalence_stats.get(
+                (receiver, interaction_id, sender), (0, 0)
+            )
             if n_subjects == 0:
                 prior = None
                 status = SenderPrevalenceStatus.MISSING_EVIDENCE
@@ -735,9 +782,7 @@ def fit_contrast_common_sender_functional(
                 status = SenderPrevalenceStatus.LOW_SUPPORT
                 reason = "insufficient_training_subject_support"
             else:
-                prior = float(
-                    (observed > resolved.prevalence_threshold).sum() / denominator
-                )
+                prior = float(n_above / denominator)
                 status = SenderPrevalenceStatus.SUPPORTED
                 reason = None
             priors.append(
@@ -896,13 +941,16 @@ def apply_contrast_common_sender_functional(
         return CommonSenderApplication(
             pd.DataFrame(columns=COMMON_SENDER_APPLICATION_COLUMNS), functional
         )
-    priors_by_group: dict[tuple[str, str], tuple[SenderPrevalencePrior, ...]] = {}
+    mutable_priors_by_group: dict[
+        tuple[str, str], list[SenderPrevalencePrior]
+    ] = {}
     for prior in functional.candidate_priors:
-        priors_by_group.setdefault((prior.receiver, prior.interaction_id), ())
-        priors_by_group[(prior.receiver, prior.interaction_id)] = (
-            *priors_by_group[(prior.receiver, prior.interaction_id)],
-            prior,
-        )
+        mutable_priors_by_group.setdefault(
+            (prior.receiver, prior.interaction_id), []
+        ).append(prior)
+    priors_by_group = {
+        key: tuple(priors) for key, priors in mutable_priors_by_group.items()
+    }
     output: list[dict[str, Any]] = []
     group_columns = [*COMMON_SENDER_GROUP_COLUMNS]
     for group_key, group in table.groupby(group_columns, observed=True, sort=True):
@@ -910,6 +958,7 @@ def apply_contrast_common_sender_functional(
         priors = priors_by_group.get((str(receiver), str(interaction_id)))
         if priors is None:
             continue
+        candidate_senders = {prior.sender for prior in priors}
         local = {
             str(row.sender): (
                 None
@@ -917,7 +966,7 @@ def apply_contrast_common_sender_functional(
                 else float(cast(Any, row.ligand_availability))
             )
             for row in group.itertuples(index=False)
-            if str(row.sender) in {prior.sender for prior in priors}
+            if str(row.sender) in candidate_senders
         }
         evidence: list[float | None] = []
         for prior in priors:

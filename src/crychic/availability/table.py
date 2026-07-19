@@ -349,19 +349,23 @@ def estimate_bundle_availability(
     receptor_columns: list[np.ndarray] = []
     supported: list[Interaction] = []
     dropped_no_support: list[str] = []
+    entity_values: dict[tuple[str, ...], npt.NDArray[np.float64]] = {}
+
+    def values_for(subunits: tuple[str, ...]) -> npt.NDArray[np.float64]:
+        values = entity_values.get(subunits)
+        if values is None:
+            values = _entity_values(
+                gene_values,
+                [local_index[gene] for gene in subunits],
+                power=parameters.complex_power,
+                epsilon=parameters.complex_epsilon,
+            )
+            entity_values[subunits] = values
+        return values
+
     for interaction in mapped:
-        ligand = _entity_values(
-            gene_values,
-            [local_index[gene] for gene in interaction.ligand_subunits],
-            power=parameters.complex_power,
-            epsilon=parameters.complex_epsilon,
-        )
-        receptor = _entity_values(
-            gene_values,
-            [local_index[gene] for gene in interaction.receptor_subunits],
-            power=parameters.complex_power,
-            epsilon=parameters.complex_epsilon,
-        )
+        ligand = values_for(interaction.ligand_subunits)
+        receptor = values_for(interaction.receptor_subunits)
         ligand_max = float(np.nanmax(ligand)) if np.isfinite(ligand).any() else 0.0
         receptor_max = (
             float(np.nanmax(receptor)) if np.isfinite(receptor).any() else 0.0

@@ -84,6 +84,9 @@ class TrainingArtifactApplication:
     sender_assignments: tuple[CommonSenderApplication, ...]
     excluded_cell_type_ids: tuple[str, ...] = ()
     application_status: str = _APPLICATION_STATUS
+    availability_mapping_summary_digest: str = field(init=False)
+    availability_sample_interactions_digest: str = field(init=False)
+    sender_assignment_table_digests: tuple[tuple[str, str], ...] = field(init=False)
     application_id: str = field(init=False)
 
     @validation_scope()
@@ -171,6 +174,33 @@ class TrainingArtifactApplication:
         object.__setattr__(self, "excluded_cell_type_ids", excluded_cell_types)
         object.__setattr__(
             self,
+            "availability_mapping_summary_digest",
+            _table_digest(
+                "availability_mapping_summary",
+                availability.mapping_summary,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "availability_sample_interactions_digest",
+            _table_digest(
+                "availability_sample_interactions",
+                availability.sample_interactions,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "sender_assignment_table_digests",
+            tuple(
+                (
+                    item.functional.sender_functional_id,
+                    _table_digest("common_sender_application", item.table),
+                )
+                for item in frozen_assignments
+            ),
+        )
+        object.__setattr__(
+            self,
             "application_id",
             stable_id("training_artifact_application", self._identity_payload()),
         )
@@ -186,15 +216,11 @@ class TrainingArtifactApplication:
                 "detection_available": self.availability.detection_available,
                 "filter_application": self.availability.filter_application.value,
                 "filter_universe_id": self.availability.filter_universe_id,
-                "mapping_summary_digest": _table_digest(
-                    "availability_mapping_summary",
-                    self.availability.mapping_summary,
-                ),
+                "mapping_summary_digest": self.availability_mapping_summary_digest,
                 "resource_id": self.availability.resource_id,
                 "resource_version": self.availability.resource_version,
-                "sample_interactions_digest": _table_digest(
-                    "availability_sample_interactions",
-                    self.availability.sample_interactions,
+                "sample_interactions_digest": (
+                    self.availability_sample_interactions_digest
                 ),
             },
             "heldout_input_digest": self.heldout_input_digest,
@@ -203,13 +229,12 @@ class TrainingArtifactApplication:
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "sender_assignments": [
                 {
-                    "sender_functional_id": item.functional.sender_functional_id,
-                    "table_digest": _table_digest(
-                        "common_sender_application",
-                        item.table,
-                    ),
+                    "sender_functional_id": sender_functional_id,
+                    "table_digest": table_digest,
                 }
-                for item in self.sender_assignments
+                for sender_functional_id, table_digest in (
+                    self.sender_assignment_table_digests
+                )
             ],
             "training_artifact_id": self.training_artifact_id,
         }
@@ -241,6 +266,12 @@ class TrainingArtifactApplication:
                 and self.excluded_cell_type_ids
                 == repeated.excluded_cell_type_ids
                 and self.application_status == repeated.application_status
+                and self.availability_mapping_summary_digest
+                == repeated.availability_mapping_summary_digest
+                and self.availability_sample_interactions_digest
+                == repeated.availability_sample_interactions_digest
+                and self.sender_assignment_table_digests
+                == repeated.sender_assignment_table_digests
                 and self.application_id == repeated.application_id
                 and not self.is_oof_certified
             )

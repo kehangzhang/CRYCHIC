@@ -1975,6 +1975,9 @@ class CommonSenderApplication:
             (prior.receiver, prior.interaction_id, prior.sender): prior
             for prior in self.functional.candidate_priors
         }
+        senders_by_group: dict[tuple[str, str], set[str]] = {}
+        for receiver, interaction_id, sender in prior_lookup:
+            senders_by_group.setdefault((receiver, interaction_id), set()).add(sender)
         for row in table.itertuples(index=False):
             candidate = (str(row.receiver), str(row.interaction_id), str(row.sender))
             if candidate not in prior_lookup:
@@ -2059,12 +2062,9 @@ class CommonSenderApplication:
             list(COMMON_SENDER_GROUP_COLUMNS), observed=True, sort=False
         ):
             first = group.iloc[0]
-            expected_senders = {
-                prior.sender
-                for prior in self.functional.candidate_priors
-                if prior.receiver == first["receiver"]
-                and prior.interaction_id == first["interaction_id"]
-            }
+            expected_senders = senders_by_group.get(
+                (str(first["receiver"]), str(first["interaction_id"])), set()
+            )
             if set(group["sender"]) != expected_senders:
                 raise ContractError(
                     "application group does not contain the frozen sender universe",

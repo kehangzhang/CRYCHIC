@@ -306,13 +306,11 @@ def family_common_sender_application_digest(
 
     if not isinstance(sender_application, CommonSenderApplication):
         raise TypeError("sender_application must be CommonSenderApplication")
-    repeated = CommonSenderApplication(
-        sender_application.table, sender_application.functional
-    )
+    sender_application._require_intact()
     return _table_digest(
         "family_common_sender_application_input",
-        repeated.table,
-        tuple(repeated.table.columns),
+        sender_application.table,
+        tuple(sender_application.table.columns),
     )
 
 
@@ -1014,9 +1012,9 @@ def _validated_sender_application(
 ) -> CommonSenderApplication:
     if not isinstance(application, CommonSenderApplication):
         raise TypeError("sender_application must be CommonSenderApplication")
-    repeated = CommonSenderApplication(application.table, application.functional)
+    application._require_intact()
     if (
-        repeated.functional.sender_functional_id
+        application.functional.sender_functional_id
         != functional.sender_functional.sender_functional_id
     ):
         raise ContractError(
@@ -1025,7 +1023,7 @@ def _validated_sender_application(
             field="sender_functional_id",
             remediation="Apply the exact contrast-common sender parent",
         )
-    return repeated
+    return application
 
 
 def _validated_edge_evidence(
@@ -1224,13 +1222,16 @@ def _validated_edge_evidence(
     coverage_samples = (
         observed_samples if expected_samples is None else expected_samples
     )
+    interactions_by_sample_mode = {
+        (str(sample_id), str(mode)): set(group["interaction_id"].astype(str))
+        for (sample_id, mode), group in table.groupby(
+            ["sample_id", "mode"], observed=True, sort=False
+        )
+    }
     for sample_id in coverage_samples:
         for mode in modes:
-            observed_interactions = set(
-                table.loc[
-                    table["sample_id"].eq(sample_id) & table["mode"].eq(mode),
-                    "interaction_id",
-                ]
+            observed_interactions = interactions_by_sample_mode.get(
+                (sample_id, mode), set()
             )
             if observed_interactions != expected_interactions:
                 raise ContractError(
@@ -1903,6 +1904,7 @@ def _sender_score_table(
         "receiver",
         "interaction_id",
     ]
+    interaction_ids = set(functional.interaction_ids)
     candidate_rows = [
         {
             "receiver": prior.receiver,
@@ -1911,7 +1913,7 @@ def _sender_score_table(
         }
         for prior in functional.sender_functional.candidate_priors
         if prior.receiver == functional.receiver
-        and prior.interaction_id in set(functional.interaction_ids)
+        and prior.interaction_id in interaction_ids
     ]
     candidates = pd.DataFrame(
         candidate_rows, columns=("receiver", "interaction_id", "sender")

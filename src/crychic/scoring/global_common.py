@@ -31,7 +31,11 @@ from crychic.attribution.gain_calibration import (
     SelectedPenaltyInnerOOFFamilyGainCalibrationArtifact,
 )
 from crychic.core import ContractError, canonical_json, stable_id
-from crychic.core._validation import validation_scope
+from crychic.core._validation import (
+    record_validation,
+    validation_is_cached,
+    validation_scope,
+)
 from crychic.sender import (
     CommonSenderApplication,
     CommonSenderApplicationStatus,
@@ -1446,7 +1450,10 @@ class CrossReceiverCommonScoringApplication:
             "table_row_counts": list(self.table_row_counts),
         }
 
+    @validation_scope()
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self.functional._require_intact()
             for application in self.child_applications:
@@ -1497,6 +1504,7 @@ class CrossReceiverCommonScoringApplication:
                 field="application_id",
                 remediation="Reapply the intact global functional to held-out parents",
             )
+        record_validation(self)
 
     def to_dict(self) -> dict[str, object]:
         self._require_intact()

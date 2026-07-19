@@ -4383,6 +4383,45 @@ def test_orchestrator_passes_only_disjoint_preaggregated_scopes(
         )
 
 
+def test_orchestrator_fits_training_availability_once_per_outer_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = training_module._fit_interaction_universe
+    calls: list[tuple[str, ...]] = []
+
+    def counted_fit(prepared, *args: object, **kwargs: object):
+        calls.append(prepared.subject_ids)
+        return original(prepared, *args, **kwargs)
+
+    monkeypatch.setattr(training_module, "_fit_interaction_universe", counted_fit)
+
+    result = _run(_adata())
+
+    assert len(calls) == len(result.folds)
+    assert sorted(calls) == sorted(
+        fold.training.training_subject_ids for fold in result.folds
+    )
+
+
+def test_family_common_parent_availability_digest_is_fold_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = crossfit_module._table_digest
+    calls: list[int] = []
+
+    def counted_digest(table_name: str, table: pd.DataFrame) -> str:
+        if table_name == "family_common_source_availability":
+            calls.append(len(table))
+        return original(table_name, table)
+
+    monkeypatch.setattr(crossfit_module, "_table_digest", counted_digest)
+
+    result = _persistable_run()
+
+    assert all(len(fold.family_common_bindings) > 1 for fold in result.folds)
+    assert len(calls) == len(result.folds)
+
+
 def test_heldout_only_cell_type_is_excluded_from_frozen_training_universe() -> None:
     adata = _adata()
     heldout_only = adata.obs["subject_id"].eq("p1") & adata.obs["cell_type"].eq(
