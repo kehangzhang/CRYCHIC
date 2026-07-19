@@ -10313,9 +10313,10 @@ def write_crossfit_result(
     try:
         tables, applications, common_collections, projection = _result_tables(artifacts)
         semantic_scores = build_crossfit_semantic_scores(artifacts)
+        semantic_tables = semantic_scores.tables()
         tables.update(
             {
-                table_name: semantic_scores.table(semantic_output)
+                table_name: semantic_tables[semantic_output]
                 for semantic_output, table_name in _SEMANTIC_OUTPUT_TO_TABLE.items()
             }
         )

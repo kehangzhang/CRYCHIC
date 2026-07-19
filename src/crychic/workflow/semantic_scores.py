@@ -717,6 +717,15 @@ class SemanticScoreCollection:
         self._require_intact()
         return self._tables()[semantic_output].copy(deep=True)
 
+    def tables(self) -> dict[str, pd.DataFrame]:
+        """Return all semantic views after one integrity validation pass."""
+
+        self._require_intact()
+        return {
+            name: table.copy(deep=True)
+            for name, table in self._tables().items()
+        }
+
     @property
     def availability_score(self) -> pd.DataFrame:
         """Return interaction-level held-out availability by mode."""
