@@ -10,9 +10,10 @@ from anndata import AnnData
 from scipy import sparse
 
 import crychic.sender.common as common_sender_module
+import crychic.workflow.application as application_module
 import crychic.workflow.training as training_module
 from crychic.availability import BatchAvailability, InteractionFilterApplication
-from crychic.core import ContractError, CrychicConfig
+from crychic.core import ContractError, CrychicConfig, canonical_json, stable_id
 from crychic.resources import (
     GeneNamespace,
     Interaction,
@@ -143,6 +144,37 @@ def _fit_adata(adata: AnnData) -> TrainingArtifacts:
             max_interactions=1,
             sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
         ),
+    )
+
+
+def test_application_table_digest_streams_sorted_rows_and_matches_legacy() -> None:
+    table = pd.DataFrame(
+        [
+            ("row-10", np.float32(1.25), None),
+            ('row-2 "quoted"', np.int64(2), pd.NA),
+            ("row-1", -0.0, pd.NaT),
+        ],
+        columns=("identifier", "value", "missing"),
+    )
+    normalized = [
+        [application_module._table_cell_token(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    expected = stable_id(
+        "training_application_table",
+        {
+            "columns": list(table.columns),
+            "rows": sorted(normalized, key=canonical_json),
+            "table_name": "digest_fixture",
+        },
+        schema_version="1",
+        digest_length=64,
+    )
+
+    assert application_module._table_digest("digest_fixture", table) == expected
+    assert (
+        application_module._table_digest("digest_fixture", table.iloc[::-1])
+        == expected
     )
 
 

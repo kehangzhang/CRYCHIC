@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from dataclasses import dataclass, field
 
@@ -54,22 +56,67 @@ def _table_cell_token(value: object) -> dict[str, object]:
 
 
 def _table_digest(table_name: str, table: pd.DataFrame) -> str:
-    rows = [
-        [_table_cell_token(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    rows.sort(key=canonical_json)
-    result: str = stable_id(
+    validation_id = stable_id(
         "training_application_table",
-        {
-            "columns": [str(column) for column in table.columns],
-            "rows": rows,
-            "table_name": table_name,
-        },
+        {},
         schema_version="1",
         digest_length=64,
     )
-    return result
+    id_prefix = validation_id[:-(64 + 1)]
+    template = canonical_json(
+        {
+            "components": {
+                "columns": [str(column) for column in table.columns],
+                "rows": [],
+                "table_name": table_name,
+            },
+            "kind": "training_application_table",
+            "schema_version": "1",
+        }
+    )
+    rows_marker = '"rows":[]'
+    prefix, suffix = template.split(rows_marker, maxsplit=1)
+
+    def encoded_rows():
+        for row in table.itertuples(index=False, name=None):
+            yield json.dumps(
+                [_table_cell_token(value) for value in row],
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+
+    def digest_rows(rows) -> str:
+        digest = hashlib.sha256()
+        digest.update(prefix.encode("ascii"))
+        digest.update(b'"rows":[')
+        for index, row in enumerate(rows):
+            if index:
+                digest.update(b",")
+            digest.update(row.encode("ascii"))
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()}"
+
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(b'"rows":[')
+    previous: str | None = None
+    row_count = 0
+    for row in encoded_rows():
+        if previous is not None and row < previous:
+            break
+        if row_count:
+            digest.update(b",")
+        digest.update(row.encode("ascii"))
+        previous = row
+        row_count += 1
+    else:
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()}"
+    return digest_rows(sorted(encoded_rows()))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
