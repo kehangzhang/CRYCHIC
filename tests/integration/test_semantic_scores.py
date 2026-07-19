@@ -268,6 +268,35 @@ def test_batch_table_accessor_validates_once_and_returns_defensive_copies(
         pd.testing.assert_frame_equal(table, private[name])
 
 
+def test_snapshot_validates_once_and_matches_individual_exports(
+    untuned_scores: SemanticScoreCollection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_manifest = untuned_scores.to_dict()
+    original = SemanticScoreCollection._require_intact
+    validation_calls = 0
+
+    def counted_require_intact(collection: SemanticScoreCollection) -> None:
+        nonlocal validation_calls
+        validation_calls += 1
+        original(collection)
+
+    monkeypatch.setattr(
+        SemanticScoreCollection,
+        "_require_intact",
+        counted_require_intact,
+    )
+    observed, manifest = untuned_scores.snapshot()
+
+    assert validation_calls == 1
+    assert manifest == expected_manifest
+    private = untuned_scores._tables()
+    assert observed.keys() == private.keys()
+    for name, table in observed.items():
+        assert table is not private[name]
+        pd.testing.assert_frame_equal(table, private[name])
+
+
 def test_v8_roundtrip_replays_all_tuned_semantic_views_exactly(
     tuned_result: CrossFitResult,
     tuned_scores: SemanticScoreCollection,

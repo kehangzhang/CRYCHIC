@@ -726,6 +726,18 @@ class SemanticScoreCollection:
             for name, table in self._tables().items()
         }
 
+    def snapshot(self) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
+        """Return defensive table copies and their manifest after one validation."""
+
+        self._require_intact()
+        return (
+            {
+                name: table.copy(deep=True)
+                for name, table in self._tables().items()
+            },
+            self._manifest_payload(),
+        )
+
     @property
     def availability_score(self) -> pd.DataFrame:
         """Return interaction-level held-out availability by mode."""
@@ -776,8 +788,7 @@ class SemanticScoreCollection:
             ]
         )
 
-    def to_dict(self) -> dict[str, object]:
-        self._require_intact()
+    def _manifest_payload(self) -> dict[str, object]:
         digest_by_name = dict(self.table_digests)
         count_by_name = dict(self.table_row_counts)
         return {
@@ -806,6 +817,10 @@ class SemanticScoreCollection:
                 "communication_probability",
             ],
         }
+
+    def to_dict(self) -> dict[str, object]:
+        self._require_intact()
+        return self._manifest_payload()
 
 
 def build_crossfit_semantic_scores(

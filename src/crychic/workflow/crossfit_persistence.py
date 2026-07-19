@@ -1005,19 +1005,45 @@ def _global_source_table_digest(
 ) -> str:
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the producer contract")
-    rows = [
-        [_canonical_table_scalar(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    rows.sort(key=canonical_json)
-    return str(
-        stable_id(
-            name,
-            {"columns": list(columns), "rows": rows},
-            schema_version="1",
-            digest_length=64,
-        )
+    stable_id(name, (), schema_version="1", digest_length=64)
+    prefix = (
+        '{"components":{"columns":'
+        f"{canonical_json(list(columns))},"
+        '"rows":['
     )
+    suffix = f']}},"kind":{canonical_json(name)},"schema_version":"1"}}'
+
+    def encoded_rows() -> Any:
+        for row in table.itertuples(index=False, name=None):
+            yield json.dumps(
+                [_canonical_table_scalar(value) for value in row],
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    previous: str | None = None
+    row_count = 0
+    for encoded in encoded_rows():
+        if previous is not None and encoded < previous:
+            break
+        if row_count:
+            digest.update(b",")
+        digest.update(encoded.encode("ascii"))
+        previous = encoded
+        row_count += 1
+    else:
+        digest.update(suffix.encode("ascii"))
+        return f"{name}_{digest.hexdigest()}"
+
+    rows = sorted(encoded_rows())
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(",".join(rows).encode("ascii"))
+    digest.update(suffix.encode("ascii"))
+    return f"{name}_{digest.hexdigest()}"
 
 
 def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -1070,6 +1096,36 @@ def _optional_float(value: object, *, field_name: str) -> float | None:
     return result
 
 
+_SOURCE_ROW_ID_KIND = "persisted_crossfit_source_row"
+_SOURCE_ROW_ID_COMPONENT_KEYS = (
+    "application_id",
+    "context_id",
+    "driver_id",
+    "family_id",
+    "interaction_id",
+    "mode",
+    "receiver",
+    "sample_id",
+    "sender",
+    "source_table",
+    "subject_id",
+)
+
+
+def _fast_json_string(value: object) -> str | None:
+    if value is None:
+        return "null"
+    if (
+        not isinstance(value, str)
+        or not value.isascii()
+        or not value.isprintable()
+        or '"' in value
+        or "\\" in value
+    ):
+        return None
+    return f'"{value}"'
+
+
 def _source_row_id(
     *,
     source_table: str,
@@ -1084,24 +1140,37 @@ def _source_row_id(
     mode: str | None = None,
     sender: str | None = None,
 ) -> str:
-    source_row_id: str = stable_id(
-        "persisted_crossfit_source_row",
-        {
-            "application_id": application_id,
-            "context_id": context_id,
-            "driver_id": driver_id,
-            "family_id": family_id,
-            "interaction_id": interaction_id,
-            "mode": mode,
-            "receiver": receiver,
-            "sample_id": sample_id,
-            "sender": sender,
-            "source_table": source_table,
-            "subject_id": subject_id,
-        },
+    components = {
+        "application_id": application_id,
+        "context_id": context_id,
+        "driver_id": driver_id,
+        "family_id": family_id,
+        "interaction_id": interaction_id,
+        "mode": mode,
+        "receiver": receiver,
+        "sample_id": sample_id,
+        "sender": sender,
+        "source_table": source_table,
+        "subject_id": subject_id,
+    }
+    encoded_values = {
+        key: _fast_json_string(components[key]) for key in _SOURCE_ROW_ID_COMPONENT_KEYS
+    }
+    if all(value is not None for value in encoded_values.values()):
+        encoded_components = ",".join(
+            f'"{key}":{encoded_values[key]}' for key in _SOURCE_ROW_ID_COMPONENT_KEYS
+        )
+        payload = (
+            f'{{"components":{{{encoded_components}}},'
+            f'"kind":"{_SOURCE_ROW_ID_KIND}","schema_version":"1"}}'
+        )
+        digest = hashlib.sha256(payload.encode("ascii")).hexdigest()[:32]
+        return f"{_SOURCE_ROW_ID_KIND}_{digest}"
+    return stable_id(
+        _SOURCE_ROW_ID_KIND,
+        components,
         schema_version="1",
     )
-    return source_row_id
 
 
 def _component_status(
@@ -2345,7 +2414,13 @@ def _require_identifiers(
 ) -> None:
     for column in columns:
         values = table[column]
-        if values.isna().any() or any(not str(value) for value in values):
+        if values.isna().any():
+            raise ValueError(f"{table_name}.{column} requires non-empty identifiers")
+        if isinstance(values.dtype, (pd.StringDtype, pd.CategoricalDtype)):
+            has_empty = bool(values.eq("").any())
+        else:
+            has_empty = any(not str(value) for value in values)
+        if has_empty:
             raise ValueError(f"{table_name}.{column} requires non-empty identifiers")
 
 
@@ -3350,11 +3425,14 @@ def _validate_application_table_lineage(
     table: pd.DataFrame,
     applications_by_id: dict[str, dict[str, Any]],
 ) -> None:
-    for application_id, application in applications_by_id.items():
-        rows = table.loc[
-            table["family_common_application_id"].astype(str).eq(application_id)
-        ]
-        if rows.empty:
+    grouped = table.groupby(
+        "family_common_application_id",
+        observed=True,
+        sort=False,
+    )
+    for raw_application_id, rows in grouped:
+        application = applications_by_id.get(str(raw_application_id))
+        if application is None:
             continue
         projection = _application_lineage_projection(application)
         for field_name, expected in projection.items():
@@ -7680,10 +7758,16 @@ def _validate_v3_contrast_common_table_lineage(
             field=table_name,
             remediation="Reject the bundle and rerun its producer",
         )
-    for application_id, (collection, application) in applications_by_id.items():
-        rows = table.loc[
-            table["global_common_application_id"].astype(str).eq(application_id)
-        ]
+    grouped = table.groupby(
+        "global_common_application_id",
+        observed=True,
+        sort=False,
+    )
+    for raw_application_id, rows in grouped:
+        lineage = applications_by_id.get(str(raw_application_id))
+        if lineage is None:
+            continue
+        collection, application = lineage
         expected_projection: dict[str, object] = {
             "contrast_common_collection_id": collection[
                 "contrast_common_collection_id"
@@ -8121,10 +8205,16 @@ def _validate_contrast_common_table_lineage(
             field=table_name,
             remediation="Reject the bundle and rerun its producer",
         )
-    for application_id, (collection, application) in applications_by_id.items():
-        rows = table.loc[
-            table["global_common_application_id"].astype(str).eq(application_id)
-        ]
+    grouped = table.groupby(
+        "global_common_application_id",
+        observed=True,
+        sort=False,
+    )
+    for raw_application_id, rows in grouped:
+        lineage = applications_by_id.get(str(raw_application_id))
+        if lineage is None:
+            continue
+        collection, application = lineage
         expected_projection: dict[str, object] = {
             "contrast_common_collection_id": collection[
                 "contrast_common_collection_id"
@@ -8342,6 +8432,7 @@ def _validate_sender_lr_cross_table_lineage(
     sender_table: pd.DataFrame,
     *,
     conserved_sender: bool = True,
+    validate_conserved_groups: bool = True,
 ) -> None:
     keys = (
         "global_common_application_id",
@@ -8448,7 +8539,7 @@ def _validate_sender_lr_cross_table_lineage(
             _raise_formula_mismatch(
                 f"{CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE}.global_sender_lr_score"
             )
-    if conserved_sender:
+    if conserved_sender and validate_conserved_groups:
         try:
             _validate_conserved_sender_groups(sender_table)
         except ValueError as error:
@@ -8463,6 +8554,8 @@ def _validate_sender_lr_cross_table_lineage(
 def _validate_contrast_common_registry_links(
     manifest: dict[str, object],
     tables: dict[str, pd.DataFrame],
+    *,
+    tables_prevalidated: bool = False,
 ) -> None:
     schema_version = str(manifest.get("schema_version"))
     _, applications_by_id = _contrast_common_registries(manifest)
@@ -8502,6 +8595,7 @@ def _validate_contrast_common_registry_links(
             _V7_CROSSFIT_RESULT_SCHEMA_VERSION,
             _V6_CROSSFIT_RESULT_SCHEMA_VERSION,
         },
+        validate_conserved_groups=not tables_prevalidated,
     )
 
 
@@ -9050,6 +9144,8 @@ def _validate_semantic_source_lineage(
 def _validate_semantic_registry_links(
     manifest: Mapping[str, object],
     tables: Mapping[str, pd.DataFrame],
+    *,
+    tables_prevalidated: bool = False,
 ) -> None:
     collection = _validate_semantic_collection_manifest(manifest)
     digests: dict[str, str] = {
@@ -9062,16 +9158,20 @@ def _validate_semantic_registry_links(
     }
     for semantic_output, table_name in _SEMANTIC_OUTPUT_TO_TABLE.items():
         table = tables[table_name]
-        _validate_semantic_table_contract(
-            semantic_output,
-            table,
-            crossfit_id=str(manifest["crossfit_id"]),
-            crossfit_spec_id=str(manifest["spec_id"]),
-            repeat_id=str(manifest["repeat_id"]),
-        )
-        if len(table) != int(counts[semantic_output]) or _semantic_table_digest(
-            semantic_output, table
-        ) != str(digests[semantic_output]):
+        if not tables_prevalidated:
+            _validate_semantic_table_contract(
+                semantic_output,
+                table,
+                crossfit_id=str(manifest["crossfit_id"]),
+                crossfit_spec_id=str(manifest["spec_id"]),
+                repeat_id=str(manifest["repeat_id"]),
+            )
+        mismatched = len(table) != int(counts[semantic_output])
+        if not tables_prevalidated:
+            mismatched = mismatched or _semantic_table_digest(
+                semantic_output, table
+            ) != str(digests[semantic_output])
+        if mismatched:
             raise ResultValidationError(
                 "Semantic score table disagrees with its collection manifest",
                 code="crossfit_semantic_collection_mismatch",
@@ -9142,6 +9242,7 @@ def _validate_receiver_family_opportunity_links(
             )
         observed_pairs = set(
             table.loc[:, ["receiver", "family_id"]]
+            .drop_duplicates()
             .astype(str)
             .itertuples(index=False, name=None)
         )
@@ -9154,7 +9255,9 @@ def _validate_receiver_family_opportunity_links(
             )
         if "driver_id" not in table.columns:
             continue
-        driver_rows = table.loc[table["driver_id"].notna(), ["driver_id", "family_id"]]
+        driver_rows = table.loc[
+            table["driver_id"].notna(), ["driver_id", "family_id"]
+        ].drop_duplicates()
         if any(
             family_by_driver.get(str(row.driver_id)) != str(row.family_id)
             for row in driver_rows.itertuples(index=False)
@@ -9170,6 +9273,8 @@ def _validate_receiver_family_opportunity_links(
 def _validate_registry_links(
     manifest: dict[str, object],
     tables: dict[str, pd.DataFrame],
+    *,
+    tables_prevalidated: bool = False,
 ) -> None:
     applications = cast(list[dict[str, Any]], manifest["applications"])
     applications_by_id = {
@@ -9242,7 +9347,11 @@ def _validate_registry_links(
         _V4_CROSSFIT_RESULT_SCHEMA_VERSION,
         _V3_CROSSFIT_RESULT_SCHEMA_VERSION,
     }:
-        _validate_contrast_common_registry_links(manifest, tables)
+        _validate_contrast_common_registry_links(
+            manifest,
+            tables,
+            tables_prevalidated=tables_prevalidated,
+        )
     if manifest["schema_version"] in {
         CROSSFIT_RESULT_SCHEMA_VERSION,
         _V8_CROSSFIT_RESULT_SCHEMA_VERSION,
@@ -9262,7 +9371,11 @@ def _validate_registry_links(
     if manifest["schema_version"] == CROSSFIT_RESULT_SCHEMA_VERSION:
         _validate_receiver_family_opportunity_links(manifest, tables)
     if manifest["schema_version"] in _V8_PLUS_CROSSFIT_RESULT_SCHEMA_VERSIONS:
-        _validate_semantic_registry_links(manifest, tables)
+        _validate_semantic_registry_links(
+            manifest,
+            tables,
+            tables_prevalidated=tables_prevalidated,
+        )
     for table_name, table in tables.items():
         if not table.empty and set(table["crossfit_id"].astype(str)) != {
             str(manifest["crossfit_id"])
@@ -10313,7 +10426,7 @@ def write_crossfit_result(
     try:
         tables, applications, common_collections, projection = _result_tables(artifacts)
         semantic_scores = build_crossfit_semantic_scores(artifacts)
-        semantic_tables = semantic_scores.tables()
+        semantic_tables, semantic_manifest_payload = semantic_scores.snapshot()
         tables.update(
             {
                 table_name: semantic_tables[semantic_output]
@@ -10323,6 +10436,7 @@ def write_crossfit_result(
         table_records: dict[str, dict[str, object]] = {}
         for name in CROSSFIT_TABLE_NAMES:
             table = _validate_table(name, tables[name])
+            tables[name] = table
             path = temporary / _TABLE_FILENAMES[name]
             table.to_parquet(
                 path,
@@ -10351,7 +10465,7 @@ def write_crossfit_result(
             )
         semantic_manifest = cast(
             dict[str, object],
-            json.loads(canonical_json(semantic_scores.to_dict())),
+            json.loads(canonical_json(semantic_manifest_payload)),
         )
         manifest: dict[str, object] = {
             "schema_version": CROSSFIT_RESULT_SCHEMA_VERSION,
@@ -10389,7 +10503,11 @@ def write_crossfit_result(
             schema_version="1",
         )
         validated_manifest = _validate_manifest(cast(dict[str, Any], manifest))
-        _validate_registry_links(validated_manifest, tables)
+        _validate_registry_links(
+            validated_manifest,
+            tables,
+            tables_prevalidated=True,
+        )
         _write_json(temporary / _MANIFEST_FILENAME, validated_manifest)
         _write_json(
             temporary / _STATUS_FILENAME,
@@ -10400,6 +10518,7 @@ def write_crossfit_result(
             },
         )
         os.replace(temporary, output)
+        return CrossFitResult._from_validated(output, validated_manifest)
     except Exception as error:
         if temporary.exists():
             _mark_incomplete(temporary, type(error).__name__)
@@ -10412,7 +10531,6 @@ def write_crossfit_result(
             field="destination",
             remediation="Inspect producer diagnostics and write to a new directory",
         ) from error
-    return CrossFitResult.load(output)
 
 
 __all__ = [

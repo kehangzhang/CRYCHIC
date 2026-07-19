@@ -38,8 +38,10 @@ from crychic.workflow.crossfit_persistence import (
     CROSSFIT_RESULT_SCHEMA_VERSION,
     CROSSFIT_TABLE_NAMES,
     _bundle_table_names,
+    _canonical_table_scalar,
     _directional_binding_rows,
     _global_source_table_digest,
+    _require_identifiers,
     _source_row_id,
     _table_columns,
     _table_schema_version,
@@ -2140,6 +2142,117 @@ def test_contrast_common_tables_enforce_score_and_source_row_semantics() -> None
     poisoned_row_id.loc[0, "source_row_id"] = "row-poisoned"
     with pytest.raises(ValueError, match="source-row identity"):
         _validate_contrast_common_lr_table(poisoned_row_id)
+
+
+def test_identifier_validation_handles_vectorized_and_object_columns() -> None:
+    valid = pd.DataFrame(
+        {
+            "arrow": pd.Series(["alpha", "beta"], dtype="string[pyarrow]"),
+            "category": pd.Series(["one", "two"], dtype="category"),
+        }
+    )
+    _require_identifiers(valid, ("arrow", "category"), table_name="test")
+
+    empty_arrow = valid.copy(deep=True)
+    empty_arrow.loc[1, "arrow"] = ""
+    with pytest.raises(ValueError, match="requires non-empty identifiers"):
+        _require_identifiers(empty_arrow, ("arrow",), table_name="test")
+
+    missing_category = valid.copy(deep=True)
+    missing_category.loc[1, "category"] = pd.NA
+    with pytest.raises(ValueError, match="requires non-empty identifiers"):
+        _require_identifiers(missing_category, ("category",), table_name="test")
+
+    class EmptyIdentifier:
+        def __str__(self) -> str:
+            return ""
+
+    object_values = pd.DataFrame({"object": ["valid", EmptyIdentifier()]})
+    with pytest.raises(ValueError, match="requires non-empty identifiers"):
+        _require_identifiers(object_values, ("object",), table_name="test")
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    [
+        "Cycling cells",
+        'T \\"cell',
+        "T cell beta",
+        "T\tcell",
+        "",
+    ],
+)
+def test_source_row_id_fast_path_matches_canonical_stable_id(receiver: str) -> None:
+    components = {
+        "application_id": "application_123",
+        "context_id": "context_123",
+        "driver_id": "FGF2",
+        "family_id": "family_123",
+        "interaction_id": "interaction_123",
+        "mode": "state",
+        "receiver": receiver,
+        "sample_id": "sample_123",
+        "sender": None,
+        "source_table": CROSSFIT_CONTRAST_COMMON_LR_TABLE,
+        "subject_id": "subject_123",
+    }
+
+    observed = _source_row_id(
+        source_table=cast(str, components["source_table"]),
+        application_id=cast(str, components["application_id"]),
+        sample_id=cast(str, components["sample_id"]),
+        subject_id=cast(str, components["subject_id"]),
+        context_id=cast(str, components["context_id"]),
+        receiver=receiver,
+        family_id=cast(str, components["family_id"]),
+        driver_id=cast(str, components["driver_id"]),
+        interaction_id=cast(str, components["interaction_id"]),
+        mode=cast(str, components["mode"]),
+    )
+
+    assert observed == stable_id(
+        "persisted_crossfit_source_row",
+        components,
+        schema_version="1",
+    )
+
+
+def test_global_source_digest_streaming_and_sort_fallback_match_legacy() -> None:
+    columns = ("identifier", "value", "available")
+    table = pd.DataFrame(
+        [
+            ("row_10", 0.25, True),
+            ("row_2", math.nan, False),
+            ("row_1", 1.0, True),
+        ],
+        columns=columns,
+    )
+    normalized = [
+        [_canonical_table_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    sorted_indices = sorted(
+        range(len(table)),
+        key=lambda index: canonical_json(normalized[index]),
+    )
+    expected_rows = [normalized[index] for index in sorted_indices]
+    expected = stable_id(
+        "test_source_rows",
+        {"columns": list(columns), "rows": expected_rows},
+        schema_version="1",
+        digest_length=64,
+    )
+
+    sorted_table = table.iloc[sorted_indices].reset_index(drop=True)
+    reversed_table = sorted_table.iloc[::-1].reset_index(drop=True)
+    assert (
+        _global_source_table_digest("test_source_rows", sorted_table, columns)
+        == expected
+    )
+    assert (
+        _global_source_table_digest("test_source_rows", reversed_table, columns)
+        == expected
+    )
 
 
 def test_v6_conserved_sender_groups_reject_incomplete_or_invalid_weights() -> None:
