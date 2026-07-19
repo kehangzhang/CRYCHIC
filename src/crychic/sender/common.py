@@ -19,6 +19,8 @@ from crychic.design import ContrastSpec, canonical_context, plain_context_value
 from .contracts import (
     _SENDER_CONTRAST_MULTIPLICITY_METHOD,
     _SENDER_CONTRAST_MULTIPLICITY_SCOPE,
+    _SENDER_CONTRAST_SUPPORT_POLICY,
+    _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT,
     _SENDER_CONTRAST_SUPPORT_PRODUCER_TOKEN,
     _SENDER_FUNCTIONAL_PRODUCER_TOKEN,
     COMMON_SENDER_APPLICATION_COLUMNS,
@@ -82,7 +84,8 @@ class _RawInteractionContrast:
     interaction_id: str
     complete_subject_ids: tuple[str, ...]
     subject_effects: tuple[float, ...]
-    degrees_of_freedom: int | None
+    unit_context_ids: tuple[str, ...]
+    degrees_of_freedom: float | int | None
     mean_effect: float | None
     sample_standard_error: float | None
     critical_value: float | None
@@ -478,83 +481,233 @@ def _fit_interaction_ligand_contrast_supports(
     )
     for receiver, interaction_id in interaction_keys:
         by_subject_context = by_interaction.get((receiver, interaction_id), {})
-        complete_subjects: list[str] = []
-        effects: list[float] = []
-        for subject_id in training_subject_ids:
-            values = {
-                context_id: by_subject_context.get((subject_id, context_id))
+        if parameters.contrast_unit == "independent_subject":
+            # Independent groups retain every subject/context observation and
+            # use a Welch contrast; no artificial pairing or imputation occurs.
+            values_by_context = {
+                context_id: [
+                    (subject_id, by_subject_context[(subject_id, context_id)])
+                    for subject_id in training_subject_ids
+                    if (subject_id, context_id) in by_subject_context
+                ]
                 for context_id in contexts
             }
-            if any(value is None for value in values.values()):
-                continue
-            effect = math.fsum(
-                weight_by_context[context_id] * cast(float, values[context_id])
+            context_subjects = [
+                subject_id
                 for context_id in contexts
-            )
-            complete_subjects.append(subject_id)
-            effects.append(effect)
-        n_complete = len(complete_subjects)
-        if n_complete < minimum_complete:
-            raw_supports.append(
-                _RawInteractionContrast(
-                    receiver=receiver,
-                    interaction_id=interaction_id,
-                    complete_subject_ids=tuple(complete_subjects),
-                    subject_effects=tuple(effects),
-                    degrees_of_freedom=None,
-                    mean_effect=None,
-                    sample_standard_error=None,
-                    critical_value=None,
-                    lower_confidence_bound=None,
-                    raw_one_sided_p_value=None,
+                for subject_id, _ in values_by_context[context_id]
+            ]
+            if len(set(context_subjects)) != len(context_subjects):
+                raise ContractError(
+                    "independent subject contrast requires disjoint subject IDs "
+                    "across contexts",
+                    code="invalid_common_sender_input",
+                    field="subject_id",
+                    remediation=(
+                        "Use paired_subject for overlapping subjects or provide "
+                        "independent subject IDs"
+                    ),
                 )
+            complete_subjects = context_subjects
+            effects = [
+                float(value)
+                for context_id in contexts
+                for _, value in values_by_context[context_id]
+            ]
+            unit_context_ids = [
+                context_id
+                for context_id in contexts
+                for _ in values_by_context[context_id]
+            ]
+            context_counts = {
+                context_id: len(values_by_context[context_id])
+                for context_id in contexts
+            }
+            support_ready = all(
+                count >= minimum_complete for count in context_counts.values()
             )
-        else:
-            mean_effect = math.fsum(effects) / n_complete
-            sample_variance = math.fsum(
-                (effect - mean_effect) ** 2 for effect in effects
-            ) / (n_complete - 1)
-            sample_standard_error = math.sqrt(sample_variance / n_complete)
-            degrees_of_freedom = n_complete - 1
-            critical_value = float(
-                student_t.ppf(
-                    parameters.ligand_contrast_confidence_level,
-                    degrees_of_freedom,
+            if not support_ready:
+                raw_supports.append(
+                    _RawInteractionContrast(
+                        receiver=receiver,
+                        interaction_id=interaction_id,
+                        complete_subject_ids=tuple(complete_subjects),
+                        subject_effects=tuple(effects),
+                        unit_context_ids=tuple(unit_context_ids),
+                        degrees_of_freedom=None,
+                        mean_effect=None,
+                        sample_standard_error=None,
+                        critical_value=None,
+                        lower_confidence_bound=None,
+                        raw_one_sided_p_value=None,
+                    )
                 )
-            )
-            lower_bound = (
-                mean_effect
-                if sample_variance == 0.0
-                else mean_effect - critical_value * sample_standard_error
-            )
-            raw_p_value = (
-                0.0
-                if sample_standard_error == 0.0
-                and mean_effect > parameters.ligand_contrast_minimum_effect
-                else 1.0
-                if sample_standard_error == 0.0
-                else float(
-                    student_t.sf(
-                        (mean_effect - parameters.ligand_contrast_minimum_effect)
-                        / sample_standard_error,
+            else:
+                means = {
+                    context_id: math.fsum(
+                        value for _, value in values_by_context[context_id]
+                    )
+                    / context_counts[context_id]
+                    for context_id in contexts
+                }
+                variances = {
+                    context_id: math.fsum(
+                        (value - means[context_id]) ** 2
+                        for _, value in values_by_context[context_id]
+                    )
+                    / (context_counts[context_id] - 1)
+                    for context_id in contexts
+                }
+                mean_effect = math.fsum(
+                    weight_by_context[context_id] * means[context_id]
+                    for context_id in contexts
+                )
+                variance_terms = tuple(
+                    weight_by_context[context_id] ** 2
+                    * variances[context_id]
+                    / context_counts[context_id]
+                    for context_id in contexts
+                )
+                variance = math.fsum(variance_terms)
+                sample_standard_error = math.sqrt(max(0.0, variance))
+                if sample_standard_error == 0.0:
+                    degrees_of_freedom = float(max(1, min(context_counts.values()) - 1))
+                else:
+                    denominator = math.fsum(
+                        term * term / (context_counts[context_id] - 1)
+                        for term, context_id in zip(
+                            variance_terms, contexts, strict=True
+                        )
+                    )
+                    welch_df = (
+                        variance * variance / denominator
+                        if denominator > 0.0
+                        else float(min(context_counts.values()) - 1)
+                    )
+                    degrees_of_freedom = max(1.0, welch_df)
+                critical_value = float(
+                    student_t.ppf(
+                        parameters.ligand_contrast_confidence_level,
                         degrees_of_freedom,
                     )
                 )
-            )
-            raw_supports.append(
-                _RawInteractionContrast(
-                    receiver=receiver,
-                    interaction_id=interaction_id,
-                    complete_subject_ids=tuple(complete_subjects),
-                    subject_effects=tuple(effects),
-                    degrees_of_freedom=degrees_of_freedom,
-                    mean_effect=mean_effect,
-                    sample_standard_error=sample_standard_error,
-                    critical_value=critical_value,
-                    lower_confidence_bound=lower_bound,
-                    raw_one_sided_p_value=raw_p_value,
+                lower_bound = (
+                    mean_effect
+                    if sample_standard_error == 0.0
+                    else mean_effect - critical_value * sample_standard_error
                 )
-            )
+                raw_p_value = (
+                    0.0
+                    if sample_standard_error == 0.0
+                    and mean_effect > parameters.ligand_contrast_minimum_effect
+                    else 1.0
+                    if sample_standard_error == 0.0
+                    else float(
+                        student_t.sf(
+                            (
+                                mean_effect
+                                - parameters.ligand_contrast_minimum_effect
+                            )
+                            / sample_standard_error,
+                            degrees_of_freedom,
+                        )
+                    )
+                )
+                raw_supports.append(
+                    _RawInteractionContrast(
+                        receiver=receiver,
+                        interaction_id=interaction_id,
+                        complete_subject_ids=tuple(complete_subjects),
+                        subject_effects=tuple(effects),
+                        unit_context_ids=tuple(unit_context_ids),
+                        degrees_of_freedom=degrees_of_freedom,
+                        mean_effect=mean_effect,
+                        sample_standard_error=sample_standard_error,
+                        critical_value=critical_value,
+                        lower_confidence_bound=lower_bound,
+                        raw_one_sided_p_value=raw_p_value,
+                    )
+                )
+        else:
+            complete_subjects = []
+            effects = []
+            for subject_id in training_subject_ids:
+                values = {
+                    context_id: by_subject_context.get((subject_id, context_id))
+                    for context_id in contexts
+                }
+                if any(value is None for value in values.values()):
+                    continue
+                effect = math.fsum(
+                    weight_by_context[context_id] * cast(float, values[context_id])
+                    for context_id in contexts
+                )
+                complete_subjects.append(subject_id)
+                effects.append(effect)
+            n_complete = len(complete_subjects)
+            if n_complete < minimum_complete:
+                raw_supports.append(
+                    _RawInteractionContrast(
+                        receiver=receiver,
+                        interaction_id=interaction_id,
+                        complete_subject_ids=tuple(complete_subjects),
+                        subject_effects=tuple(effects),
+                        unit_context_ids=(),
+                        degrees_of_freedom=None,
+                        mean_effect=None,
+                        sample_standard_error=None,
+                        critical_value=None,
+                        lower_confidence_bound=None,
+                        raw_one_sided_p_value=None,
+                    )
+                )
+            else:
+                mean_effect = math.fsum(effects) / n_complete
+                sample_variance = math.fsum(
+                    (effect - mean_effect) ** 2 for effect in effects
+                ) / (n_complete - 1)
+                sample_standard_error = math.sqrt(sample_variance / n_complete)
+                degrees_of_freedom = n_complete - 1
+                critical_value = float(
+                    student_t.ppf(
+                        parameters.ligand_contrast_confidence_level,
+                        degrees_of_freedom,
+                    )
+                )
+                lower_bound = (
+                    mean_effect
+                    if sample_variance == 0.0
+                    else mean_effect - critical_value * sample_standard_error
+                )
+                raw_p_value = (
+                    0.0
+                    if sample_standard_error == 0.0
+                    and mean_effect > parameters.ligand_contrast_minimum_effect
+                    else 1.0
+                    if sample_standard_error == 0.0
+                    else float(
+                        student_t.sf(
+                            (mean_effect - parameters.ligand_contrast_minimum_effect)
+                            / sample_standard_error,
+                            degrees_of_freedom,
+                        )
+                    )
+                )
+                raw_supports.append(
+                    _RawInteractionContrast(
+                        receiver=receiver,
+                        interaction_id=interaction_id,
+                        complete_subject_ids=tuple(complete_subjects),
+                        subject_effects=tuple(effects),
+                        unit_context_ids=(),
+                        degrees_of_freedom=degrees_of_freedom,
+                        mean_effect=mean_effect,
+                        sample_standard_error=sample_standard_error,
+                        critical_value=critical_value,
+                        lower_confidence_bound=lower_bound,
+                        raw_one_sided_p_value=raw_p_value,
+                    )
+                )
 
     supports: list[InteractionLigandContrastSupport] = []
     familywise_alpha = _sender_contrast_familywise_alpha(
@@ -587,6 +740,11 @@ def _fit_interaction_ligand_contrast_supports(
                 parameters.ligand_contrast_confidence_level
             ),
             ligand_contrast_minimum_effect=(parameters.ligand_contrast_minimum_effect),
+            aggregation_policy=(
+                _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
+                if parameters.contrast_unit == "independent_subject"
+                else _SENDER_CONTRAST_SUPPORT_POLICY
+            ),
         )
         adjustments = _holm_step_down_adjustments(
             {raw.interaction_id: raw.raw_one_sided_p_value for raw in family}
@@ -601,7 +759,11 @@ def _fit_interaction_ligand_contrast_supports(
                 else SenderContrastSupportStatus.UNSUPPORTED
             )
             reason_code = (
-                "insufficient_complete_subject_ligand_contrasts"
+                (
+                    "insufficient_independent_subject_ligand_contrasts"
+                    if parameters.contrast_unit == "independent_subject"
+                    else "insufficient_complete_subject_ligand_contrasts"
+                )
                 if status is SenderContrastSupportStatus.NOT_ESTIMABLE
                 else None
                 if status is SenderContrastSupportStatus.SUPPORTED
@@ -636,6 +798,12 @@ def _fit_interaction_ligand_contrast_supports(
                     holm_adjusted_p_value=adjusted_p,
                     status=status,
                     reason_code=reason_code,
+                    aggregation_policy=(
+                        _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
+                        if parameters.contrast_unit == "independent_subject"
+                        else _SENDER_CONTRAST_SUPPORT_POLICY
+                    ),
+                    unit_context_ids=raw.unit_context_ids,
                 )
             )
     return tuple(supports)
@@ -740,6 +908,35 @@ def fit_contrast_common_sender_functional(
         .sort_values(list(_INPUT_KEY), kind="stable")
         .reset_index(drop=True)
     )
+    if resolved.contrast_unit == "independent_subject":
+        # Validate the design on the complete training table before any
+        # interaction- or availability-specific NA filtering.  Checking only
+        # observed values would allow a mixed design to evade the independent
+        # subject contract when an overlapping subject is missing one ligand.
+        subjects_by_context = {
+            context_id: set(
+                table.loc[
+                    table["context_id"].eq(context_id), "subject_id"
+                ].astype(str)
+            )
+            for context_id in contexts
+        }
+        overlap: set[str] = set()
+        context_items = tuple(subjects_by_context.items())
+        for index, (_, left_subjects) in enumerate(context_items):
+            for _, right_subjects in context_items[index + 1 :]:
+                overlap.update(left_subjects.intersection(right_subjects))
+        if overlap:
+            raise ContractError(
+                "independent subject contrast requires disjoint subject IDs "
+                "across contexts",
+                code="invalid_common_sender_input",
+                field="subject_id",
+                remediation=(
+                    "Use paired_subject for overlapping subjects or provide "
+                    "independent subject IDs"
+                ),
+            )
     subjects = tuple(sorted(table["subject_id"].unique()))
     denominator = len(subjects)
     subject_means = table.groupby(

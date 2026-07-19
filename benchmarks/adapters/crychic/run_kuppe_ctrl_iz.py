@@ -55,6 +55,7 @@ from crychic.workflow import CrossFitSpec, FoldTrainingSpec
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET_ID = "Kuppe_MI_CTRL_vs_IZ"
 PREPARATION_SCHEMA = "crychic-kuppe-ctrl-iz-preparation-v1"
+DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-kuppe-ctrl-iz-downsample-v1"
 RESOURCE_SCHEMA = "crychic-connectomedb2020-resource-v1"
 RUN_SCHEMA = "crychic-kuppe-ctrl-iz-crossfit-run-v1"
 CONTRAST = "IZ_vs_CTRL"
@@ -217,7 +218,8 @@ def validate_preparation_manifest(
     if not input_path.is_file():
         raise FileNotFoundError(input_path)
     manifest = _read_json_object(manifest_file, label="Kuppe preparation manifest")
-    if manifest.get("schema_version") != PREPARATION_SCHEMA:
+    schema_version = manifest.get("schema_version")
+    if schema_version not in {PREPARATION_SCHEMA, DOWNSAMPLE_PREPARATION_SCHEMA}:
         raise ValueError(
             "input_manifest.schema_version is not the Kuppe CTRL/IZ schema"
         )
@@ -256,6 +258,14 @@ def validate_preparation_manifest(
     matrices = manifest.get("matrices")
     if not isinstance(matrices, Mapping) or matrices.get("counts_layer") != "counts":
         raise ValueError("input_manifest.matrices must declare layers['counts']")
+    if schema_version == DOWNSAMPLE_PREPARATION_SCHEMA:
+        downsample = manifest.get("downsample")
+        if not isinstance(downsample, Mapping) or float(
+            downsample.get("fraction", 0.0)
+        ) <= 0:
+            raise ValueError("downsample manifest must declare a positive fraction")
+        if output.get("shape") != list(manifest.get("cohort", {}).get("shape", ())):
+            raise ValueError("downsample output shape disagrees with cohort metadata")
     return manifest
 
 
@@ -472,7 +482,10 @@ def build_crossfit_configuration(
             min_cells=min_cells,
             min_pooled_availability=0.0,
             max_interactions=None,
-            sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+            sender_parameters=ContrastCommonSenderParameters(
+                min_subjects=2,
+                contrast_unit="independent_subject",
+            ),
         ),
         allowed_n_splits=(OUTER_FOLDS,),
         min_train_subjects_per_context=2,

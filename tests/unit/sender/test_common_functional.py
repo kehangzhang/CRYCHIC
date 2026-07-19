@@ -1405,3 +1405,139 @@ def test_support_gate_and_functional_reject_forced_mutation() -> None:
     assert functional_error.value.details.code == (
         "common_sender_functional_integrity_violation"
     )
+
+
+def _independent_availability(
+    *,
+    include_treated: bool = True,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    groups = {
+        "control": {"c1": 0.20, "c2": 0.25, "c3": 0.30},
+        "treated": {"t1": 0.80, "t2": 0.75, "t3": 0.85},
+    }
+    if not include_treated:
+        groups.pop("treated")
+    for context, subjects in groups.items():
+        for subject, value in subjects.items():
+            for sender, ligand in (("A", value), ("B", value - 0.1)):
+                rows.append(
+                    {
+                        "sample_id": f"{subject}-{context}",
+                        "subject_id": subject,
+                        "context_id": context,
+                        "sender": sender,
+                        "receiver": "R",
+                        "interaction_id": "L_R",
+                        "ligand_availability": ligand,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _fit_independent(
+    source: pd.DataFrame,
+) -> ContrastCommonSenderFunctional:
+    return fit_contrast_common_sender_functional(
+        source,
+        contrast=_contrast(),
+        context_keys=("context_id",),
+        filter_universe_id="independent-unit-test",
+        frozen_interaction_ids=("L_R",),
+        parameters=ContrastCommonSenderParameters(
+            min_subjects=2,
+            contrast_unit="independent_subject",
+        ),
+    )
+
+
+def test_independent_subject_contrast_is_estimable_without_pairing() -> None:
+    functional = _fit_independent(_independent_availability())
+    support = functional.contrast_supports[0]
+
+    assert support.aggregation_policy == (
+        "subject_equal_independent_welch_one_sided_t_holm_fwer_v1"
+    )
+    assert support.n_complete == 6
+    assert len(support.unit_context_ids) == 6
+    assert support.status is SenderContrastSupportStatus.SUPPORTED
+    assert support.mean_effect == pytest.approx(0.55, abs=1e-12)
+    assert interaction_ligand_contrast_gate(functional, "R", "L_R").gate == 1.0
+    functional._require_intact()
+
+
+def test_independent_subject_contrast_marks_missing_group_not_estimable() -> None:
+    source = _independent_availability()
+    source = source.loc[~source["subject_id"].isin(("t2", "t3"))]
+    functional = _fit_independent(source)
+    support = functional.contrast_supports[0]
+
+    assert support.status is SenderContrastSupportStatus.NOT_ESTIMABLE
+    assert support.reason_code == "insufficient_independent_subject_ligand_contrasts"
+    assert support.mean_effect is None
+    assert interaction_ligand_contrast_gate(functional, "R", "L_R").gate is None
+    functional._require_intact()
+
+
+def test_independent_subject_contrast_rejects_global_overlap_before_na_filter() -> None:
+    source = _independent_availability()
+    # Keep the overlap only in rows that would not contribute to one of the
+    # interaction summaries.  The design contract must still reject it.
+    source.loc[source["subject_id"].eq("t1"), "subject_id"] = "c1"
+    source.loc[
+        source["subject_id"].eq("c1") & source["context_id"].eq("treated"),
+        "ligand_availability",
+    ] = np.nan
+
+    with pytest.raises(ContractError, match="disjoint subject IDs") as error:
+        _fit_independent(source)
+    assert error.value.details.code == "invalid_common_sender_input"
+
+
+def test_independent_subject_contrast_uses_exact_welch_statistics() -> None:
+    rows: list[dict[str, object]] = []
+    values = {
+        "control": {"c1": 0.10, "c2": 0.20},
+        "treated": {"t1": 0.70, "t2": 0.80, "t3": 1.00},
+    }
+    for context, subjects in values.items():
+        for subject, value in subjects.items():
+            rows.extend(
+                {
+                    "sample_id": f"{subject}-{context}-{sender}",
+                    "subject_id": subject,
+                    "context_id": context,
+                    "sender": sender,
+                    "receiver": "R",
+                    "interaction_id": "L_R",
+                    "ligand_availability": ligand,
+                }
+                for sender, ligand in (("A", value), ("B", value - 0.1))
+            )
+    functional = _fit_independent(pd.DataFrame(rows))
+    support = functional.contrast_supports[0]
+    control = np.array([0.10, 0.20])
+    treated = np.array([0.70, 0.80, 1.00])
+    expected_mean = float(treated.mean() - control.mean())
+    expected_variance = float(treated.var(ddof=1) / len(treated)) + float(
+        control.var(ddof=1) / len(control)
+    )
+    expected_se = math.sqrt(expected_variance)
+    expected_df = expected_variance**2 / (
+        (treated.var(ddof=1) / len(treated)) ** 2 / (len(treated) - 1)
+        + (control.var(ddof=1) / len(control)) ** 2 / (len(control) - 1)
+    )
+    expected_p = float(student_t.sf(expected_mean / expected_se, expected_df))
+
+    assert support.mean_effect == pytest.approx(expected_mean)
+    assert support.sample_standard_error == pytest.approx(expected_se)
+    assert support.degrees_of_freedom == pytest.approx(expected_df)
+    assert support.degrees_of_freedom != int(support.degrees_of_freedom)
+    assert support.raw_one_sided_p_value == pytest.approx(expected_p)
+    shuffled = _fit_independent(pd.DataFrame(rows).sample(frac=1, random_state=19))
+    assert shuffled.contrast_supports[0].support_id == support.support_id
+
+
+def test_independent_subject_parameter_rejects_unknown_sampling_unit() -> None:
+    with pytest.raises(ContractError, match="contrast_unit"):
+        ContrastCommonSenderParameters(contrast_unit="mixed_subject")

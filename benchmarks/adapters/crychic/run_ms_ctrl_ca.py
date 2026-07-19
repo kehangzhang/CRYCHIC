@@ -47,6 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET_ID = "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
 DES_DATASET_ID = "LermaMartin_MS_CA_vs_Ctrl"
 PREPARATION_SCHEMA = "crychic-prepared-subset-v1"
+DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-ms-ctrl-ca-downsample-v1"
 RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v1"
 CONTRAST = "CA_vs_Ctrl"
 REFERENCE = "Ctrl"
@@ -165,6 +166,15 @@ def validate_subset_manifest(
     lineage = manifest.get("lineage")
     if not isinstance(lineage, Mapping):
         raise ValueError("input_manifest.lineage is missing")
+    schema_version = manifest.get("schema_version")
+    # Older canonical subset manifests kept the preparation schema only in
+    # lineage.  Treat that exact shape as the full frozen subset for backward
+    # compatibility; downsample manifests must continue to declare their
+    # distinct top-level schema explicitly.
+    if schema_version is None and lineage.get("schema_version") == PREPARATION_SCHEMA:
+        schema_version = PREPARATION_SCHEMA
+    if schema_version not in {PREPARATION_SCHEMA, DOWNSAMPLE_PREPARATION_SCHEMA}:
+        raise ValueError("input_manifest.schema_version is not a supported MS schema")
     expected_lineage = {
         "schema_version": PREPARATION_SCHEMA,
         "dataset_id": DATASET_ID,
@@ -192,12 +202,29 @@ def validate_subset_manifest(
     expected_output_sha = _required_sha256(
         manifest.get("output_sha256"), field="input_manifest.output_sha256"
     )
-    if expected_output_sha != EXPECTED_OUTPUT_SHA256:
+    if (
+        schema_version == PREPARATION_SCHEMA
+        and expected_output_sha != EXPECTED_OUTPUT_SHA256
+    ):
         raise ValueError("input_manifest.output_sha256 is not the canonical MS digest")
     if sha256_file(input_path) != expected_output_sha:
         raise ValueError("input_manifest.output_sha256 does not match input_h5ad")
-    if manifest.get("shape") != list(EXPECTED_SHAPE):
+    if (
+        schema_version == PREPARATION_SCHEMA
+        and manifest.get("shape") != list(EXPECTED_SHAPE)
+    ):
         raise ValueError("input_manifest.shape differs from the frozen MS subset")
+    if schema_version == DOWNSAMPLE_PREPARATION_SCHEMA:
+        declared_shape = manifest.get("shape")
+        if not isinstance(declared_shape, list) or len(declared_shape) != 2:
+            raise ValueError("downsample MS manifest must declare shape")
+        probe = ad.read_h5ad(input_path, backed="r")
+        try:
+            if list(probe.shape) != declared_shape:
+                raise ValueError("downsample MS shape does not match input_h5ad")
+        finally:
+            if probe.isbacked:
+                probe.file.close()
     if manifest.get("samples_by_context") != {
         TARGET: EXPECTED_SAMPLES[TARGET],
         REFERENCE: EXPECTED_SAMPLES[REFERENCE],
@@ -236,7 +263,10 @@ def build_crossfit_configuration(
             min_cells=min_cells,
             min_pooled_availability=0.0,
             max_interactions=None,
-            sender_parameters=ContrastCommonSenderParameters(min_subjects=2),
+            sender_parameters=ContrastCommonSenderParameters(
+                min_subjects=2,
+                contrast_unit="independent_subject",
+            ),
         ),
         allowed_n_splits=(OUTER_FOLDS,),
         min_train_subjects_per_context=2,

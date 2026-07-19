@@ -81,6 +81,9 @@ COMMON_SENDER_GROUP_COLUMNS = (
 _COUPLING_REASON = "v0_1_adjusted_coupling_disabled"
 _ASSIGNMENT_MODE = "exploratory_in_sample"
 _SENDER_CONTRAST_SUPPORT_POLICY = "subject_equal_paired_one_sided_t_holm_fwer_v3"
+_SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT = (
+    "subject_equal_independent_welch_one_sided_t_holm_fwer_v1"
+)
 _SENDER_CONTRAST_MULTIPLICITY_METHOD = "holm_step_down"
 _SENDER_CONTRAST_MULTIPLICITY_SCOPE = (
     "outer_training_fold_receiver_contrast_frozen_interactions"
@@ -97,6 +100,21 @@ _FORBIDDEN_INFERENCE_COLUMNS = {
     "posterior",
     "posterior_probability",
 }
+
+
+def _sender_contrast_policy(contrast_unit: str) -> str:
+    """Map the declared sampling unit to its frozen support policy."""
+
+    if contrast_unit == "paired_subject":
+        return _SENDER_CONTRAST_SUPPORT_POLICY
+    if contrast_unit == "independent_subject":
+        return _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
+    raise ContractError(
+        "contrast_unit must be paired_subject or independent_subject",
+        code="invalid_common_sender_parameters",
+        field="contrast_unit",
+        remediation="Declare the sampling relationship before fitting",
+    )
 
 
 def _canonical_contrast_weights(
@@ -130,6 +148,7 @@ def _sender_contrast_family_id(
     minimum_complete_subjects: int,
     ligand_contrast_confidence_level: float,
     ligand_contrast_minimum_effect: float,
+    aggregation_policy: str = _SENDER_CONTRAST_SUPPORT_POLICY,
 ) -> str:
     """Return the immutable receiver-wise Holm family identity."""
 
@@ -137,7 +156,7 @@ def _sender_contrast_family_id(
     family_id: str = stable_id(
         "interaction_ligand_contrast_multiplicity_family",
         {
-            "aggregation_policy": _SENDER_CONTRAST_SUPPORT_POLICY,
+            "aggregation_policy": aggregation_policy,
             "contrast_weights": [list(value) for value in canonical_weights],
             "candidate_sender_ids_by_interaction": [
                 [interaction_id, list(sender_ids)]
@@ -373,6 +392,7 @@ class ContrastCommonSenderParameters:
     softmax_temperature: float = 1.0
     ligand_contrast_confidence_level: float = 0.95
     ligand_contrast_minimum_effect: float = 0.0
+    contrast_unit: str = "paired_subject"
     schema_version: str = "3.0.0"
     parameter_manifest_id: str = field(init=False)
 
@@ -392,6 +412,8 @@ class ContrastCommonSenderParameters:
         temperature = float(self.softmax_temperature)
         confidence_level = float(self.ligand_contrast_confidence_level)
         minimum_effect = float(self.ligand_contrast_minimum_effect)
+        contrast_unit = str(self.contrast_unit).strip()
+        _sender_contrast_policy(contrast_unit)
         if not math.isfinite(threshold) or not 0 <= threshold <= 1:
             raise ContractError(
                 "prevalence_threshold must lie in [0, 1]",
@@ -439,10 +461,15 @@ class ContrastCommonSenderParameters:
             "schema_version": self.schema_version,
             "softmax_temperature": temperature,
         }
+        # Keep the released paired-subject identity byte-for-byte compatible;
+        # independent-group analyses bind their sampling policy explicitly.
+        if contrast_unit != "paired_subject":
+            payload["contrast_unit"] = contrast_unit
         object.__setattr__(self, "prevalence_threshold", threshold)
         object.__setattr__(self, "softmax_temperature", temperature)
         object.__setattr__(self, "ligand_contrast_confidence_level", confidence_level)
         object.__setattr__(self, "ligand_contrast_minimum_effect", minimum_effect)
+        object.__setattr__(self, "contrast_unit", contrast_unit)
         object.__setattr__(
             self,
             "parameter_manifest_id",
@@ -465,6 +492,7 @@ class ContrastCommonSenderParameters:
                     self.ligand_contrast_confidence_level
                 ),
                 ligand_contrast_minimum_effect=(self.ligand_contrast_minimum_effect),
+                contrast_unit=self.contrast_unit,
                 schema_version=self.schema_version,
             )
             valid = (
@@ -475,6 +503,7 @@ class ContrastCommonSenderParameters:
                 == repeated.ligand_contrast_confidence_level
                 and self.ligand_contrast_minimum_effect
                 == repeated.ligand_contrast_minimum_effect
+                and self.contrast_unit == repeated.contrast_unit
                 and self.schema_version == repeated.schema_version
                 and self.parameter_manifest_id == repeated.parameter_manifest_id
             )
@@ -497,7 +526,7 @@ class ContrastCommonSenderParameters:
         """Return a serialization-ready frozen parameter manifest."""
 
         self._require_intact()
-        return {
+        payload = {
             "parameter_manifest_id": self.parameter_manifest_id,
             "min_subjects": self.min_subjects,
             "prevalence_threshold": self.prevalence_threshold,
@@ -510,6 +539,9 @@ class ContrastCommonSenderParameters:
             "ligand_contrast_multiplicity_scope": (_SENDER_CONTRAST_MULTIPLICITY_SCOPE),
             "schema_version": self.schema_version,
         }
+        if self.contrast_unit != "paired_subject":
+            payload["contrast_unit"] = self.contrast_unit
+        return payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -658,7 +690,7 @@ class InteractionLigandContrastSupport:
     aggregation_policy: str
     ligand_contrast_confidence_level: float
     ligand_contrast_minimum_effect: float
-    degrees_of_freedom: int | None
+    degrees_of_freedom: float | int | None
     mean_effect: float | None
     sample_standard_error: float | None
     critical_value: float | None
@@ -674,6 +706,10 @@ class InteractionLigandContrastSupport:
     reason_code: str | None
     support_id: str
     _producer_marker: str
+    # Independent-group supports retain the context label for every raw
+    # subject value.  The default paired path leaves this empty so its
+    # released identity remains unchanged.
+    unit_context_ids: tuple[str, ...] = ()
 
     def __init__(self) -> None:
         raise TypeError(
@@ -694,7 +730,7 @@ class InteractionLigandContrastSupport:
         contrast_weights: tuple[tuple[str, float], ...],
         ligand_contrast_confidence_level: float,
         ligand_contrast_minimum_effect: float,
-        degrees_of_freedom: int | None,
+        degrees_of_freedom: float | int | None,
         mean_effect: float | None,
         sample_standard_error: float | None,
         critical_value: float | None,
@@ -708,11 +744,26 @@ class InteractionLigandContrastSupport:
         holm_adjusted_p_value: float,
         status: SenderContrastSupportStatus | str,
         reason_code: str | None,
+        aggregation_policy: str = _SENDER_CONTRAST_SUPPORT_POLICY,
+        unit_context_ids: tuple[str, ...] = (),
     ) -> InteractionLigandContrastSupport:
         if _producer_token is not _SENDER_CONTRAST_SUPPORT_PRODUCER_TOKEN:
             raise TypeError(
                 "interaction ligand contrast support is sender-producer-owned"
             )
+        if aggregation_policy not in {
+            _SENDER_CONTRAST_SUPPORT_POLICY,
+            _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT,
+        }:
+            raise ContractError(
+                "unsupported sender contrast aggregation policy",
+                code="invalid_sender_contrast_support",
+                field="aggregation_policy",
+                remediation="Use the released paired or independent policy",
+            )
+        independent = (
+            aggregation_policy == _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
+        )
         identifiers: dict[str, str] = {}
         for field_name, raw_value in (
             ("receiver", receiver),
@@ -740,6 +791,7 @@ class InteractionLigandContrastSupport:
             )
         subjects = tuple(complete_subject_ids)
         effects = tuple(float(value) for value in subject_effects)
+        contexts_for_units = tuple(unit_context_ids)
         if len(subjects) != len(effects) or any(
             not isinstance(value, str) or not value.strip() for value in subjects
         ):
@@ -748,6 +800,24 @@ class InteractionLigandContrastSupport:
                 code="invalid_sender_contrast_support",
                 field="complete_subject_ids",
                 remediation="Retain every complete subject and paired effect",
+            )
+        if independent:
+            if len(contexts_for_units) != len(subjects) or any(
+                not isinstance(value, str) or not value.strip()
+                for value in contexts_for_units
+            ):
+                raise ContractError(
+                    "independent support requires one context per subject value",
+                    code="invalid_sender_contrast_support",
+                    field="unit_context_ids",
+                    remediation="Retain context labels for every independent unit",
+                )
+        elif contexts_for_units:
+            raise ContractError(
+                "paired support cannot carry independent context labels",
+                code="invalid_sender_contrast_support",
+                field="unit_context_ids",
+                remediation="Use empty unit_context_ids for paired supports",
             )
         normalized_subjects = tuple(value.strip() for value in subjects)
         if len(set(normalized_subjects)) != len(normalized_subjects) or any(
@@ -759,9 +829,25 @@ class InteractionLigandContrastSupport:
                 field="subject_effects",
                 remediation="Aggregate one finite contrast effect per subject",
             )
-        ordered = tuple(sorted(zip(normalized_subjects, effects, strict=True)))
-        canonical_subjects = tuple(subject for subject, _ in ordered)
-        canonical_effects = tuple(effect for _, effect in ordered)
+        if independent:
+            ordered = tuple(
+                sorted(
+                    zip(
+                        normalized_subjects,
+                        effects,
+                        (value.strip() for value in contexts_for_units),
+                        strict=True,
+                    )
+                )
+            )
+            canonical_subjects = tuple(subject for subject, _, _ in ordered)
+            canonical_effects = tuple(effect for _, effect, _ in ordered)
+            canonical_unit_contexts = tuple(context for _, _, context in ordered)
+        else:
+            ordered = tuple(sorted(zip(normalized_subjects, effects, strict=True)))
+            canonical_subjects = tuple(subject for subject, _ in ordered)
+            canonical_effects = tuple(effect for _, effect in ordered)
+            canonical_unit_contexts = ()
         weights: list[tuple[str, float]] = []
         for context_id, raw_weight in tuple(contrast_weights):
             if not isinstance(context_id, str) or not context_id.strip():
@@ -794,6 +880,28 @@ class InteractionLigandContrastSupport:
                 field="contrast_weights",
                 remediation="Use the complete estimable frozen contrast",
             )
+        context_counts: dict[str, int] = {}
+        if independent:
+            allowed_contexts = {context for context, _ in canonical_weights}
+            unknown_contexts = set(canonical_unit_contexts).difference(
+                allowed_contexts
+            )
+            if unknown_contexts:
+                raise ContractError(
+                    "independent support contains contexts outside the contrast",
+                    code="invalid_sender_contrast_support",
+                    field="unit_context_ids",
+                    remediation="Bind every unit to a declared contrast context",
+                )
+            context_counts = {
+                context: canonical_unit_contexts.count(context)
+                for context in allowed_contexts
+            }
+        support_ready = (
+            all(count >= minimum_complete_subjects for count in context_counts.values())
+            if independent
+            else len(canonical_subjects) >= minimum_complete_subjects
+        )
         normalized_confidence = float(ligand_contrast_confidence_level)
         normalized_minimum_effect = float(ligand_contrast_minimum_effect)
         if (
@@ -875,7 +983,7 @@ class InteractionLigandContrastSupport:
         )
         if normalized_status is SenderContrastSupportStatus.NOT_ESTIMABLE:
             if (
-                n_complete >= minimum_complete_subjects
+                support_ready
                 or degrees_of_freedom is not None
                 or any(value is not None for value in numeric_stats)
                 or normalized_adjusted_p != 1.0
@@ -896,39 +1004,112 @@ class InteractionLigandContrastSupport:
                 None,
             )
         else:
-            if n_complete < minimum_complete_subjects:
+            if not support_ready:
                 raise ContractError(
                     "observed contrast support lacks complete subjects",
                     code="invalid_sender_contrast_support",
                     field="n_complete",
                     remediation="Mark low-support contrasts not estimable",
                 )
+            valid_df = (
+                not isinstance(degrees_of_freedom, bool)
+                and isinstance(degrees_of_freedom, (int, float))
+                and math.isfinite(float(degrees_of_freedom))
+                and float(degrees_of_freedom) > 0
+            )
             if (
-                isinstance(degrees_of_freedom, bool)
-                or not isinstance(degrees_of_freedom, int)
-                or degrees_of_freedom != n_complete - 1
+                not valid_df
+                or (not independent and not isinstance(degrees_of_freedom, int))
                 or any(value is None for value in numeric_stats)
             ):
                 raise ContractError(
-                    "observed support requires complete paired test statistics",
+                    "observed support requires complete test statistics",
                     code="invalid_sender_contrast_support",
                     field="degrees_of_freedom",
-                    remediation="Compute the subject-equal one-sided Student-t test",
+                    remediation="Compute the declared one-sided contrast test",
                 )
             normalized_df = degrees_of_freedom
             supplied_stats = tuple(float(cast(float, value)) for value in numeric_stats)
-            observed_mean = math.fsum(canonical_effects) / n_complete
-            sample_variance = (
-                math.fsum((effect - observed_mean) ** 2 for effect in canonical_effects)
-                / normalized_df
-            )
-            observed_se = math.sqrt(sample_variance / n_complete)
+            if independent:
+                values_by_context = {
+                    context: [
+                        effect
+                        for effect, unit_context in zip(
+                            canonical_effects,
+                            canonical_unit_contexts,
+                            strict=True,
+                        )
+                        if unit_context == context
+                    ]
+                    for context, _ in canonical_weights
+                }
+                means = {
+                    context: math.fsum(values) / len(values)
+                    for context, values in values_by_context.items()
+                }
+                variances = {
+                    context: (
+                        math.fsum((value - means[context]) ** 2 for value in values)
+                        / (len(values) - 1)
+                    )
+                    for context, values in values_by_context.items()
+                }
+                observed_mean = math.fsum(
+                    weight * means[context]
+                    for context, weight in canonical_weights
+                )
+                variance_terms = tuple(
+                    (weight * weight)
+                    * variances[context]
+                    / len(values_by_context[context])
+                    for context, weight in canonical_weights
+                )
+                variance = math.fsum(variance_terms)
+                observed_se = math.sqrt(max(0.0, variance))
+                if observed_se == 0.0:
+                    expected_df: float = float(min(context_counts.values()) - 1)
+                else:
+                    denominator = math.fsum(
+                        term * term / (context_counts[context] - 1)
+                        for term, (context, _) in zip(
+                            variance_terms, canonical_weights, strict=True
+                        )
+                    )
+                    expected_df = (
+                        variance * variance / denominator
+                        if denominator > 0.0
+                        else float(min(context_counts.values()) - 1)
+                    )
+                if not math.isclose(
+                    float(normalized_df),
+                    expected_df,
+                    rel_tol=1e-12,
+                    abs_tol=1e-15,
+                ):
+                    raise ContractError(
+                        "independent support degrees of freedom disagree with "
+                        "context observations",
+                        code="invalid_sender_contrast_support",
+                        field="degrees_of_freedom",
+                        remediation="Recompute Welch-Satterthwaite degrees of freedom",
+                    )
+                normalized_df = expected_df
+            else:
+                observed_mean = math.fsum(canonical_effects) / n_complete
+                sample_variance = (
+                    math.fsum(
+                        (effect - observed_mean) ** 2
+                        for effect in canonical_effects
+                    )
+                    / normalized_df
+                )
+                observed_se = math.sqrt(sample_variance / n_complete)
             observed_critical = float(
                 student_t.ppf(normalized_confidence, normalized_df)
             )
             observed_lower = (
                 observed_mean
-                if sample_variance == 0.0
+                if observed_se == 0.0
                 else observed_mean - observed_critical * observed_se
             )
             observed_raw_p = (
@@ -1015,7 +1196,7 @@ class InteractionLigandContrastSupport:
                 )
 
         payload = {
-            "aggregation_policy": _SENDER_CONTRAST_SUPPORT_POLICY,
+            "aggregation_policy": aggregation_policy,
             "complete_subject_ids": list(canonical_subjects),
             "contrast_weights": [list(value) for value in canonical_weights],
             "critical_value": normalized_stats[2],
@@ -1040,6 +1221,8 @@ class InteractionLigandContrastSupport:
             "status": normalized_status.value,
             "subject_effects": list(canonical_effects),
         }
+        if independent:
+            payload["unit_context_ids"] = list(canonical_unit_contexts)
         self = object.__new__(cls)
         values: dict[str, object] = {
             "receiver": identifiers["receiver"],
@@ -1049,7 +1232,7 @@ class InteractionLigandContrastSupport:
             "n_complete": n_complete,
             "minimum_complete_subjects": minimum_complete_subjects,
             "contrast_weights": canonical_weights,
-            "aggregation_policy": _SENDER_CONTRAST_SUPPORT_POLICY,
+            "aggregation_policy": aggregation_policy,
             "ligand_contrast_confidence_level": normalized_confidence,
             "ligand_contrast_minimum_effect": normalized_minimum_effect,
             "degrees_of_freedom": normalized_df,
@@ -1070,6 +1253,7 @@ class InteractionLigandContrastSupport:
                 "interaction_ligand_contrast_support", payload, schema_version="3"
             ),
             "_producer_marker": _SENDER_CONTRAST_SUPPORT_PRODUCER,
+            "unit_context_ids": canonical_unit_contexts,
         }
         for field_name, value in values.items():
             object.__setattr__(self, field_name, value)
@@ -1077,7 +1261,7 @@ class InteractionLigandContrastSupport:
         return self
 
     def _identity_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "aggregation_policy": self.aggregation_policy,
             "complete_subject_ids": list(self.complete_subject_ids),
             "contrast_weights": [list(value) for value in self.contrast_weights],
@@ -1103,6 +1287,9 @@ class InteractionLigandContrastSupport:
             "status": SenderContrastSupportStatus(self.status).value,
             "subject_effects": list(self.subject_effects),
         }
+        if self.unit_context_ids:
+            payload["unit_context_ids"] = list(self.unit_context_ids)
+        return payload
 
     @validation_scope()
     def _require_intact(self) -> None:
@@ -1135,6 +1322,8 @@ class InteractionLigandContrastSupport:
                 holm_adjusted_p_value=self.holm_adjusted_p_value,
                 status=self.status,
                 reason_code=self.reason_code,
+                aggregation_policy=self.aggregation_policy,
+                unit_context_ids=self.unit_context_ids,
             )
             valid = (
                 self._producer_marker == _SENDER_CONTRAST_SUPPORT_PRODUCER
@@ -1610,10 +1799,11 @@ class ContrastCommonSenderFunctional:
                 remediation="Emit one support per receiver and interaction",
             )
         minimum_complete = max(2, self.parameters.min_subjects)
+        expected_policy = _sender_contrast_policy(self.parameters.contrast_unit)
         for support in supports:
-            if (
-                not set(support.complete_subject_ids).issubset(subjects)
-                or support.minimum_complete_subjects != minimum_complete
+            lineage_invalid = (
+                support.minimum_complete_subjects != minimum_complete
+                or support.aggregation_policy != expected_policy
                 or support.contrast_weights != contrast_weights
                 or support.ligand_contrast_confidence_level
                 != self.parameters.ligand_contrast_confidence_level
@@ -1621,7 +1811,21 @@ class ContrastCommonSenderFunctional:
                 != self.parameters.ligand_contrast_minimum_effect
                 or support.multiplicity_method != _SENDER_CONTRAST_MULTIPLICITY_METHOD
                 or support.multiplicity_scope != _SENDER_CONTRAST_MULTIPLICITY_SCOPE
-            ):
+            )
+            if expected_policy == _SENDER_CONTRAST_SUPPORT_POLICY:
+                lineage_invalid = lineage_invalid or (
+                    not set(support.complete_subject_ids).issubset(subjects)
+                    or bool(support.unit_context_ids)
+                )
+            else:
+                lineage_invalid = lineage_invalid or (
+                    len(support.unit_context_ids)
+                    != len(support.complete_subject_ids)
+                    or not set(support.complete_subject_ids).issubset(subjects)
+                    or len(set(support.complete_subject_ids))
+                    != len(support.complete_subject_ids)
+                )
+            if lineage_invalid:
                 raise ContractError(
                     "contrast support lineage does not match its functional",
                     code="invalid_common_sender_functional",
@@ -1659,6 +1863,7 @@ class ContrastCommonSenderFunctional:
                 ligand_contrast_minimum_effect=(
                     self.parameters.ligand_contrast_minimum_effect
                 ),
+                aggregation_policy=expected_policy,
             )
             expected_adjustments = _holm_step_down_adjustments(
                 {
@@ -1681,7 +1886,12 @@ class ContrastCommonSenderFunctional:
                     else SenderContrastSupportStatus.UNSUPPORTED
                 )
                 expected_reason = (
-                    "insufficient_complete_subject_ligand_contrasts"
+                    (
+                        "insufficient_independent_subject_ligand_contrasts"
+                        if expected_policy
+                        == _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
+                        else "insufficient_complete_subject_ligand_contrasts"
+                    )
                     if expected_status is SenderContrastSupportStatus.NOT_ESTIMABLE
                     else None
                     if expected_status is SenderContrastSupportStatus.SUPPORTED
