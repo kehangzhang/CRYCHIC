@@ -17,6 +17,7 @@ from crychic.core._validation import validation_scope
 from crychic.design import ContrastSpec, canonical_context, plain_context_value
 
 from .contracts import (
+    _COMMON_SENDER_APPLICATION_PRODUCER_TOKEN,
     _SENDER_CONTRAST_MULTIPLICITY_METHOD,
     _SENDER_CONTRAST_MULTIPLICITY_SCOPE,
     _SENDER_CONTRAST_SUPPORT_POLICY,
@@ -311,9 +312,7 @@ def _training_availability_digest(
     for row in canonical.itertuples(index=False, name=None):
         ligand = row[-1]
         ligand_token = (
-            b"null"
-            if pd.isna(ligand)
-            else encoded_token(float(ligand).hex())
+            b"null" if pd.isna(ligand) else encoded_token(float(ligand).hex())
         )
         digest_buffer.extend(b"[")
         digest_buffer.extend(b",".join(encoded_token(value) for value in row[:-1]))
@@ -464,9 +463,7 @@ def _fit_interaction_ligand_contrast_supports(
         .max(min_count=1)
         .reset_index()
     )
-    by_interaction: dict[
-        tuple[str, str], dict[tuple[str, str], float]
-    ] = {}
+    by_interaction: dict[tuple[str, str], dict[tuple[str, str], float]] = {}
     for row in interaction_context.itertuples(index=False):
         if pd.isna(row.ligand_availability):
             continue
@@ -604,10 +601,7 @@ def _fit_interaction_ligand_contrast_supports(
                     if sample_standard_error == 0.0
                     else float(
                         student_t.sf(
-                            (
-                                mean_effect
-                                - parameters.ligand_contrast_minimum_effect
-                            )
+                            (mean_effect - parameters.ligand_contrast_minimum_effect)
                             / sample_standard_error,
                             degrees_of_freedom,
                         )
@@ -852,8 +846,9 @@ def fit_contrast_common_sender_functional(
         frozen_interaction_ids=frozen_interactions,
     )
     observed_candidate_keys = set(
-        table[["receiver", "interaction_id", "sender"]]
-        .itertuples(index=False, name=None)
+        table[["receiver", "interaction_id", "sender"]].itertuples(
+            index=False, name=None
+        )
     )
     frozen_candidate_keys = {
         (receiver, interaction_id, sender)
@@ -885,10 +880,7 @@ def fit_contrast_common_sender_functional(
         raise ValueError("contrast contexts are absent from training availability")
     contrast_context_ids = tuple(
         sorted(
-            (
-                (node, node_to_context_id[node])
-                for node in contrast.weights
-            ),
+            ((node, node_to_context_id[node]) for node in contrast.weights),
             key=lambda item: canonical_json(item[0]),
         )
     )
@@ -915,9 +907,7 @@ def fit_contrast_common_sender_functional(
         # subject contract when an overlapping subject is missing one ligand.
         subjects_by_context = {
             context_id: set(
-                table.loc[
-                    table["context_id"].eq(context_id), "subject_id"
-                ].astype(str)
+                table.loc[table["context_id"].eq(context_id), "subject_id"].astype(str)
             )
             for context_id in contexts
         }
@@ -945,16 +935,24 @@ def fit_contrast_common_sender_functional(
         sort=True,
     )["ligand_availability"].mean()
     candidate_levels = ["receiver", "interaction_id", "sender"]
-    observed_subjects = subject_means.notna().groupby(
-        level=candidate_levels,
-        observed=True,
-        sort=True,
-    ).sum()
-    above_threshold = subject_means.gt(resolved.prevalence_threshold).groupby(
-        level=candidate_levels,
-        observed=True,
-        sort=True,
-    ).sum()
+    observed_subjects = (
+        subject_means.notna()
+        .groupby(
+            level=candidate_levels,
+            observed=True,
+            sort=True,
+        )
+        .sum()
+    )
+    above_threshold = (
+        subject_means.gt(resolved.prevalence_threshold)
+        .groupby(
+            level=candidate_levels,
+            observed=True,
+            sort=True,
+        )
+        .sum()
+    )
     prevalence_stats = {
         cast(tuple[str, str, str], key): (int(n_subjects), int(n_above))
         for key, n_subjects, n_above in zip(
@@ -1135,12 +1133,12 @@ def apply_contrast_common_sender_functional(
     table = _validated_availability(sample_availability)
     table = table.loc[table["context_id"].isin(functional.context_ids)].copy()
     if table.empty:
-        return CommonSenderApplication(
-            pd.DataFrame(columns=COMMON_SENDER_APPLICATION_COLUMNS), functional
+        return CommonSenderApplication._from_producer_table(
+            pd.DataFrame(columns=COMMON_SENDER_APPLICATION_COLUMNS),
+            functional,
+            _producer_token=_COMMON_SENDER_APPLICATION_PRODUCER_TOKEN,
         )
-    mutable_priors_by_group: dict[
-        tuple[str, str], list[SenderPrevalencePrior]
-    ] = {}
+    mutable_priors_by_group: dict[tuple[str, str], list[SenderPrevalencePrior]] = {}
     for prior in functional.candidate_priors:
         mutable_priors_by_group.setdefault(
             (prior.receiver, prior.interaction_id), []
@@ -1226,8 +1224,10 @@ def apply_contrast_common_sender_functional(
                     "assignment_mode": _APPLICATION_MODE,
                 }
             )
-    return CommonSenderApplication(
-        pd.DataFrame(output, columns=COMMON_SENDER_APPLICATION_COLUMNS), functional
+    return CommonSenderApplication._from_producer_table(
+        pd.DataFrame(output, columns=COMMON_SENDER_APPLICATION_COLUMNS),
+        functional,
+        _producer_token=_COMMON_SENDER_APPLICATION_PRODUCER_TOKEN,
     )
 
 

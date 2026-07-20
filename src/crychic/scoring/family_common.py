@@ -9,6 +9,7 @@ an already-established member score.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 from typing import Any, cast
@@ -18,7 +19,7 @@ import pandas as pd
 from scipy import sparse
 
 from crychic.attribution import ReceiverFamilyTrainingArtifact
-from crychic.core import ContractError, stable_id
+from crychic.core import ContractError, canonical_json, stable_id
 from crychic.core._validation import (
     record_validation,
     validation_is_cached,
@@ -219,17 +220,36 @@ def _canonical_scalar(value: object) -> object:
 def _table_digest(name: str, table: pd.DataFrame, columns: tuple[str, ...]) -> str:
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the released contract")
-    rows = [
-        [_canonical_scalar(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    return str(
-        stable_id(
-            name,
-            {"columns": list(columns), "rows": rows},
-            schema_version="1",
-        )
+    digest_length = 32
+    validation_id: str = stable_id(
+        name,
+        {},
+        schema_version="1",
+        digest_length=digest_length,
     )
+    id_prefix = validation_id[: -(digest_length + 1)]
+    template = canonical_json(
+        {
+            "components": {"columns": list(columns), "rows": []},
+            "kind": name,
+            "schema_version": "1",
+        }
+    )
+    rows_marker = '"rows":[]'
+    if template.count(rows_marker) != 1:  # pragma: no cover - canonical contract
+        raise RuntimeError("canonical stable-ID template lacks one rows marker")
+    prefix, suffix = template.split(rows_marker, maxsplit=1)
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(b'"rows":[')
+    for row_index, row in enumerate(table.itertuples(index=False, name=None)):
+        if row_index:
+            digest.update(b",")
+        canonical_row = [_canonical_scalar(value) for value in row]
+        digest.update(canonical_json(canonical_row).encode("ascii"))
+    digest.update(b"]")
+    digest.update(suffix.encode("ascii"))
+    return f"{id_prefix}_{digest.hexdigest()[:digest_length]}"
 
 
 def family_common_edge_evidence_digest(edge_evidence: pd.DataFrame) -> str:
@@ -264,9 +284,7 @@ def family_common_edge_evidence_digest(edge_evidence: pd.DataFrame) -> str:
         "interaction_id",
         "mode",
     ]
-    canonical = edge_evidence.loc[
-        :, list(FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS)
-    ].copy()
+    canonical = edge_evidence.loc[:, list(FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS)].copy()
     for column in identifiers:
         canonical[column] = [
             _required_name(value, field_name=column) for value in canonical[column]
@@ -283,9 +301,7 @@ def family_common_edge_evidence_digest(edge_evidence: pd.DataFrame) -> str:
         [
             None
             if value is None or value is pd.NA or pd.isna(value)
-            else _required_name(
-                value, field_name="ligand_contrast_gate_reason_code"
-            )
+            else _required_name(value, field_name="ligand_contrast_gate_reason_code")
             for value in canonical["ligand_contrast_gate_reason_code"]
         ],
         index=canonical.index,
@@ -756,9 +772,7 @@ def fit_family_common_scoring_functional(
         autonomous_program_resource_id=autonomous_program_resource_id,
     )
     if receiver_program_artifact is not None:
-        if not isinstance(
-            receiver_program_artifact, ReceiverProgramTrainingArtifact
-        ):
+        if not isinstance(receiver_program_artifact, ReceiverProgramTrainingArtifact):
             raise TypeError(
                 "receiver_program_artifact must be ReceiverProgramTrainingArtifact"
             )
@@ -854,9 +868,7 @@ def mark_family_common_scoring_not_estimable(
     receiver_family._require_producer_owned()
     sender_functional._require_intact()
     if receiver_program_artifact is not None:
-        if not isinstance(
-            receiver_program_artifact, ReceiverProgramTrainingArtifact
-        ):
+        if not isinstance(receiver_program_artifact, ReceiverProgramTrainingArtifact):
             raise TypeError(
                 "receiver_program_artifact must be ReceiverProgramTrainingArtifact"
             )
@@ -1212,12 +1224,14 @@ def _validated_edge_evidence(
                 remediation="Copy the exact frozen interaction gate into every row",
             )
     modes = tuple(sorted(set(table["mode"])))
-    if modes != _RELEASED_MODES:
+    if not modes or not set(modes).issubset(_RELEASED_MODES):
         raise ContractError(
-            "Family-common evidence must contain the released scoring modes",
+            "Family-common evidence contains unsupported scoring modes",
             code="invalid_family_common_edge_evidence",
             field="mode",
-            remediation="Emit exact state and ecosystem rows for every sample edge",
+            remediation=(
+                "Emit at least one requested state/ecosystem mode for every sample edge"
+            ),
         )
     coverage_samples = (
         observed_samples if expected_samples is None else expected_samples
@@ -1317,9 +1331,7 @@ def _validated_receiver_program_application(
         for sample_id in expected_samples
         for family_id in functional.family_ids
     }
-    observed_keys = set(
-        zip(table["sample_id"], table["family_id"], strict=True)
-    )
+    observed_keys = set(zip(table["sample_id"], table["family_id"], strict=True))
     if (
         observed_keys != expected_keys
         or set(table["receiver"]) != {functional.receiver}
@@ -1572,9 +1584,7 @@ def _score_tables(
             receiver_program_score = (
                 None
                 if pd.isna(raw_program_score)
-                else _unit_value(
-                    raw_program_score, field_name="receiver_program_score"
-                )
+                else _unit_value(raw_program_score, field_name="receiver_program_score")
             )
             receiver_program_status = str(program_row["status"])
             raw_program_reason = program_row["reason_code"]
@@ -1610,9 +1620,7 @@ def _score_tables(
         if not family_receptor_eligible:
             family_availability: float | None = 0.0
         elif not family_gate_supported:
-            family_availability = (
-                None if family_gate_not_estimable else 0.0
-            )
+            family_availability = None if family_gate_not_estimable else 0.0
         elif any(value is None for value in availability_values):
             family_availability = None
         else:
@@ -1896,7 +1904,7 @@ def _sender_score_table(
     member_scores: pd.DataFrame,
     sender_application: CommonSenderApplication,
 ) -> pd.DataFrame:
-    assignment = sender_application.table.copy(deep=True)
+    assignment = sender_application.table
     member_keys = [
         "sample_id",
         "subject_id",
@@ -1947,72 +1955,90 @@ def _sender_score_table(
         validate="many_to_one",
         sort=False,
     )
-    rows: list[dict[str, object]] = []
-    for row in merged.itertuples(index=False):
-        unresolved = _unit_value(
-            row.sender_unresolved_strength,
-            field_name="sender_unresolved_strength",
-        )
-        assignment_weight = _unit_value(
-            row.assignment_weight, field_name="assignment_weight"
-        )
-        if unresolved == 0.0:
-            resolved: float | None = 0.0
-            status = "structural_zero"
-            reason = row.reason_code
-        elif unresolved is None:
-            resolved = None
-            status = "not_estimable"
-            reason = row.reason_code
-        elif assignment_weight is None:
-            resolved = None
-            status = "not_estimable"
-            reason = (
-                "sender_application_group_missing"
-                if pd.isna(row.sender_assignment_status)
-                else row.sender_assignment_reason_code
+    numeric: dict[str, pd.Series] = {}
+    for column in ("sender_unresolved_strength", "assignment_weight"):
+        values = pd.to_numeric(merged[column], errors="coerce").astype(float)
+        invalid = merged[column].notna() & values.isna()
+        present = values.dropna()
+        if invalid.any() or (
+            not present.empty
+            and (
+                (present < 0.0).any()
+                or (present > 1.0).any()
+                or not present.map(math.isfinite).all()
             )
-        else:
-            resolved = unresolved * assignment_weight
-            status = "ok"
-            reason = None
-        rows.append(
-            {
-                "family_common_functional_id": functional.family_common_functional_id,
-                "sender_functional_id": (
-                    sender_application.functional.sender_functional_id
-                ),
-                "sample_id": row.sample_id,
-                "subject_id": row.subject_id,
-                "context_id": row.context_id,
-                "receiver": row.receiver,
-                "family_id": row.family_id,
-                "driver_id": row.driver_id,
-                "interaction_id": row.interaction_id,
-                "mode": row.mode,
-                "sender": row.sender,
-                "sender_unresolved_strength": unresolved,
-                "assignment_weight": assignment_weight,
-                "sender_resolved_strength": resolved,
-                "status": status,
-                "reason_code": reason,
-                "score_version": functional.score_version,
-            }
-        )
-    result = pd.DataFrame(rows, columns=FAMILY_SENDER_SCORE_COLUMNS)
+        ):
+            raise ValueError(f"{column} must lie in [0, 1] or be missing")
+        numeric[column] = values
+    unresolved = numeric["sender_unresolved_strength"]
+    assignment_weight = numeric["assignment_weight"]
+    structural = unresolved.eq(0.0)
+    missing_unresolved = unresolved.isna()
+    missing_assignment = assignment_weight.isna()
+    resolved = unresolved * assignment_weight
+    resolved.loc[structural] = 0.0
+    resolved.loc[missing_unresolved | (~structural & missing_assignment)] = math.nan
+    status = pd.Series("ok", index=merged.index, dtype=object)
+    status.loc[structural] = "structural_zero"
+    status.loc[missing_unresolved | (~structural & missing_assignment)] = (
+        "not_estimable"
+    )
+    reason = pd.Series(None, index=merged.index, dtype=object)
+    reason.loc[structural | missing_unresolved] = merged.loc[
+        structural | missing_unresolved, "reason_code"
+    ]
+    sender_missing = ~structural & ~missing_unresolved & missing_assignment
+    reason.loc[sender_missing] = merged.loc[
+        sender_missing, "sender_assignment_reason_code"
+    ].where(
+        merged.loc[sender_missing, "sender_assignment_status"].notna(),
+        "sender_application_group_missing",
+    )
+    result = pd.DataFrame(
+        {
+            "family_common_functional_id": functional.family_common_functional_id,
+            "sender_functional_id": (
+                sender_application.functional.sender_functional_id
+            ),
+            "sample_id": merged["sample_id"],
+            "subject_id": merged["subject_id"],
+            "context_id": merged["context_id"],
+            "receiver": merged["receiver"],
+            "family_id": merged["family_id"],
+            "driver_id": merged["driver_id"],
+            "interaction_id": merged["interaction_id"],
+            "mode": merged["mode"],
+            "sender": merged["sender"],
+            "sender_unresolved_strength": unresolved,
+            "assignment_weight": assignment_weight,
+            "sender_resolved_strength": resolved,
+            "status": status,
+            "reason_code": reason,
+            "score_version": functional.score_version,
+        },
+        columns=FAMILY_SENDER_SCORE_COLUMNS,
+    )
     if result.empty:
         return result
     group_keys = [*member_keys, "mode"]
-    for _, group in result.groupby(group_keys, observed=True, sort=False):
-        unresolved_values = group["sender_unresolved_strength"].dropna().unique()
-        if len(unresolved_values) != 1:
-            continue
-        unresolved = float(unresolved_values[0])
-        resolved_series = group["sender_resolved_strength"]
-        if resolved_series.notna().all() and not math.isclose(
-            float(resolved_series.sum()), unresolved, rel_tol=1e-10, abs_tol=1e-12
-        ):
-            raise RuntimeError("sender resolution failed family-member conservation")
+    grouped = result.groupby(group_keys, observed=True, sort=False)
+    summary = grouped.agg(
+        unresolved_nunique=("sender_unresolved_strength", "nunique"),
+        unresolved=("sender_unresolved_strength", "first"),
+        group_size=("sender", "size"),
+        resolved_count=("sender_resolved_strength", "count"),
+        resolved_sum=("sender_resolved_strength", "sum"),
+    )
+    complete = summary["unresolved_nunique"].eq(1) & summary["resolved_count"].eq(
+        summary["group_size"]
+    )
+    if not np.allclose(
+        summary.loc[complete, "resolved_sum"],
+        summary.loc[complete, "unresolved"],
+        rtol=1e-10,
+        atol=1e-12,
+    ):
+        raise RuntimeError("sender resolution failed family-member conservation")
     return result.sort_values([*group_keys, "sender"], kind="stable", ignore_index=True)
 
 
@@ -2061,9 +2087,7 @@ class FamilyCommonScoringApplication:
             "heldout_subject_ids": list(self.heldout_subject_ids),
             "heldout_reason_code": self.heldout_reason_code,
             "incremental_application_id": self.incremental_application_id,
-            "receiver_program_application_id": (
-                self.receiver_program_application_id
-            ),
+            "receiver_program_application_id": (self.receiver_program_application_id),
             "member_scores_digest": self.member_scores_digest,
             "sender_application_digest": self.sender_application_digest,
             "sender_scores_digest": self.sender_scores_digest,

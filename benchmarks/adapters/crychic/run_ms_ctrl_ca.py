@@ -28,6 +28,11 @@ from benchmarks.adapters.crychic.des_postprocess import (
 from benchmarks.adapters.crychic.run_kuppe_ctrl_iz import (
     load_connectomedb2020_bundle,
 )
+from benchmarks.adapters.crychic.score_layers import (
+    SCORE_LAYER_VALUE_COLUMNS,
+    build_multigroup_score_layers,
+    summarize_score_layer,
+)
 from crychic import Crychic, CrychicConfig
 from crychic.attribution import GainCalibrationSpec, PenaltyTuningSpec
 from crychic.data import InputSchema, validate_anndata
@@ -48,11 +53,11 @@ DATASET_ID = "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
 DES_DATASET_ID = "LermaMartin_MS_CA_vs_Ctrl"
 PREPARATION_SCHEMA = "crychic-prepared-subset-v1"
 DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-ms-ctrl-ca-downsample-v1"
-RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v1"
+RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v2"
 CONTRAST = "CA_vs_Ctrl"
 REFERENCE = "Ctrl"
 TARGET = "CA"
-OUTER_FOLDS = 3
+OUTER_FOLDS = 2
 EXPECTED_SHAPE = (75_004, 32_115)
 EXPECTED_OUTPUT_SHA256 = (
     "612fe9c4cdaf88694a47e13ba4458c828f206cd945eba9e9c72f46e9bd0196c7"
@@ -67,7 +72,9 @@ EXPECTED_SAMPLES_PER_SUBJECT = {
     TARGET: (1, 1, 1, 1, 2),
 }
 SCORE_FILENAME = "sender_lr_scores.parquet"
+SCORE_LAYER_FILENAME = "sender_lr_score_layers.parquet"
 DIRECTED_EFFECT_FILENAME = "directed_lr_effects.parquet"
+MECHANISTIC_DIRECTED_EFFECT_FILENAME = "mechanistic_directed_lr_effects.parquet"
 UNORDERED_RANKING_FILENAME = "condition_cell_pair_rankings.tsv"
 
 SCORE_COLUMNS = (
@@ -99,6 +106,7 @@ SCORE_COLUMNS = (
     "score_semantics",
     "formal_inference_allowed",
 )
+SCORE_LAYER_COLUMNS = (*SCORE_COLUMNS, *SCORE_LAYER_VALUE_COLUMNS)
 
 DIRECTED_EDGE_COLUMNS = (
     "sender",
@@ -120,6 +128,14 @@ class MSCrossFitResult(Protocol):
     def manifest(self) -> Mapping[str, object]: ...
 
     def query_contrast_common_sender_lr_scores(
+        self,
+        *,
+        contrast: str | None = None,
+        mode: str | None = None,
+        status: str | None = None,
+    ) -> pd.DataFrame: ...
+
+    def query_contrast_common_lr_scores(
         self,
         *,
         contrast: str | None = None,
@@ -209,9 +225,8 @@ def validate_subset_manifest(
         raise ValueError("input_manifest.output_sha256 is not the canonical MS digest")
     if sha256_file(input_path) != expected_output_sha:
         raise ValueError("input_manifest.output_sha256 does not match input_h5ad")
-    if (
-        schema_version == PREPARATION_SCHEMA
-        and manifest.get("shape") != list(EXPECTED_SHAPE)
+    if schema_version == PREPARATION_SCHEMA and manifest.get("shape") != list(
+        EXPECTED_SHAPE
     ):
         raise ValueError("input_manifest.shape differs from the frozen MS subset")
     if schema_version == DOWNSAMPLE_PREPARATION_SCHEMA:
@@ -241,7 +256,7 @@ def validate_subset_manifest(
 def build_crossfit_configuration(
     *, seed: int, min_cells: int
 ) -> tuple[CrychicConfig, CrossFitSpec]:
-    """Freeze the three-fold CA-versus-Ctrl descriptive cross-fit policy."""
+    """Freeze the two-fold CA-versus-Ctrl descriptive cross-fit policy."""
 
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("seed must be a non-negative integer")
@@ -596,6 +611,40 @@ def compact_sender_lr_scores(
     )
 
 
+def multigroup_score_layers(
+    result: MSCrossFitResult,
+    compact_scores: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build the preregistered mechanism/annotation/strict MS score layers."""
+
+    sender = result.query_contrast_common_sender_lr_scores(
+        contrast=CONTRAST,
+        mode="state",
+        status=None,
+    )
+    lr = result.query_contrast_common_lr_scores(
+        contrast=CONTRAST,
+        mode="state",
+        status=None,
+    )
+    downstream_path = result.path / "descriptive_differential.parquet"
+    if not downstream_path.is_file():
+        raise FileNotFoundError(
+            f"persisted downstream differential table is missing: {downstream_path}"
+        )
+    downstream = pd.read_parquet(downstream_path)
+    layers = build_multigroup_score_layers(
+        compact_scores,
+        sender,
+        lr,
+        downstream,
+        policy="annotate",
+    )
+    if tuple(layers.columns) != SCORE_LAYER_COLUMNS:
+        raise RuntimeError("MS score-layer columns do not match the released contract")
+    return layers
+
+
 def _heldout_fold_audit(
     scores: pd.DataFrame, expected_sample_metadata: pd.DataFrame
 ) -> dict[str, object]:
@@ -605,7 +654,9 @@ def _heldout_fold_audit(
         raise ValueError("one subject appears in multiple held-out outer folds")
     folds = sorted(subject_folds["fold_id"].astype(str).unique())
     if len(folds) != OUTER_FOLDS:
-        raise ValueError(f"expected three held-out folds, observed {len(folds)}")
+        raise ValueError(
+            f"expected {OUTER_FOLDS} held-out folds, observed {len(folds)}"
+        )
     repeated_sample_folds = (
         scores.loc[:, ["subject_id", "sample_id", "fold_id"]]
         .drop_duplicates()
@@ -759,11 +810,19 @@ def run_ms_ctrl_ca(
         ),
         "code": git_metadata(repo_root),
         "score_semantics": {
-            "sample_score": (
+            "downstream_confirmed_sample_score": (
                 "heldout_receiver_balanced_descriptive_sender_lr_strength"
             ),
+            "primary_sample_score": "mechanistic_sender_lr_score",
+            "primary_score_policy": "annotate",
+            "mechanistic_score": (
+                "heldout_availability_x_prior_quality_x_frozen_sender_assignment"
+            ),
+            "downstream_support": "signed_receiver_family_loss_ratio_annotation",
             "directed_effect": "CA_minus_Ctrl_subject_equal_mean",
-            "primary_ranking": "unordered_cell_pair_condition_specific_positive_sum",
+            "primary_ranking": (
+                "mechanistic_unordered_cell_pair_condition_specific_positive_sum"
+            ),
             "technical_sample_policy": "mean_within_subject_and_lesion_type",
             "cells_are_independent_replicates": False,
             "formal_inference_allowed": False,
@@ -797,8 +856,9 @@ def run_ms_ctrl_ca(
                 ),
             )
         scores = compact_sender_lr_scores(result, data, bundle)
+        score_layers = multigroup_score_layers(result, scores)
         fold_audit = _heldout_fold_audit(scores, sample_metadata)
-        directed_effects = subject_equal_directed_lr_effects(
+        strict_directed_effects = subject_equal_directed_lr_effects(
             scores,
             reference=REFERENCE,
             target=TARGET,
@@ -806,18 +866,38 @@ def run_ms_ctrl_ca(
             edge_columns=DIRECTED_EDGE_COLUMNS,
             min_subjects_per_condition=3,
         )
+        mechanistic_scores = score_layers.copy(deep=False)
+        mechanistic_scores["status"] = score_layers["selected_score_status"]
+        mechanistic_scores["reason_code"] = score_layers["selected_score_reason_code"]
+        mechanistic_directed_effects = subject_equal_directed_lr_effects(
+            mechanistic_scores,
+            reference=REFERENCE,
+            target=TARGET,
+            condition_column="lesion_type",
+            edge_columns=DIRECTED_EDGE_COLUMNS,
+            score_column="selected_score",
+            min_subjects_per_condition=3,
+        )
         rankings = unordered_cell_pair_des_rankings(
-            directed_effects,
+            mechanistic_directed_effects,
             dataset=DES_DATASET_ID,
             method="crychic",
             method_version=method_version,
             resource=bundle.resource_id,
         )
         score_path = output / SCORE_FILENAME
-        directed_path = output / DIRECTED_EFFECT_FILENAME
+        score_layer_path = output / SCORE_LAYER_FILENAME
+        strict_directed_path = output / DIRECTED_EFFECT_FILENAME
+        mechanistic_directed_path = output / MECHANISTIC_DIRECTED_EFFECT_FILENAME
         ranking_path = output / UNORDERED_RANKING_FILENAME
         scores.to_parquet(score_path, index=False, compression="zstd")
-        directed_effects.to_parquet(directed_path, index=False, compression="zstd")
+        score_layers.to_parquet(score_layer_path, index=False, compression="zstd")
+        strict_directed_effects.to_parquet(
+            strict_directed_path, index=False, compression="zstd"
+        )
+        mechanistic_directed_effects.to_parquet(
+            mechanistic_directed_path, index=False, compression="zstd"
+        )
         rankings.to_csv(ranking_path, sep="\t", index=False, lineterminator="\n")
         crossfit_manifest_path = result.path / "crossfit_manifest.json"
         if not crossfit_manifest_path.is_file():
@@ -844,10 +924,33 @@ def run_ms_ctrl_ca(
                     "manifest_sha256": sha256_file(crossfit_manifest_path),
                     "heldout_fold_audit": fold_audit,
                 },
+                "score_layer_diagnostics": {
+                    "mechanistic_sender_lr_score": summarize_score_layer(
+                        score_layers,
+                        score_column="mechanistic_sender_lr_score",
+                        status_column="mechanistic_status",
+                    ),
+                    "downstream_confirmed_sender_lr_score": summarize_score_layer(
+                        score_layers,
+                        score_column="downstream_confirmed_sender_lr_score",
+                        status_column="downstream_confirmed_status",
+                    ),
+                    "selected_score": summarize_score_layer(
+                        score_layers,
+                        score_column="selected_score",
+                        status_column="selected_score_status",
+                    ),
+                },
                 "outputs": {
                     SCORE_FILENAME: _output_record(score_path, scores),
+                    SCORE_LAYER_FILENAME: _output_record(
+                        score_layer_path, score_layers
+                    ),
                     DIRECTED_EFFECT_FILENAME: _output_record(
-                        directed_path, directed_effects
+                        strict_directed_path, strict_directed_effects
+                    ),
+                    MECHANISTIC_DIRECTED_EFFECT_FILENAME: _output_record(
+                        mechanistic_directed_path, mechanistic_directed_effects
                     ),
                     UNORDERED_RANKING_FILENAME: _output_record(ranking_path, rankings),
                 },
@@ -928,8 +1031,11 @@ if __name__ == "__main__":
 __all__ = [
     "DIRECTED_EDGE_COLUMNS",
     "SCORE_COLUMNS",
+    "SCORE_LAYER_COLUMNS",
+    "SCORE_LAYER_FILENAME",
     "build_crossfit_configuration",
     "compact_sender_lr_scores",
+    "multigroup_score_layers",
     "run_ms_ctrl_ca",
     "validate_subset_manifest",
 ]

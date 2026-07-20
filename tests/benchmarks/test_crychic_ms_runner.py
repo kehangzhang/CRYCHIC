@@ -167,7 +167,32 @@ def _target_prior() -> TargetPrior:
 class _FakeResult:
     def __init__(self, path: Path, scores: pd.DataFrame) -> None:
         self.path = path
-        self._scores = scores
+        self._scores = scores.assign(
+            raw_sender_evidence=scores["global_sender_lr_score"],
+            assignment_weight=1.0,
+        )
+        lr_keys = [
+            "crossfit_id",
+            "spec_id",
+            "repeat_id",
+            "fold_id",
+            "contrast_id",
+            "contrast",
+            "sample_id",
+            "subject_id",
+            "context_id",
+            "receiver",
+            "family_id",
+            "driver_id",
+            "interaction_id",
+            "mode",
+        ]
+        self._lr = (
+            self._scores.loc[:, [*lr_keys, "global_sender_lr_score"]]
+            .drop_duplicates(lr_keys)
+            .rename(columns={"global_sender_lr_score": "availability"})
+            .assign(receptor_eligible=True, prior_quality=1.0)
+        )
         self._manifest: dict[str, object] = {
             "schema_version": "9.0.0",
             "status": "complete",
@@ -176,6 +201,23 @@ class _FakeResult:
         path.mkdir(parents=True)
         (path / "crossfit_manifest.json").write_text(
             json.dumps(self._manifest, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        downstream_keys = [
+            "crossfit_id",
+            "spec_id",
+            "repeat_id",
+            "fold_id",
+            "contrast_id",
+            "contrast",
+            "receiver",
+            "subject_id",
+            "family_id",
+        ]
+        (
+            self._scores.loc[:, downstream_keys]
+            .drop_duplicates()
+            .assign(differential_effect=0.1, status="observed", reason_code=None)
+            .to_parquet(path / "descriptive_differential.parquet", index=False)
         )
 
     @property
@@ -193,6 +235,18 @@ class _FakeResult:
         assert mode == "state"
         assert status is None
         return self._scores.copy(deep=True)
+
+    def query_contrast_common_lr_scores(
+        self,
+        *,
+        contrast: str | None = None,
+        mode: str | None = None,
+        status: str | None = None,
+    ) -> pd.DataFrame:
+        assert contrast == module.CONTRAST
+        assert mode == "state"
+        assert status is None
+        return self._lr.copy(deep=True)
 
 
 def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
@@ -242,7 +296,7 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
             records: list[dict[str, object]] = []
             for sample in sample_rows.itertuples(index=False):
                 subject_number = int(str(sample.subject_id).rsplit("_", 1)[1])
-                fold_id = f"fold-{subject_number}"
+                fold_id = f"fold-{1 + (subject_number - 1) % module.OUTER_FOLDS}"
                 for interaction in captured["bundle"].interactions:
                     ligand = str(interaction.ligand_name)
                     if sample.lesion_type == "Ctrl":
@@ -319,11 +373,10 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
         "all_input_samples_observed": True,
         "all_input_subjects_observed": True,
         "heldout_subjects_by_fold": {
-            "fold-1": ["CA_1", "CTRL_1"],
+            "fold-1": ["CA_1", "CA_3", "CTRL_1", "CTRL_3"],
             "fold-2": ["CA_2", "CTRL_2"],
-            "fold-3": ["CA_3", "CTRL_3"],
         },
-        "n_folds": 3,
+        "n_folds": 2,
         "n_samples": 7,
         "n_subjects": 6,
         "subject_heldout_once": True,
@@ -339,13 +392,23 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     assert config.covariates == ("batch",)
     assert config.categorical_covariates == ("batch",)
     assert config.design == "~ batch + lesion_type"
-    assert spec.allowed_n_splits == (3,)
+    assert spec.allowed_n_splits == (2,)
     assert spec.contrasts[0].name == "CA_vs_Ctrl"
 
     scores = pd.read_parquet(output_dir / module.SCORE_FILENAME)
+    score_layers = pd.read_parquet(output_dir / module.SCORE_LAYER_FILENAME)
     effects = pd.read_parquet(output_dir / module.DIRECTED_EFFECT_FILENAME)
+    mechanistic_effects = pd.read_parquet(
+        output_dir / module.MECHANISTIC_DIRECTED_EFFECT_FILENAME
+    )
     rankings = pd.read_csv(output_dir / module.UNORDERED_RANKING_FILENAME, sep="\t")
     assert len(scores) == 14
+    assert tuple(score_layers.columns) == module.SCORE_LAYER_COLUMNS
+    assert score_layers["selected_score"].equals(
+        score_layers["mechanistic_sender_lr_score"]
+    )
+    assert set(score_layers["selected_score_policy"]) == {"annotate"}
+    assert mechanistic_effects["effect_semantics"].str.contains("selected_score").all()
     assert effects["n_samples_target"].eq(4).all()
     assert effects["n_subjects_target"].eq(3).all()
     effect_by_ligand = effects.set_index("ligand")["effect_target_minus_reference"]
@@ -366,6 +429,8 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     assert not forbidden.intersection(scores.columns)
     assert not forbidden.intersection(effects.columns)
     assert not forbidden.intersection(rankings.columns)
+    assert module.SCORE_LAYER_FILENAME in manifest["outputs"]
+    assert module.MECHANISTIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
 
 
 def test_ms_subset_manifest_fails_closed_on_output_hash(

@@ -7,13 +7,17 @@ import pytest
 from crychic.scoring import (
     LEGACY_UNTRACKED_SCORE_VERSION,
     CommunicationScores,
+    DownstreamEvidencePolicy,
     ScoringFunctional,
     ScoringFunctionalStatus,
     ScoringModelManifest,
+    downstream_modulated_strength,
     float64_array_digest,
+    mechanistic_only_strength,
     mechanistic_strength,
     pair_softmin,
     score_communication,
+    select_communication_score,
 )
 
 _MANIFEST_VALUES = {
@@ -112,9 +116,10 @@ def test_every_learned_artifact_changes_manifest_and_functional_id(
     )
 
     assert first_manifest.model_manifest_id != changed_manifest.model_manifest_id
-    assert _functional(first_manifest).scoring_function_id != _functional(
-        changed_manifest
-    ).scoring_function_id
+    assert (
+        _functional(first_manifest).scoring_function_id
+        != _functional(changed_manifest).scoring_function_id
+    )
 
 
 def test_model_manifest_is_stable_serializable_and_validated() -> None:
@@ -156,21 +161,17 @@ def test_tracked_functional_requires_matching_manifest() -> None:
 
 
 def test_tracked_provenance_is_preserved_and_common_across_contexts() -> None:
-    functional = _functional(
-        _manifest(), status=ScoringFunctionalStatus.OUT_OF_FOLD
-    )
+    functional = _functional(_manifest(), status=ScoringFunctionalStatus.OUT_OF_FOLD)
     result = score_communication(
         _availability(functional), _downstream(functional), functional
     )
 
     assert set(result.table["score_version"]) == {functional.score_version}
-    assert set(result.table["model_manifest_id"]) == {
-        functional.model_manifest_id
-    }
+    assert set(result.table["model_manifest_id"]) == {functional.model_manifest_id}
     inconsistent = result.table.copy()
-    inconsistent.loc[
-        inconsistent["context"] == "treated", "model_manifest_id"
-    ] = "different-model"
+    inconsistent.loc[inconsistent["context"] == "treated", "model_manifest_id"] = (
+        "different-model"
+    )
     with pytest.raises(ValueError, match="model_manifest_id provenance"):
         CommunicationScores(inconsistent, functional)
 
@@ -241,3 +242,81 @@ def test_mechanistic_missingness_does_not_replace_missing_with_zero() -> None:
         prior_quality=1.0,
         sender_weight=0.5,
     ) == (None, None, None)
+
+
+def test_mechanistic_only_layer_excludes_downstream_and_conserves_sender() -> None:
+    core, adjusted, unresolved = mechanistic_only_strength(
+        availability=0.8,
+        prior_quality=0.5,
+        sender_weight=None,
+    )
+    assert core == pytest.approx(0.4)
+    assert adjusted == core
+    assert unresolved is None
+
+    sender_scores = [
+        mechanistic_only_strength(
+            availability=0.8,
+            prior_quality=0.5,
+            sender_weight=weight,
+        )[2]
+        for weight in (0.25, 0.75)
+    ]
+    assert sum(value or 0.0 for value in sender_scores) == pytest.approx(core)
+    assert mechanistic_only_strength(
+        availability=0.0,
+        prior_quality=1.0,
+        sender_weight=1.0,
+    ) == (0.0, 0.0, 0.0)
+    assert mechanistic_only_strength(
+        availability=0.0,
+        prior_quality=None,
+        sender_weight=None,
+    ) == (0.0, 0.0, 0.0)
+    assert mechanistic_only_strength(
+        availability=None,
+        prior_quality=0.0,
+        sender_weight=None,
+    ) == (0.0, 0.0, 0.0)
+    assert mechanistic_only_strength(
+        availability=0.8,
+        prior_quality=0.5,
+        sender_weight=0.0,
+    ) == (0.4, 0.4, 0.0)
+    assert mechanistic_only_strength(
+        availability=None,
+        prior_quality=1.0,
+        sender_weight=1.0,
+    ) == (None, None, None)
+
+
+def test_downstream_modulation_is_signed_neutral_and_boundary_safe() -> None:
+    baseline = downstream_modulated_strength(0.4, 0.0)
+    opposed = downstream_modulated_strength(0.4, -0.5)
+    supported = downstream_modulated_strength(0.4, 0.5)
+    assert baseline == pytest.approx(0.4)
+    assert opposed is not None and supported is not None
+    assert 0.0 < opposed < baseline < supported < 1.0
+    assert downstream_modulated_strength(0.4, None) == pytest.approx(0.4)
+    assert downstream_modulated_strength(0.0, 1.0) == 0.0
+    assert downstream_modulated_strength(1.0, -1.0) == 1.0
+    with pytest.raises(ValueError, match=r"\[-1, 1\]"):
+        downstream_modulated_strength(0.4, 1.1)
+
+
+def test_score_policy_never_uses_result_dependent_fallback() -> None:
+    values = {
+        "mechanistic_score": 0.4,
+        "downstream_modulated_score": 0.5,
+        "downstream_confirmed_score": 0.0,
+    }
+    assert select_communication_score(
+        policy=DownstreamEvidencePolicy.ANNOTATE, **values
+    ) == pytest.approx(0.4)
+    assert select_communication_score(
+        policy=DownstreamEvidencePolicy.MODULATE, **values
+    ) == pytest.approx(0.5)
+    assert (
+        select_communication_score(policy=DownstreamEvidencePolicy.REQUIRED, **values)
+        == 0.0
+    )

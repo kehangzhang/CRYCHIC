@@ -429,9 +429,7 @@ def test_three_node_equal_weight_mapping_tamper_fails_integrity() -> None:
 
     with pytest.raises(ContractError) as error:
         functional.to_dict()
-    assert error.value.details.code == (
-        "common_sender_functional_integrity_violation"
-    )
+    assert error.value.details.code == ("common_sender_functional_integrity_violation")
 
 
 def test_two_node_sender_identity_and_effect_parity() -> None:
@@ -511,6 +509,23 @@ def test_application_uses_only_local_ligand_and_one_frozen_functional() -> None:
     assert set(table["status"]) == {CommonSenderApplicationStatus.OK.value}
     assert result.causal_interpretation == "evidence_based_non_causal"
     assert not result.is_oof_certified
+
+
+def test_producer_fast_path_is_byte_stable_under_public_revalidation() -> None:
+    functional = _functional()
+    application = apply_contrast_common_sender_functional(
+        functional, _heldout_availability()
+    )
+
+    revalidated = CommonSenderApplication(application.table, functional)
+
+    pd.testing.assert_frame_equal(
+        application.table, revalidated.table, check_exact=True
+    )
+    assert application.table["sender_application_id"].tolist() == [
+        "common_sender_application_01b6cc127f4c3fd04d2aeaa24e3e28f5",
+        "common_sender_application_d0467bc91bc347650b5b0eadcaf18584",
+    ]
 
 
 def test_unrelated_heldout_context_is_excluded_and_unseen_sender_is_ignored() -> None:
@@ -1079,9 +1094,7 @@ def test_completely_missing_receiver_remains_frozen_and_not_estimable() -> None:
         support.status is SenderContrastSupportStatus.NOT_ESTIMABLE
         for support in by_receiver["R2"]
     )
-    assert {
-        support.multiplicity_family_id for support in by_receiver["R"]
-    }.isdisjoint(
+    assert {support.multiplicity_family_id for support in by_receiver["R"]}.isdisjoint(
         {support.multiplicity_family_id for support in by_receiver["R2"]}
     )
 
@@ -1217,9 +1230,7 @@ def test_functional_rejects_coordinated_support_replacement_across_inputs() -> N
 
     with pytest.raises(ContractError) as error:
         weak.to_dict()
-    assert error.value.details.code == (
-        "common_sender_functional_integrity_violation"
-    )
+    assert error.value.details.code == ("common_sender_functional_integrity_violation")
 
 
 @pytest.mark.parametrize(
@@ -1287,9 +1298,7 @@ def test_functional_jointly_rejects_forged_holm_family(forgery: str) -> None:
     object.__setattr__(functional, "contrast_supports", supports)
     with pytest.raises(ContractError) as error:
         functional.to_dict()
-    assert error.value.details.code == (
-        "common_sender_functional_integrity_violation"
-    )
+    assert error.value.details.code == ("common_sender_functional_integrity_violation")
 
 
 def test_technical_rows_are_meaned_before_interaction_sender_maximum() -> None:

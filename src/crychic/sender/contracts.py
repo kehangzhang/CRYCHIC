@@ -92,6 +92,7 @@ _SENDER_CONTRAST_SUPPORT_PRODUCER = "common_sender_fit_v3"
 _SENDER_CONTRAST_SUPPORT_PRODUCER_TOKEN = object()
 _SENDER_FUNCTIONAL_PRODUCER = "common_sender_functional_fit_v3"
 _SENDER_FUNCTIONAL_PRODUCER_TOKEN = object()
+_COMMON_SENDER_APPLICATION_PRODUCER_TOKEN = object()
 _FORBIDDEN_INFERENCE_COLUMNS = {
     "p",
     "p_value",
@@ -130,9 +131,7 @@ def _canonical_contrast_weights(
         if not math.isfinite(weight):
             raise ValueError("contrast weights must be finite")
         normalized.append((raw_context_id.strip(), weight))
-    if len(normalized) < 2 or len({item[0] for item in normalized}) != len(
-        normalized
-    ):
+    if len(normalized) < 2 or len({item[0] for item in normalized}) != len(normalized):
         raise ValueError("contrast weights require unique context IDs")
     return tuple(sorted(normalized, key=lambda item: item[0]))
 
@@ -761,9 +760,7 @@ class InteractionLigandContrastSupport:
                 field="aggregation_policy",
                 remediation="Use the released paired or independent policy",
             )
-        independent = (
-            aggregation_policy == _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
-        )
+        independent = aggregation_policy == _SENDER_CONTRAST_SUPPORT_POLICY_INDEPENDENT
         identifiers: dict[str, str] = {}
         for field_name, raw_value in (
             ("receiver", receiver),
@@ -883,9 +880,7 @@ class InteractionLigandContrastSupport:
         context_counts: dict[str, int] = {}
         if independent:
             allowed_contexts = {context for context, _ in canonical_weights}
-            unknown_contexts = set(canonical_unit_contexts).difference(
-                allowed_contexts
-            )
+            unknown_contexts = set(canonical_unit_contexts).difference(allowed_contexts)
             if unknown_contexts:
                 raise ContractError(
                     "independent support contains contexts outside the contrast",
@@ -1055,8 +1050,7 @@ class InteractionLigandContrastSupport:
                     for context, values in values_by_context.items()
                 }
                 observed_mean = math.fsum(
-                    weight * means[context]
-                    for context, weight in canonical_weights
+                    weight * means[context] for context, weight in canonical_weights
                 )
                 variance_terms = tuple(
                     (weight * weight)
@@ -1098,8 +1092,7 @@ class InteractionLigandContrastSupport:
                 observed_mean = math.fsum(canonical_effects) / n_complete
                 sample_variance = (
                     math.fsum(
-                        (effect - observed_mean) ** 2
-                        for effect in canonical_effects
+                        (effect - observed_mean) ** 2 for effect in canonical_effects
                     )
                     / normalized_df
                 )
@@ -1616,9 +1609,7 @@ class ContrastCommonSenderFunctional:
                 field="frozen_interaction_ids",
                 remediation="Bind the complete outer-training interaction universe",
             )
-        frozen_interactions = tuple(
-            sorted(value.strip() for value in raw_interactions)
-        )
+        frozen_interactions = tuple(sorted(value.strip() for value in raw_interactions))
         if len(frozen_interactions) != len(set(frozen_interactions)):
             raise ContractError(
                 "frozen_interaction_ids must be unique",
@@ -1679,8 +1670,7 @@ class ContrastCommonSenderFunctional:
                 )
             senders = tuple(raw_senders)
             if not senders or any(
-                not isinstance(sender, str) or not sender.strip()
-                for sender in senders
+                not isinstance(sender, str) or not sender.strip() for sender in senders
             ):
                 raise ContractError(
                     "each frozen interaction must contain candidate senders",
@@ -1819,8 +1809,7 @@ class ContrastCommonSenderFunctional:
                 )
             else:
                 lineage_invalid = lineage_invalid or (
-                    len(support.unit_context_ids)
-                    != len(support.complete_subject_ids)
+                    len(support.unit_context_ids) != len(support.complete_subject_ids)
                     or not set(support.complete_subject_ids).issubset(subjects)
                     or len(set(support.complete_subject_ids))
                     != len(support.complete_subject_ids)
@@ -2015,8 +2004,7 @@ class ContrastCommonSenderFunctional:
                 and self.training_subject_ids == repeated.training_subject_ids
                 and self.filter_universe_id == repeated.filter_universe_id
                 and self.frozen_interaction_ids == repeated.frozen_interaction_ids
-                and self.candidate_sender_manifest
-                == repeated.candidate_sender_manifest
+                and self.candidate_sender_manifest == repeated.candidate_sender_manifest
                 and self.training_availability_digest
                 == repeated.training_availability_digest
                 and self.training_input_digest == repeated.training_input_digest
@@ -2085,6 +2073,42 @@ class CommonSenderApplication:
 
     table: pd.DataFrame
     functional: ContrastCommonSenderFunctional
+
+    @classmethod
+    @validation_scope()
+    def _from_producer_table(
+        cls,
+        table: pd.DataFrame,
+        functional: ContrastCommonSenderFunctional,
+        *,
+        _producer_token: object,
+    ) -> CommonSenderApplication:
+        """Freeze a table that the released sender producer just constructed."""
+
+        if _producer_token is not _COMMON_SENDER_APPLICATION_PRODUCER_TOKEN:
+            raise TypeError("common sender applications are sender-producer-owned")
+        if not isinstance(functional, ContrastCommonSenderFunctional):
+            raise TypeError("functional must be ContrastCommonSenderFunctional")
+        functional._require_intact()
+        if not isinstance(table, pd.DataFrame):
+            raise TypeError("common sender application must be a pandas DataFrame")
+        if set(table.columns) != set(COMMON_SENDER_APPLICATION_COLUMNS):
+            raise ContractError(
+                "producer common sender application columns do not match the contract",
+                code="invalid_common_sender_application",
+                field="columns",
+                remediation=f"Use exactly {list(COMMON_SENDER_APPLICATION_COLUMNS)}",
+            )
+        frozen = table.loc[:, list(COMMON_SENDER_APPLICATION_COLUMNS)].sort_values(
+            [*COMMON_SENDER_GROUP_COLUMNS, "sender"],
+            kind="stable",
+            ignore_index=True,
+        )
+        self = object.__new__(cls)
+        object.__setattr__(self, "table", frozen)
+        object.__setattr__(self, "functional", functional)
+        record_validation(self)
+        return self
 
     @validation_scope()
     def __post_init__(self) -> None:
@@ -2409,9 +2433,8 @@ class CommonSenderApplication:
             return
         try:
             repeated = CommonSenderApplication(self.table, self.functional)
-            valid = (
-                self.functional is repeated.functional
-                and self.table.equals(repeated.table)
+            valid = self.functional is repeated.functional and self.table.equals(
+                repeated.table
             )
         except (AttributeError, ContractError, TypeError, ValueError) as error:
             raise ContractError(

@@ -8,11 +8,13 @@ from anndata import AnnData
 
 import crychic
 import crychic.api as public_api
+import crychic.api.facade as facade_module
 import crychic.inference as inference
 import crychic.response as response
 import crychic.results as results
 import crychic.workflow as workflow
 from crychic.core import FeatureUnavailableError
+from crychic.core._validation import record_validation, validation_is_cached
 from crychic.design import balanced_contrast
 
 
@@ -587,6 +589,42 @@ def test_crossfit_facade_requires_typed_spec_and_versioned_resource() -> None:
             n_plans=1,
         )
     assert probability_error.value.details.code == "resource_bundle_missing"
+
+
+def test_crossfit_facade_reuses_validation_scope_for_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = crychic.Crychic(crychic.CrychicConfig(context_keys=["condition"]))
+    object.__setattr__(model, "_resource_bundle", object())
+    object.__setattr__(model, "_target_prior", object())
+    spec = crychic.CrossFitSpec(
+        contrasts=(
+            balanced_contrast(
+                ("treated",),
+                ("control",),
+                name="treated_vs_control",
+            ),
+        ),
+    )
+    artifact = object()
+    persisted = object()
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        record_validation(artifact)
+        return artifact
+
+    def fake_write(observed: object, output_dir: object) -> object:
+        assert observed is artifact
+        assert validation_is_cached(observed)
+        return persisted
+
+    monkeypatch.setattr(facade_module, "run_subject_crossfit", fake_run)
+    monkeypatch.setattr(facade_module, "write_crossfit_result", fake_write)
+
+    result = model.fit_crossfit(_adata(), spec=spec, output_dir="result")
+
+    assert result is persisted
+    assert not validation_is_cached(artifact)
 
 
 def test_repeated_and_resampling_facades_require_typed_specs() -> None:

@@ -165,7 +165,32 @@ def _target_prior() -> TargetPrior:
 class _FakeResult:
     def __init__(self, path: Path, scores: pd.DataFrame) -> None:
         self.path = path
-        self._scores = scores
+        self._scores = scores.assign(
+            raw_sender_evidence=scores["global_sender_lr_score"],
+            assignment_weight=1.0,
+        )
+        lr_keys = [
+            "crossfit_id",
+            "spec_id",
+            "repeat_id",
+            "fold_id",
+            "contrast_id",
+            "contrast",
+            "sample_id",
+            "subject_id",
+            "context_id",
+            "receiver",
+            "family_id",
+            "driver_id",
+            "interaction_id",
+            "mode",
+        ]
+        self._lr = (
+            self._scores.loc[:, [*lr_keys, "global_sender_lr_score"]]
+            .drop_duplicates(lr_keys)
+            .rename(columns={"global_sender_lr_score": "availability"})
+            .assign(receptor_eligible=True, prior_quality=1.0)
+        )
         self._manifest: dict[str, object] = {
             "schema_version": "9.0.0",
             "status": "complete",
@@ -174,6 +199,23 @@ class _FakeResult:
         path.mkdir(parents=True)
         (path / "crossfit_manifest.json").write_text(
             json.dumps(self._manifest, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        downstream_keys = [
+            "crossfit_id",
+            "spec_id",
+            "repeat_id",
+            "fold_id",
+            "contrast_id",
+            "contrast",
+            "receiver",
+            "subject_id",
+            "family_id",
+        ]
+        (
+            self._scores.loc[:, downstream_keys]
+            .drop_duplicates()
+            .assign(differential_effect=0.1, status="observed", reason_code=None)
+            .to_parquet(path / "descriptive_differential.parquet", index=False)
         )
 
     @property
@@ -191,6 +233,18 @@ class _FakeResult:
         assert mode == "state"
         assert status is None
         return self._scores.copy(deep=True)
+
+    def query_contrast_common_lr_scores(
+        self,
+        *,
+        contrast: str | None = None,
+        mode: str | None = None,
+        status: str | None = None,
+    ) -> pd.DataFrame:
+        assert contrast == module.CONTRAST
+        assert mode == "state"
+        assert status is None
+        return self._lr.copy(deep=True)
 
 
 def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
@@ -231,7 +285,7 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
             records: list[dict[str, object]] = []
             for sample in sample_rows.itertuples(index=False):
                 subject_number = int(str(sample.subject_id).rsplit("_", 1)[1])
-                fold_id = f"fold-{subject_number}"
+                fold_id = f"fold-{1 + (subject_number - 1) % module.OUTER_FOLDS}"
                 for interaction in interactions:
                     ligand = str(interaction.ligand_name)
                     values = {
@@ -303,11 +357,11 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     assert manifest["parameters"]["threads"] == 2
     assert manifest["parameters"]["blas_threads_per_fold"] == 2
     assert manifest["parameters"]["fold_jobs"] == 3
-    assert manifest["parameters"]["effective_fold_jobs"] == 3
-    assert manifest["parameters"]["outer_folds"] == 3
+    assert manifest["parameters"]["effective_fold_jobs"] == 2
+    assert manifest["parameters"]["outer_folds"] == 2
     assert manifest["resource"]["interactions"] == 2
     assert manifest["resource"]["observation_label_dependency"] is False
-    assert manifest["crossfit_result"]["heldout_fold_audit"]["n_folds"] == 3
+    assert manifest["crossfit_result"]["heldout_fold_audit"]["n_folds"] == 2
     assert manifest["crossfit_result"]["heldout_fold_audit"]["n_samples"] == 6
     assert manifest["crossfit_result"]["heldout_fold_audit"]["n_subjects"] == 6
     assert manifest["score_semantics"]["p_value"] == "not_emitted"
@@ -317,20 +371,29 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     spec = captured["spec"]
     assert captured["n_jobs"] == 3
     assert [mode.value for mode in config.communication_modes] == ["state"]
-    assert spec.allowed_n_splits == (3,)
+    assert spec.allowed_n_splits == (2,)
     assert spec.outer_fold_partition_seed == 17
     assert spec.training_spec.max_interactions is None
     assert spec.contrasts[0].name == module.CONTRAST
 
     scores = pd.read_parquet(output_dir / module.SCORE_FILENAME)
+    score_layers = pd.read_parquet(output_dir / module.SCORE_LAYER_FILENAME)
     differences = pd.read_parquet(output_dir / module.DIFFERENCE_FILENAME)
     ranking = pd.read_parquet(output_dir / module.RANKING_FILENAME)
     directed_effects = pd.read_parquet(output_dir / module.DIRECTED_EFFECT_FILENAME)
+    mechanistic_effects = pd.read_parquet(
+        output_dir / module.MECHANISTIC_DIRECTED_EFFECT_FILENAME
+    )
     des_rankings = pd.read_csv(
         output_dir / module.UNORDERED_RANKING_FILENAME,
         sep="\t",
     )
     assert tuple(scores.columns) == module.SCORE_COLUMNS
+    assert tuple(score_layers.columns) == module.SCORE_LAYER_COLUMNS
+    assert score_layers["selected_score"].equals(
+        score_layers["mechanistic_sender_lr_score"]
+    )
+    assert set(score_layers["selected_score_policy"]) == {"annotate"}
     assert len(scores) == 12
     assert not {"p_value", "q_value", "pval", "qval"}.intersection(scores.columns)
     assert not scores["formal_inference_allowed"].any()
@@ -361,6 +424,9 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
         "L2", "effect_target_minus_reference"
     ] == pytest.approx(-0.6)
     assert module.UNORDERED_RANKING_FILENAME in manifest["outputs"]
+    assert module.SCORE_LAYER_FILENAME in manifest["outputs"]
+    assert module.MECHANISTIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
+    assert mechanistic_effects["effect_semantics"].str.contains("selected_score").all()
 
     for filename in (
         module.DIRECTED_EFFECT_FILENAME,

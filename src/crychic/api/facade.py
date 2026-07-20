@@ -11,6 +11,7 @@ from anndata import AnnData
 from crychic.attribution import AttributionSupportMethod
 from crychic.availability import AvailabilityParameters
 from crychic.core import CrychicConfig, FeatureUnavailableError, SeedLineage
+from crychic.core._validation import validation_scope
 from crychic.data import InputSchema, ValidatedInput, validate_anndata
 from crychic.design import ContextGraph
 from crychic.inference import (
@@ -306,6 +307,7 @@ class Crychic:
             persist_edge_evidence=persist_edge_evidence,
         )
 
+    @validation_scope()
     def fit_crossfit(
         self,
         adata: AnnData,

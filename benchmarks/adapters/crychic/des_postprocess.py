@@ -66,8 +66,7 @@ def heldout_sample_coverage_audit(
         )
     if missing_expected or expected_sample_metadata.empty:
         raise ValueError(
-            "expected sample metadata are empty or missing: "
-            f"{sorted(missing_expected)}"
+            f"expected sample metadata are empty or missing: {sorted(missing_expected)}"
         )
     expected = (
         expected_sample_metadata.loc[:, ["sample_id", "subject_id"]]
@@ -259,7 +258,7 @@ def subject_equal_directed_lr_effects(
         estimable, None, "insufficient_subject_score_coverage"
     )
     result["effect_semantics"] = (
-        "target_minus_reference_subject_equal_mean_global_sender_lr_score_descriptive"
+        f"target_minus_reference_subject_equal_mean_{score_column}_descriptive"
     )
     result["formal_inference_allowed"] = False
     return result.loc[:, [*edges, *DIRECTED_EFFECT_COLUMNS]].sort_values(

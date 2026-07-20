@@ -1173,6 +1173,27 @@ def _persistable_run() -> CrossFitArtifacts:
     )
 
 
+def test_state_only_config_avoids_unrequested_ecosystem_score_rows() -> None:
+    result = run_subject_crossfit(
+        _adata(),
+        replace(_config(), communication_modes=("state",)),
+        _bundle(),
+        _prior(),
+        spec=_persistable_spec(),
+    )
+
+    applications = [
+        application
+        for fold in result.folds
+        for application in fold.family_common_applications
+    ]
+    assert applications
+    for application in applications:
+        assert set(application.family_scores["mode"]) == {"state"}
+        assert set(application.member_scores["mode"]) == {"state"}
+        assert set(application.sender_scores["mode"]) == {"state"}
+
+
 def _as_v3_scoring_registry(
     current: ScoringCollectionDocument,
 ) -> ScoringCollectionDocument:
@@ -4325,9 +4346,7 @@ def test_orchestrator_passes_only_disjoint_preaggregated_scopes(
             sorted(prepared.sample_metadata["subject_id"].astype(str).unique())
         )
         aggregate_subjects = tuple(
-            sorted(
-                prepared.aggregate.unit_metadata["subject_id"].astype(str).unique()
-            )
+            sorted(prepared.aggregate.unit_metadata["subject_id"].astype(str).unique())
         )
         assert aggregate_subjects == subjects
         calls.append(("fit", subjects))
@@ -4339,9 +4358,7 @@ def test_orchestrator_passes_only_disjoint_preaggregated_scopes(
             sorted(prepared.sample_metadata["subject_id"].astype(str).unique())
         )
         aggregate_subjects = tuple(
-            sorted(
-                prepared.aggregate.unit_metadata["subject_id"].astype(str).unique()
-            )
+            sorted(prepared.aggregate.unit_metadata["subject_id"].astype(str).unique())
         )
         assert aggregate_subjects == subjects
         assert not set(subjects).intersection(artifacts.training_subject_ids)

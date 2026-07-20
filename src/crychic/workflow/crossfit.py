@@ -53,6 +53,7 @@ from crychic.attribution.precision import (
 )
 from crychic.availability import BatchAvailability
 from crychic.core import (
+    CommunicationMode,
     ContractError,
     CrychicConfig,
     SeedLineage,
@@ -455,7 +456,7 @@ def _table_digest(table_name: str, table: pd.DataFrame) -> str:
         schema_version="1",
         digest_length=64,
     )
-    id_prefix = validation_id[:-(64 + 1)]
+    id_prefix = validation_id[: -(64 + 1)]
     template = canonical_json(
         {
             "components": {
@@ -1155,7 +1156,9 @@ def _require_family_common_exact_coverage(
         )
 
     attribution, differential, family_scores, member_scores, sender_scores = tables
-    modes = tuple(sorted(_FAMILY_SCORE_MODES))
+    modes = tuple(sorted(set(family_scores["mode"].astype(str))))
+    if not modes or not set(modes).issubset(_FAMILY_SCORE_MODES):
+        raise ValueError("family scores contain unsupported communication modes")
     membership = {
         item.interaction_id: (item.family_id, item.driver_id)
         for item in functional.interactions
@@ -1957,8 +1960,7 @@ class CrossFitFoldArtifacts:
                         for application in global_application.child_applications
                     )
                     != tuple(
-                        application.application_id
-                        for application in child_applications
+                        application.application_id for application in child_applications
                     )
                     or global_application.source_sender_application_digests
                     != expected_sender_digests
@@ -2813,6 +2815,24 @@ class CrossFitArtifacts:
         receiver_audit_id = _receiver_coverage_identity(
             receiver_coverage, fold_plan_id=self.fold_plan.plan_id
         )
+        functional_contrasts_by_fold = {
+            fold_id: {
+                functional.sender_functional_id: _contrast_id(functional.contrast)
+                for functional in item.training.sender_functionals
+            }
+            for fold_id, item in fold_artifacts.items()
+        }
+        encoder_applications_by_fold = {
+            fold_id: {
+                _contrast_id(encoder.contrast): (encoder, application)
+                for encoder, application in zip(
+                    item.design_encoders,
+                    item.design_applications,
+                    strict=True,
+                )
+            }
+            for fold_id, item in fold_artifacts.items()
+        }
         for row in assignments.itertuples(index=False):
             fold_id = str(row.fold_id)
             if fold_id not in fold_artifacts:
@@ -2829,29 +2849,17 @@ class CrossFitArtifacts:
                 raise ValueError(
                     "sender assignment training artifact does not match its fold"
                 )
-            functionals = {
-                functional.sender_functional_id: _contrast_id(functional.contrast)
-                for functional in item.training.sender_functionals
-            }
             functional_id = str(row.sender_functional_id)
-            if functionals.get(functional_id) != str(row.contrast_id):
+            if functional_contrasts_by_fold[fold_id].get(functional_id) != str(
+                row.contrast_id
+            ):
                 raise ValueError(
                     "sender assignment functional does not match its fold contrast"
                 )
         for row in coverage.itertuples(index=False):
-            item = fold_artifacts[str(row.fold_id)]
-            encoders = {
-                _contrast_id(encoder.contrast): (
-                    encoder,
-                    application,
-                )
-                for encoder, application in zip(
-                    item.design_encoders,
-                    item.design_applications,
-                    strict=True,
-                )
-            }
-            pair = encoders.get(str(row.contrast_id))
+            pair = encoder_applications_by_fold[str(row.fold_id)].get(
+                str(row.contrast_id)
+            )
             if pair is None:
                 raise ValueError("coverage row references an unknown design contrast")
             encoder, design_application = pair
@@ -3999,8 +4007,7 @@ def _training_receiver_families(
         or availability.application_subject_ids != prepared.subject_ids
         or availability.filter_universe_id
         != training.frozen_interaction_universe.filter_universe_id
-        or
-        availability.frozen_interaction_universe.to_dict()
+        or availability.frozen_interaction_universe.to_dict()
         != training.frozen_interaction_universe.to_dict()
     ):
         raise RuntimeError(
@@ -4754,6 +4761,8 @@ def _family_common_edge_evidence(
     functional: FamilyCommonScoringFunctional,
     design_application: FrozenDesignApplication,
     availability: pd.DataFrame,
+    *,
+    communication_modes: tuple[str, ...],
 ) -> pd.DataFrame:
     """Build exact sample/interaction/mode evidence from frozen held-out rows."""
 
@@ -4835,10 +4844,8 @@ def _family_common_edge_evidence(
             ligand_contrast_gate = ligand_contrast_gates[interaction_id]
             evidence = grouped.get((sample_id, functional.receiver, interaction_id))
             ligand_availability = None if evidence is None else evidence[0]
-            for mode, evidence_index in (
-                ("state", 1),
-                ("ecosystem", 2),
-            ):
+            for mode in communication_modes:
+                evidence_index = 1 if mode == "state" else 2
                 rows.append(
                     {
                         "sample_id": sample_id,
@@ -5001,6 +5008,7 @@ def _apply_family_common_chains(
     design_encoders: tuple[FrozenDesignEncoder, ...],
     design_applications: tuple[FrozenDesignApplication, ...],
     availability: pd.DataFrame,
+    communication_modes: tuple[str, ...],
 ) -> tuple[
     tuple[FamilyCommonScoringApplication, ...],
     tuple[_FamilyCommonCrossFitBinding, ...],
@@ -5048,6 +5056,7 @@ def _apply_family_common_chains(
             functional,
             design_application,
             availability,
+            communication_modes=communication_modes,
         )
         diagnostic = incremental_application.diagnostic_application
         if (
@@ -5815,9 +5824,7 @@ def _run_crossfit_fold(
         receiver_incremental_applications,
         receiver_ids=training.cell_type_ids,
     )
-    _fold_stage_completed(
-        fold.fold_id, "receiver_incremental_chain", stage_started
-    )
+    _fold_stage_completed(fold.fold_id, "receiver_incremental_chain", stage_started)
     observed_contrasts = {
         _contrast_id(functional.contrast) for functional in training.sender_functionals
     }
@@ -5868,6 +5875,14 @@ def _run_crossfit_fold(
             design_encoders=design_encoders,
             design_applications=design_applications,
             availability=application.availability.sample_interactions,
+            communication_modes=tuple(
+                sorted(
+                    {
+                        CommunicationMode(mode).value
+                        for mode in config.communication_modes
+                    }
+                )
+            ),
         )
         cross_receiver_common_applications = (
             _apply_cross_receiver_common_chains(
@@ -6130,9 +6145,7 @@ def _run_subject_crossfit(
     )
 
     def execute(fold: FoldManifest) -> _CrossFitFoldExecutionResult:
-        started = (
-            fold_reporter.task_started() if fold_reporter is not None else None
-        )
+        started = fold_reporter.task_started() if fold_reporter is not None else None
         try:
             with _receiver_family_validation_scope(), validation_scope():
                 return _run_crossfit_fold(fold, context=fold_context)

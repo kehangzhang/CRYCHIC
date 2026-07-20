@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import crychic.scoring.family_common as family_common_module
 from crychic.attribution import (
     ReceiverFamilyTrainingArtifact,
     fit_receiver_family_training_artifact,
@@ -17,7 +18,7 @@ from crychic.availability import (
     InteractionFilterApplication,
     InteractionFilterPolicy,
 )
-from crychic.core import ContractError
+from crychic.core import ContractError, stable_id
 from crychic.design import balanced_contrast
 from crychic.resources import (
     GeneNamespace,
@@ -52,6 +53,33 @@ from crychic.sender import (
     freeze_common_sender_candidate_manifest,
     interaction_ligand_contrast_gate,
 )
+
+
+def test_streamed_family_table_digest_matches_legacy_stable_id() -> None:
+    columns = ("identifier", "score", "reason")
+    table = pd.DataFrame(
+        [
+            ["row-b", np.float64(0.25), None],
+            ["row-a", np.nan, "not_estimable"],
+        ],
+        columns=columns,
+    )
+    rows = [
+        [family_common_module._canonical_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    expected = stable_id(
+        "family_common_digest_fixture",
+        {"columns": list(columns), "rows": rows},
+        schema_version="1",
+    )
+
+    assert (
+        family_common_module._table_digest(
+            "family_common_digest_fixture", table, columns
+        )
+        == expected
+    )
 
 
 def _prior(columns: Mapping[str, Mapping[str, float]]) -> TargetPrior:
@@ -794,11 +822,20 @@ def test_producer_owned_types_and_edge_contract_fail_closed() -> None:
             _edge_evidence().assign(receiver_activity=1.0),
             sender_application,
         )
-    with pytest.raises(ContractError, match="released scoring modes"):
+    state_only = apply_family_common_scoring_functional(
+        functional,
+        _incremental_application(incremental),
+        _edge_evidence().loc[lambda frame: frame["mode"].eq("state")],
+        sender_application,
+    )
+    assert set(state_only.family_scores["mode"]) == {"state"}
+    with pytest.raises(ContractError, match="unsupported scoring modes"):
         apply_family_common_scoring_functional(
             functional,
             _incremental_application(incremental),
-            _edge_evidence().loc[lambda frame: frame["mode"].eq("state")],
+            _edge_evidence()
+            .loc[lambda frame: frame["mode"].eq("state")]
+            .assign(mode="invalid"),
             sender_application,
         )
 

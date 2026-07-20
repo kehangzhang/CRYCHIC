@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import crychic.scoring.global_common as global_common_module
 from crychic.attribution import (
     GainCalibrationSpec,
     PenaltyTuningSpec,
@@ -30,7 +31,7 @@ from crychic.availability import (
     InteractionFilterApplication,
     InteractionFilterPolicy,
 )
-from crychic.core import ContractError
+from crychic.core import ContractError, canonical_json, stable_id
 from crychic.design import balanced_contrast
 from crychic.resources import GeneNamespace, MappingReport, Species, TargetPrior
 from crychic.scoring import (
@@ -65,6 +66,58 @@ _RECEIVERS = ("R1", "R2")
 _INTERACTIONS = ("iA", "iB", "iC")
 _TRAINING_SUBJECTS = ("p1", "p2", "p3")
 _HELDOUT_SUBJECTS = ("h1", "h2")
+
+
+def test_streamed_global_table_digest_matches_legacy_sorted_stable_id() -> None:
+    columns = ("identifier", "score", "reason")
+    table = pd.DataFrame(
+        [
+            ["row-b", np.float64(0.25), None],
+            ["row-a", np.nan, "not_estimable"],
+            ["row-c", 0.0, "structural_zero"],
+        ],
+        columns=columns,
+    )
+    rows = [
+        [global_common_module._canonical_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    rows.sort(key=canonical_json)
+    expected = stable_id(
+        "global_common_digest_fixture",
+        {"columns": list(columns), "rows": rows},
+        schema_version="1",
+        digest_length=64,
+    )
+
+    observed = global_common_module._table_digest(
+        "global_common_digest_fixture",
+        table,
+        columns,
+        unique_text_prefix=("identifier",),
+    )
+    reordered = global_common_module._table_digest(
+        "global_common_digest_fixture",
+        table.iloc[::-1],
+        columns,
+        unique_text_prefix=("identifier",),
+    )
+
+    assert observed == expected
+    assert reordered == expected
+
+
+def test_streamed_global_digest_prefix_must_be_unique_text() -> None:
+    columns = ("identifier", "score")
+    duplicate = pd.DataFrame([["same", 1.0], ["same", 2.0]], columns=columns)
+
+    with pytest.raises(ValueError, match="must be unique"):
+        global_common_module._table_digest(
+            "global_common_digest_fixture",
+            duplicate,
+            columns,
+            unique_text_prefix=("identifier",),
+        )
 
 
 def _prior(columns: Mapping[str, Mapping[str, float]]) -> TargetPrior:
@@ -313,9 +366,7 @@ def _selected_gain_calibration(
         fold_id = f"{receiver_family.fold_id}-{receiver_family.receiver}-inner-{index}"
         fold_ids.append(fold_id)
         training_subjects = tuple(
-            subject
-            for subject in _TRAINING_SUBJECTS
-            if subject != validation_subject
+            subject for subject in _TRAINING_SUBJECTS if subject != validation_subject
         )
         functional = _incremental_functional(
             receiver_family,
@@ -713,9 +764,10 @@ def test_training_only_receiver_gain_calibrations_are_exactly_bound() -> None:
     assert functional.gain_calibration("R2") is c2
     assert functional.all_receivers_gain_calibrated
     assert functional.cross_receiver_percentile_rank_eligible
-    assert functional.gain_calibration_binding("R1")[
-        "gain_calibration_artifact_id"
-    ] == c1.artifact_id
+    assert (
+        functional.gain_calibration_binding("R1")["gain_calibration_artifact_id"]
+        == c1.artifact_id
+    )
     assert functional.to_dict()["training_only_receiver_calibration"] is True
     assert functional.to_dict()["receiver_scale_amplification"] is False
 
@@ -738,9 +790,7 @@ def test_swapped_receiver_gain_calibrations_fail_closed() -> None:
 
 
 def test_frozen_percentile_gain_is_used_without_coefficient_rescaling() -> None:
-    functional, application, _, _, _ = _world(
-        effect_scales={"R1": 1.0, "R2": 4.0}
-    )
+    functional, application, _, _, _ = _world(effect_scales={"R1": 1.0, "R2": 4.0})
     lr_scores = application.global_lr_scores
     observed = lr_scores.loc[lr_scores["status"].eq("observed")]
 
@@ -757,9 +807,7 @@ def test_frozen_percentile_gain_is_used_without_coefficient_rescaling() -> None:
     for receiver, rows in observed.groupby("receiver", observed=True):
         calibration = functional.gain_calibration(str(receiver))
         assert calibration is not None
-        assert set(rows["gain_calibration_artifact_id"]) == {
-            calibration.artifact_id
-        }
+        assert set(rows["gain_calibration_artifact_id"]) == {calibration.artifact_id}
 
 
 def test_positive_gain_with_typed_ne_calibration_does_not_fall_back() -> None:
@@ -770,9 +818,7 @@ def test_positive_gain_with_typed_ne_calibration_does_not_fall_back() -> None:
         min_positive_observations=1,
         min_distinct_positive_gains=2,
     )
-    functional, application, _, _, _ = _world(
-        calibration_specs={"R1": typed_ne_spec}
-    )
+    functional, application, _, _, _ = _world(calibration_specs={"R1": typed_ne_spec})
     calibration = functional.gain_calibration("R1")
     assert calibration is not None
     assert calibration.status == "not_estimable"
@@ -790,9 +836,7 @@ def test_positive_gain_with_typed_ne_calibration_does_not_fall_back() -> None:
     assert row["status"] == "not_estimable"
     assert row["reason_code"] == "insufficient_inner_oof_subjects"
     assert row["gain_calibration_status"] == "not_estimable"
-    assert row["gain_calibration_reason_code"] == (
-        "insufficient_inner_oof_subjects"
-    )
+    assert row["gain_calibration_reason_code"] == ("insufficient_inner_oof_subjects")
 
 
 def test_training_coefficient_magnitude_does_not_rescale_global_score() -> None:
@@ -856,8 +900,7 @@ def test_missing_receiver_and_child_contract_mismatch_fail_closed() -> None:
     assert functional.receiver_balanced_descriptive_collection
 
 
-def test_lr_score_ignores_local_allocation_but_sender_uses_frozen_weight(
-) -> None:
+def test_lr_score_ignores_local_allocation_but_sender_uses_frozen_weight() -> None:
     _, global_application, _, child_applications, sender_applications = _world()
     global_lr = global_application.global_lr_scores
     global_sender = global_application.global_sender_lr_scores
@@ -1111,6 +1154,5 @@ def test_spec_functional_and_application_tampering_is_detected() -> None:
     )
     assert intact_functional.to_dict()["common_functional_across_receivers"] is False
     assert (
-        intact_functional.to_dict()["receiver_balanced_descriptive_collection"]
-        is True
+        intact_functional.to_dict()["receiver_balanced_descriptive_collection"] is True
     )

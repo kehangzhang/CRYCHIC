@@ -27,6 +27,11 @@ from benchmarks.adapters.crychic.des_postprocess import (
     subject_equal_directed_lr_effects,
     unordered_cell_pair_des_rankings,
 )
+from benchmarks.adapters.crychic.score_layers import (
+    SCORE_LAYER_VALUE_COLUMNS,
+    build_multigroup_score_layers,
+    summarize_score_layer,
+)
 from benchmarks.literature.connectomedb2020 import (
     PAPER_METHODS,
     validate_resource_table,
@@ -57,15 +62,17 @@ DATASET_ID = "Kuppe_MI_CTRL_vs_IZ"
 PREPARATION_SCHEMA = "crychic-kuppe-ctrl-iz-preparation-v1"
 DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-kuppe-ctrl-iz-downsample-v1"
 RESOURCE_SCHEMA = "crychic-connectomedb2020-resource-v1"
-RUN_SCHEMA = "crychic-kuppe-ctrl-iz-crossfit-run-v1"
+RUN_SCHEMA = "crychic-kuppe-ctrl-iz-crossfit-run-v2"
 CONTRAST = "IZ_vs_CTRL"
 REFERENCE = "CTRL"
 TARGET = "IZ"
-OUTER_FOLDS = 3
+OUTER_FOLDS = 2
 SCORE_FILENAME = "sender_lr_scores.parquet"
+SCORE_LAYER_FILENAME = "sender_lr_score_layers.parquet"
 DIFFERENCE_FILENAME = "sender_lr_differences.parquet"
 RANKING_FILENAME = "cell_pair_direction_ranking.parquet"
 DIRECTED_EFFECT_FILENAME = "directed_lr_effects.parquet"
+MECHANISTIC_DIRECTED_EFFECT_FILENAME = "mechanistic_directed_lr_effects.parquet"
 UNORDERED_RANKING_FILENAME = "condition_cell_pair_rankings.tsv"
 CONNECTOMEDB_ADAPTER_COLUMNS = (
     "harmonized_interaction_id",
@@ -105,6 +112,7 @@ SCORE_COLUMNS = (
     "score_semantics",
     "formal_inference_allowed",
 )
+SCORE_LAYER_COLUMNS = (*SCORE_COLUMNS, *SCORE_LAYER_VALUE_COLUMNS)
 
 DIFFERENCE_COLUMNS = (
     "sender",
@@ -163,6 +171,14 @@ class KuppeCrossFitResult(Protocol):
     def manifest(self) -> Mapping[str, object]: ...
 
     def query_contrast_common_sender_lr_scores(
+        self,
+        *,
+        contrast: str | None = None,
+        mode: str | None = None,
+        status: str | None = None,
+    ) -> pd.DataFrame: ...
+
+    def query_contrast_common_lr_scores(
         self,
         *,
         contrast: str | None = None,
@@ -260,9 +276,10 @@ def validate_preparation_manifest(
         raise ValueError("input_manifest.matrices must declare layers['counts']")
     if schema_version == DOWNSAMPLE_PREPARATION_SCHEMA:
         downsample = manifest.get("downsample")
-        if not isinstance(downsample, Mapping) or float(
-            downsample.get("fraction", 0.0)
-        ) <= 0:
+        if (
+            not isinstance(downsample, Mapping)
+            or float(downsample.get("fraction", 0.0)) <= 0
+        ):
             raise ValueError("downsample manifest must declare a positive fraction")
         if output.get("shape") != list(manifest.get("cohort", {}).get("shape", ())):
             raise ValueError("downsample output shape disagrees with cohort metadata")
@@ -460,7 +477,7 @@ def load_connectomedb2020_bundle(
 def build_crossfit_configuration(
     *, seed: int, min_cells: int
 ) -> tuple[CrychicConfig, CrossFitSpec]:
-    """Freeze the three-fold CTRL-versus-IZ descriptive cross-fit policy."""
+    """Freeze the two-fold CTRL-versus-IZ descriptive cross-fit policy."""
 
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("seed must be a non-negative integer")
@@ -558,7 +575,7 @@ def _validate_input_contract(
     support = {condition: len(subjects) for condition, subjects in subject_sets.items()}
     if min(support.values()) < OUTER_FOLDS:
         raise ValueError(
-            "three-fold subject-blocked cross-fit requires at least three "
+            "two-fold subject-blocked cross-fit requires at least two "
             f"subjects per condition; observed={support}"
         )
     return sample_metadata, support
@@ -748,6 +765,42 @@ def compact_sender_lr_scores(
         ignore_index=True,
     )
     return result_table
+
+
+def multigroup_score_layers(
+    result: KuppeCrossFitResult,
+    compact_scores: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build the preregistered mechanism/annotation/strict Kuppe score layers."""
+
+    sender = result.query_contrast_common_sender_lr_scores(
+        contrast=CONTRAST,
+        mode="state",
+        status=None,
+    )
+    lr = result.query_contrast_common_lr_scores(
+        contrast=CONTRAST,
+        mode="state",
+        status=None,
+    )
+    downstream_path = result.path / "descriptive_differential.parquet"
+    if not downstream_path.is_file():
+        raise FileNotFoundError(
+            f"persisted downstream differential table is missing: {downstream_path}"
+        )
+    downstream = pd.read_parquet(downstream_path)
+    layers = build_multigroup_score_layers(
+        compact_scores,
+        sender,
+        lr,
+        downstream,
+        policy="annotate",
+    )
+    if tuple(layers.columns) != SCORE_LAYER_COLUMNS:
+        raise RuntimeError(
+            "Kuppe score-layer columns do not match the released contract"
+        )
+    return layers
 
 
 def subject_equal_sender_lr_differences(
@@ -1085,15 +1138,21 @@ def run_kuppe_ctrl_iz(
         ),
         "code": git_metadata(repo_root),
         "score_semantics": {
-            "sample_score": (
+            "downstream_confirmed_sample_score": (
                 "heldout_receiver_balanced_descriptive_sender_lr_strength"
             ),
+            "primary_sample_score": "mechanistic_sender_lr_score",
+            "primary_score_policy": "annotate",
+            "mechanistic_score": (
+                "heldout_availability_x_prior_quality_x_frozen_sender_assignment"
+            ),
+            "downstream_support": "signed_receiver_family_loss_ratio_annotation",
             "sample_score_direction": "higher_is_stronger",
             "difference": "IZ_minus_CTRL_subject_equal_mean",
             "cell_pair_directions": ["IZ_over_CTRL", "CTRL_over_IZ"],
             "primary_spatial_des_ranking": (
-                "sum_positive_subject_equal_directed_lr_effects_after_unordered_"
-                "cell_pair_collapse"
+                "mechanistic_sum_positive_subject_equal_directed_lr_effects_"
+                "after_unordered_cell_pair_collapse"
             ),
             "cells_are_independent_replicates": False,
             "sample_replicates_within_subject_are_averaged": True,
@@ -1124,10 +1183,11 @@ def run_kuppe_ctrl_iz(
                 ),
             )
         scores = compact_sender_lr_scores(result, data, bundle)
+        score_layers = multigroup_score_layers(result, scores)
         fold_audit = _heldout_fold_audit(scores, sample_metadata)
         differences = subject_equal_sender_lr_differences(scores)
         legacy_ranking = cell_pair_direction_ranking(differences)
-        directed_effects = subject_equal_directed_lr_effects(
+        strict_directed_effects = subject_equal_directed_lr_effects(
             scores,
             reference=REFERENCE,
             target=TARGET,
@@ -1135,23 +1195,41 @@ def run_kuppe_ctrl_iz(
             edge_columns=DIRECTED_EDGE_COLUMNS,
             min_subjects_per_condition=3,
         )
+        mechanistic_scores = score_layers.copy(deep=False)
+        mechanistic_scores["status"] = score_layers["selected_score_status"]
+        mechanistic_scores["reason_code"] = score_layers["selected_score_reason_code"]
+        mechanistic_directed_effects = subject_equal_directed_lr_effects(
+            mechanistic_scores,
+            reference=REFERENCE,
+            target=TARGET,
+            condition_column="condition",
+            edge_columns=DIRECTED_EDGE_COLUMNS,
+            score_column="selected_score",
+            min_subjects_per_condition=3,
+        )
         des_rankings = unordered_cell_pair_des_rankings(
-            directed_effects,
+            mechanistic_directed_effects,
             dataset=DATASET_ID,
             method="crychic",
             method_version=_method_version(),
             resource=bundle.resource_id,
         )
         score_path = output / SCORE_FILENAME
+        score_layer_path = output / SCORE_LAYER_FILENAME
         difference_path = output / DIFFERENCE_FILENAME
         ranking_path = output / RANKING_FILENAME
-        directed_effect_path = output / DIRECTED_EFFECT_FILENAME
+        strict_directed_effect_path = output / DIRECTED_EFFECT_FILENAME
+        mechanistic_directed_effect_path = output / MECHANISTIC_DIRECTED_EFFECT_FILENAME
         unordered_ranking_path = output / UNORDERED_RANKING_FILENAME
         scores.to_parquet(score_path, index=False, compression="zstd")
+        score_layers.to_parquet(score_layer_path, index=False, compression="zstd")
         differences.to_parquet(difference_path, index=False, compression="zstd")
         legacy_ranking.to_parquet(ranking_path, index=False, compression="zstd")
-        directed_effects.to_parquet(
-            directed_effect_path, index=False, compression="zstd"
+        strict_directed_effects.to_parquet(
+            strict_directed_effect_path, index=False, compression="zstd"
+        )
+        mechanistic_directed_effects.to_parquet(
+            mechanistic_directed_effect_path, index=False, compression="zstd"
         )
         des_rankings.to_csv(
             unordered_ranking_path,
@@ -1183,12 +1261,36 @@ def run_kuppe_ctrl_iz(
                     "manifest_sha256": sha256_file(crossfit_manifest_path),
                     "heldout_fold_audit": fold_audit,
                 },
+                "score_layer_diagnostics": {
+                    "mechanistic_sender_lr_score": summarize_score_layer(
+                        score_layers,
+                        score_column="mechanistic_sender_lr_score",
+                        status_column="mechanistic_status",
+                    ),
+                    "downstream_confirmed_sender_lr_score": summarize_score_layer(
+                        score_layers,
+                        score_column="downstream_confirmed_sender_lr_score",
+                        status_column="downstream_confirmed_status",
+                    ),
+                    "selected_score": summarize_score_layer(
+                        score_layers,
+                        score_column="selected_score",
+                        status_column="selected_score_status",
+                    ),
+                },
                 "outputs": {
                     SCORE_FILENAME: _output_record(score_path, scores),
+                    SCORE_LAYER_FILENAME: _output_record(
+                        score_layer_path, score_layers
+                    ),
                     DIFFERENCE_FILENAME: _output_record(difference_path, differences),
                     RANKING_FILENAME: _output_record(ranking_path, legacy_ranking),
                     DIRECTED_EFFECT_FILENAME: _output_record(
-                        directed_effect_path, directed_effects
+                        strict_directed_effect_path, strict_directed_effects
+                    ),
+                    MECHANISTIC_DIRECTED_EFFECT_FILENAME: _output_record(
+                        mechanistic_directed_effect_path,
+                        mechanistic_directed_effects,
                     ),
                     UNORDERED_RANKING_FILENAME: _output_record(
                         unordered_ranking_path, des_rankings
@@ -1272,10 +1374,13 @@ __all__ = [
     "DIFFERENCE_COLUMNS",
     "RANKING_COLUMNS",
     "SCORE_COLUMNS",
+    "SCORE_LAYER_COLUMNS",
+    "SCORE_LAYER_FILENAME",
     "build_crossfit_configuration",
     "cell_pair_direction_ranking",
     "compact_sender_lr_scores",
     "load_connectomedb2020_bundle",
+    "multigroup_score_layers",
     "run_kuppe_ctrl_iz",
     "subject_equal_sender_lr_differences",
     "validate_preparation_manifest",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Any, cast
 
 import numpy as np
@@ -32,6 +33,27 @@ _AVAILABILITY_COLUMNS = {
     "sender_component",
 }
 _DOWNSTREAM_COLUMNS = {*_JOIN_KEYS, "downstream_activity", "prior_quality"}
+
+
+class DownstreamEvidencePolicy(StrEnum):
+    """How receiver downstream evidence participates in a communication score.
+
+    The strict historical score remains available as ``REQUIRED``.  The other
+    policies keep the mechanism evidence visible when downstream response is
+    weak or not estimable.
+    """
+
+    DISABLED = "disabled"
+    ANNOTATE = "annotate"
+    MODULATE = "modulate"
+    REQUIRED = "required"
+
+
+class DownstreamDirectionPolicy(StrEnum):
+    """Direction convention for signed receiver support annotations."""
+
+    POSITIVE_ONLY = "positive_only"
+    SIGNED = "signed"
 
 
 def _numeric_component(value: object, *, name: str) -> float | None:
@@ -105,12 +127,96 @@ def pair_softmin(
     if left_value == 0.0 or right_value == 0.0:
         return 0.0
     shifted_inverse = 0.5 * (
-        (left_value + epsilon) ** (-power)
-        + (right_value + epsilon) ** (-power)
+        (left_value + epsilon) ** (-power) + (right_value + epsilon) ** (-power)
     )
-    return float(
-        np.clip(shifted_inverse ** (-1.0 / power) - epsilon, 0.0, 1.0)
-    )
+    return float(np.clip(shifted_inverse ** (-1.0 / power) - epsilon, 0.0, 1.0))
+
+
+def mechanistic_only_strength(
+    *,
+    availability: float | None,
+    prior_quality: float | None,
+    sender_weight: float | None = 1.0,
+) -> tuple[float | None, float | None, float | None]:
+    """Return mechanism-only LR, quality-adjusted, and sender scores.
+
+    This layer deliberately excludes receiver downstream response.  It is the
+    descriptive communication estimand used for steady-state and exploratory
+    differential rankings.  Missing values remain missing; a zero availability
+    remains a genuine structural zero.
+    """
+
+    availability_value = _numeric_component(availability, name="availability")
+    quality = _numeric_component(prior_quality, name="prior_quality")
+    sender = _numeric_component(sender_weight, name="sender_weight")
+    if availability_value == 0.0 or quality == 0.0:
+        return 0.0, 0.0, 0.0
+    if availability_value is None or quality is None:
+        return None, None, None
+    adjusted = availability_value * quality
+    return adjusted, adjusted, None if sender is None else adjusted * sender
+
+
+def downstream_modulated_strength(
+    mechanistic_score: float | None,
+    signed_downstream_support: float | None,
+    *,
+    modulation_strength: float = 1.0,
+    epsilon: float = 1e-8,
+) -> float | None:
+    """Softly adjust mechanism evidence by signed downstream support.
+
+    The adjustment is performed in logit space and therefore stays in ``[0, 1]``.
+    A missing downstream estimate is neutral (the mechanism score is retained),
+    while a zero support value leaves it exactly unchanged.
+    """
+
+    mechanism = _numeric_component(mechanistic_score, name="mechanistic_score")
+    if mechanism is None:
+        return None
+    if (
+        signed_downstream_support is None
+        or (signed_downstream_support is pd.NA)
+        or bool(pd.isna(cast(Any, signed_downstream_support)))
+    ):
+        return mechanism
+    support = float(signed_downstream_support)
+    if not math.isfinite(support) or not -1.0 <= support <= 1.0:
+        raise ValueError("signed_downstream_support must lie in [-1, 1] or be missing")
+    strength = float(modulation_strength)
+    if not math.isfinite(strength) or strength < 0:
+        raise ValueError("modulation_strength must be finite and non-negative")
+    floor = float(epsilon)
+    if not math.isfinite(floor) or not 0 < floor < 0.5:
+        raise ValueError("epsilon must be finite and lie in (0, 0.5)")
+    if mechanism <= 0.0 or mechanism >= 1.0:
+        # Preserve exact boundary semantics instead of manufacturing a tiny
+        # positive score from a structural zero.
+        return mechanism
+    clipped = float(np.clip(mechanism, floor, 1.0 - floor))
+    logit = math.log(clipped / (1.0 - clipped))
+    adjusted = 1.0 / (1.0 + math.exp(-(logit + strength * support)))
+    return float(np.clip(adjusted, 0.0, 1.0))
+
+
+def select_communication_score(
+    *,
+    policy: DownstreamEvidencePolicy | str,
+    mechanistic_score: float | None,
+    downstream_modulated_score: float | None = None,
+    downstream_confirmed_score: float | None = None,
+) -> float | None:
+    """Select a named score layer without implicit result-dependent fallback."""
+
+    resolved = DownstreamEvidencePolicy(policy)
+    if resolved in {
+        DownstreamEvidencePolicy.DISABLED,
+        DownstreamEvidencePolicy.ANNOTATE,
+    }:
+        return mechanistic_score
+    if resolved is DownstreamEvidencePolicy.MODULATE:
+        return downstream_modulated_score
+    return downstream_confirmed_score
 
 
 def mechanistic_strength(

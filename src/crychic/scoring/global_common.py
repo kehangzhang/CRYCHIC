@@ -19,11 +19,13 @@ absolute communication rate, probability, p-value, or causal effect.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 
 from crychic.attribution.gain_calibration import (
@@ -109,6 +111,8 @@ GLOBAL_COMMON_SENDER_SCORE_COLUMNS = (
     "reason_code",
     "score_version",
 )
+_GLOBAL_LR_DIGEST_KEY_COLUMNS = GLOBAL_COMMON_LR_SCORE_COLUMNS[:11]
+_GLOBAL_SENDER_DIGEST_KEY_COLUMNS = GLOBAL_COMMON_SENDER_SCORE_COLUMNS[:14]
 
 _FUNCTIONAL_PRODUCER = "crychic.cross_receiver_common_scoring_functional.v4"
 _APPLICATION_PRODUCER = "crychic.cross_receiver_common_scoring_application.v4"
@@ -161,22 +165,76 @@ def _canonical_scalar(value: object) -> object:
     return str(value)
 
 
-def _table_digest(name: str, table: pd.DataFrame, columns: tuple[str, ...]) -> str:
+def _table_digest(
+    name: str,
+    table: pd.DataFrame,
+    columns: tuple[str, ...],
+    *,
+    unique_text_prefix: tuple[str, ...],
+) -> str:
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the released contract")
-    rows = [
-        [_canonical_scalar(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    rows.sort(key=canonical_json)
-    return str(
-        stable_id(
-            name,
-            {"columns": list(columns), "rows": rows},
-            schema_version="1",
-            digest_length=64,
-        )
+    if not unique_text_prefix or columns[: len(unique_text_prefix)] != (
+        unique_text_prefix
+    ):
+        raise ValueError(f"{name} unique digest prefix must lead the contract")
+    prefix_table = table.loc[:, list(unique_text_prefix)]
+    if prefix_table.isna().any(axis=None) or not all(
+        prefix_table[column].map(lambda value: isinstance(value, str)).all()
+        for column in unique_text_prefix
+    ):
+        raise ValueError(f"{name} unique digest prefix must contain strings")
+    if prefix_table.duplicated().any():
+        raise ValueError(f"{name} unique digest prefix must be unique")
+    digest_length = 64
+    validation_id: str = stable_id(
+        name,
+        {},
+        schema_version="1",
+        digest_length=digest_length,
     )
+    id_prefix = validation_id[: -(digest_length + 1)]
+    template = canonical_json(
+        {
+            "components": {"columns": list(columns), "rows": []},
+            "kind": name,
+            "schema_version": "1",
+        }
+    )
+    rows_marker = '"rows":[]'
+    if template.count(rows_marker) != 1:  # pragma: no cover - canonical contract
+        raise RuntimeError("canonical stable-ID template lacks one rows marker")
+    prefix, suffix = template.split(rows_marker, maxsplit=1)
+
+    def encoded_rows():
+        canonical_prefixes = np.fromiter(
+            (
+                canonical_json([_canonical_scalar(value) for value in row])
+                for row in prefix_table.itertuples(index=False, name=None)
+            ),
+            dtype=object,
+            count=len(prefix_table),
+        )
+        order = np.argsort(canonical_prefixes, kind="stable")
+        batch_size = 65_536
+        for start in range(0, len(order), batch_size):
+            batch = table.iloc[order[start : start + batch_size]]
+            for row in batch.itertuples(index=False, name=None):
+                yield canonical_json([_canonical_scalar(value) for value in row])
+
+    def digest_rows(rows) -> str:
+        digest = hashlib.sha256()
+        digest.update(prefix.encode("ascii"))
+        digest.update(b'"rows":[')
+        for row_index, row in enumerate(rows):
+            if row_index:
+                digest.update(b",")
+            digest.update(row.encode("ascii"))
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()[:digest_length]}"
+
+    return digest_rows(encoded_rows())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1123,21 +1181,25 @@ def _build_global_sender_table(
     for application in sender_applications:
         if not isinstance(application, CommonSenderApplication):
             raise TypeError("sender_applications must contain CommonSenderApplication")
-        repeated = CommonSenderApplication(application.table, application.functional)
-        if repeated.functional.sender_functional_id != functional.sender_functional_id:
+        application._require_intact()
+        if (
+            application.functional.sender_functional_id
+            != functional.sender_functional_id
+        ):
             raise ContractError(
                 "Global common sender application uses a different functional",
                 code="global_common_sender_application_mismatch",
                 field="source_sender_functional_id",
                 remediation="Apply the shared contrast-common sender functional",
             )
-        receivers = tuple(sorted(set(repeated.table["receiver"].astype(str))))
+        application_table = application.table
+        receivers = tuple(sorted(set(application_table["receiver"].astype(str))))
         if len(receivers) != 1:
             raise ValueError(
                 "each global common sender application must cover one receiver"
             )
         seen_receivers.append(receivers[0])
-        sender_tables.append(repeated.table)
+        sender_tables.append(application_table)
     if tuple(sorted(seen_receivers)) != functional.receiver_ids:
         raise ContractError(
             "Global common sender applications lack exact receiver coverage",
@@ -1239,112 +1301,116 @@ def _build_global_sender_table(
     )
     if observed_groups != expected_groups:
         raise ValueError("global common sender scores lack exact candidate coverage")
-    rows: list[dict[str, object]] = []
-    for source in merged.itertuples(index=False):
-        lr_score = _optional_unit(source.global_lr_score, field_name="global_lr_score")
-        raw_sender = _optional_unit(
-            source.raw_sender_evidence,
-            field_name="raw_sender_evidence",
-        )
-        assignment_weight = _optional_unit(
-            source.assignment_weight,
-            field_name="assignment_weight",
-        )
-        normalized_entropy = _optional_unit(
-            source.normalized_entropy,
-            field_name="normalized_entropy",
-        )
-        lr_status = str(source.status)
-        sender_status = str(source.sender_status)
-        if lr_status not in _STATUSES:
-            raise ValueError("global LR source status is not recognized")
-        if sender_status not in {
-            CommonSenderApplicationStatus.OK.value,
-            CommonSenderApplicationStatus.NOT_ESTIMABLE.value,
-        }:
-            raise ValueError("global sender source status is not recognized")
-        if lr_status == "structural_zero":
-            score: float | None = 0.0
-            status = "structural_zero"
-            reason = None if pd.isna(source.reason_code) else str(source.reason_code)
-        elif lr_status == "not_estimable" or lr_score is None:
-            score = None
-            status = "not_estimable"
-            reason = (
-                "global_lr_score_not_estimable"
-                if pd.isna(source.reason_code)
-                else str(source.reason_code)
+    numeric: dict[str, pd.Series] = {}
+    for column in (
+        "global_lr_score",
+        "ligand_availability",
+        "training_prevalence_prior",
+        "raw_sender_evidence",
+        "assignment_weight",
+        "normalized_entropy",
+    ):
+        values = pd.to_numeric(merged[column], errors="coerce").astype(float)
+        invalid = merged[column].notna() & values.isna()
+        present = values.dropna()
+        if invalid.any() or (
+            not present.empty
+            and (
+                (present < 0.0).any()
+                or (present > 1.0).any()
+                or not present.map(math.isfinite).all()
             )
-        elif (
-            sender_status == CommonSenderApplicationStatus.NOT_ESTIMABLE.value
-            or assignment_weight is None
         ):
-            score = None
-            status = "not_estimable"
-            reason = (
-                "sender_assignment_not_estimable"
-                if pd.isna(source.sender_reason_code)
-                else str(source.sender_reason_code)
-            )
-        elif assignment_weight == 0.0:
-            score = 0.0
-            status = "structural_zero"
-            reason = "sender_assignment_weight_zero"
-        else:
-            score = lr_score * assignment_weight
-            status = "observed"
-            reason = None
-        rows.append(
-            {
-                "global_common_functional_id": functional.global_common_functional_id,
-                "source_family_common_functional_id": (
-                    str(source.source_family_common_functional_id)
-                ),
-                "source_family_common_application_id": (
-                    str(source.source_family_common_application_id)
-                ),
-                "source_sender_functional_id": str(source.sender_functional_id),
-                "source_sender_application_id": str(source.sender_application_id),
-                "sample_id": str(source.sample_id),
-                "subject_id": str(source.subject_id),
-                "context_id": str(source.context_id),
-                "receiver": str(source.receiver),
-                "family_id": str(source.family_id),
-                "driver_id": str(source.driver_id),
-                "interaction_id": str(source.interaction_id),
-                "mode": str(source.mode),
-                "sender": str(source.sender),
-                "global_lr_score": lr_score,
-                "gain_calibration_binding_id": str(source.gain_calibration_binding_id),
-                "gain_calibration_artifact_id": (
-                    None
-                    if pd.isna(source.gain_calibration_artifact_id)
-                    else str(source.gain_calibration_artifact_id)
-                ),
-                "gain_calibration_status": str(source.gain_calibration_status),
-                "gain_calibration_reason_code": (
-                    None
-                    if pd.isna(source.gain_calibration_reason_code)
-                    else str(source.gain_calibration_reason_code)
-                ),
-                "ligand_availability": _optional_unit(
-                    source.ligand_availability,
-                    field_name="ligand_availability",
-                ),
-                "training_prevalence_prior": _optional_unit(
-                    source.training_prevalence_prior,
-                    field_name="training_prevalence_prior",
-                ),
-                "raw_sender_evidence": raw_sender,
-                "assignment_weight": assignment_weight,
-                "normalized_entropy": normalized_entropy,
-                "global_sender_lr_score": score,
-                "status": status,
-                "reason_code": reason,
-                "score_version": functional.score_version,
-            }
-        )
-    result = pd.DataFrame(rows, columns=GLOBAL_COMMON_SENDER_SCORE_COLUMNS)
+            raise ValueError(f"{column} must lie in [0, 1] or be missing")
+        numeric[column] = values
+
+    lr_status = merged["status"].astype(str)
+    sender_status = merged["sender_status"].astype(str)
+    if not set(lr_status).issubset(_STATUSES):
+        raise ValueError("global LR source status is not recognized")
+    allowed_sender_statuses = {
+        CommonSenderApplicationStatus.OK.value,
+        CommonSenderApplicationStatus.NOT_ESTIMABLE.value,
+    }
+    if not set(sender_status).issubset(allowed_sender_statuses):
+        raise ValueError("global sender source status is not recognized")
+
+    lr_score = numeric["global_lr_score"]
+    assignment_weight = numeric["assignment_weight"]
+    structural_parent = lr_status.eq("structural_zero")
+    missing_parent = ~structural_parent & (
+        lr_status.eq("not_estimable") | lr_score.isna()
+    )
+    missing_sender = (
+        sender_status.eq(CommonSenderApplicationStatus.NOT_ESTIMABLE.value)
+        | assignment_weight.isna()
+    )
+    zero_assignment = assignment_weight.eq(0.0)
+    observed = ~(structural_parent | missing_parent | missing_sender | zero_assignment)
+    sender_not_estimable = ~structural_parent & ~missing_parent & missing_sender
+
+    score = lr_score * assignment_weight
+    score.loc[structural_parent | zero_assignment] = 0.0
+    score.loc[missing_parent | sender_not_estimable] = math.nan
+    status = pd.Series("observed", index=merged.index, dtype=object)
+    status.loc[structural_parent | zero_assignment] = "structural_zero"
+    status.loc[missing_parent | sender_not_estimable] = "not_estimable"
+    reason = pd.Series(None, index=merged.index, dtype=object)
+    reason.loc[structural_parent] = merged.loc[structural_parent, "reason_code"]
+    reason.loc[missing_parent] = merged.loc[missing_parent, "reason_code"].where(
+        merged.loc[missing_parent, "reason_code"].notna(),
+        "global_lr_score_not_estimable",
+    )
+    reason.loc[sender_not_estimable] = merged.loc[
+        sender_not_estimable, "sender_reason_code"
+    ].where(
+        merged.loc[sender_not_estimable, "sender_reason_code"].notna(),
+        "sender_assignment_not_estimable",
+    )
+    zero_sender = (
+        ~structural_parent & ~missing_parent & ~missing_sender & zero_assignment
+    )
+    reason.loc[zero_sender] = "sender_assignment_weight_zero"
+    if score.loc[observed].isna().any():
+        raise RuntimeError("observed global sender rows lack a numeric score")
+
+    result = pd.DataFrame(
+        {
+            "global_common_functional_id": functional.global_common_functional_id,
+            "source_family_common_functional_id": merged[
+                "source_family_common_functional_id"
+            ],
+            "source_family_common_application_id": merged[
+                "source_family_common_application_id"
+            ],
+            "source_sender_functional_id": merged["sender_functional_id"],
+            "source_sender_application_id": merged["sender_application_id"],
+            "sample_id": merged["sample_id"],
+            "subject_id": merged["subject_id"],
+            "context_id": merged["context_id"],
+            "receiver": merged["receiver"],
+            "family_id": merged["family_id"],
+            "driver_id": merged["driver_id"],
+            "interaction_id": merged["interaction_id"],
+            "mode": merged["mode"],
+            "sender": merged["sender"],
+            "global_lr_score": lr_score,
+            "gain_calibration_binding_id": merged["gain_calibration_binding_id"],
+            "gain_calibration_artifact_id": merged["gain_calibration_artifact_id"],
+            "gain_calibration_status": merged["gain_calibration_status"],
+            "gain_calibration_reason_code": merged["gain_calibration_reason_code"],
+            "ligand_availability": numeric["ligand_availability"],
+            "training_prevalence_prior": numeric["training_prevalence_prior"],
+            "raw_sender_evidence": numeric["raw_sender_evidence"],
+            "assignment_weight": assignment_weight,
+            "normalized_entropy": numeric["normalized_entropy"],
+            "global_sender_lr_score": score,
+            "status": status,
+            "reason_code": reason,
+            "score_version": functional.score_version,
+        },
+        columns=GLOBAL_COMMON_SENDER_SCORE_COLUMNS,
+    )
     keys = [
         "sample_id",
         "subject_id",
@@ -1364,34 +1430,57 @@ def _build_global_sender_table(
         "interaction_id",
         "mode",
     ]
-    for _, group in result.groupby(group_keys, observed=True, sort=False):
-        parent_values = group["global_lr_score"].drop_duplicates()
-        if len(parent_values) != 1:
-            raise RuntimeError("sender allocation does not share one LR parent score")
-        parent = parent_values.iloc[0]
-        weights = group["assignment_weight"]
-        scores = group["global_sender_lr_score"]
-        if pd.isna(parent):
-            if scores.notna().any():
-                raise RuntimeError("not-estimable LR parent produced sender scores")
-            continue
-        parent_score = float(parent)
-        if parent_score == 0.0:
-            if scores.isna().any() or not (scores == 0.0).all():
-                raise RuntimeError("structural-zero LR parent did not remain zero")
-            continue
-        if weights.isna().all():
-            if scores.notna().any():
-                raise RuntimeError("not-estimable sender allocation produced scores")
-            continue
-        if weights.isna().any() or scores.isna().any():
-            raise RuntimeError("sender allocation must fail closed as a complete group")
-        if not math.isclose(float(weights.sum()), 1.0, rel_tol=1e-10, abs_tol=1e-12):
-            raise RuntimeError("sender assignment weights do not sum to one")
-        if not math.isclose(
-            float(scores.sum()), parent_score, rel_tol=1e-10, abs_tol=1e-12
-        ):
-            raise RuntimeError("global sender scores do not conserve LR strength")
+    grouped = result.groupby(group_keys, observed=True, sort=False)
+    parent_counts = grouped["global_lr_score"].nunique(dropna=False)
+    if not parent_counts.eq(1).all():
+        raise RuntimeError("sender allocation does not share one LR parent score")
+    summary = grouped.agg(
+        parent_score=("global_lr_score", "first"),
+        group_size=("sender", "size"),
+        weight_count=("assignment_weight", "count"),
+        weight_sum=("assignment_weight", "sum"),
+        score_count=("global_sender_lr_score", "count"),
+        score_sum=("global_sender_lr_score", "sum"),
+    )
+    missing_parent = summary["parent_score"].isna()
+    if summary.loc[missing_parent, "score_count"].ne(0).any():
+        raise RuntimeError("not-estimable LR parent produced sender scores")
+    zero_parent = summary["parent_score"].eq(0.0)
+    if (
+        summary.loc[zero_parent, "score_count"]
+        .ne(summary.loc[zero_parent, "group_size"])
+        .any()
+        or summary.loc[zero_parent, "score_sum"].ne(0.0).any()
+    ):
+        raise RuntimeError("structural-zero LR parent did not remain zero")
+    positive_parent = ~(missing_parent | zero_parent)
+    missing_weights = summary["weight_count"].eq(0)
+    if summary.loc[positive_parent & missing_weights, "score_count"].ne(0).any():
+        raise RuntimeError("not-estimable sender allocation produced scores")
+    complete = positive_parent & ~missing_weights
+    if (
+        summary.loc[complete, "weight_count"]
+        .ne(summary.loc[complete, "group_size"])
+        .any()
+        or summary.loc[complete, "score_count"]
+        .ne(summary.loc[complete, "group_size"])
+        .any()
+    ):
+        raise RuntimeError("sender allocation must fail closed as a complete group")
+    if not np.allclose(
+        summary.loc[complete, "weight_sum"],
+        1.0,
+        rtol=1e-10,
+        atol=1e-12,
+    ):
+        raise RuntimeError("sender assignment weights do not sum to one")
+    if not np.allclose(
+        summary.loc[complete, "score_sum"],
+        summary.loc[complete, "parent_score"],
+        rtol=1e-10,
+        atol=1e-12,
+    ):
+        raise RuntimeError("global sender scores do not conserve LR strength")
     return result.sort_values(keys, kind="stable", ignore_index=True)
 
 
@@ -1470,12 +1559,14 @@ class CrossReceiverCommonScoringApplication:
                     "cross_receiver_common_lr_scores",
                     self._lr_scores,
                     GLOBAL_COMMON_LR_SCORE_COLUMNS,
+                    unique_text_prefix=_GLOBAL_LR_DIGEST_KEY_COLUMNS,
                 )
                 == self.lr_scores_digest
                 and _table_digest(
                     "cross_receiver_common_sender_scores",
                     self._sender_scores,
                     GLOBAL_COMMON_SENDER_SCORE_COLUMNS,
+                    unique_text_prefix=_GLOBAL_SENDER_DIGEST_KEY_COLUMNS,
                 )
                 == self.sender_scores_digest
                 and self.table_row_counts
@@ -1597,11 +1688,13 @@ def apply_cross_receiver_common_scoring_functional(
             "cross_receiver_common_lr_scores",
             lr_scores,
             GLOBAL_COMMON_LR_SCORE_COLUMNS,
+            unique_text_prefix=_GLOBAL_LR_DIGEST_KEY_COLUMNS,
         ),
         "sender_scores_digest": _table_digest(
             "cross_receiver_common_sender_scores",
             sender_scores,
             GLOBAL_COMMON_SENDER_SCORE_COLUMNS,
+            unique_text_prefix=_GLOBAL_SENDER_DIGEST_KEY_COLUMNS,
         ),
         "table_row_counts": (len(lr_scores), len(sender_scores)),
         "_lr_scores": lr_scores.copy(deep=True),
