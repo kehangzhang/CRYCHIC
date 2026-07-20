@@ -165,6 +165,8 @@ def _target_prior() -> TargetPrior:
 class _FakeResult:
     def __init__(self, path: Path, scores: pd.DataFrame) -> None:
         self.path = path
+        self.sender_queries = 0
+        self.lr_queries = 0
         self._scores = scores.assign(
             raw_sender_evidence=scores["global_sender_lr_score"],
             assignment_weight=1.0,
@@ -229,6 +231,7 @@ class _FakeResult:
         mode: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame:
+        self.sender_queries += 1
         assert contrast == module.CONTRAST
         assert mode == "state"
         assert status is None
@@ -241,6 +244,7 @@ class _FakeResult:
         mode: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame:
+        self.lr_queries += 1
         assert contrast == module.CONTRAST
         assert mode == "state"
         assert status is None
@@ -318,7 +322,9 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
                             "reason_code": None,
                         }
                     )
-            return _FakeResult(output_dir, pd.DataFrame.from_records(records))
+            result = _FakeResult(output_dir, pd.DataFrame.from_records(records))
+            captured["result"] = result
+            return result
 
     monkeypatch.setattr(module, "Crychic", FakeCrychic)
     monkeypatch.setattr(
@@ -370,6 +376,8 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     config = captured["config"]
     spec = captured["spec"]
     assert captured["n_jobs"] == 3
+    assert captured["result"].sender_queries == 1
+    assert captured["result"].lr_queries == 1
     assert [mode.value for mode in config.communication_modes] == ["state"]
     assert spec.allowed_n_splits == (2,)
     assert spec.outer_fold_partition_seed == 17

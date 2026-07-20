@@ -471,14 +471,17 @@ def compact_sender_lr_scores(
     result: MSCrossFitResult,
     data: ad.AnnData,
     bundle: ResourceBundle,
+    *,
+    source: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Export current v9 held-out MS sender-LR rows at sample grain."""
 
-    source = result.query_contrast_common_sender_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
+    if source is None:
+        source = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
     if not isinstance(source, pd.DataFrame) or source.empty:
         raise ValueError("v9 result has no CA_vs_Ctrl state sender-LR rows")
     required = {
@@ -614,19 +617,24 @@ def compact_sender_lr_scores(
 def multigroup_score_layers(
     result: MSCrossFitResult,
     compact_scores: pd.DataFrame,
+    *,
+    sender_components: pd.DataFrame | None = None,
+    lr_components: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build the preregistered mechanism/annotation/strict MS score layers."""
 
-    sender = result.query_contrast_common_sender_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
-    lr = result.query_contrast_common_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
+    if sender_components is None:
+        sender_components = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+    if lr_components is None:
+        lr_components = result.query_contrast_common_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
     downstream_path = result.path / "descriptive_differential.parquet"
     if not downstream_path.is_file():
         raise FileNotFoundError(
@@ -635,8 +643,8 @@ def multigroup_score_layers(
     downstream = pd.read_parquet(downstream_path)
     layers = build_multigroup_score_layers(
         compact_scores,
-        sender,
-        lr,
+        sender_components,
+        lr_components,
         downstream,
         policy="annotate",
     )
@@ -855,8 +863,28 @@ def run_ms_ctrl_ca(
                     output_dir=output / "crossfit_result",
                 ),
             )
-        scores = compact_sender_lr_scores(result, data, bundle)
-        score_layers = multigroup_score_layers(result, scores)
+        sender_components = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+        lr_components = result.query_contrast_common_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+        scores = compact_sender_lr_scores(
+            result,
+            data,
+            bundle,
+            source=sender_components,
+        )
+        score_layers = multigroup_score_layers(
+            result,
+            scores,
+            sender_components=sender_components,
+            lr_components=lr_components,
+        )
         fold_audit = _heldout_fold_audit(scores, sample_metadata)
         strict_directed_effects = subject_equal_directed_lr_effects(
             scores,

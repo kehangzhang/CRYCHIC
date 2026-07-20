@@ -627,14 +627,17 @@ def compact_sender_lr_scores(
     result: KuppeCrossFitResult,
     data: ad.AnnData,
     bundle: ResourceBundle,
+    *,
+    source: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Export current v9 held-out sender-LR rows at their native sample grain."""
 
-    source = result.query_contrast_common_sender_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
+    if source is None:
+        source = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
     if not isinstance(source, pd.DataFrame) or source.empty:
         raise ValueError(
             "v9 cross-fit result has no contrast-common state sender-LR rows for "
@@ -770,19 +773,24 @@ def compact_sender_lr_scores(
 def multigroup_score_layers(
     result: KuppeCrossFitResult,
     compact_scores: pd.DataFrame,
+    *,
+    sender_components: pd.DataFrame | None = None,
+    lr_components: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build the preregistered mechanism/annotation/strict Kuppe score layers."""
 
-    sender = result.query_contrast_common_sender_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
-    lr = result.query_contrast_common_lr_scores(
-        contrast=CONTRAST,
-        mode="state",
-        status=None,
-    )
+    if sender_components is None:
+        sender_components = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+    if lr_components is None:
+        lr_components = result.query_contrast_common_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
     downstream_path = result.path / "descriptive_differential.parquet"
     if not downstream_path.is_file():
         raise FileNotFoundError(
@@ -791,8 +799,8 @@ def multigroup_score_layers(
     downstream = pd.read_parquet(downstream_path)
     layers = build_multigroup_score_layers(
         compact_scores,
-        sender,
-        lr,
+        sender_components,
+        lr_components,
         downstream,
         policy="annotate",
     )
@@ -1182,8 +1190,28 @@ def run_kuppe_ctrl_iz(
                     output_dir=output / "crossfit_result",
                 ),
             )
-        scores = compact_sender_lr_scores(result, data, bundle)
-        score_layers = multigroup_score_layers(result, scores)
+        sender_components = result.query_contrast_common_sender_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+        lr_components = result.query_contrast_common_lr_scores(
+            contrast=CONTRAST,
+            mode="state",
+            status=None,
+        )
+        scores = compact_sender_lr_scores(
+            result,
+            data,
+            bundle,
+            source=sender_components,
+        )
+        score_layers = multigroup_score_layers(
+            result,
+            scores,
+            sender_components=sender_components,
+            lr_components=lr_components,
+        )
         fold_audit = _heldout_fold_audit(scores, sample_metadata)
         differences = subject_equal_sender_lr_differences(scores)
         legacy_ranking = cell_pair_direction_ranking(differences)

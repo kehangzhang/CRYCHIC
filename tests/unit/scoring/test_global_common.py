@@ -107,6 +107,41 @@ def test_streamed_global_table_digest_matches_legacy_sorted_stable_id() -> None:
     assert reordered == expected
 
 
+def test_batched_global_digest_sorts_canonical_encoded_prefixes() -> None:
+    columns = ("identifier", "score")
+    table = pd.DataFrame(
+        [
+            ["a", 1.0],
+            ["a!", 2.0],
+            ["a space", 3.0],
+            ['a"quote', 4.0],
+            ["unicode-\u03b1", 5.0],
+        ],
+        columns=columns,
+    )
+    rows = [
+        [global_common_module._canonical_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    rows.sort(key=canonical_json)
+    expected = stable_id(
+        "global_common_prefix_order_fixture",
+        {"columns": list(columns), "rows": rows},
+        schema_version="1",
+        digest_length=64,
+    )
+
+    assert (
+        global_common_module._table_digest(
+            "global_common_prefix_order_fixture",
+            table,
+            columns,
+            unique_text_prefix=("identifier",),
+        )
+        == expected
+    )
+
+
 def test_streamed_global_digest_prefix_must_be_unique_text() -> None:
     columns = ("identifier", "score")
     duplicate = pd.DataFrame([["same", 1.0], ["same", 2.0]], columns=columns)

@@ -20,6 +20,7 @@ absolute communication rate, probability, p-value, or causal effect.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -179,9 +180,16 @@ def _table_digest(
     ):
         raise ValueError(f"{name} unique digest prefix must lead the contract")
     prefix_table = table.loc[:, list(unique_text_prefix)]
+
+    def text_column(values: pd.Series) -> bool:
+        if isinstance(values.dtype, pd.StringDtype):
+            return True
+        if isinstance(values.dtype, pd.CategoricalDtype):
+            return all(isinstance(value, str) for value in values.cat.categories)
+        return bool(values.map(lambda value: isinstance(value, str)).all())
+
     if prefix_table.isna().any(axis=None) or not all(
-        prefix_table[column].map(lambda value: isinstance(value, str)).all()
-        for column in unique_text_prefix
+        text_column(prefix_table[column]) for column in unique_text_prefix
     ):
         raise ValueError(f"{name} unique digest prefix must contain strings")
     if prefix_table.duplicated().any():
@@ -205,6 +213,106 @@ def _table_digest(
     if template.count(rows_marker) != 1:  # pragma: no cover - canonical contract
         raise RuntimeError("canonical stable-ID template lacks one rows marker")
     prefix, suffix = template.split(rows_marker, maxsplit=1)
+
+    def standard_scalar(value: object) -> bool:
+        if value is None or value is pd.NA:
+            return True
+        if type(value) is float:
+            return math.isnan(value) or math.isfinite(value)
+        return type(value) in {str, bool, int}
+
+    def standard_column(values: pd.Series) -> bool:
+        dtype = values.dtype
+        if (
+            pd.api.types.is_complex_dtype(dtype)
+            or pd.api.types.is_datetime64_any_dtype(dtype)
+            or pd.api.types.is_timedelta64_dtype(dtype)
+        ):
+            return False
+        if pd.api.types.is_float_dtype(dtype):
+            numeric = values.to_numpy(dtype=float, na_value=np.nan, copy=False)
+            return not bool(np.isinf(numeric).any())
+        if pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_bool_dtype(dtype):
+            return True
+        if isinstance(dtype, pd.StringDtype):
+            return True
+        if isinstance(dtype, pd.CategoricalDtype):
+            return all(standard_scalar(value) for value in values.cat.categories)
+        if dtype == np.dtype("object"):
+            return all(
+                standard_scalar(value)
+                for value in values.to_numpy(dtype=object, copy=False)
+            )
+        return False
+
+    standard_prefix = all(
+        isinstance(prefix_table[column].dtype, pd.StringDtype)
+        or (
+            isinstance(prefix_table[column].dtype, pd.CategoricalDtype)
+            and all(
+                type(value) is str
+                for value in prefix_table[column].cat.categories
+            )
+        )
+        or (
+            prefix_table[column].dtype == np.dtype("object")
+            and all(
+                type(value) is str
+                for value in prefix_table[column].to_numpy(
+                    dtype=object, copy=False
+                )
+            )
+        )
+        for column in unique_text_prefix
+    )
+    if standard_prefix and all(
+        standard_column(table[column]) for column in columns
+    ):
+        encoded_prefix_values: list[np.ndarray] = []
+        for column in unique_text_prefix:
+            codes, unique = pd.factorize(prefix_table[column], sort=False)
+            if bool(np.any(codes < 0)):  # guarded by the prefix contract above
+                raise RuntimeError("digest prefix unexpectedly contains missing values")
+            encoded_unique = np.fromiter(
+                (
+                    json.dumps(
+                        value,
+                        allow_nan=False,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    for value in unique
+                ),
+                dtype=object,
+                count=len(unique),
+            )
+            encoded_prefix_values.append(encoded_unique[codes])
+        prefix_values = tuple(reversed(encoded_prefix_values))
+        order = np.lexsort(prefix_values)
+        digest = hashlib.sha256()
+        digest.update(prefix.encode("ascii"))
+        digest.update(b'"rows":[')
+        emitted = False
+        batch_size = 8_192
+        for start in range(0, len(order), batch_size):
+            batch = table.iloc[order[start : start + batch_size]].astype(object)
+            rows = batch.where(pd.notna(batch), None).to_numpy(dtype=object).tolist()
+            body = json.dumps(
+                rows,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )[1:-1]
+            if not body:
+                continue
+            if emitted:
+                digest.update(b",")
+            digest.update(body.encode("ascii"))
+            emitted = True
+        digest.update(b"]")
+        digest.update(suffix.encode("ascii"))
+        return f"{id_prefix}_{digest.hexdigest()[:digest_length]}"
 
     def encoded_rows():
         canonical_prefixes = np.fromiter(

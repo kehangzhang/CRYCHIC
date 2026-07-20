@@ -7,7 +7,10 @@ add inferential claims.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -15,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from crychic.core import ContractError, canonical_json, stable_id
+from crychic.core._validation import record_validation, validation_is_cached
 
 from .crossfit import CrossFitArtifacts
 
@@ -218,19 +222,88 @@ def _cell_token(value: object) -> dict[str, object]:
 
 
 def _table_digest(name: str, table: pd.DataFrame) -> str:
-    rows = [
-        [_cell_token(value) for value in row]
-        for row in table.itertuples(index=False, name=None)
-    ]
-    rows.sort(key=canonical_json)
-    return str(
-        stable_id(
-            "semantic_score_table",
-            {"columns": list(table.columns), "rows": rows, "table_name": name},
-            schema_version=_SCHEMA_VERSION,
-            digest_length=64,
-        )
+    kind = "semantic_score_table"
+    prefix = (
+        f'{{"components":{{"columns":{canonical_json(list(table.columns))},"rows":['
     )
+    suffix = (
+        f'],"table_name":{canonical_json(name)}}},'
+        f'"kind":"{kind}","schema_version":"{_SCHEMA_VERSION}"}}'
+    )
+
+    missing_token = '{"type":"missing","value":null}'
+    false_token = '{"type":"bool","value":false}'
+    true_token = '{"type":"bool","value":true}'
+    string_tokens: dict[str, str] = {}
+    integer_tokens: dict[int, str] = {}
+
+    def encoded_cell(value: object) -> str:
+        if value is None or value is pd.NA or value is pd.NaT:
+            return missing_token
+        if isinstance(value, np.generic):
+            value = value.item()
+        if type(value) is float:
+            if math.isnan(value):
+                return missing_token
+            if not math.isfinite(value):
+                raise ValueError("semantic score tables cannot contain infinite values")
+            return f'{{"type":"float","value":"{value.hex()}"}}'
+        if isinstance(value, bool):
+            return true_token if value else false_token
+        if type(value) is int:
+            token = integer_tokens.get(value)
+            if token is None:
+                token = f'{{"type":"int","value":{value}}}'
+                if len(integer_tokens) < 4_096:
+                    integer_tokens[value] = token
+            return token
+        if type(value) is str:
+            token = string_tokens.get(value)
+            if token is None:
+                encoded_value = json.dumps(
+                    value,
+                    allow_nan=False,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                token = f'{{"type":"str","value":{encoded_value}}}'
+                if len(string_tokens) < 65_536:
+                    string_tokens[value] = token
+            return token
+        return json.dumps(
+            _cell_token(value),
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def encoded_rows() -> Iterator[str]:
+        for row in table.itertuples(index=False, name=None):
+            yield "[" + ",".join(encoded_cell(value) for value in row) + "]"
+
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    previous: str | None = None
+    row_count = 0
+    for encoded in encoded_rows():
+        if previous is not None and encoded < previous:
+            break
+        if row_count:
+            digest.update(b",")
+        digest.update(encoded.encode("ascii"))
+        previous = encoded
+        row_count += 1
+    else:
+        digest.update(suffix.encode("ascii"))
+        return f"{kind}_{digest.hexdigest()}"
+
+    rows = sorted(encoded_rows())
+    digest = hashlib.sha256()
+    digest.update(prefix.encode("ascii"))
+    digest.update(",".join(rows).encode("ascii"))
+    digest.update(suffix.encode("ascii"))
+    return f"{kind}_{digest.hexdigest()}"
 
 
 def _optional_reason(value: object) -> str | None:
@@ -490,35 +563,106 @@ def _validate_table(
         "repeat_id": repeat_id,
     }
     for column, expected in expected_lineage.items():
-        if set(table[column].astype(str)) != {expected}:
+        if not bool(table[column].astype(str).eq(expected).all()):
             raise ValueError(f"{name}.{column} changed collection lineage")
-    if table.duplicated(list(_KEY_COLUMNS[name])).any():
+    if bool(table.duplicated(list(_KEY_COLUMNS[name])).any()):
         raise ValueError(f"{name} contains duplicate semantic grain rows")
-    if any(
-        type(value) is not bool for value in table["formal_inference_allowed"].tolist()
-    ) or bool(table["formal_inference_allowed"].any()):
-        raise ValueError(f"{name} cannot claim formal inference")
-    value_column = _VALUE_COLUMNS[name]
-    for row in table.loc[:, [value_column, "status", "reason_code"]].itertuples(
-        index=False, name=None
+    inference_flags = table["formal_inference_allowed"]
+    if inference_flags.dtype != np.dtype(bool) and any(
+        type(value) is not bool for value in inference_flags.tolist()
     ):
-        raw_value, raw_status, raw_reason = row
-        status = str(raw_status)
-        reason = _optional_reason(raw_reason)
-        missing = raw_value is None or bool(pd.isna(cast(Any, raw_value)))
-        value = None if missing else float(cast(Any, raw_value))
-        if status not in _ROW_STATUSES:
-            raise ValueError(f"{name} contains an unsupported row status")
-        if status == "observed" and (value is None or reason is not None):
-            raise ValueError(f"{name} observed rows require value and no reason")
-        if status == "not_estimable" and (value is not None or reason is None):
-            raise ValueError(f"{name} not-estimable rows require NA and a reason")
-        if status == "structural_zero" and (value != 0.0 or reason is None):
-            raise ValueError(f"{name} structural-zero rows require zero and a reason")
-        if value is not None and not math.isfinite(value):
-            raise ValueError(f"{name} values must be finite")
-        if name != "differential_effect" and value is not None and not 0 <= value <= 1:
-            raise ValueError(f"{name} values must lie in [0, 1]")
+        raise ValueError(f"{name} cannot claim formal inference")
+    if bool(inference_flags.any()):
+        raise ValueError(f"{name} cannot claim formal inference")
+
+    value_column = _VALUE_COLUMNS[name]
+    statuses = table["status"].astype(str)
+    if not bool(statuses.isin(_ROW_STATUSES).all()):
+        raise ValueError(f"{name} contains an unsupported row status")
+
+    raw_values = table[value_column]
+    raw_reasons = table["reason_code"]
+    fast_numeric_values = (
+        pd.api.types.is_numeric_dtype(raw_values.dtype)
+        and not pd.api.types.is_complex_dtype(raw_values.dtype)
+        and not pd.api.types.is_datetime64_any_dtype(raw_values.dtype)
+        and not pd.api.types.is_timedelta64_dtype(raw_values.dtype)
+    )
+    fast_reasons = all(
+        value is None
+        or value is pd.NA
+        or value is pd.NaT
+        or type(value) in {str, float, np.float64}
+        for value in raw_reasons.to_numpy(dtype="object", copy=False)
+    )
+    if not fast_numeric_values or not fast_reasons:
+        for raw_value, raw_status, raw_reason in table.loc[
+            :, [value_column, "status", "reason_code"]
+        ].itertuples(index=False, name=None):
+            status = str(raw_status)
+            reason = _optional_reason(raw_reason)
+            missing = raw_value is None or bool(pd.isna(cast(Any, raw_value)))
+            value = None if missing else float(cast(Any, raw_value))
+            if status not in _ROW_STATUSES:
+                raise ValueError(f"{name} contains an unsupported row status")
+            if status == "observed" and (value is None or reason is not None):
+                raise ValueError(f"{name} observed rows require value and no reason")
+            if status == "not_estimable" and (value is not None or reason is None):
+                raise ValueError(
+                    f"{name} not-estimable rows require NA and a reason"
+                )
+            if status == "structural_zero" and (value != 0.0 or reason is None):
+                raise ValueError(
+                    f"{name} structural-zero rows require zero and a reason"
+                )
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{name} values must be finite")
+            if (
+                name != "differential_effect"
+                and value is not None
+                and not 0 <= value <= 1
+            ):
+                raise ValueError(f"{name} values must lie in [0, 1]")
+        return
+
+    missing_values = raw_values.isna().to_numpy(dtype=bool, copy=False)
+    numeric_values: np.ndarray = np.full(len(table), np.nan, dtype=float)
+    try:
+        numeric_values[~missing_values] = pd.to_numeric(
+            raw_values.loc[~missing_values], errors="raise"
+        ).to_numpy(dtype=float, copy=False)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} values must be numeric") from error
+
+    missing_reasons = np.logical_or(
+        raw_reasons.isna().to_numpy(dtype=bool, copy=False),
+        raw_reasons.eq("").fillna(False).to_numpy(dtype=bool, copy=False),
+    )
+    observed = statuses.eq("observed").to_numpy(dtype=bool, copy=False)
+    not_estimable = statuses.eq("not_estimable").to_numpy(dtype=bool, copy=False)
+    structural_zero = statuses.eq("structural_zero").to_numpy(
+        dtype=bool, copy=False
+    )
+
+    if bool(np.any(observed & (missing_values | ~missing_reasons))):
+        raise ValueError(f"{name} observed rows require value and no reason")
+    if bool(np.any(not_estimable & (~missing_values | missing_reasons))):
+        raise ValueError(f"{name} not-estimable rows require NA and a reason")
+    if bool(
+        np.any(
+            structural_zero
+            & ((numeric_values != 0.0) | missing_reasons)
+        )
+    ):
+        raise ValueError(f"{name} structural-zero rows require zero and a reason")
+
+    finite_values = numeric_values[~missing_values]
+    if not bool(np.isfinite(finite_values).all()):
+        raise ValueError(f"{name} values must be finite")
+    if name != "differential_effect" and bool(
+        np.any((finite_values < 0.0) | (finite_values > 1.0))
+    ):
+        raise ValueError(f"{name} values must lie in [0, 1]")
 
 
 def _view_statuses(
@@ -583,10 +727,24 @@ class SemanticScoreCollection:
         artifacts: CrossFitArtifacts,
         tables: dict[str, pd.DataFrame],
     ) -> SemanticScoreCollection:
+        owned_tables = {
+            name: tables[name].copy(deep=True) for name in SEMANTIC_SCORE_OUTPUTS
+        }
+        for name, table in owned_tables.items():
+            _validate_table(
+                name,
+                table,
+                crossfit_id=artifacts.crossfit_id,
+                crossfit_spec_id=artifacts.spec.spec_id,
+                repeat_id=artifacts.spec.repeat_id,
+            )
         digests = tuple(
-            (name, _table_digest(name, tables[name])) for name in SEMANTIC_SCORE_OUTPUTS
+            (name, _table_digest(name, owned_tables[name]))
+            for name in SEMANTIC_SCORE_OUTPUTS
         )
-        row_counts = tuple((name, len(tables[name])) for name in SEMANTIC_SCORE_OUTPUTS)
+        row_counts = tuple(
+            (name, len(owned_tables[name])) for name in SEMANTIC_SCORE_OUTPUTS
+        )
         self = object.__new__(cls)
         values: dict[str, object] = {
             "crossfit_id": artifacts.crossfit_id,
@@ -594,12 +752,12 @@ class SemanticScoreCollection:
             "repeat_id": artifacts.spec.repeat_id,
             "table_digests": digests,
             "table_row_counts": row_counts,
-            "view_statuses": _view_statuses(artifacts, tables),
+            "view_statuses": _view_statuses(artifacts, owned_tables),
             "formal_inference_allowed": False,
-            "_availability_score": tables["availability_score"].copy(deep=True),
-            "_receiver_program_score": tables["receiver_program_score"].copy(deep=True),
-            "_integrated_lr_score": tables["integrated_lr_score"].copy(deep=True),
-            "_differential_effect": tables["differential_effect"].copy(deep=True),
+            "_availability_score": owned_tables["availability_score"],
+            "_receiver_program_score": owned_tables["receiver_program_score"],
+            "_integrated_lr_score": owned_tables["integrated_lr_score"],
+            "_differential_effect": owned_tables["differential_effect"],
             "_source_artifacts": artifacts,
             "_producer_marker": _COLLECTION_MARKER,
         }
@@ -614,7 +772,7 @@ class SemanticScoreCollection:
                 schema_version=_SCHEMA_VERSION,
             ),
         )
-        self._require_intact()
+        record_validation(self)
         return self
 
     def _tables(self) -> dict[str, pd.DataFrame]:
@@ -637,6 +795,8 @@ class SemanticScoreCollection:
         }
 
     def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
         try:
             self._source_artifacts._require_intact()
             tables = self._tables()
@@ -705,6 +865,7 @@ class SemanticScoreCollection:
                 field="collection_id",
                 remediation="Rebuild it from intact in-memory CrossFitArtifacts",
             )
+        record_validation(self)
 
     def table(self, semantic_output: str) -> pd.DataFrame:
         """Return one named semantic view as a defensive copy."""
@@ -721,20 +882,14 @@ class SemanticScoreCollection:
         """Return all semantic views after one integrity validation pass."""
 
         self._require_intact()
-        return {
-            name: table.copy(deep=True)
-            for name, table in self._tables().items()
-        }
+        return {name: table.copy(deep=True) for name, table in self._tables().items()}
 
     def snapshot(self) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
         """Return defensive table copies and their manifest after one validation."""
 
         self._require_intact()
         return (
-            {
-                name: table.copy(deep=True)
-                for name, table in self._tables().items()
-            },
+            {name: table.copy(deep=True) for name, table in self._tables().items()},
             self._manifest_payload(),
         )
 
@@ -837,14 +992,6 @@ def build_crossfit_semantic_scores(
         "integrated_lr_score": _integrated_lr_table(artifacts),
         "differential_effect": _differential_effect_table(artifacts),
     }
-    for name, table in tables.items():
-        _validate_table(
-            name,
-            table,
-            crossfit_id=artifacts.crossfit_id,
-            crossfit_spec_id=artifacts.spec.spec_id,
-            repeat_id=artifacts.spec.repeat_id,
-        )
     return SemanticScoreCollection._from_tables(artifacts, tables)
 
 

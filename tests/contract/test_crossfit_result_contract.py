@@ -4,6 +4,7 @@ import copy
 import math
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -41,10 +42,13 @@ from crychic.workflow.crossfit_persistence import (
     _canonical_table_scalar,
     _directional_binding_rows,
     _global_source_table_digest,
+    _math_isclose_array,
     _require_identifiers,
     _source_row_id,
+    _source_row_ids,
     _table_columns,
     _table_schema_version,
+    _validate_conserved_sender_groups,
     _validate_contrast_common_collections_manifest,
     _validate_contrast_common_lr_table,
     _validate_contrast_common_registry_links,
@@ -2217,6 +2221,77 @@ def test_source_row_id_fast_path_matches_canonical_stable_id(receiver: str) -> N
     )
 
 
+def test_source_row_id_batch_matches_scalar_fast_and_fallback_paths() -> None:
+    receivers = np.asarray(["Receiver", 'T \\"cell', "T\tcell"], dtype=object)
+    values = {
+        "application_ids": np.asarray(["app-a", "app-a", "app-b"], dtype=object),
+        "sample_ids": np.asarray(["sample-1", "sample-2", "sample-3"], dtype=object),
+        "subject_ids": np.asarray(
+            ["subject-1", "subject-2", "subject-3"], dtype=object
+        ),
+        "context_ids": np.asarray(
+            ["context-1", "context-2", "context-3"], dtype=object
+        ),
+        "receivers": receivers,
+        "family_ids": np.asarray(["family-a", "family-a", "family-b"], dtype=object),
+        "driver_ids": np.asarray(["FGF2", "FGF2", "WNT5A"], dtype=object),
+        "interaction_ids": np.asarray(["lr-1", "lr-2", "lr-3"], dtype=object),
+        "modes": np.asarray(["state", "state", "ecosystem"], dtype=object),
+        "senders": np.asarray([None, None, None], dtype=object),
+    }
+    observed = _source_row_ids(
+        source_table=CROSSFIT_CONTRAST_COMMON_LR_TABLE,
+        **values,
+    )
+    expected = np.asarray(
+        [
+            _source_row_id(
+                source_table=CROSSFIT_CONTRAST_COMMON_LR_TABLE,
+                application_id=values["application_ids"][index],
+                sample_id=values["sample_ids"][index],
+                subject_id=values["subject_ids"][index],
+                context_id=values["context_ids"][index],
+                receiver=values["receivers"][index],
+                family_id=values["family_ids"][index],
+                driver_id=values["driver_ids"][index],
+                interaction_id=values["interaction_ids"][index],
+                mode=values["modes"][index],
+            )
+            for index in range(len(receivers))
+        ],
+        dtype=object,
+    )
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_vector_isclose_matches_math_isclose_at_tolerance_boundaries() -> None:
+    left = np.asarray([0.0, 1.0, 1.0, 0.25, 1e-14], dtype=float)
+    right = np.asarray(
+        [
+            1e-12,
+            1.0 + 1.005e-10,
+            np.nextafter(1.0 + 1e-10, 1.0),
+            0.25 + 1e-12,
+            0.0,
+        ],
+        dtype=float,
+    )
+    observed = _math_isclose_array(
+        left,
+        right,
+        rel_tol=1e-10,
+        abs_tol=1e-12,
+    )
+    expected = np.asarray(
+        [
+            math.isclose(a, b, rel_tol=1e-10, abs_tol=1e-12)
+            for a, b in zip(left, right, strict=True)
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(observed, expected)
+
+
 def test_global_source_digest_streaming_and_sort_fallback_match_legacy() -> None:
     columns = ("identifier", "value", "available")
     table = pd.DataFrame(
@@ -2251,6 +2326,80 @@ def test_global_source_digest_streaming_and_sort_fallback_match_legacy() -> None
     )
     assert (
         _global_source_table_digest("test_source_rows", reversed_table, columns)
+        == expected
+    )
+
+
+def test_global_source_digest_fast_tokens_match_legacy_edge_types() -> None:
+    class StringSubclass(str):
+        pass
+
+    class FloatSubclass(float):
+        pass
+
+    columns = ("identifier", "value", "flag", "other")
+    table = pd.DataFrame(
+        [
+            ('quoted "row"', -0.0, True, None),
+            ("unicode-\u03b1", np.float32(0.125), np.bool_(False), pd.NA),
+            (StringSubclass("subclass"), FloatSubclass(0.5), False, np.int64(7)),
+            ("back\\slash", math.nan, True, pd.NaT),
+        ],
+        columns=columns,
+        dtype=object,
+    )
+    normalized = [
+        [_canonical_table_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    expected = stable_id(
+        "test_source_edge_rows",
+        {
+            "columns": list(columns),
+            "rows": sorted(normalized, key=canonical_json),
+        },
+        schema_version="1",
+        digest_length=64,
+    )
+
+    assert (
+        _global_source_table_digest("test_source_edge_rows", table, columns)
+        == expected
+    )
+    assert (
+        _global_source_table_digest(
+            "test_source_edge_rows",
+            table.iloc[::-1].reset_index(drop=True),
+            columns,
+        )
+        == expected
+    )
+
+
+def test_global_source_digest_fast_token_cache_boundary_matches_legacy() -> None:
+    columns = ("identifier", "value")
+    table = pd.DataFrame(
+        {
+            "identifier": [f"row-{index:05d}" for index in range(65_537)],
+            "value": np.arange(65_537, dtype=np.int64),
+        }
+    )
+    normalized = [
+        [_canonical_table_scalar(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    expected = stable_id(
+        "test_source_cache_rows",
+        {
+            "columns": list(columns),
+            "rows": sorted(normalized, key=canonical_json),
+        },
+        schema_version="1",
+        digest_length=64,
+    )
+
+    assert (
+        _global_source_table_digest("test_source_cache_rows", table, columns)
         == expected
     )
 
@@ -2307,6 +2456,23 @@ def test_v6_conserved_sender_groups_enforce_zero_and_ne_precedence() -> None:
     zero_assignment.loc[1, "status"] = "structural_zero"
     zero_assignment.loc[1, "reason_code"] = "sender_assignment_weight_zero"
     assert len(_validate_contrast_common_sender_lr_table(zero_assignment)) == 2
+
+
+def test_vector_conserved_parent_check_matches_legacy_first_row_semantics() -> None:
+    sender = _contrast_common_sender_table()
+    sender = pd.concat([sender, sender.iloc[[1]]], ignore_index=True)
+    sender.loc[2, "sender"] = "SenderC"
+    delta = 7.5e-13
+    parents = np.asarray([0.5, 0.5 + delta, 0.5 - delta])
+    sender.loc[:, "global_lr_score"] = parents
+    sender.loc[:, "assignment_weight"] = 1.0 / 3.0
+    sender.loc[:, "normalized_entropy"] = 1.0
+    sender.loc[:, "global_sender_lr_score"] = parents / 3.0
+
+    assert math.isclose(parents[0], parents[1], rel_tol=1e-12, abs_tol=1e-12)
+    assert math.isclose(parents[0], parents[2], rel_tol=1e-12, abs_tol=1e-12)
+    assert not math.isclose(parents[1], parents[2], rel_tol=1e-12, abs_tol=1e-12)
+    _validate_conserved_sender_groups(sender)
 
 
 def test_contrast_common_collection_allows_multiple_sender_applications() -> None:
@@ -2494,7 +2660,6 @@ def test_contrast_common_table_lineage_binds_source_digests_and_children() -> No
             raw_gain_tamper,
             applications,
         )
-
     prior_tamper = tables[CROSSFIT_CONTRAST_COMMON_LR_TABLE].copy(deep=True)
     prior_tamper.loc[0, "prior_quality"] = 0.8
     with pytest.raises(ResultValidationError, match="frozen formula"):
@@ -2522,6 +2687,34 @@ def test_contrast_common_table_lineage_binds_source_digests_and_children() -> No
             binding_tamper,
             applications,
         )
+
+
+def test_sender_lr_vector_lineage_preserves_legacy_string_coercion() -> None:
+    lr = _contrast_common_lr_table()
+    sender = _contrast_common_sender_table()
+
+    lr["sample_id"] = pd.Categorical([1])
+    sender["sample_id"] = pd.Categorical(["1", "1"])
+    _validate_sender_lr_cross_table_lineage(lr, sender)
+
+    sender["sample_id"] = pd.Categorical([1.0, 1.0])
+    with pytest.raises(ResultValidationError, match="no corresponding LR parent"):
+        _validate_sender_lr_cross_table_lineage(lr, sender)
+
+
+def test_sender_lr_vector_lineage_honors_string_subclass_str() -> None:
+    class PoisonStatus(str):
+        def __str__(self) -> str:
+            return "poison"
+
+    lr = _contrast_common_lr_table()
+    sender = _contrast_common_sender_table()
+    sender["status"] = sender["status"].astype(object)
+    sender.at[0, "status"] = PoisonStatus("observed")
+    assert type(sender.at[0, "status"]) is PoisonStatus
+
+    with pytest.raises(ResultValidationError, match="frozen formula"):
+        _validate_sender_lr_cross_table_lineage(lr, sender)
 
 
 def test_contrast_common_table_lineage_rejects_missing_sender_application() -> None:

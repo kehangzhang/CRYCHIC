@@ -4,9 +4,11 @@ import copy
 import json
 import shutil
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import pandas as pd
 import pytest
 from tests.integration.test_subject_crossfit import (
@@ -23,6 +25,7 @@ from tests.integration.test_subject_crossfit import (
 )
 
 from crychic.core import ContractError, canonical_digest, canonical_json, stable_id
+from crychic.core._validation import validation_scope
 from crychic.results.errors import ResultValidationError
 from crychic.workflow import (
     CrossFitArtifacts,
@@ -32,6 +35,7 @@ from crychic.workflow import (
     run_subject_crossfit,
     write_crossfit_result,
 )
+from crychic.workflow import semantic_scores as semantic_scores_module
 from crychic.workflow.crossfit_persistence import (
     CROSSFIT_INTEGRATED_LR_QUERY_COLUMNS,
     CROSSFIT_SEMANTIC_INTEGRATED_LR_TABLE,
@@ -39,7 +43,52 @@ from crychic.workflow.crossfit_persistence import (
     _sha256_file,
     _validate_source_response_precision_lineage,
 )
-from crychic.workflow.semantic_scores import _table_digest
+from crychic.workflow.semantic_scores import _cell_token, _table_digest, _validate_table
+
+
+class _DigestInt(int):
+    def __str__(self) -> str:
+        return "999"
+
+
+class _DigestFloat(float):
+    def hex(self) -> str:
+        return 'quoted"\\hex'
+
+
+class _DigestString(str):
+    def __hash__(self) -> int:
+        return 1
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str)
+
+
+class _FloatLike:
+    def __float__(self) -> float:
+        return 0.5
+
+
+class _MisleadingReason:
+    def __eq__(self, other: object) -> bool:
+        return other == ""
+
+    def __str__(self) -> str:
+        return "real_reason"
+
+
+def _legacy_semantic_digest(name: str, table: pd.DataFrame) -> str:
+    rows = [
+        [_cell_token(value) for value in row]
+        for row in table.itertuples(index=False, name=None)
+    ]
+    rows.sort(key=canonical_json)
+    return stable_id(
+        "semantic_score_table",
+        {"columns": list(table.columns), "rows": rows, "table_name": name},
+        schema_version="1",
+        digest_length=64,
+    )
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
@@ -53,9 +102,116 @@ def untuned_artifacts() -> CrossFitArtifacts:
     )
 
 
+def test_semantic_table_digest_matches_legacy_for_sorted_and_shuffled_rows() -> None:
+    table = pd.DataFrame(
+        {
+            "label": ["alpha", "alpha", "quote\"slash\\", "unicode-\u03b1", None],
+            "value": [0.0, -0.0, 0.125, float("nan"), 3.5],
+            "flag": [False, True, False, True, False],
+            "count": [0, 1, -2, 7, 11],
+        }
+    )
+    expected = _legacy_semantic_digest("digest_fixture", table)
+
+    assert _table_digest("digest_fixture", table) == expected
+    assert _table_digest("digest_fixture", table.iloc[::-1]) == expected
+    assert (
+        _table_digest("digest_fixture", table.sample(frac=1.0, random_state=7))
+        == expected
+    )
+
+
+def test_semantic_table_digest_preserves_subclass_and_cache_boundary_semantics(
+) -> None:
+    subclass_table = pd.DataFrame(
+        {
+            "value": pd.Series(
+                [_DigestInt(5), _DigestFloat(0.5), _DigestString("left")],
+                dtype="object",
+            )
+        }
+    )
+    unique_table = pd.DataFrame(
+        {"value": [f"unique-{index:05d}" for index in range(65_538)]}
+    )
+
+    for name, table in (
+        ("subclass_fixture", subclass_table),
+        ("cache_boundary_fixture", unique_table),
+    ):
+        expected = _legacy_semantic_digest(name, table)
+        assert _table_digest(name, table) == expected
+        assert _table_digest(name, table.iloc[::-1]) == expected
+
+
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def untuned_scores(untuned_artifacts: CrossFitArtifacts) -> SemanticScoreCollection:
     return build_crossfit_semantic_scores(untuned_artifacts)
+
+
+def test_semantic_validation_fast_path_preserves_legacy_object_boundaries(
+    untuned_scores: SemanticScoreCollection,
+) -> None:
+    base = untuned_scores.availability_score.iloc[[0]].reset_index(drop=True)
+    lineage = {
+        "crossfit_id": untuned_scores.crossfit_id,
+        "crossfit_spec_id": untuned_scores.crossfit_spec_id,
+        "repeat_id": untuned_scores.repeat_id,
+    }
+
+    def validate_value(value: object) -> None:
+        table = base.copy(deep=True)
+        table["availability_score"] = pd.Series([value], dtype="object")
+        _validate_table("availability_score", table, **lineage)
+
+    for accepted in (Fraction(1, 2), "0.5", _FloatLike()):
+        validate_value(accepted)
+    with pytest.raises(TypeError):
+        validate_value(0.5 + 0.0j)
+
+    for reason in (
+        np.float32(np.nan),
+        np.datetime64("NaT"),
+        _MisleadingReason(),
+    ):
+        table = base.copy(deep=True)
+        table["reason_code"] = pd.Series([reason], dtype="object")
+        with pytest.raises(ValueError, match="observed rows"):
+            _validate_table("availability_score", table, **lineage)
+
+    nullable_bool = base.copy(deep=True)
+    nullable_bool["formal_inference_allowed"] = pd.Series([False], dtype="boolean")
+    _validate_table("availability_score", nullable_bool, **lineage)
+
+    numpy_bool = base.copy(deep=True)
+    numpy_bool["formal_inference_allowed"] = pd.Series(
+        [np.bool_(False)], dtype="object"
+    )
+    with pytest.raises(ValueError, match="formal inference"):
+        _validate_table("availability_score", numpy_bool, **lineage)
+
+
+def test_semantic_snapshot_reuses_only_operation_scoped_validation(
+    untuned_artifacts: CrossFitArtifacts,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = semantic_scores_module._table_digest
+    digest_calls = 0
+
+    def counted_digest(name: str, table: pd.DataFrame) -> str:
+        nonlocal digest_calls
+        digest_calls += 1
+        return original(name, table)
+
+    monkeypatch.setattr(semantic_scores_module, "_table_digest", counted_digest)
+    with validation_scope():
+        collection = build_crossfit_semantic_scores(untuned_artifacts)
+        calls_after_build = digest_calls
+        collection.snapshot()
+        assert digest_calls == calls_after_build
+
+    collection.snapshot()
+    assert digest_calls > calls_after_build
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]

@@ -11,7 +11,7 @@ import tempfile
 from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from itertools import pairwise
+from itertools import pairwise, repeat
 from pathlib import Path
 from typing import Any, cast
 
@@ -1006,18 +1006,80 @@ def _global_source_table_digest(
 ) -> str:
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the producer contract")
+    recognized_prefix: tuple[str, ...] | None = None
+    if name == "cross_receiver_common_lr_scores" and columns == (
+        GLOBAL_COMMON_LR_SCORE_COLUMNS
+    ):
+        recognized_prefix = columns[:11]
+    elif name == "cross_receiver_common_sender_scores" and columns == (
+        GLOBAL_COMMON_SENDER_SCORE_COLUMNS
+    ):
+        recognized_prefix = columns[:14]
+    if recognized_prefix is not None:
+        prefix_table = table.loc[:, list(recognized_prefix)]
+        standard_prefix = all(
+            isinstance(prefix_table[column].dtype, pd.StringDtype)
+            for column in recognized_prefix
+        )
+        if (
+            standard_prefix
+            and not bool(prefix_table.isna().any(axis=None))
+            and not bool(prefix_table.duplicated().any())
+        ):
+            from crychic.scoring.global_common import _table_digest
+
+            return _table_digest(
+                name,
+                table,
+                columns,
+                unique_text_prefix=recognized_prefix,
+            )
     stable_id(name, (), schema_version="1", digest_length=64)
     prefix = f'{{"components":{{"columns":{canonical_json(list(columns))},"rows":['
     suffix = f']}},"kind":{canonical_json(name)},"schema_version":"1"}}'
 
+    string_tokens: dict[str, str] = {}
+    integer_tokens: dict[int, str] = {}
+
+    def encoded_scalar(value: object) -> str:
+        if value is None or value is pd.NA:
+            return "null"
+        if type(value) is str:
+            token = string_tokens.get(value)
+            if token is None:
+                token = json.dumps(
+                    value,
+                    allow_nan=False,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                if len(string_tokens) < 65_536:
+                    string_tokens[value] = token
+            return token
+        if type(value) is bool:
+            return "true" if value else "false"
+        if type(value) is int:
+            token = integer_tokens.get(value)
+            if token is None:
+                token = str(value)
+                if len(integer_tokens) < 4_096:
+                    integer_tokens[value] = token
+            return token
+        if type(value) is float:
+            if math.isnan(value):
+                return "null"
+            if math.isfinite(value):
+                return repr(value)
+        return json.dumps(
+            _canonical_table_scalar(value),
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
     def encoded_rows() -> Any:
         for row in table.itertuples(index=False, name=None):
-            yield json.dumps(
-                [_canonical_table_scalar(value) for value in row],
-                allow_nan=False,
-                ensure_ascii=True,
-                separators=(",", ":"),
-            )
+            yield "[" + ",".join(encoded_scalar(value) for value in row) + "]"
 
     digest = hashlib.sha256()
     digest.update(prefix.encode("ascii"))
@@ -1170,6 +1232,120 @@ def _source_row_id(
     )
 
 
+def _source_row_ids(
+    *,
+    source_table: str,
+    application_ids: np.ndarray,
+    sample_ids: np.ndarray,
+    subject_ids: np.ndarray,
+    context_ids: np.ndarray,
+    receivers: np.ndarray,
+    family_ids: np.ndarray,
+    driver_ids: np.ndarray,
+    interaction_ids: np.ndarray,
+    modes: np.ndarray,
+    senders: np.ndarray,
+) -> np.ndarray:
+    arrays = (
+        application_ids,
+        context_ids,
+        driver_ids,
+        family_ids,
+        interaction_ids,
+        modes,
+        receivers,
+        sample_ids,
+        senders,
+        subject_ids,
+    )
+    row_count = len(application_ids)
+    if any(len(values) != row_count for values in arrays):
+        raise ValueError("source-row identity columns must have equal lengths")
+
+    def legacy() -> np.ndarray:
+        return cast(
+            np.ndarray,
+            np.fromiter(
+                (
+                    _source_row_id(
+                        source_table=source_table,
+                        application_id=cast(str, application_ids[index]),
+                        sample_id=cast(str | None, sample_ids[index]),
+                        subject_id=cast(str | None, subject_ids[index]),
+                        context_id=cast(str | None, context_ids[index]),
+                        receiver=cast(str, receivers[index]),
+                        family_id=cast(str, family_ids[index]),
+                        driver_id=cast(str | None, driver_ids[index]),
+                        interaction_id=cast(str | None, interaction_ids[index]),
+                        mode=cast(str | None, modes[index]),
+                        sender=cast(str | None, senders[index]),
+                    )
+                    for index in range(row_count)
+                ),
+                dtype=object,
+                count=row_count,
+            ),
+        )
+
+    encoded_source_table = _fast_json_string(source_table)
+    if encoded_source_table is None:
+        return legacy()
+    encoded_columns: list[np.ndarray] = []
+    for key, values in zip(
+        (
+            "application_id",
+            "context_id",
+            "driver_id",
+            "family_id",
+            "interaction_id",
+            "mode",
+            "receiver",
+            "sample_id",
+            "sender",
+            "subject_id",
+        ),
+        arrays,
+        strict=True,
+    ):
+        codes, uniques = pd.factorize(values, sort=False)
+        fragments: list[str] = []
+        for value in uniques:
+            encoded = _fast_json_string(value)
+            if encoded is None:
+                return legacy()
+            fragments.append(f'"{key}":{encoded}')
+        if bool(np.any(codes < 0)):
+            missing_index = len(fragments)
+            fragments.append(f'"{key}":null')
+            codes = codes.copy()
+            codes[codes < 0] = missing_index
+        encoded_columns.append(np.asarray(fragments, dtype=object)[codes])
+
+    source_fragment = f'"source_table":{encoded_source_table}'
+    prefix = '{"components":{'
+    suffix = f'}},"kind":"{_SOURCE_ROW_ID_KIND}","schema_version":"1"}}'
+    row_fragments = zip(
+        *encoded_columns[:9],
+        repeat(source_fragment, row_count),
+        encoded_columns[9],
+        strict=True,
+    )
+    return cast(
+        np.ndarray,
+        np.fromiter(
+            (
+                f"{_SOURCE_ROW_ID_KIND}_"
+                + hashlib.sha256(
+                    (prefix + ",".join(fragments) + suffix).encode("ascii")
+                ).hexdigest()[:32]
+                for fragments in row_fragments
+            ),
+            dtype=object,
+            count=row_count,
+        ),
+    )
+
+
 def _component_status(
     *,
     component: str,
@@ -1260,16 +1436,46 @@ def _base_component_row(
     }
 
 
-def _required_string_array(values: pd.Series) -> np.ndarray:
-    """Match ``str(value)`` while avoiding one Python object per persisted row."""
+def _standard_required_string_array(values: pd.Series) -> np.ndarray | None:
+    if isinstance(values.dtype, pd.StringDtype):
+        if bool(values.isna().any()):
+            return None
+        return cast(np.ndarray, values.to_numpy(dtype=object, copy=False))
+    if isinstance(values.dtype, pd.CategoricalDtype):
+        if bool(values.isna().any()) or not all(
+            type(value) is str for value in values.cat.categories
+        ):
+            return None
+        return cast(np.ndarray, values.to_numpy(dtype=object, copy=False))
+    return None
 
-    return values.astype(str).to_numpy(dtype=object, copy=False)
+
+def _required_string_array(values: pd.Series) -> np.ndarray:
+    """Match ``str(value)`` while keeping ordinary string columns vectorized."""
+
+    standard = _standard_required_string_array(values)
+    if standard is not None:
+        return standard
+    return cast(
+        np.ndarray,
+        np.fromiter(
+            (str(value) for value in values), dtype=object, count=len(values)
+        ),
+    )
 
 
 def _optional_string_array(values: pd.Series, *, field_name: str) -> np.ndarray:
     missing = values.isna().to_numpy(dtype=bool, copy=False)
-    result = values.astype(str).to_numpy(dtype=object, copy=True)
-    result[missing] = None
+    result: np.ndarray
+    if _standard_optional_string_presence(values) is None:
+        result = np.fromiter(
+            (_optional_string(value) for value in values),
+            dtype=object,
+            count=len(values),
+        )
+    else:
+        result = values.to_numpy(dtype=object, copy=True)
+        result[missing] = None
     if any(value == "" for value in result[~missing]):
         raise ValueError("persisted optional identifiers must be non-empty")
     return result
@@ -1290,7 +1496,7 @@ def _finite_float_matrix(
         values.append(numeric)
     if not values:
         return np.empty((len(source), 0), dtype=float)
-    return np.column_stack(values)
+    return cast(np.ndarray, np.column_stack(values))
 
 
 def _component_source_row_ids(
@@ -1321,25 +1527,18 @@ def _component_source_row_ids(
         if source_table == "sender_scores"
         else np.full(len(source), None, dtype=object)
     )
-    return np.fromiter(
-        (
-            _source_row_id(
-                source_table=source_table,
-                application_id=application_id,
-                sample_id=sample_ids[index],
-                subject_id=subject_ids[index],
-                context_id=context_ids[index],
-                receiver=receivers[index],
-                family_id=family_ids[index],
-                driver_id=driver_ids[index],
-                interaction_id=interaction_ids[index],
-                mode=modes[index],
-                sender=senders[index],
-            )
-            for index in range(len(source))
-        ),
-        dtype=object,
-        count=len(source),
+    return _source_row_ids(
+        source_table=source_table,
+        application_ids=np.full(len(source), application_id, dtype=object),
+        sample_ids=sample_ids,
+        subject_ids=subject_ids,
+        context_ids=context_ids,
+        receivers=receivers,
+        family_ids=family_ids,
+        driver_ids=driver_ids,
+        interaction_ids=interaction_ids,
+        modes=modes,
+        senders=senders,
     )
 
 
@@ -2249,25 +2448,20 @@ def _contrast_common_persisted_frame(
     driver_ids = _required_string_array(table["driver_id"])
     interaction_ids = _required_string_array(table["interaction_id"])
     modes = _required_string_array(table["mode"])
-    source_row_ids = np.fromiter(
-        (
-            _source_row_id(
-                source_table=source_table,
-                application_id=source.application.application_id,
-                sample_id=sample_ids[index],
-                subject_id=subject_ids[index],
-                context_id=context_ids[index],
-                receiver=receivers[index],
-                family_id=family_ids[index],
-                driver_id=driver_ids[index],
-                interaction_id=interaction_ids[index],
-                mode=modes[index],
-                sender=sender[index],
-            )
-            for index in range(row_count)
+    source_row_ids = _source_row_ids(
+        source_table=source_table,
+        application_ids=np.full(
+            row_count, source.application.application_id, dtype=object
         ),
-        dtype=object,
-        count=row_count,
+        sample_ids=sample_ids,
+        subject_ids=subject_ids,
+        context_ids=context_ids,
+        receivers=receivers,
+        family_ids=family_ids,
+        driver_ids=driver_ids,
+        interaction_ids=interaction_ids,
+        modes=modes,
+        senders=sender,
     )
     prefix = pd.DataFrame(
         {
@@ -2968,12 +3162,86 @@ def _require_identifiers(
         values = table[column]
         if values.isna().any():
             raise ValueError(f"{table_name}.{column} requires non-empty identifiers")
-        if isinstance(values.dtype, (pd.StringDtype, pd.CategoricalDtype)):
-            has_empty = bool(values.eq("").any())
-        else:
+        standard = _standard_required_string_array(values)
+        if standard is None:
             has_empty = any(not str(value) for value in values)
+        else:
+            has_empty = bool(np.equal(standard, "").any())
         if has_empty:
             raise ValueError(f"{table_name}.{column} requires non-empty identifiers")
+
+
+def _standard_optional_string_presence(values: pd.Series) -> np.ndarray | None:
+    if isinstance(values.dtype, pd.StringDtype):
+        missing = values.isna().to_numpy(dtype=bool, copy=False)
+        empty = values.eq("").fillna(False).to_numpy(dtype=bool, copy=False)
+    elif isinstance(values.dtype, pd.CategoricalDtype):
+        if not all(type(value) is str for value in values.cat.categories):
+            return None
+        missing = values.isna().to_numpy(dtype=bool, copy=False)
+        empty = values.eq("").fillna(False).to_numpy(dtype=bool, copy=False)
+    elif values.dtype == np.dtype("object"):
+        raw = values.to_numpy(dtype="object", copy=False)
+        if not all(
+            value is None
+            or value is pd.NA
+            or value is pd.NaT
+            or type(value) is str
+            or type(value) in {float, np.float64}
+            for value in raw
+        ):
+            return None
+        missing = values.isna().to_numpy(dtype=bool, copy=False)
+        empty = values.eq("").fillna(False).to_numpy(dtype=bool, copy=False)
+    else:
+        return None
+    if bool(empty.any()):
+        raise ValueError("persisted optional identifiers must be non-empty")
+    return ~missing
+
+
+def _validate_component_rows_legacy(result: pd.DataFrame) -> None:
+    for row in result.itertuples(index=False):
+        scope = str(row.component_scope)
+        component = str(row.component)
+        if scope not in _SCOPE_COMPONENTS or component not in _SCOPE_COMPONENTS[scope]:
+            raise ValueError("component does not belong to its declared scope")
+        if scope == "family" and any(
+            _optional_string(value) is not None
+            for value in (row.driver_id, row.interaction_id, row.sender)
+        ):
+            raise ValueError("family components cannot claim LR or sender identity")
+        if scope == "lr_member" and (
+            _optional_string(row.driver_id) is None
+            or _optional_string(row.interaction_id) is None
+            or _optional_string(row.sender) is not None
+        ):
+            raise ValueError("LR-member components require LR but no sender identity")
+        if scope == "sender_lr_member" and any(
+            _optional_string(value) is None
+            for value in (row.driver_id, row.interaction_id, row.sender)
+        ):
+            raise ValueError(
+                "sender LR-member components require LR and sender identity"
+            )
+        value = _optional_float(row.component_value, field_name="component_value")
+        status = str(row.status)
+        reason = _optional_string(row.reason_code)
+        if status not in _COMPONENT_STATUSES:
+            raise ValueError("component status is not recognized")
+        if status == "not_estimable" and (value is not None or reason is None):
+            raise ValueError("not-estimable components require NA value and reason")
+        if status == "structural_zero" and (value != 0.0 or reason is None):
+            raise ValueError("structural-zero components require zero value and reason")
+        if status == "observed" and (value is None or reason is not None):
+            raise ValueError("observed components require a value and no reason")
+        if type(row.is_oof_certified) is not bool:
+            raise ValueError("component OOF certification flag must be boolean")
+        is_oof_certified = bool(row.is_oof_certified)
+        if str(row.formal_inference_status) != _FORMAL_INFERENCE_STATUS:
+            raise ValueError("component rows cannot claim formal inference")
+        if str(row.claim_scope) != _expected_claim_scope(is_oof_certified):
+            raise ValueError("component claim scope is invalid")
 
 
 def _validate_component_table(table: pd.DataFrame) -> pd.DataFrame:
@@ -3015,46 +3283,111 @@ def _validate_component_table(table: pd.DataFrame) -> pd.DataFrame:
         ),
         table_name=CROSSFIT_COMPONENT_TABLE,
     )
-    for row in result.itertuples(index=False):
-        scope = str(row.component_scope)
-        component = str(row.component)
-        if scope not in _SCOPE_COMPONENTS or component not in _SCOPE_COMPONENTS[scope]:
+    presence = {
+        column: _standard_optional_string_presence(result[column])
+        for column in ("driver_id", "interaction_id", "sender", "reason_code")
+    }
+    value_dtype = result["component_value"].dtype
+    fast_values = (
+        pd.api.types.is_numeric_dtype(value_dtype)
+        and not pd.api.types.is_complex_dtype(value_dtype)
+        and not pd.api.types.is_datetime64_any_dtype(value_dtype)
+        and not pd.api.types.is_timedelta64_dtype(value_dtype)
+    )
+    fast_flags = result["is_oof_certified"].dtype == np.dtype(bool)
+    if any(value is None for value in presence.values()) or not (
+        fast_values and fast_flags
+    ):
+        _validate_component_rows_legacy(result)
+    else:
+        scopes = pd.Series(
+            _required_string_array(result["component_scope"]), index=result.index
+        )
+        components = pd.Series(
+            _required_string_array(result["component"]), index=result.index
+        )
+        valid_scope_component: np.ndarray = np.zeros(len(result), dtype=bool)
+        for scope, allowed in _SCOPE_COMPONENTS.items():
+            valid_scope_component |= scopes.eq(scope).to_numpy(
+                dtype=bool, copy=False
+            ) & components.isin(allowed).to_numpy(dtype=bool, copy=False)
+        if not bool(valid_scope_component.all()):
             raise ValueError("component does not belong to its declared scope")
-        if scope == "family" and any(
-            _optional_string(value) is not None
-            for value in (row.driver_id, row.interaction_id, row.sender)
+
+        driver_present = cast(np.ndarray, presence["driver_id"])
+        interaction_present = cast(np.ndarray, presence["interaction_id"])
+        sender_present = cast(np.ndarray, presence["sender"])
+        family = scopes.eq("family").to_numpy(dtype=bool, copy=False)
+        lr_member = scopes.eq("lr_member").to_numpy(dtype=bool, copy=False)
+        sender_member = scopes.eq("sender_lr_member").to_numpy(
+            dtype=bool, copy=False
+        )
+        if bool(
+            np.any(family & (driver_present | interaction_present | sender_present))
         ):
             raise ValueError("family components cannot claim LR or sender identity")
-        if scope == "lr_member" and (
-            _optional_string(row.driver_id) is None
-            or _optional_string(row.interaction_id) is None
-            or _optional_string(row.sender) is not None
+        if bool(
+            np.any(
+                lr_member
+                & (~driver_present | ~interaction_present | sender_present)
+            )
         ):
             raise ValueError("LR-member components require LR but no sender identity")
-        if scope == "sender_lr_member" and any(
-            _optional_string(value) is None
-            for value in (row.driver_id, row.interaction_id, row.sender)
+        if bool(
+            np.any(
+                sender_member
+                & (~driver_present | ~interaction_present | ~sender_present)
+            )
         ):
             raise ValueError(
                 "sender LR-member components require LR and sender identity"
             )
-        value = _optional_float(row.component_value, field_name="component_value")
-        status = str(row.status)
-        reason = _optional_string(row.reason_code)
-        if status not in _COMPONENT_STATUSES:
+
+        raw_values = result["component_value"]
+        missing_values = raw_values.isna().to_numpy(dtype=bool, copy=False)
+        values = raw_values.to_numpy(dtype=float, na_value=np.nan, copy=False)
+        if not bool(np.isfinite(values[~missing_values]).all()):
+            raise ValueError("component_value must be finite or missing")
+        statuses = pd.Series(
+            _required_string_array(result["status"]), index=result.index
+        )
+        if not bool(statuses.isin(_COMPONENT_STATUSES).all()):
             raise ValueError("component status is not recognized")
-        if status == "not_estimable" and (value is not None or reason is None):
+        reason_present = cast(np.ndarray, presence["reason_code"])
+        observed = statuses.eq("observed").to_numpy(dtype=bool, copy=False)
+        not_estimable = statuses.eq("not_estimable").to_numpy(
+            dtype=bool, copy=False
+        )
+        structural_zero = statuses.eq("structural_zero").to_numpy(
+            dtype=bool, copy=False
+        )
+        if bool(np.any(not_estimable & (~missing_values | ~reason_present))):
             raise ValueError("not-estimable components require NA value and reason")
-        if status == "structural_zero" and (value != 0.0 or reason is None):
+        if bool(
+            np.any(structural_zero & ((values != 0.0) | ~reason_present))
+        ):
             raise ValueError("structural-zero components require zero value and reason")
-        if status == "observed" and (value is None or reason is not None):
+        if bool(np.any(observed & (missing_values | reason_present))):
             raise ValueError("observed components require a value and no reason")
-        if type(row.is_oof_certified) is not bool:
-            raise ValueError("component OOF certification flag must be boolean")
-        is_oof_certified = bool(row.is_oof_certified)
-        if str(row.formal_inference_status) != _FORMAL_INFERENCE_STATUS:
+
+        flags = result["is_oof_certified"].to_numpy(dtype=bool, copy=False)
+        if not bool(
+            np.equal(
+                _required_string_array(result["formal_inference_status"]),
+                _FORMAL_INFERENCE_STATUS,
+            ).all()
+        ):
             raise ValueError("component rows cannot claim formal inference")
-        if str(row.claim_scope) != _expected_claim_scope(is_oof_certified):
+        expected_claims = np.where(
+            flags,
+            _expected_claim_scope(True),
+            _expected_claim_scope(False),
+        )
+        if not bool(
+            np.equal(
+                _required_string_array(result["claim_scope"]), expected_claims
+            ).all()
+        ):
             raise ValueError("component claim scope is invalid")
     if result.duplicated(["source_row_id", "component"]).any():
         raise ValueError("component table contains duplicate source-row components")
@@ -3312,6 +3645,214 @@ def _same_optional_float(left: float | None, right: float | None) -> bool:
     return math.isclose(left, right, rel_tol=1e-12, abs_tol=1e-12)
 
 
+def _math_isclose_array(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    rel_tol: float,
+    abs_tol: float,
+) -> np.ndarray:
+    difference = np.abs(left - right)
+    tolerance = np.maximum(
+        abs_tol,
+        rel_tol * np.maximum(np.abs(left), np.abs(right)),
+    )
+    return cast(np.ndarray, difference <= tolerance)
+
+
+def _validate_contrast_common_rows_fast(
+    result: pd.DataFrame,
+    *,
+    table_name: str,
+    unit_fields: tuple[str, ...],
+    score_column: str,
+    sender_grain: bool,
+    conserved_sender: bool,
+) -> bool:
+    if not sender_grain:
+        return False
+    if any(
+        not pd.api.types.is_numeric_dtype(result[column].dtype)
+        or pd.api.types.is_complex_dtype(result[column].dtype)
+        or pd.api.types.is_datetime64_any_dtype(result[column].dtype)
+        or pd.api.types.is_timedelta64_dtype(result[column].dtype)
+        for column in unit_fields
+    ) or result["is_oof_certified"].dtype != np.dtype(bool):
+        return False
+    optional_presence = {
+        column: _standard_optional_string_presence(result[column])
+        for column in (
+            "gain_calibration_binding_id",
+            "gain_calibration_artifact_id",
+            "gain_calibration_reason_code",
+            "reason_code",
+        )
+    }
+    if any(value is None for value in optional_presence.values()):
+        return False
+
+    modes = pd.Series(_required_string_array(result["mode"]), index=result.index)
+    if not bool(modes.isin({"state", "ecosystem"}).all()):
+        raise ValueError("contrast-common score mode is not recognized")
+    unit_values = _finite_float_matrix(result, unit_fields)
+    for index, field_name in enumerate(unit_fields):
+        values = unit_values[:, index]
+        finite = ~np.isnan(values)
+        if bool(np.any((values[finite] < 0.0) | (values[finite] > 1.0))):
+            raise ValueError(f"{field_name} must lie in [0, 1] or be missing")
+    unit_by_name = {
+        field_name: unit_values[:, index]
+        for index, field_name in enumerate(unit_fields)
+    }
+
+    binding_present = cast(
+        np.ndarray, optional_presence["gain_calibration_binding_id"]
+    )
+    artifact_present = cast(
+        np.ndarray, optional_presence["gain_calibration_artifact_id"]
+    )
+    calibration_reason_present = cast(
+        np.ndarray, optional_presence["gain_calibration_reason_code"]
+    )
+    calibration_status = pd.Series(
+        _required_string_array(result["gain_calibration_status"]), index=result.index
+    )
+    calibration_observed = calibration_status.eq("observed").to_numpy(
+        dtype=bool, copy=False
+    )
+    calibration_not_estimable = calibration_status.eq("not_estimable").to_numpy(
+        dtype=bool, copy=False
+    )
+    if bool(
+        np.any(
+            ~binding_present
+            | ~(calibration_observed | calibration_not_estimable)
+        )
+    ):
+        raise ValueError("gain calibration row lineage is invalid")
+    if bool(
+        np.any(
+            calibration_observed
+            & (~artifact_present | calibration_reason_present)
+        )
+    ):
+        raise ValueError("observed gain calibration row lineage is invalid")
+    if bool(np.any(calibration_not_estimable & ~calibration_reason_present)):
+        raise ValueError("not-estimable gain calibration requires a reason")
+
+    score = unit_by_name[score_column]
+    score_present = ~np.isnan(score)
+    statuses = pd.Series(
+        _required_string_array(result["status"]), index=result.index
+    )
+    if not bool(statuses.isin(_CONTRAST_COMMON_STATUSES).all()):
+        raise ValueError("contrast-common score status is not recognized")
+    reason_present = cast(np.ndarray, optional_presence["reason_code"])
+    observed = statuses.eq("observed").to_numpy(dtype=bool, copy=False)
+    not_estimable = statuses.eq("not_estimable").to_numpy(dtype=bool, copy=False)
+    structural_zero = statuses.eq("structural_zero").to_numpy(
+        dtype=bool, copy=False
+    )
+    if bool(np.any(observed & (~score_present | reason_present))):
+        raise ValueError(
+            "observed contrast-common scores require a value and no reason"
+        )
+    if bool(np.any(not_estimable & (score_present | ~reason_present))):
+        raise ValueError(
+            "not-estimable contrast-common scores require NA and a reason"
+        )
+    if bool(
+        np.any(structural_zero & ((score != 0.0) | ~reason_present))
+    ):
+        raise ValueError(
+            "structural-zero contrast-common scores require zero and a reason"
+        )
+
+    ligand = unit_by_name["ligand_availability"]
+    prevalence = unit_by_name["training_prevalence_prior"]
+    raw_sender = unit_by_name["raw_sender_evidence"]
+    expected_raw_present = ~np.isnan(ligand) & ~np.isnan(prevalence)
+    raw_present = ~np.isnan(raw_sender)
+    if bool(np.any(raw_present != expected_raw_present)) or (
+        bool(expected_raw_present.any())
+        and not bool(
+            _math_isclose_array(
+                raw_sender[expected_raw_present],
+                ligand[expected_raw_present] * prevalence[expected_raw_present],
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ).all()
+        )
+    ):
+        raise ValueError(
+            "raw sender evidence violates ligand-by-prevalence multiplication"
+        )
+    if not conserved_sender and bool(observed.any()):
+        lr_score = unit_by_name["global_lr_score"]
+        valid_formula = (
+            ~np.isnan(lr_score[observed])
+            & ~np.isnan(raw_sender[observed])
+            & _math_isclose_array(
+                score[observed],
+                lr_score[observed] * raw_sender[observed],
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        )
+        if not bool(valid_formula.all()):
+            raise ValueError(
+                "observed sender-LR score violates its multiplicative contract"
+            )
+
+    flags = result["is_oof_certified"].to_numpy(dtype=bool, copy=False)
+    if not bool(
+        np.equal(
+            _required_string_array(result["formal_inference_status"]),
+            _FORMAL_INFERENCE_STATUS,
+        ).all()
+    ):
+        raise ValueError("contrast-common rows cannot claim formal inference")
+    expected_claims = np.where(
+        flags,
+        _expected_contrast_common_claim_scope(True),
+        _expected_contrast_common_claim_scope(False),
+    )
+    if not bool(
+        np.equal(
+            _required_string_array(result["claim_scope"]), expected_claims
+        ).all()
+    ):
+        raise ValueError("contrast-common row claim scope is invalid")
+
+    application_ids = _required_string_array(result["global_common_application_id"])
+    sample_ids = _required_string_array(result["sample_id"])
+    subject_ids = _required_string_array(result["subject_id"])
+    context_ids = _required_string_array(result["context_id"])
+    receivers = _required_string_array(result["receiver"])
+    family_ids = _required_string_array(result["family_id"])
+    driver_ids = _required_string_array(result["driver_id"])
+    interaction_ids = _required_string_array(result["interaction_id"])
+    senders = _required_string_array(result["sender"])
+    mode_values = _required_string_array(result["mode"])
+    expected_row_ids = _source_row_ids(
+        source_table=table_name,
+        application_ids=application_ids,
+        sample_ids=sample_ids,
+        subject_ids=subject_ids,
+        context_ids=context_ids,
+        receivers=receivers,
+        family_ids=family_ids,
+        driver_ids=driver_ids,
+        interaction_ids=interaction_ids,
+        modes=mode_values,
+        senders=senders,
+    )
+    observed_row_ids = _required_string_array(result["source_row_id"])
+    if not bool(np.equal(observed_row_ids, expected_row_ids).all()):
+        raise ValueError("contrast-common source-row identity is invalid")
+    return True
+
+
 def _validate_contrast_common_table(
     table: pd.DataFrame,
     *,
@@ -3375,7 +3916,15 @@ def _validate_contrast_common_table(
             "global_sender_lr_score",
         )
     )
-    for row in result.itertuples(index=False):
+    fast_rows_validated = _validate_contrast_common_rows_fast(
+        result,
+        table_name=table_name,
+        unit_fields=unit_fields,
+        score_column=score_column,
+        sender_grain=sender_grain,
+        conserved_sender=conserved_sender,
+    )
+    for row in (() if fast_rows_validated else result.itertuples(index=False)):
         if str(row.mode) not in {"state", "ecosystem"}:
             raise ValueError("contrast-common score mode is not recognized")
         if not sender_grain and type(row.receptor_eligible) is not bool:
@@ -3498,7 +4047,7 @@ def _validate_contrast_common_table(
     return result
 
 
-def _validate_conserved_sender_groups(table: pd.DataFrame) -> None:
+def _validate_conserved_sender_groups_legacy(table: pd.DataFrame) -> None:
     group_keys = [
         "global_common_application_id",
         "sample_id",
@@ -3608,6 +4157,199 @@ def _validate_conserved_sender_groups(table: pd.DataFrame) -> None:
                 abs_tol=1e-12,
             ):
                 raise ValueError("global sender scores do not conserve LR strength")
+
+
+def _validate_conserved_sender_groups(table: pd.DataFrame) -> None:
+    numeric_columns = (
+        "global_lr_score",
+        "assignment_weight",
+        "normalized_entropy",
+        "global_sender_lr_score",
+    )
+    fast_numeric = all(
+        pd.api.types.is_numeric_dtype(table[column].dtype)
+        and not pd.api.types.is_complex_dtype(table[column].dtype)
+        and not pd.api.types.is_datetime64_any_dtype(table[column].dtype)
+        and not pd.api.types.is_timedelta64_dtype(table[column].dtype)
+        for column in numeric_columns
+    )
+    reason_present = _standard_optional_string_presence(table["reason_code"])
+    if not fast_numeric or reason_present is None:
+        _validate_conserved_sender_groups_legacy(table)
+        return
+
+    numeric = _finite_float_matrix(table, numeric_columns)
+    present = ~np.isnan(numeric)
+    if bool(np.any((numeric[present] < 0.0) | (numeric[present] > 1.0))):
+        raise ValueError("conserved sender values must lie in [0, 1] or be missing")
+    parents, weights, entropies, scores = numeric.T
+    parent_present, weight_present, entropy_present, score_present = present.T
+
+    group_keys = [
+        "global_common_application_id",
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "receiver",
+        "family_id",
+        "driver_id",
+        "interaction_id",
+        "mode",
+    ]
+    codes = (
+        table.groupby(group_keys, observed=True, sort=False, dropna=False)
+        .ngroup()
+        .to_numpy(dtype=np.intp, copy=False)
+    )
+    if bool(np.any(codes < 0)):  # pragma: no cover - identifiers are validated first
+        raise ValueError("conserved sender group identifiers cannot be missing")
+    n_groups = int(codes.max()) + 1 if len(codes) else 0
+    sizes = np.bincount(codes, minlength=n_groups)
+    parent_counts = np.bincount(
+        codes, weights=parent_present.astype(np.int8), minlength=n_groups
+    ).astype(np.intp)
+    if bool(np.any((parent_counts != 0) & (parent_counts != sizes))):
+        raise ValueError("conserved sender group has multiple LR parent scores")
+    _, first_indices = np.unique(codes, return_index=True)
+    parent_by_group = parents[first_indices]
+    complete_parent_groups = parent_counts == sizes
+    comparable_parent_rows = parent_present & complete_parent_groups[codes]
+    if bool(comparable_parent_rows.any()):
+        if not bool(
+            _math_isclose_array(
+                parents[comparable_parent_rows],
+                parent_by_group[codes[comparable_parent_rows]],
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ).all()
+        ):
+            raise ValueError("conserved sender group has multiple LR parent scores")
+
+    weight_counts = np.bincount(
+        codes, weights=weight_present.astype(np.int8), minlength=n_groups
+    ).astype(np.intp)
+    entropy_counts = np.bincount(
+        codes, weights=entropy_present.astype(np.int8), minlength=n_groups
+    ).astype(np.intp)
+    all_weights_missing = weight_counts == 0
+    complete_weights = weight_counts == sizes
+    if bool(np.any(all_weights_missing & (entropy_counts != 0))):
+        raise ValueError("missing sender weights require missing normalized entropy")
+    if bool(np.any(~all_weights_missing & ~complete_weights)):
+        raise ValueError(
+            "sender weights and entropy must be complete or entirely missing"
+        )
+    if bool(np.any(complete_weights & (entropy_counts != sizes))):
+        raise ValueError(
+            "sender weights and entropy must be complete or entirely missing"
+        )
+
+    weight_sums = np.bincount(
+        codes, weights=np.nan_to_num(weights, nan=0.0), minlength=n_groups
+    )
+    if bool(complete_weights.any()) and not bool(
+        _math_isclose_array(
+            weight_sums[complete_weights],
+            np.ones(int(complete_weights.sum()), dtype=float),
+            rel_tol=1e-10,
+            abs_tol=1e-12,
+        ).all()
+    ):
+        raise ValueError("sender assignment weights do not sum to one")
+    entropy_terms: np.ndarray = np.zeros(len(table), dtype=float)
+    positive_weights = weight_present & (weights > 0.0)
+    entropy_terms[positive_weights] = -weights[positive_weights] * np.log(
+        weights[positive_weights]
+    )
+    entropy_sums = np.bincount(codes, weights=entropy_terms, minlength=n_groups)
+    expected_entropy: np.ndarray = np.zeros(n_groups, dtype=float)
+    multi_sender = sizes > 1
+    expected_entropy[multi_sender] = entropy_sums[multi_sender] / np.log(
+        sizes[multi_sender]
+    )
+    complete_entropy_rows = complete_weights[codes]
+    if bool(complete_entropy_rows.any()) and not bool(
+        _math_isclose_array(
+            entropies[complete_entropy_rows],
+            expected_entropy[codes[complete_entropy_rows]],
+            rel_tol=1e-10,
+            abs_tol=1e-12,
+        ).all()
+    ):
+        raise ValueError("normalized entropy does not match sender assignment weights")
+
+    statuses = _required_string_array(table["status"])
+    reasons = table["reason_code"]
+    reason_present_array: np.ndarray = reason_present
+    parent_missing = ~parent_present
+    parent_zero = parent_present & (parents == 0.0)
+    positive_parent = parent_present & (parents > 0.0)
+    weight_missing = ~weight_present
+    weight_zero = weight_present & (weights == 0.0)
+    positive_weight = weight_present & (weights > 0.0)
+    valid: np.ndarray = np.zeros(len(table), dtype=bool)
+    valid[parent_missing] = (
+        (statuses[parent_missing] == "not_estimable")
+        & ~score_present[parent_missing]
+        & reason_present_array[parent_missing]
+    )
+    valid[parent_zero] = (
+        (statuses[parent_zero] == "structural_zero")
+        & score_present[parent_zero]
+        & (scores[parent_zero] == 0.0)
+        & reason_present_array[parent_zero]
+    )
+    missing_assignment = positive_parent & weight_missing
+    valid[missing_assignment] = (
+        (statuses[missing_assignment] == "not_estimable")
+        & ~score_present[missing_assignment]
+        & reason_present_array[missing_assignment]
+    )
+    zero_assignment = positive_parent & weight_zero
+    valid[zero_assignment] = (
+        (statuses[zero_assignment] == "structural_zero")
+        & score_present[zero_assignment]
+        & (scores[zero_assignment] == 0.0)
+        & reasons.eq("sender_assignment_weight_zero")
+        .fillna(False)
+        .to_numpy(dtype=bool, copy=False)[zero_assignment]
+    )
+    observed_assignment = positive_parent & positive_weight
+    valid[observed_assignment] = (
+        (statuses[observed_assignment] == "observed")
+        & ~reason_present_array[observed_assignment]
+        & score_present[observed_assignment]
+        & _math_isclose_array(
+            scores[observed_assignment],
+            parents[observed_assignment] * weights[observed_assignment],
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+    )
+    if not bool(valid.all()):
+        raise ValueError("conserved sender row violates LR or assignment precedence")
+
+    conserved_groups = (parent_by_group > 0.0) & complete_weights
+    if bool(conserved_groups.any()):
+        score_counts = np.bincount(
+            codes, weights=score_present.astype(np.int8), minlength=n_groups
+        ).astype(np.intp)
+        score_sums = np.bincount(
+            codes, weights=np.nan_to_num(scores, nan=0.0), minlength=n_groups
+        )
+        incomplete_scores = bool(
+            np.any(score_counts[conserved_groups] != sizes[conserved_groups])
+        )
+        mismatched_sum = not bool(
+            _math_isclose_array(
+                score_sums[conserved_groups],
+                parent_by_group[conserved_groups],
+                rel_tol=1e-10,
+                abs_tol=1e-12,
+            ).all()
+        )
+        if incomplete_scores or mismatched_sum:
+            raise ValueError("global sender scores do not conserve LR strength")
 
 
 def _validate_contrast_common_lr_table(table: pd.DataFrame) -> pd.DataFrame:
@@ -8979,7 +9721,7 @@ def _validate_contrast_common_table_lineage(
             )
 
 
-def _validate_sender_lr_cross_table_lineage(
+def _validate_sender_lr_cross_table_lineage_legacy(
     lr_table: pd.DataFrame,
     sender_table: pd.DataFrame,
     *,
@@ -9091,6 +9833,238 @@ def _validate_sender_lr_cross_table_lineage(
             _raise_formula_mismatch(
                 f"{CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE}.global_sender_lr_score"
             )
+    if conserved_sender and validate_conserved_groups:
+        try:
+            _validate_conserved_sender_groups(sender_table)
+        except ValueError as error:
+            raise ResultValidationError(
+                "Conserved sender groups violate LR allocation semantics",
+                code="contrast_common_sender_conservation_mismatch",
+                field=CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE,
+                remediation="Reject the bundle and rerun its producer",
+            ) from error
+
+
+def _validate_sender_lr_cross_table_lineage(
+    lr_table: pd.DataFrame,
+    sender_table: pd.DataFrame,
+    *,
+    conserved_sender: bool = True,
+    validate_conserved_groups: bool = True,
+) -> None:
+    keys = (
+        "global_common_application_id",
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "receiver",
+        "family_id",
+        "driver_id",
+        "interaction_id",
+        "mode",
+    )
+
+    def standard_key(series: pd.Series) -> bool:
+        return _standard_required_string_array(series) is not None
+
+    numeric_columns = (
+        "global_lr_score",
+        "raw_sender_evidence",
+        *(("assignment_weight",) if conserved_sender else ()),
+        "global_sender_lr_score",
+    )
+    standard_numeric = all(
+        pd.api.types.is_numeric_dtype(sender_table[column].dtype)
+        and not pd.api.types.is_complex_dtype(sender_table[column].dtype)
+        and not pd.api.types.is_datetime64_any_dtype(sender_table[column].dtype)
+        and not pd.api.types.is_timedelta64_dtype(sender_table[column].dtype)
+        for column in numeric_columns
+    ) and (
+        pd.api.types.is_numeric_dtype(lr_table["global_lr_score"].dtype)
+        and not pd.api.types.is_complex_dtype(lr_table["global_lr_score"].dtype)
+    )
+    if (
+        not standard_numeric
+        or not all(standard_key(lr_table[key]) for key in keys)
+        or not all(standard_key(sender_table[key]) for key in keys)
+    ):
+        _validate_sender_lr_cross_table_lineage_legacy(
+            lr_table,
+            sender_table,
+            conserved_sender=conserved_sender,
+            validate_conserved_groups=validate_conserved_groups,
+        )
+        return
+
+    parent_fields = (
+        "global_lr_score",
+        "gain_calibration_binding_id",
+        "gain_calibration_artifact_id",
+        "gain_calibration_status",
+        "gain_calibration_reason_code",
+        "status",
+    )
+    parent = lr_table.loc[:, [*keys, *parent_fields]].rename(
+        columns={field: f"parent_{field}" for field in parent_fields}
+    )
+    sender_fields = (
+        "global_lr_score",
+        "gain_calibration_binding_id",
+        "gain_calibration_artifact_id",
+        "gain_calibration_status",
+        "gain_calibration_reason_code",
+        "raw_sender_evidence",
+        *(("assignment_weight",) if conserved_sender else ()),
+        "global_sender_lr_score",
+        "status",
+    )
+    merged = sender_table.loc[:, [*keys, *sender_fields]].merge(
+        parent,
+        on=list(keys),
+        how="left",
+        sort=False,
+        validate="many_to_one",
+        indicator=True,
+    )
+    if not bool(merged["_merge"].eq("both").all()):
+        raise ResultValidationError(
+            "Sender-LR row has no corresponding LR parent",
+            code="contrast_common_sender_lr_parent_mismatch",
+            field=CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE,
+            remediation="Reject the bundle and rerun its producer",
+        )
+
+    numeric_pairs = _finite_float_matrix(
+        merged,
+        (
+            "global_lr_score",
+            "parent_global_lr_score",
+            "raw_sender_evidence",
+            *(("assignment_weight",) if conserved_sender else ()),
+            "global_sender_lr_score",
+        ),
+    )
+    for index, field_name in enumerate(
+        (
+            "global_lr_score",
+            "parent_global_lr_score",
+            "raw_sender_evidence",
+            *(("assignment_weight",) if conserved_sender else ()),
+            "global_sender_lr_score",
+        )
+    ):
+        values = numeric_pairs[:, index]
+        present = ~np.isnan(values)
+        if bool(np.any((values[present] < 0.0) | (values[present] > 1.0))):
+            public_name = field_name.removeprefix("parent_")
+            raise ValueError(f"{public_name} must lie in [0, 1] or be missing")
+    sender_lr_score = numeric_pairs[:, 0]
+    parent_lr_score = numeric_pairs[:, 1]
+    sender_lr_present = ~np.isnan(sender_lr_score)
+    parent_lr_present = ~np.isnan(parent_lr_score)
+    lr_matches = sender_lr_present == parent_lr_present
+    both_lr_present = sender_lr_present & parent_lr_present
+    lr_matches[both_lr_present] &= _math_isclose_array(
+        sender_lr_score[both_lr_present],
+        parent_lr_score[both_lr_present],
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    )
+    if not bool(lr_matches.all()):
+        raise ResultValidationError(
+            "Sender-LR row misstates its LR/calibration parent",
+            code="contrast_common_sender_lr_parent_mismatch",
+            field=(
+                f"{CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE}.global_lr_score"
+            ),
+            remediation="Reject the bundle and rerun its producer",
+        )
+
+    for field_name in (
+        "gain_calibration_binding_id",
+        "gain_calibration_artifact_id",
+        "gain_calibration_status",
+        "gain_calibration_reason_code",
+    ):
+        observed = merged[field_name]
+        expected = merged[f"parent_{field_name}"]
+        observed_present = _standard_optional_string_presence(observed)
+        expected_present = _standard_optional_string_presence(expected)
+        if observed_present is None or expected_present is None:
+            _validate_sender_lr_cross_table_lineage_legacy(
+                lr_table,
+                sender_table,
+                conserved_sender=conserved_sender,
+                validate_conserved_groups=validate_conserved_groups,
+            )
+            return
+        presence_matches = np.equal(observed_present, expected_present)
+        both_present = observed_present & expected_present
+        value_matches = observed.astype(str).eq(expected.astype(str)).to_numpy(
+            dtype=bool, copy=False
+        )
+        if not bool((presence_matches & (~both_present | value_matches)).all()):
+            raise ResultValidationError(
+                "Sender-LR row misstates its LR/calibration parent",
+                code="contrast_common_sender_lr_parent_mismatch",
+                field=f"{CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE}.{field_name}",
+                remediation="Reject the bundle and rerun its producer",
+            )
+
+    raw_sender_index = 2
+    assignment_index = 3 if conserved_sender else None
+    sender_score_index = 4 if conserved_sender else 3
+    raw_sender = numeric_pairs[:, raw_sender_index]
+    assignment_weight = (
+        numeric_pairs[:, assignment_index]
+        if assignment_index is not None
+        else np.full(len(merged), np.nan, dtype=float)
+    )
+    sender_score = numeric_pairs[:, sender_score_index]
+    sender_score_present = ~np.isnan(sender_score)
+    sender_status = _required_string_array(merged["status"])
+    lr_status = _required_string_array(merged["parent_status"])
+    valid: np.ndarray = np.zeros(len(merged), dtype=bool)
+    parent_zero = lr_status == "structural_zero"
+    valid[parent_zero] = (
+        (sender_status[parent_zero] == "structural_zero")
+        & sender_score_present[parent_zero]
+        & (sender_score[parent_zero] == 0.0)
+    )
+    parent_not_estimable = lr_status == "not_estimable"
+    valid[parent_not_estimable] = (
+        (sender_status[parent_not_estimable] == "not_estimable")
+        & ~sender_score_present[parent_not_estimable]
+    )
+    remaining = ~(parent_zero | parent_not_estimable)
+    multiplier = assignment_weight if conserved_sender else raw_sender
+    multiplier_missing = remaining & np.isnan(multiplier)
+    valid[multiplier_missing] = (
+        (sender_status[multiplier_missing] == "not_estimable")
+        & ~sender_score_present[multiplier_missing]
+    )
+    multiplier_zero = remaining & ~np.isnan(multiplier) & (multiplier == 0.0)
+    valid[multiplier_zero] = (
+        (sender_status[multiplier_zero] == "structural_zero")
+        & sender_score_present[multiplier_zero]
+        & (sender_score[multiplier_zero] == 0.0)
+    )
+    formula_rows = remaining & ~np.isnan(multiplier) & (multiplier > 0.0)
+    valid[formula_rows] = (
+        parent_lr_present[formula_rows]
+        & (sender_status[formula_rows] == "observed")
+        & sender_score_present[formula_rows]
+        & _math_isclose_array(
+            sender_score[formula_rows],
+            parent_lr_score[formula_rows] * multiplier[formula_rows],
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+    )
+    if not bool(valid.all()):
+        _raise_formula_mismatch(
+            f"{CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE}.global_sender_lr_score"
+        )
     if conserved_sender and validate_conserved_groups:
         try:
             _validate_conserved_sender_groups(sender_table)

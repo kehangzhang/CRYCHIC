@@ -167,6 +167,8 @@ def _target_prior() -> TargetPrior:
 class _FakeResult:
     def __init__(self, path: Path, scores: pd.DataFrame) -> None:
         self.path = path
+        self.sender_queries = 0
+        self.lr_queries = 0
         self._scores = scores.assign(
             raw_sender_evidence=scores["global_sender_lr_score"],
             assignment_weight=1.0,
@@ -231,6 +233,7 @@ class _FakeResult:
         mode: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame:
+        self.sender_queries += 1
         assert contrast == module.CONTRAST
         assert mode == "state"
         assert status is None
@@ -243,6 +246,7 @@ class _FakeResult:
         mode: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame:
+        self.lr_queries += 1
         assert contrast == module.CONTRAST
         assert mode == "state"
         assert status is None
@@ -327,7 +331,9 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
                             "reason_code": None,
                         }
                     )
-            return _FakeResult(output_dir, pd.DataFrame.from_records(records))
+            result = _FakeResult(output_dir, pd.DataFrame.from_records(records))
+            captured["result"] = result
+            return result
 
     monkeypatch.setattr(module, "Crychic", FakeCrychic)
     monkeypatch.setattr(
@@ -388,6 +394,8 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     config = captured["config"]
     spec = captured["spec"]
     assert captured["n_jobs"] == 2
+    assert captured["result"].sender_queries == 1
+    assert captured["result"].lr_queries == 1
     assert config.context_keys == ("lesion_type",)
     assert config.covariates == ("batch",)
     assert config.categorical_covariates == ("batch",)
