@@ -1,0 +1,186 @@
+{
+  "comparison_panels": [
+    {
+      "analysis_unit": "condition_level",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_767d03dcc79e3a75e9977c81",
+      "conditions": [
+        "chronic_active",
+        "control"
+      ],
+      "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+      "expected_filters": {},
+      "expected_sets_sha256": "ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0",
+      "expected_variant": "not_applicable",
+      "scenario": "condition_aware",
+      "score_semantics": "unweighted_fgsea_positive_running_sum_analogue",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "analysis_unit": "condition_level",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_c28439754fc5792f2330c5f7",
+      "conditions": [
+        "CTRL",
+        "IZ"
+      ],
+      "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+      "expected_filters": {
+        "variant": "spatial_neighbor_max"
+      },
+      "expected_sets_sha256": "151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e",
+      "expected_variant": "spatial_neighbor_max",
+      "scenario": "condition_aware",
+      "score_semantics": "unweighted_fgsea_positive_running_sum_analogue",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    }
+  ],
+  "inputs": {
+    "evaluation_manifest_aggregate_sha256": "2e8dea37840e01df57dea796719de8dc88a12dd22bedcecad998f41b0363f39d",
+    "evaluation_manifests": [
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "6c22e4c35f0fb7ba79b7b6769d9d77f9edb7adf3f93bfbf266b85409e5465fe7",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e",
+        "path_hint": "evaluations/kuppe/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "65e63767bb3bee4e8f461c6542bd0125fff963fe1730c1c703f9e9ea515c4cd5",
+        "sha256": "0cbc6e197a740bf8fb589a698fa729058108f69e23b60189d70516acebbf8d69"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "bdd5e168b42bc463cba142b7cb1ce3215eaf35f82a3ea3cd7e6887e72be0e624",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e",
+        "path_hint": "kuppe_subject_condition_aware/cellchat_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "588243ae54117e8b2a74d7da3745545e08006c2811cabf6e8e238910678a8dfe",
+        "sha256": "ffa188433b437cf0ec52488c171c8603f99116f35515e297131eec43e81897b5"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "d72841ce14879aed0c82b6d70f76293380f80a445851f3514b80a2b959688a8d",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e",
+        "path_hint": "kuppe_subject_condition_aware/scdiffcom_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "3fcf3f784e5afbeff4795de476a263c2fa7af8baf7ea1837e06951a0591a9f35",
+        "sha256": "e5e822ec1ec4745190acd35c4891542c3cf5cd26e9a76d0a01c4a948a592fc2c"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "6937ff4e033ed78bdc65953e49cc5b7f02035852a094f83121980ec897a4b71b",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e",
+        "path_hint": "kuppe_subject_condition_aware/scseqcommdiff_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "a7b3abe315aa535f7ea704d9067b9ec05ef058cf3ba444eb108d7b4d7e98269e",
+        "sha256": "b2c5f3fcd05a9c99dc792c8e83dc1059efe3a6a56a06926d03c37ae486c785a8"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "94cb18d037354e142a66b4e707d9b8b9c6dc72b944a4ddd3044f45bfb8e7a876",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0",
+        "path_hint": "evaluations/ms/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "c5ed8547b2d3f5dea2317b77e1a90c5a96570bd6b3247b948e386aa62b81b126",
+        "sha256": "4ce111c4bbbef985563ece34c794434b769878ab93e62725c6fe20287e3495b1"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "a3fcbbc2ec02ed1cb2b9a20c69b88e2086393f82d09f00946a4d2e458aca3d95",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0",
+        "path_hint": "ms_subject_condition_aware/cellchat_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "f4db0ebeadc393ff66967b1b9609b4f22a2f672c73d11b757b09cb434b397d71",
+        "sha256": "aa30928c3bbd83419ce3380f84160bbbe28809d4511d92ae57ab382bb323d679"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "307471af5031dd7b6a6b89a6f2ec593b69428f6a273f0e19a60b02f6b4a6076c",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0",
+        "path_hint": "ms_subject_condition_aware/scdiffcom_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "fcb7e8be78d6c9f489778f70edf7d90967ed797442ea0f978191ba72b2c82358",
+        "sha256": "e583a8b6f7adcf5954b7c265bb0114aa5a0547b19c78ea28cca5eebead4454fc"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "d5b8ff6a37f0f074c03ca255d00461d3c2bb98457238ff4b6df1ad0c437f8c32",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0",
+        "path_hint": "ms_subject_condition_aware/scseqcommdiff_condition_aware_connectomedb/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "880231cbf62d9baecbef8084e1c6feecbc8708a7d5caa00ca0d8d77d68654509",
+        "sha256": "d4e30e13dbe5ae5dcd4688b515cec329ee82b0f12f4e59fcc011233928438f24"
+      }
+    ]
+  },
+  "output": {
+    "bytes": 5530,
+    "filename": "spatial_des_benchmark_summary.tsv",
+    "rows": 8,
+    "sha256": "d2ddd232788770339efaa5501a5f18ee4219db176d4f2cff702a170ab1a1123b"
+  },
+  "protocol": {
+    "coverage_reporting": "rank_eligible_fraction and expected_pair_coverage_fraction are reported separately as minimum and arithmetic mean across 8 strata",
+    "expected_des_strata_per_method": 8,
+    "no_cross_panel_ranking": true,
+    "panel_isolation": "dataset, scenario, expected-set SHA256, expected filters/variant, analysis unit, condition/fraction strata, cell-pair direction, and score semantics",
+    "rank_eligibility": "all 8 condition-by-fraction DES rows are observed and finite, and all expected sets are declared available",
+    "ranking": "within comparison_panel_id by DES median descending; tied medians share minimum rank; incomplete methods are not ranked",
+    "required_conditions_per_panel": 2,
+    "required_top_fractions": [
+      0.1,
+      0.2,
+      0.3,
+      0.4
+    ],
+    "secondary_ranking": "within comparison_panel_id by DES mean descending; tied means share minimum rank; incomplete methods are not ranked"
+  },
+  "schema_version": "crychic-spatial-des-benchmark-summary-v1",
+  "software": {
+    "numpy": "2.3.5",
+    "pandas": "3.0.3",
+    "python": "3.13.12"
+  },
+  "status": "complete"
+}

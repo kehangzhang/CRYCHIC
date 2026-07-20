@@ -1,0 +1,174 @@
+{
+  "schema_version": "crychic-multigroup-formal-benchmark-summary-v1",
+  "status": "complete",
+  "tag": "formal_perf_894059a_20260721_004919",
+  "algorithm": {
+    "commit": "894059a64cdde97381b15c9ab64ce2330b261334",
+    "source_digest": "be8d015027be1411afa5e649fc9de26195cc77ed616dac2a59979fd0ade4efaa",
+    "reporting_fix_commit": "c6849acd9f9f6f561230e1e96f4547e7de2cd792",
+    "seed": 20260717,
+    "min_cells": 2,
+    "outer_folds": 2,
+    "fold_jobs_per_dataset": 2,
+    "blas_threads_per_fold": 8
+  },
+  "inputs": {
+    "kuppe": {
+      "cells": 76141,
+      "genes": 29126,
+      "subjects": 11,
+      "conditions": [
+        "CTRL",
+        "IZ"
+      ]
+    },
+    "ms": {
+      "cells": 75004,
+      "genes": 32115,
+      "subjects": 11,
+      "conditions": [
+        "Ctrl",
+        "CA"
+      ]
+    }
+  },
+  "runtime": {
+    "pair_wall_seconds": 5695,
+    "kuppe_wall_seconds": 4310,
+    "ms_wall_seconds_including_merge_lock_wait": 5687,
+    "kuppe_peak_rss_kib": 68915492,
+    "ms_peak_rss_kib": 42567772,
+    "combined_process_tree_peak_rss_kib": 72906872,
+    "system_peak_used_kib": 100891872,
+    "system_peak_used_fraction": 0.382299593,
+    "memory_abort_fraction": 0.78,
+    "merge_lock_scope": "module"
+  },
+  "selected_mechanistic_scores": {
+    "kuppe": {
+      "crossfit_result_id": "crossfit_result_1f0553a41c60aa05830d8d2a522adc11",
+      "rows": 3361380,
+      "finite_rows": 2710818,
+      "nonzero_rows": 647933,
+      "unique_score_count": 510793,
+      "degenerate_ranking": false,
+      "status_counts": {
+        "observed": 647933,
+        "structural_zero": 2062885,
+        "not_estimable": 650562
+      }
+    },
+    "ms": {
+      "crossfit_result_id": "crossfit_result_5bba2588ba09df5a3202bb6b0f231254",
+      "rows": 1909980,
+      "finite_rows": 1344834,
+      "nonzero_rows": 277911,
+      "unique_score_count": 181573,
+      "degenerate_ranking": false,
+      "status_counts": {
+        "observed": 277911,
+        "structural_zero": 1066923,
+        "not_estimable": 565146
+      }
+    }
+  },
+  "spatial_des": {
+    "protocol": {
+      "scenario": "condition_aware",
+      "analysis_unit": "condition_level",
+      "strata_per_method": 8,
+      "rank_metric": "median spatial DES descending",
+      "higher_is_better": true
+    },
+    "kuppe": {
+      "crychic_median": 0.2450460829493088,
+      "crychic_mean": 0.2730293197932618,
+      "median_rank": 3,
+      "mean_rank": 3,
+      "methods_in_panel": 4,
+      "expected_pair_coverage_min": 1.0,
+      "rank_eligible_fraction_min": 1.0,
+      "median_ranking": [
+        {
+          "rank": 1,
+          "method": "scDiffCom",
+          "median": 0.3316558441558441
+        },
+        {
+          "rank": 2,
+          "method": "scSeqCommDiff",
+          "median": 0.2931763152102135
+        },
+        {
+          "rank": 3,
+          "method": "CRYCHIC",
+          "median": 0.2450460829493088
+        },
+        {
+          "rank": 4,
+          "method": "CellChat",
+          "median": 0.217917675544794
+        }
+      ]
+    },
+    "ms": {
+      "crychic_median": 0.0512820512820511,
+      "crychic_mean": 0.1151724291968193,
+      "median_rank": 4,
+      "mean_rank": 4,
+      "methods_in_panel": 4,
+      "expected_pair_coverage_min": 1.0,
+      "rank_eligible_fraction_min": 1.0,
+      "median_ranking": [
+        {
+          "rank": 1,
+          "method": "scSeqCommDiff",
+          "median": 0.303030303030303
+        },
+        {
+          "rank": 2,
+          "method": "CellChat",
+          "median": 0.275
+        },
+        {
+          "rank": 3,
+          "method": "scDiffCom",
+          "median": 0.2227272727272726
+        },
+        {
+          "rank": 4,
+          "method": "CRYCHIC",
+          "median": 0.0512820512820511
+        }
+      ]
+    }
+  },
+  "limitations": {
+    "ms_reference_ranking": "All 45 Ctrl cell-pair ranked strengths are exactly zero and tied; all 98100 observed mechanistic directed effects are non-negative.",
+    "downstream_confirmed_layer": "The downstream-confirmed layer is structurally zero in both datasets; the benchmark uses the explicitly selected non-degenerate mechanistic layer.",
+    "evaluation_binding": "Standalone evaluation manifests do not embed the run-manifest binding; the formal pair status binds ranking and run-manifest SHA256 values.",
+    "package_version": "Evaluation tables contain the installed package version 0.0.1.dev56+g87153a38e.d20260716; authoritative source provenance is the clean commit and source digest recorded above."
+  },
+  "artifacts": {
+    "formal_pair_status": {
+      "workspace_relative_path": "benchmark_work/multi-group/optimized_formal/formal_perf_894059a_20260721_004919/pair_status.json",
+      "sha256": "0dff789dfd8a588d3240df78550dbf59ca873a1a40a436bb33a719b172307bf7"
+    },
+    "publication_bundle": {
+      "repository_relative_path": "benchmarks/results/spatial_des_formal_20260721",
+      "manifest_sha256": "c9f843504cfd43e203cb25e413192c7c543ef3124199ea5e37b3fdaef3e29872",
+      "leaderboard_sha256": "cf9bd6f5d3632ab2518bfdb989919a3365949dffa8d7883aa57792d353d22a76"
+    }
+  },
+  "validation": {
+    "formal_pair_complete": true,
+    "run_and_evaluation_return_codes_zero": true,
+    "declared_outputs_checked": 38,
+    "declared_output_row_and_sha256_mismatches": 0,
+    "des_strata_observed": {
+      "kuppe": 8,
+      "ms": 8
+    },
+    "memory_limit_respected": true
+  }
+}

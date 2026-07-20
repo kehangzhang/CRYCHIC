@@ -1,0 +1,46 @@
+{
+  "input": {
+    "summary_filename": "spatial_des_benchmark_summary.tsv",
+    "summary_manifest_filename": "spatial_des_benchmark_summary_manifest.json",
+    "summary_manifest_sha256": "b9a7a722cfe99880c5526b00d553f831976cfb0c539863858877fca668bb43f5",
+    "summary_sha256": "d2ddd232788770339efaa5501a5f18ee4219db176d4f2cff702a170ab1a1123b"
+  },
+  "outputs": {
+    "README.md": {
+      "bytes": 2414,
+      "sha256": "2f02ca8f655e54d4b58c638626cf11a386ce67e808030b2dbc8fa83e39c0d2b3"
+    },
+    "figure_des_mean.png": {
+      "bytes": 101673,
+      "sha256": "0b54ff3f1c391e374ecc4e47982b7c2842dba96e9f5693e6673f819d8eb1e9f8"
+    },
+    "figure_des_median.png": {
+      "bytes": 97398,
+      "sha256": "d2e391cd880013a48962e808547b368b4fb4e948ddebd43f61f6a505b3eab9b9"
+    },
+    "figure_rank_coverage.png": {
+      "bytes": 80853,
+      "sha256": "441be0b180312b2b2cebbb760a6275091b44a52a72719b1ca3834648f3910ce9"
+    },
+    "spatial_des_benchmark_summary.tsv": {
+      "bytes": 5530,
+      "sha256": "d2ddd232788770339efaa5501a5f18ee4219db176d4f2cff702a170ab1a1123b"
+    },
+    "spatial_des_benchmark_summary_manifest.json": {
+      "bytes": 8835,
+      "sha256": "b9a7a722cfe99880c5526b00d553f831976cfb0c539863858877fca668bb43f5"
+    },
+    "spatial_des_leaderboard.tsv": {
+      "bytes": 3928,
+      "sha256": "cf9bd6f5d3632ab2518bfdb989919a3365949dffa8d7883aa57792d353d22a76"
+    }
+  },
+  "protocol": {
+    "complete_strata_required": 8,
+    "no_cross_panel_ranking": true,
+    "rank_metric": "median spatial DES descending",
+    "secondary_rank_metric": "mean spatial DES descending"
+  },
+  "schema_version": "crychic-spatial-des-report-v1",
+  "status": "complete"
+}
