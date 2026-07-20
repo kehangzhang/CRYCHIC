@@ -15,6 +15,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 
 from crychic.attribution.gain_calibration import GAIN_CALIBRATION_PERCENTILE_POLICY
@@ -1006,11 +1007,7 @@ def _global_source_table_digest(
     if tuple(table.columns) != columns:
         raise ValueError(f"{name} columns do not match the producer contract")
     stable_id(name, (), schema_version="1", digest_length=64)
-    prefix = (
-        '{"components":{"columns":'
-        f"{canonical_json(list(columns))},"
-        '"rows":['
-    )
+    prefix = f'{{"components":{{"columns":{canonical_json(list(columns))},"rows":['
     suffix = f']}},"kind":{canonical_json(name)},"schema_version":"1"}}'
 
     def encoded_rows() -> Any:
@@ -1261,6 +1258,309 @@ def _base_component_row(
         "source_table": source_table,
         "source_row_id": source_row_id,
     }
+
+
+def _required_string_array(values: pd.Series) -> np.ndarray:
+    """Match ``str(value)`` while avoiding one Python object per persisted row."""
+
+    return values.astype(str).to_numpy(dtype=object, copy=False)
+
+
+def _optional_string_array(values: pd.Series, *, field_name: str) -> np.ndarray:
+    missing = values.isna().to_numpy(dtype=bool, copy=False)
+    result = values.astype(str).to_numpy(dtype=object, copy=True)
+    result[missing] = None
+    if any(value == "" for value in result[~missing]):
+        raise ValueError("persisted optional identifiers must be non-empty")
+    return result
+
+
+def _finite_float_matrix(
+    source: pd.DataFrame,
+    columns: tuple[str, ...],
+) -> np.ndarray:
+    values: list[np.ndarray] = []
+    for column in columns:
+        numeric = pd.to_numeric(source[column], errors="raise").to_numpy(
+            dtype=float,
+            na_value=np.nan,
+        )
+        if np.isinf(numeric).any():
+            raise ValueError(f"{column} must be finite or missing")
+        values.append(numeric)
+    if not values:
+        return np.empty((len(source), 0), dtype=float)
+    return np.column_stack(values)
+
+
+def _component_source_row_ids(
+    source: pd.DataFrame,
+    *,
+    source_table: str,
+    application_id: str,
+) -> np.ndarray:
+    sample_ids = _required_string_array(source["sample_id"])
+    subject_ids = _required_string_array(source["subject_id"])
+    context_ids = _required_string_array(source["context_id"])
+    receivers = _required_string_array(source["receiver"])
+    family_ids = _required_string_array(source["family_id"])
+    modes = _required_string_array(source["mode"])
+    has_member_ids = source_table != "family_scores"
+    driver_ids = (
+        _required_string_array(source["driver_id"])
+        if has_member_ids
+        else np.full(len(source), None, dtype=object)
+    )
+    interaction_ids = (
+        _required_string_array(source["interaction_id"])
+        if has_member_ids
+        else np.full(len(source), None, dtype=object)
+    )
+    senders = (
+        _required_string_array(source["sender"])
+        if source_table == "sender_scores"
+        else np.full(len(source), None, dtype=object)
+    )
+    return np.fromiter(
+        (
+            _source_row_id(
+                source_table=source_table,
+                application_id=application_id,
+                sample_id=sample_ids[index],
+                subject_id=subject_ids[index],
+                context_id=context_ids[index],
+                receiver=receivers[index],
+                family_id=family_ids[index],
+                driver_id=driver_ids[index],
+                interaction_id=interaction_ids[index],
+                mode=modes[index],
+                sender=senders[index],
+            )
+            for index in range(len(source))
+        ),
+        dtype=object,
+        count=len(source),
+    )
+
+
+def _component_frame(
+    artifacts: CrossFitArtifacts,
+    *,
+    projection: _OOFPersistenceProjection,
+    fold_id: str,
+    functional: Any,
+    application: Any,
+    binding: Any,
+    source_table: str,
+    source: pd.DataFrame,
+    component_scope: str,
+    components: tuple[str, ...],
+) -> pd.DataFrame:
+    if source.empty:
+        return pd.DataFrame(columns=CROSSFIT_COMPONENT_COLUMNS)
+
+    row_count = len(source)
+    component_count = len(components)
+    output_count = row_count * component_count
+    source_row_ids = _component_source_row_ids(
+        source,
+        source_table=source_table,
+        application_id=application.application_id,
+    )
+    component_names = np.tile(np.asarray(components, dtype=object), row_count)
+    component_values = _finite_float_matrix(source, components).reshape(-1)
+    row_status = _required_string_array(source["status"])
+    row_reason = _optional_string_array(
+        source["reason_code"],
+        field_name="reason_code",
+    )
+    repeated_row_status = np.repeat(row_status, component_count)
+    repeated_row_reason = np.repeat(row_reason, component_count)
+
+    status = np.full(output_count, "observed", dtype=object)
+    reason = np.full(output_count, None, dtype=object)
+    missing = np.isnan(component_values)
+    status[missing] = "not_estimable"
+    reason[missing] = np.where(
+        pd.notna(repeated_row_reason[missing]),
+        repeated_row_reason[missing],
+        "source_component_value_missing",
+    )
+
+    terminal = (
+        np.isin(component_names, tuple(_TERMINAL_COMPONENTS))
+        & (repeated_row_status == "structural_zero")
+        & ~missing
+    )
+    if np.any(terminal & (component_values != 0.0)):
+        raise ValueError("structural-zero terminal component must equal zero")
+    status[terminal] = "structural_zero"
+    reason[terminal] = repeated_row_reason[terminal]
+
+    if source_table == "family_scores":
+        receiver_program = component_names == "receiver_program_score"
+        explicit_status = np.repeat(
+            _required_string_array(source["receiver_program_status"]),
+            component_count,
+        )
+        explicit_reason = np.repeat(
+            _optional_string_array(
+                source["receiver_program_reason_code"],
+                field_name="receiver_program_reason_code",
+            ),
+            component_count,
+        )
+        explicit_ok = receiver_program & (explicit_status == "ok")
+        explicit_other = receiver_program & ~explicit_ok
+        status[explicit_ok] = "observed"
+        reason[explicit_ok] = None
+        status[explicit_other] = explicit_status[explicit_other]
+        reason[explicit_other] = explicit_reason[explicit_other]
+
+    def repeated(column: str) -> np.ndarray:
+        return np.repeat(_required_string_array(source[column]), component_count)
+
+    if source_table == "family_scores":
+        driver_id = np.full(output_count, None, dtype=object)
+        interaction_id = np.full(output_count, None, dtype=object)
+        sender = np.full(output_count, None, dtype=object)
+        lr_status = np.repeat(
+            _optional_string_array(
+                source["lr_identifiability_status"],
+                field_name="lr_identifiability_status",
+            ),
+            component_count,
+        )
+        ligand_status = np.repeat(
+            _optional_string_array(
+                source["ligand_contrast_gate_status"],
+                field_name="ligand_contrast_gate_status",
+            ),
+            component_count,
+        )
+    elif source_table == "member_scores":
+        driver_id = repeated("driver_id")
+        interaction_id = repeated("interaction_id")
+        sender = np.full(output_count, None, dtype=object)
+        lr_status = np.repeat(
+            _optional_string_array(
+                source["lr_identifiability_status"],
+                field_name="lr_identifiability_status",
+            ),
+            component_count,
+        )
+        ligand_status = np.repeat(
+            _optional_string_array(
+                source["ligand_contrast_gate_status"],
+                field_name="ligand_contrast_gate_status",
+            ),
+            component_count,
+        )
+    elif source_table == "sender_scores":
+        driver_id = repeated("driver_id")
+        interaction_id = repeated("interaction_id")
+        sender = repeated("sender")
+        lr_status = np.full(output_count, None, dtype=object)
+        ligand_status = np.full(output_count, None, dtype=object)
+    else:  # pragma: no cover - private caller invariant
+        raise KeyError(source_table)
+
+    frame = pd.DataFrame(
+        {
+            "crossfit_id": np.full(output_count, artifacts.crossfit_id, dtype=object),
+            "spec_id": np.full(output_count, artifacts.spec.spec_id, dtype=object),
+            "repeat_id": np.full(output_count, artifacts.spec.repeat_id, dtype=object),
+            "fold_id": np.full(output_count, fold_id, dtype=object),
+            "contrast_id": np.full(
+                output_count,
+                functional.contrast_manifest_id,
+                dtype=object,
+            ),
+            "contrast": np.full(
+                output_count,
+                functional.contrast_name,
+                dtype=object,
+            ),
+            "sample_id": repeated("sample_id"),
+            "subject_id": repeated("subject_id"),
+            "context_id": repeated("context_id"),
+            "receiver": repeated("receiver"),
+            "family_id": repeated("family_id"),
+            "driver_id": driver_id,
+            "interaction_id": interaction_id,
+            "mode": repeated("mode"),
+            "sender": sender,
+            "component_scope": np.full(
+                output_count,
+                component_scope,
+                dtype=object,
+            ),
+            "component": component_names,
+            "component_value": component_values,
+            "status": status,
+            "reason_code": reason,
+            "row_status": repeated_row_status,
+            "row_reason_code": repeated_row_reason,
+            "lr_identifiability_status": lr_status,
+            "ligand_contrast_gate_status": ligand_status,
+            "score_version": np.full(
+                output_count,
+                functional.score_version,
+                dtype=object,
+            ),
+            "family_common_functional_id": np.full(
+                output_count,
+                functional.family_common_functional_id,
+                dtype=object,
+            ),
+            "family_common_application_id": np.full(
+                output_count,
+                application.application_id,
+                dtype=object,
+            ),
+            "family_common_binding_id": np.full(
+                output_count,
+                binding.binding_id,
+                dtype=object,
+            ),
+            "sender_functional_id": np.full(
+                output_count,
+                functional.sender_functional.sender_functional_id,
+                dtype=object,
+            ),
+            "certification_status": np.full(
+                output_count,
+                projection.certification_status,
+                dtype=object,
+            ),
+            "is_oof_certified": np.full(
+                output_count,
+                projection.is_oof_certified,
+                dtype=bool,
+            ),
+            "formal_inference_status": np.full(
+                output_count,
+                _FORMAL_INFERENCE_STATUS,
+                dtype=object,
+            ),
+            "claim_scope": np.full(
+                output_count,
+                projection.claim_scope,
+                dtype=object,
+            ),
+            "source_table": np.full(output_count, source_table, dtype=object),
+            "source_row_id": np.repeat(source_row_ids, component_count),
+        },
+        columns=CROSSFIT_COMPONENT_COLUMNS,
+        dtype=object,
+    )
+    frame["component_value"] = component_values
+    frame["is_oof_certified"] = np.full(
+        output_count,
+        projection.is_oof_certified,
+        dtype=bool,
+    )
+    return frame
 
 
 def _family_component_rows(
@@ -1523,6 +1823,120 @@ def _differential_rows(
             }
         )
     return rows
+
+
+def _differential_frame(
+    artifacts: CrossFitArtifacts,
+    *,
+    projection: _OOFPersistenceProjection,
+    fold_id: str,
+    functional: Any,
+    application: Any,
+    binding: Any,
+) -> pd.DataFrame:
+    source = application.subject_differential
+    if source.empty:
+        return pd.DataFrame(columns=CROSSFIT_DIFFERENTIAL_COLUMNS)
+    row_count = len(source)
+    subject_ids = _required_string_array(source["subject_id"])
+    family_ids = _required_string_array(source["family_id"])
+    values = _finite_float_matrix(source, ("differential_effect",))[:, 0]
+    source_row_ids = np.fromiter(
+        (
+            _source_row_id(
+                source_table="subject_differential",
+                application_id=application.application_id,
+                subject_id=subject_ids[index],
+                receiver=functional.receiver,
+                family_id=family_ids[index],
+            )
+            for index in range(row_count)
+        ),
+        dtype=object,
+        count=row_count,
+    )
+    frame = pd.DataFrame(
+        {
+            "crossfit_id": np.full(row_count, artifacts.crossfit_id, dtype=object),
+            "spec_id": np.full(row_count, artifacts.spec.spec_id, dtype=object),
+            "repeat_id": np.full(row_count, artifacts.spec.repeat_id, dtype=object),
+            "fold_id": np.full(row_count, fold_id, dtype=object),
+            "contrast_id": np.full(
+                row_count,
+                functional.contrast_manifest_id,
+                dtype=object,
+            ),
+            "contrast": np.full(
+                row_count,
+                functional.contrast_name,
+                dtype=object,
+            ),
+            "receiver": np.full(row_count, functional.receiver, dtype=object),
+            "subject_id": subject_ids,
+            "family_id": family_ids,
+            "differential_effect": values,
+            "status": _required_string_array(source["status"]),
+            "reason_code": _optional_string_array(
+                source["reason_code"],
+                field_name="reason_code",
+            ),
+            "effect_semantics": np.full(
+                row_count,
+                _EFFECT_SEMANTICS,
+                dtype=object,
+            ),
+            "score_version": np.full(
+                row_count,
+                functional.score_version,
+                dtype=object,
+            ),
+            "family_common_functional_id": np.full(
+                row_count,
+                functional.family_common_functional_id,
+                dtype=object,
+            ),
+            "family_common_application_id": np.full(
+                row_count,
+                application.application_id,
+                dtype=object,
+            ),
+            "family_common_binding_id": np.full(
+                row_count,
+                binding.binding_id,
+                dtype=object,
+            ),
+            "certification_status": np.full(
+                row_count,
+                projection.certification_status,
+                dtype=object,
+            ),
+            "is_oof_certified": np.full(
+                row_count,
+                projection.is_oof_certified,
+                dtype=bool,
+            ),
+            "formal_inference_status": np.full(
+                row_count,
+                _FORMAL_INFERENCE_STATUS,
+                dtype=object,
+            ),
+            "claim_scope": np.full(
+                row_count,
+                projection.claim_scope,
+                dtype=object,
+            ),
+            "source_row_id": source_row_ids,
+        },
+        columns=CROSSFIT_DIFFERENTIAL_COLUMNS,
+        dtype=object,
+    )
+    frame["differential_effect"] = values
+    frame["is_oof_certified"] = np.full(
+        row_count,
+        projection.is_oof_certified,
+        dtype=bool,
+    )
+    return frame
 
 
 @dataclass(frozen=True, slots=True)
@@ -1802,6 +2216,125 @@ def _contrast_common_persisted_rows(
             }
         )
     return rows
+
+
+def _contrast_common_persisted_frame(
+    artifacts: CrossFitArtifacts,
+    *,
+    projection: _OOFPersistenceProjection,
+    source: _ContrastCommonSource,
+    collection_id: str,
+    source_table: str,
+) -> pd.DataFrame:
+    output_columns: tuple[str, ...]
+    if source_table == CROSSFIT_CONTRAST_COMMON_LR_TABLE:
+        table = source.lr_scores
+        output_columns = CROSSFIT_CONTRAST_COMMON_LR_COLUMNS
+        sender = np.full(len(table), None, dtype=object)
+    elif source_table == CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE:
+        table = source.sender_scores
+        output_columns = CROSSFIT_CONTRAST_COMMON_SENDER_LR_COLUMNS
+        sender = _required_string_array(table["sender"])
+    else:  # pragma: no cover - private caller invariant
+        raise KeyError(source_table)
+    if table.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    row_count = len(table)
+    sample_ids = _required_string_array(table["sample_id"])
+    subject_ids = _required_string_array(table["subject_id"])
+    context_ids = _required_string_array(table["context_id"])
+    receivers = _required_string_array(table["receiver"])
+    family_ids = _required_string_array(table["family_id"])
+    driver_ids = _required_string_array(table["driver_id"])
+    interaction_ids = _required_string_array(table["interaction_id"])
+    modes = _required_string_array(table["mode"])
+    source_row_ids = np.fromiter(
+        (
+            _source_row_id(
+                source_table=source_table,
+                application_id=source.application.application_id,
+                sample_id=sample_ids[index],
+                subject_id=subject_ids[index],
+                context_id=context_ids[index],
+                receiver=receivers[index],
+                family_id=family_ids[index],
+                driver_id=driver_ids[index],
+                interaction_id=interaction_ids[index],
+                mode=modes[index],
+                sender=sender[index],
+            )
+            for index in range(row_count)
+        ),
+        dtype=object,
+        count=row_count,
+    )
+    prefix = pd.DataFrame(
+        {
+            "crossfit_id": np.full(row_count, artifacts.crossfit_id, dtype=object),
+            "spec_id": np.full(row_count, artifacts.spec.spec_id, dtype=object),
+            "repeat_id": np.full(row_count, artifacts.spec.repeat_id, dtype=object),
+            "fold_id": np.full(row_count, source.fold_id, dtype=object),
+            "contrast_id": np.full(
+                row_count,
+                source.functional.contrast_manifest_id,
+                dtype=object,
+            ),
+            "contrast": np.full(
+                row_count,
+                source.functional.contrast_name,
+                dtype=object,
+            ),
+            "contrast_common_collection_id": np.full(
+                row_count,
+                collection_id,
+                dtype=object,
+            ),
+            "global_common_application_id": np.full(
+                row_count,
+                source.application.application_id,
+                dtype=object,
+            ),
+        },
+        dtype=object,
+    )
+    suffix = pd.DataFrame(
+        {
+            "certification_status": np.full(
+                row_count,
+                projection.certification_status,
+                dtype=object,
+            ),
+            "is_oof_certified": np.full(
+                row_count,
+                projection.is_oof_certified,
+                dtype=bool,
+            ),
+            "formal_inference_status": np.full(
+                row_count,
+                _FORMAL_INFERENCE_STATUS,
+                dtype=object,
+            ),
+            "claim_scope": np.full(
+                row_count,
+                _expected_contrast_common_claim_scope(projection.is_oof_certified),
+                dtype=object,
+            ),
+            "source_row_id": source_row_ids,
+        },
+        dtype=object,
+    )
+    suffix["is_oof_certified"] = np.full(
+        row_count,
+        projection.is_oof_certified,
+        dtype=bool,
+    )
+    source_frame = table.reset_index(drop=True).copy(deep=False)
+    result = pd.concat(
+        [prefix, source_frame, suffix],
+        axis="columns",
+    )
+    return result.loc[:, output_columns]
 
 
 _DIRECTIONAL_BINDING_FIELDS = frozenset(
@@ -2147,8 +2680,8 @@ def _result_tables(
     _OOFPersistenceProjection,
 ]:
     projection = _oof_persistence_projection(artifacts)
-    component_rows: list[dict[str, object]] = []
-    differential_rows: list[dict[str, object]] = []
+    component_frames: list[pd.DataFrame] = []
+    differential_frames: list[pd.DataFrame] = []
     applications: list[dict[str, object]] = []
     directional_rows: list[dict[str, object]] = []
     receiver_support_rows: list[dict[str, object]] = []
@@ -2198,7 +2731,43 @@ def _result_tables(
             functional._require_intact()
             application._require_intact()
             family_binding._require_intact()
-            family_rows = _family_component_rows(
+            family_rows = _component_frame(
+                artifacts,
+                projection=projection,
+                fold_id=fold.fold_id,
+                functional=functional,
+                application=application,
+                binding=family_binding,
+                source_table="family_scores",
+                source=application.family_scores,
+                component_scope="family",
+                components=_FAMILY_COMPONENTS,
+            )
+            member_rows = _component_frame(
+                artifacts,
+                projection=projection,
+                fold_id=fold.fold_id,
+                functional=functional,
+                application=application,
+                binding=family_binding,
+                source_table="member_scores",
+                source=application.member_scores,
+                component_scope="lr_member",
+                components=_MEMBER_COMPONENTS,
+            )
+            sender_rows = _component_frame(
+                artifacts,
+                projection=projection,
+                fold_id=fold.fold_id,
+                functional=functional,
+                application=application,
+                binding=family_binding,
+                source_table="sender_scores",
+                source=application.sender_scores,
+                component_scope="sender_lr_member",
+                components=_SENDER_COMPONENTS,
+            )
+            effects = _differential_frame(
                 artifacts,
                 projection=projection,
                 fold_id=fold.fold_id,
@@ -2206,32 +2775,8 @@ def _result_tables(
                 application=application,
                 binding=family_binding,
             )
-            member_rows = _member_component_rows(
-                artifacts,
-                projection=projection,
-                fold_id=fold.fold_id,
-                functional=functional,
-                application=application,
-                binding=family_binding,
-            )
-            sender_rows = _sender_component_rows(
-                artifacts,
-                projection=projection,
-                fold_id=fold.fold_id,
-                functional=functional,
-                application=application,
-                binding=family_binding,
-            )
-            effects = _differential_rows(
-                artifacts,
-                projection=projection,
-                fold_id=fold.fold_id,
-                functional=functional,
-                application=application,
-                binding=family_binding,
-            )
-            component_rows.extend((*family_rows, *member_rows, *sender_rows))
-            differential_rows.extend(effects)
+            component_frames.extend((family_rows, member_rows, sender_rows))
+            differential_frames.append(effects)
             applications.append(
                 {
                     "fold_id": fold.fold_id,
@@ -2275,12 +2820,12 @@ def _result_tables(
         common_sources,
         projection,
     )
-    common_lr_rows: list[dict[str, object]] = []
-    common_sender_rows: list[dict[str, object]] = []
+    common_lr_frames: list[pd.DataFrame] = []
+    common_sender_frames: list[pd.DataFrame] = []
     for source in common_sources:
         collection_id = application_to_collection[source.application.application_id]
-        common_lr_rows.extend(
-            _contrast_common_persisted_rows(
+        common_lr_frames.append(
+            _contrast_common_persisted_frame(
                 artifacts,
                 projection=projection,
                 source=source,
@@ -2288,8 +2833,8 @@ def _result_tables(
                 source_table=CROSSFIT_CONTRAST_COMMON_LR_TABLE,
             )
         )
-        common_sender_rows.extend(
-            _contrast_common_persisted_rows(
+        common_sender_frames.append(
+            _contrast_common_persisted_frame(
                 artifacts,
                 projection=projection,
                 source=source,
@@ -2297,18 +2842,25 @@ def _result_tables(
                 source_table=CROSSFIT_CONTRAST_COMMON_SENDER_LR_TABLE,
             )
         )
-    components = pd.DataFrame(component_rows, columns=CROSSFIT_COMPONENT_COLUMNS)
-    differential = pd.DataFrame(
-        differential_rows,
-        columns=CROSSFIT_DIFFERENTIAL_COLUMNS,
+    components = (
+        pd.concat(component_frames, ignore_index=True)
+        if component_frames
+        else pd.DataFrame(columns=CROSSFIT_COMPONENT_COLUMNS)
     )
-    common_lr = pd.DataFrame(
-        common_lr_rows,
-        columns=CROSSFIT_CONTRAST_COMMON_LR_COLUMNS,
+    differential = (
+        pd.concat(differential_frames, ignore_index=True)
+        if differential_frames
+        else pd.DataFrame(columns=CROSSFIT_DIFFERENTIAL_COLUMNS)
     )
-    common_sender = pd.DataFrame(
-        common_sender_rows,
-        columns=CROSSFIT_CONTRAST_COMMON_SENDER_LR_COLUMNS,
+    common_lr = (
+        pd.concat(common_lr_frames, ignore_index=True)
+        if common_lr_frames
+        else pd.DataFrame(columns=CROSSFIT_CONTRAST_COMMON_LR_COLUMNS)
+    )
+    common_sender = (
+        pd.concat(common_sender_frames, ignore_index=True)
+        if common_sender_frames
+        else pd.DataFrame(columns=CROSSFIT_CONTRAST_COMMON_SENDER_LR_COLUMNS)
     )
     directional_registry = pd.DataFrame(
         directional_rows,
