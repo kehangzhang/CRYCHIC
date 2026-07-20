@@ -32,6 +32,7 @@ def _write_evaluation(
     fractions: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4),
     rank_coverage: float = 0.75,
     expected_coverage: list[float] | None = None,
+    ranking_semantics: str | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     strata = [
@@ -46,7 +47,10 @@ def _write_evaluation(
         "method": [method] * len(strata),
         "method_version": ["1.0"] * len(strata),
         "resource": ["ConnectomeDB2020"] * len(strata),
-        "ranking_semantics": [f"{analysis_unit}_ranking"] * len(strata),
+        "ranking_semantics": [
+            ranking_semantics or f"{analysis_unit}_ranking"
+        ]
+        * len(strata),
         "condition": [condition for condition, _ in strata],
         "top_fraction": [fraction for _, fraction in strata],
     }
@@ -211,6 +215,49 @@ def test_explicit_condition_level_unit_overrides_campaign_path_hint(
     summary, _, _ = summarize_evaluations([manifest])
 
     assert summary.loc[0, "analysis_unit"] == "condition_level"
+
+
+@pytest.mark.parametrize("aggregation_marker", ["subject_equal", "subject-equal"])
+def test_subject_equal_aggregation_does_not_override_condition_level_unit(
+    tmp_path: Path, aggregation_marker: str
+) -> None:
+    manifest = _write_evaluation(
+        tmp_path / aggregation_marker,
+        method="crychic",
+        values=[0.5] * 8,
+        scenario="condition_aware",
+        analysis_unit="condition_level",
+        ranking_semantics=f"sum_positive_{aggregation_marker}_directed_lr_effects",
+    )
+
+    summary, bundles, _ = summarize_evaluations([manifest])
+
+    assert summary.loc[0, "analysis_unit"] == "condition_level"
+    assert bundles[0].analysis_unit_source == "evaluation_manifest"
+
+
+@pytest.mark.parametrize(
+    "ranking_semantics",
+    [
+        "subject_id_ranking",
+        "sample_id_ranking",
+        "subject_equal_subject_id_ranking",
+    ],
+)
+def test_explicit_condition_level_rejects_true_unit_semantics(
+    tmp_path: Path, ranking_semantics: str
+) -> None:
+    manifest = _write_evaluation(
+        tmp_path / ranking_semantics,
+        method="method",
+        values=[0.5] * 8,
+        scenario="condition_aware",
+        analysis_unit="condition_level",
+        ranking_semantics=ranking_semantics,
+    )
+
+    with pytest.raises(ValueError, match=r"explicit analysis_unit.*conflicts"):
+        summarize_evaluations([manifest])
 
 
 @pytest.mark.parametrize(

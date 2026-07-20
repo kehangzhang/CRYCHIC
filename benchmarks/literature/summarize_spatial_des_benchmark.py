@@ -155,6 +155,9 @@ def _validated_output(
 
 def _text_unit_candidates(value: str) -> set[str]:
     normalized = value.lower().replace("multi_sample", "").replace("multi-sample", "")
+    normalized = re.sub(
+        r"(?<![a-z0-9])subject[_-]equal(?![a-z0-9])", "", normalized
+    )
     tokens = {token for token in re.split(r"[^a-z0-9]+", normalized) if token}
     result: set[str] = set()
     if "subject" in tokens or "subjects" in tokens or "donor" in tokens:
