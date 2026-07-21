@@ -1,0 +1,20 @@
+{
+  "accepted_for_real_benchmark": false,
+  "candidate": {
+    "name": "two_sided_005",
+    "required_two_sided_fraction": 0.05
+  },
+  "config_sha256": "07df0603d16403587509e18d58c704589467001838b6ee32a81f93eff2ffd6d9",
+  "formal_release_allowed": false,
+  "holdout_used_for_candidate_selection": false,
+  "program_policy": {
+    "alpha_cap": 1.5,
+    "maximum_alpha": 4.0,
+    "minimum_concordance_edges": 200,
+    "missing_evidence_weight": 1.0
+  },
+  "real_cohorts_used_for_selection": false,
+  "schema_version": "crychic-two-sided-program-frozen-v1",
+  "selected_candidate": "two_sided_005",
+  "selected_on": "development_only"
+}

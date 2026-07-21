@@ -1,0 +1,65 @@
+{
+  "acceptance": {
+    "accepted": false,
+    "holdout_balanced_mean_delta_vs_signed": 0.0,
+    "holdout_balanced_safety_pass": true,
+    "holdout_biased_gain_pass": false,
+    "holdout_biased_mean_delta_vs_signed": -0.0015064343420163953,
+    "holdout_safety_mean_delta_vs_signed": 3.814414739497229e-05,
+    "holdout_safety_pass": true,
+    "novel_candidate": true,
+    "novel_candidate_pass": true,
+    "selected_candidate": "two_sided_005"
+  },
+  "accepted": false,
+  "code": {
+    "commit": "691fddae204d410747e00855be3dbea4ec85f6cc",
+    "dirty": false
+  },
+  "config": {
+    "path": "benchmarks/configs/two_sided_program_rc5_v1.json",
+    "sha256": "07df0603d16403587509e18d58c704589467001838b6ee32a81f93eff2ffd6d9"
+  },
+  "elapsed_seconds": 87.2456749137491,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "two_sided_coverage_is_global_not_receiver_specific",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 100,
+      "sha256": "cc7f4dd4783c553208e33b9a4659abf1624f0789acffe79a331eae4e991fb731"
+    },
+    "candidate_selection.tsv": {
+      "rows": 5,
+      "sha256": "bc42423bc51582e748c6548da65db01cf51835007a5bcaaec4bcb6870cc3ad87"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 4000,
+      "sha256": "4c781353e4cbccfaec9de994f1e884d4e7946209e12673f269dab9b1aa1216bc"
+    }
+  },
+  "schema_version": "crychic-two-sided-program-result-v1",
+  "selection": {
+    "accepted_for_real_benchmark": false,
+    "candidate": {
+      "name": "two_sided_005",
+      "required_two_sided_fraction": 0.05
+    },
+    "config_sha256": "07df0603d16403587509e18d58c704589467001838b6ee32a81f93eff2ffd6d9",
+    "formal_release_allowed": false,
+    "holdout_used_for_candidate_selection": false,
+    "program_policy": {
+      "alpha_cap": 1.5,
+      "maximum_alpha": 4.0,
+      "minimum_concordance_edges": 200,
+      "missing_evidence_weight": 1.0
+    },
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-two-sided-program-frozen-v1",
+    "selected_candidate": "two_sided_005",
+    "selected_on": "development_only"
+  },
+  "status": "complete"
+}

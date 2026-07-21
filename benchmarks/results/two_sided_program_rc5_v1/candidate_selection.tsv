@@ -1,0 +1,6 @@
+development_rank	candidate	candidate_priority	primary_mean_delta_vs_signed	safety_mean_delta_vs_signed	global_null_effective_alpha_q95	safety_pass	global_null_pass	eligible	selected
+1	two_sided_005	1	0.00014431363713899748	-6.09635107561804e-05	0.10555555555555539	True	True	True	True
+2	signed_rc3_reference	0	0.0	0.0	0.10555555555555539	True	True	True	False
+3	two_sided_010	2	-6.48876972808632e-05	0.00026724612079051524	0.10555555555555539	True	True	True	False
+4	two_sided_020	3	-0.0005478530223517275	0.0003808950995800413	0.10555555555555539	True	True	True	False
+5	two_sided_030	4	-0.0014021424880519163	0.00040144923980897363	0.10555555555555539	True	True	True	False

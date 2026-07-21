@@ -1,0 +1,12 @@
+{
+  "accepted": false,
+  "holdout_balanced_mean_delta_vs_signed": 0.0,
+  "holdout_balanced_safety_pass": true,
+  "holdout_biased_gain_pass": false,
+  "holdout_biased_mean_delta_vs_signed": -0.0015064343420163953,
+  "holdout_safety_mean_delta_vs_signed": 3.814414739497229e-05,
+  "holdout_safety_pass": true,
+  "novel_candidate": true,
+  "novel_candidate_pass": true,
+  "selected_candidate": "two_sided_005"
+}
