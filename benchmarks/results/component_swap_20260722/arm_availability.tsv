@@ -1,0 +1,13 @@
+benchmark_dataset	arm	status	fidelity	edge_score	test	selection	pair_score	reason_code
+kuppe	A	complete	exact	CRYCHIC sender-specific held-out score	sample-level HC2 contrast	one-SE stability	hard count	
+kuppe	B	complete	exact_head_swap	CRYCHIC sender-specific held-out score	scSeqCommDiff-equivalent Mann-Whitney	raw p<0.05	hard count	
+kuppe	C	complete	declared_proxy	CRYCHIC sender-specific held-out score	Gaussian HC2 Wald analogue	nominal raw p<0.05	hard count	bounded_crychic_score_is_not_a_raw_count_and_cannot_enter_pydeseq2_negative_binomial_likelihood
+kuppe	D	complete	exact_head_swap	native scSeqCommDiff per-sample S_inter	sample-level HC2 contrast	one-SE stability	hard count	
+kuppe	E	not_estimable	unavailable	LIANA interaction_stat	CRYCHIC hypergraph reweighting	calibrated soft posterior	posterior expected count	no_checksum_bound_full_pipeline_null_and_g3p_calibrated_soft_posterior_in_current_run
+kuppe	F	complete	diagnostic_uncalibrated	CRYCHIC sender-specific held-out score	current HC2 effect/SE	none	continuous signed HC2 evidence count	not_a_released_posterior_probability
+ms	A	complete	exact	CRYCHIC sender-specific held-out score	sample-level HC2 contrast	one-SE stability	hard count	
+ms	B	complete	exact_head_swap	CRYCHIC sender-specific held-out score	scSeqCommDiff-equivalent Mann-Whitney	raw p<0.05	hard count	
+ms	C	complete	declared_proxy	CRYCHIC sender-specific held-out score	Gaussian HC2 Wald analogue	nominal raw p<0.05	hard count	bounded_crychic_score_is_not_a_raw_count_and_cannot_enter_pydeseq2_negative_binomial_likelihood
+ms	D	complete	exact_head_swap	native scSeqCommDiff per-sample S_inter	sample-level HC2 contrast	one-SE stability	hard count	
+ms	E	not_estimable	unavailable	LIANA interaction_stat	CRYCHIC hypergraph reweighting	calibrated soft posterior	posterior expected count	no_checksum_bound_full_pipeline_null_and_g3p_calibrated_soft_posterior_in_current_run
+ms	F	complete	diagnostic_uncalibrated	CRYCHIC sender-specific held-out score	current HC2 effect/SE	none	continuous signed HC2 evidence count	not_a_released_posterior_probability

@@ -1,0 +1,15 @@
+benchmark_dataset	method	strata	observed_strata	minimum_expected_pair_coverage	minimum_ranked_pairs	maximum_ranked_pairs	complete_8_of_8
+kuppe	A	8	8	1.0	55	55	True
+kuppe	B	8	8	1.0	54	54	True
+kuppe	C	8	8	1.0	55	55	True
+kuppe	D	8	8	0.6666666666666666	34	34	True
+kuppe	F	8	8	1.0	55	55	True
+kuppe	R_liana_native	8	8	0.9090909090909092	45	45	True
+kuppe	R_scseq_native	8	8	1.0	55	55	True
+ms	A	8	8	0.3333333333333333	21	21	True
+ms	B	8	6	0.0	15	15	False
+ms	C	8	8	0.3333333333333333	21	21	True
+ms	D	8	6	0.0	14	14	False
+ms	F	8	8	0.3333333333333333	21	21	True
+ms	R_liana_native	8	6	0.0	15	15	False
+ms	R_scseq_native	8	8	0.3333333333333333	21	21	True

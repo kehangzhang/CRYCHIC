@@ -1,0 +1,235 @@
+{
+  "algorithm_modified": false,
+  "implementation": {
+    "code": {
+      "commit": "309db35eabeac05249bbd6415aeda980c27aa678",
+      "dirty": true
+    },
+    "script_sha256": "e3f18e6b7e018e8415509b318a4f3ec869bd927f1ffd6f01583c98aace3424a8"
+  },
+  "outputs": {
+    "arm_availability.tsv": {
+      "bytes": 2085,
+      "columns": [
+        "benchmark_dataset",
+        "arm",
+        "status",
+        "fidelity",
+        "edge_score",
+        "test",
+        "selection",
+        "pair_score",
+        "reason_code"
+      ],
+      "filename": "arm_availability.tsv",
+      "rows": 12,
+      "sha256": "0b9cb087dac8118a261d5769b7f99abef1abcf94ed191b90f837e4528c8c0912"
+    },
+    "arm_diagnostics.tsv": {
+      "bytes": 2323,
+      "columns": [
+        "benchmark_dataset",
+        "method",
+        "condition",
+        "observed_pairs",
+        "positive_edges",
+        "negative_edges",
+        "zero_edges",
+        "selected_target_edges",
+        "selected_reference_edges",
+        "selected_edges_per_pair_median",
+        "selected_edges_per_pair_max",
+        "n_estimable_lr_per_pair_median",
+        "n_estimable_lr_per_pair_min",
+        "n_estimable_lr_per_pair_max",
+        "pair_score_vs_n_estimable_lr_spearman",
+        "tie_fraction",
+        "zero_pair_fraction"
+      ],
+      "filename": "arm_diagnostics.tsv",
+      "rows": 20,
+      "sha256": "0e45e321eb27fae47e2ef1581d83d3f31dddcbc1b772992d7a67564a3da64e23"
+    },
+    "coverage_summary.tsv": {
+      "bytes": 639,
+      "columns": [
+        "benchmark_dataset",
+        "method",
+        "strata",
+        "observed_strata",
+        "minimum_expected_pair_coverage",
+        "minimum_ranked_pairs",
+        "maximum_ranked_pairs",
+        "complete_8_of_8"
+      ],
+      "filename": "coverage_summary.tsv",
+      "rows": 14,
+      "sha256": "bbd219f146ae8f29423c17e2d846c992827967fabb928e16c77a565809741549"
+    },
+    "pair_rank_comparison.tsv": {
+      "bytes": 61430,
+      "columns": [
+        "benchmark_dataset",
+        "dataset",
+        "condition",
+        "sender",
+        "receiver",
+        "unordered_pair",
+        "expected_spatial_top10pct",
+        "expected_spatial_rank",
+        "A_score",
+        "A_n_estimable_lr",
+        "A_status",
+        "A_rank",
+        "B_score",
+        "B_n_estimable_lr",
+        "B_status",
+        "B_rank",
+        "C_score",
+        "C_n_estimable_lr",
+        "C_status",
+        "C_rank",
+        "D_score",
+        "D_n_estimable_lr",
+        "D_status",
+        "D_rank",
+        "F_score",
+        "F_n_estimable_lr",
+        "F_status",
+        "F_rank",
+        "R_scseq_native_score",
+        "R_scseq_native_n_estimable_lr",
+        "R_scseq_native_status",
+        "R_scseq_native_rank",
+        "R_liana_native_score",
+        "R_liana_native_n_estimable_lr",
+        "R_liana_native_status",
+        "R_liana_native_rank",
+        "mean_effect_target_minus_reference",
+        "condition_oriented_mean_effect",
+        "crychic_rank",
+        "scseqcommdiff_rank",
+        "liana_rank",
+        "n_estimable_lr",
+        "hard_selected_count",
+        "expected_selected_count",
+        "occurrence_effect",
+        "program_effect",
+        "downstream_support",
+        "sender_abundance",
+        "receiver_abundance",
+        "unavailable_component_reason"
+      ],
+      "filename": "pair_rank_comparison.tsv",
+      "rows": 152,
+      "sha256": "5b8a9103a3c9b75bcf1019de1ee1aee56b0d2a5dc8edc995fa31e45eabc65d64"
+    },
+    "pairwise_diagnostics.tsv": {
+      "bytes": 3843,
+      "columns": [
+        "benchmark_dataset",
+        "condition",
+        "left_arm",
+        "right_arm",
+        "common_estimable_edges",
+        "common_nonzero_edges",
+        "edge_sign_concordance",
+        "edge_rank_spearman",
+        "common_estimable_pairs",
+        "pair_rank_spearman",
+        "top10_pair_overlap_count",
+        "top10_pair_overlap_jaccard"
+      ],
+      "filename": "pairwise_diagnostics.tsv",
+      "rows": 40,
+      "sha256": "669713b3114c2c995ebf3ddf6e9484f94e3b2e21a97430832efda23e76ad40da"
+    },
+    "spatial_des_summary.tsv": {
+      "bytes": 3380,
+      "columns": [
+        "benchmark_dataset",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "count",
+        "median",
+        "mean",
+        "min",
+        "max",
+        "complete_8_of_8",
+        "delta_median_vs_A",
+        "complete_rank"
+      ],
+      "filename": "spatial_des_summary.tsv",
+      "rows": 14,
+      "sha256": "48af028a82d1470aa5608171d67a30825f8e65a9a5eb4e87f84e21ca430dd855"
+    },
+    "threshold_path_summary.tsv": {
+      "bytes": 8548,
+      "columns": [
+        "benchmark_dataset",
+        "method",
+        "arm",
+        "threshold_type",
+        "threshold",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "count",
+        "median",
+        "mean",
+        "min",
+        "max",
+        "post_hoc_diagnostic_only"
+      ],
+      "filename": "threshold_path_summary.tsv",
+      "rows": 44,
+      "sha256": "f4813f8531c975243e9991f7b99493d02a38dfc3578adc162c27310eb17c6577"
+    }
+  },
+  "schema_version": "crychic-component-swap-summary-v1",
+  "source_runs": {
+    "kuppe": {
+      "arm_a_parity": {
+        "exact": true,
+        "rows": 132
+      },
+      "compact_output_sha256": {
+        "arm_availability.tsv": "33fb70788792c97242a6e887cad7f95c7ee7211f690989d5c114703370bd6f19",
+        "arm_diagnostics.tsv": "1f99b92536bbcd0f948de14bbd1916bccc51e8fac1610545cbb5607e86ea73f9",
+        "pair_rank_comparison.tsv": "cd34eef8224f66ffefd5acd02ea797e829eccf723390636bc38cac3936370361",
+        "pairwise_diagnostics.tsv": "04c371d49ef3a87418a76da3d8ab2d222dec64f5ab3b094dc5e20ce6b317e080",
+        "spatial_des_summary.tsv": "1cdb0646239e7c191b6230c3abfd3ae0d7c821402f4296b4bbd4c67952cd0470",
+        "threshold_path_summary.tsv": "3e9b72a68215240c6e0eef0146bfeda8a8d16d1ad66f934874ab5c274ea3e3b0"
+      },
+      "coverage_sha256": "95f39eba9986bda9a69d472efc60694ec6b6c4ec083f6931c8d4dc6103f85225",
+      "implementation": {
+        "script_sha256": "67bec4e7af312a4b621eda71b73d8979ac0a1390df1be21b69490f9296342f67",
+        "scseq_sample_exporter_sha256": "471e3778f93678c83ef925a599a8113b0162afd9ed67bbb29d9cc2fa9509f89e"
+      },
+      "manifest_sha256": "0e731c055bc713f9bc49518c5da086bf0458223ba6c76f6e6c0e319df97f403e"
+    },
+    "ms": {
+      "arm_a_parity": {
+        "exact": true,
+        "rows": 90
+      },
+      "compact_output_sha256": {
+        "arm_availability.tsv": "33fb70788792c97242a6e887cad7f95c7ee7211f690989d5c114703370bd6f19",
+        "arm_diagnostics.tsv": "dad390edd6f88b1abb2ffc564095de0277e677f267e4a44fcb0ebb86730f60ff",
+        "pair_rank_comparison.tsv": "44abd8ffeb3b5c4ecbeb1e305d6e3ea05ba2220c76a1afc99311a6ba4b9fe6aa",
+        "pairwise_diagnostics.tsv": "bc91229e5c98c8358052f14f4f55abfde54ede9e9a6c41b1f2667aaf15cb60c5",
+        "spatial_des_summary.tsv": "9507f25cdccfcdc507e698bb784449b469981f3670fa5aa7dd99eeb491d2ff6f",
+        "threshold_path_summary.tsv": "3804c573932bafe1647e19f5c0fba3e05cadee9d427ec0663eac2e44dee9e687"
+      },
+      "coverage_sha256": "5f646038e482210788d3e84943748c89252b2b5321d38529f3489bcdb327d2f7",
+      "implementation": {
+        "script_sha256": "67bec4e7af312a4b621eda71b73d8979ac0a1390df1be21b69490f9296342f67",
+        "scseq_sample_exporter_sha256": "471e3778f93678c83ef925a599a8113b0162afd9ed67bbb29d9cc2fa9509f89e"
+      },
+      "manifest_sha256": "3a7b9834689492722cbda8eebed99a329e7d7c8559fe82153d045fbcd85bd260"
+    }
+  },
+  "status": "complete"
+}
