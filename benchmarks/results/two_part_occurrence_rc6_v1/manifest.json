@@ -1,0 +1,81 @@
+{
+  "acceptance": {
+    "accepted": true,
+    "global_null_gate_pass": true,
+    "global_null_total_effective_alpha_q95": 0.06889177846853581,
+    "holdout_magnitude_gain_pass": true,
+    "holdout_magnitude_mean_delta_vs_rc3": 0.012239779636550952,
+    "holdout_occurrence_gain_pass": true,
+    "holdout_occurrence_mean_delta_vs_rc3": 0.03416674668638411,
+    "holdout_primary_gain_pass": true,
+    "holdout_primary_mean_delta_vs_rc3": 0.032180951510307386,
+    "holdout_safety_mean_delta_vs_rc3": 0.0013561634889053755,
+    "holdout_safety_pass": true,
+    "holdout_structural_missingness_delta_vs_rc3": 0.03258864552562746,
+    "holdout_structural_missingness_pass": true,
+    "novel_candidate": true,
+    "novel_candidate_pass": true,
+    "selected_candidate": "two_part_20_05"
+  },
+  "accepted": true,
+  "code": {
+    "commit": "1da5f8322b468c22f4dfaa6c1e3a6597f6774b78",
+    "dirty": false
+  },
+  "config": {
+    "path": "benchmarks/configs/two_part_occurrence_rc6_v1.json",
+    "sha256": "3596c29fa0732296077218425ff53970070c001819db942b416efaaff4689623"
+  },
+  "elapsed_seconds": 135.54816336464137,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "working_beta_and_normal_probabilities_not_formal_inference",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 180,
+      "sha256": "17b474098732f83546b988538fa143fa37eff6d2ab57fdf8e90ff93b13ed1f83"
+    },
+    "candidate_selection.tsv": {
+      "rows": 9,
+      "sha256": "43757d468bd4fdef3b688822398f881de06ebf4dbc0c1814caa6f77e43b78e3c"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 7200,
+      "sha256": "d7b81a52bff695ca45c3bb6ed352c512a69cbca85512c8dc1f8e1555a72df297"
+    }
+  },
+  "schema_version": "crychic-two-part-occurrence-result-v1",
+  "selection": {
+    "accepted_for_real_benchmark": true,
+    "candidate": {
+      "magnitude_alpha": 0.5,
+      "name": "two_part_20_05",
+      "occurrence_alpha": 2.0
+    },
+    "config_sha256": "3596c29fa0732296077218425ff53970070c001819db942b416efaaff4689623",
+    "formal_release_allowed": false,
+    "holdout_used_for_candidate_selection": false,
+    "hurdle_policy": {
+      "beta_prior": 0.5,
+      "channel_alpha_cap": 1.0,
+      "conditional_presence_threshold": 0.5,
+      "log_weight_cap": 1.5,
+      "magnitude_log_sd_floor": 0.05,
+      "minimum_active_subjects": 3,
+      "minimum_concordance_edges": 200,
+      "minimum_subjects": 3
+    },
+    "program_policy": {
+      "alpha_cap": 1.5,
+      "maximum_alpha": 4.0,
+      "minimum_concordance_edges": 200
+    },
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-two-part-occurrence-frozen-v1",
+    "selected_candidate": "two_part_20_05",
+    "selected_on": "development_only"
+  },
+  "status": "complete"
+}

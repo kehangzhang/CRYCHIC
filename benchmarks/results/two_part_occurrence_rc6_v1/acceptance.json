@@ -1,0 +1,18 @@
+{
+  "accepted": true,
+  "global_null_gate_pass": true,
+  "global_null_total_effective_alpha_q95": 0.06889177846853581,
+  "holdout_magnitude_gain_pass": true,
+  "holdout_magnitude_mean_delta_vs_rc3": 0.012239779636550952,
+  "holdout_occurrence_gain_pass": true,
+  "holdout_occurrence_mean_delta_vs_rc3": 0.03416674668638411,
+  "holdout_primary_gain_pass": true,
+  "holdout_primary_mean_delta_vs_rc3": 0.032180951510307386,
+  "holdout_safety_mean_delta_vs_rc3": 0.0013561634889053755,
+  "holdout_safety_pass": true,
+  "holdout_structural_missingness_delta_vs_rc3": 0.03258864552562746,
+  "holdout_structural_missingness_pass": true,
+  "novel_candidate": true,
+  "novel_candidate_pass": true,
+  "selected_candidate": "two_part_20_05"
+}

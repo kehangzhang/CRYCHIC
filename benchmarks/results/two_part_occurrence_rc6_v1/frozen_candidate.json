@@ -1,0 +1,30 @@
+{
+  "accepted_for_real_benchmark": true,
+  "candidate": {
+    "magnitude_alpha": 0.5,
+    "name": "two_part_20_05",
+    "occurrence_alpha": 2.0
+  },
+  "config_sha256": "3596c29fa0732296077218425ff53970070c001819db942b416efaaff4689623",
+  "formal_release_allowed": false,
+  "holdout_used_for_candidate_selection": false,
+  "hurdle_policy": {
+    "beta_prior": 0.5,
+    "channel_alpha_cap": 1.0,
+    "conditional_presence_threshold": 0.5,
+    "log_weight_cap": 1.5,
+    "magnitude_log_sd_floor": 0.05,
+    "minimum_active_subjects": 3,
+    "minimum_concordance_edges": 200,
+    "minimum_subjects": 3
+  },
+  "program_policy": {
+    "alpha_cap": 1.5,
+    "maximum_alpha": 4.0,
+    "minimum_concordance_edges": 200
+  },
+  "real_cohorts_used_for_selection": false,
+  "schema_version": "crychic-two-part-occurrence-frozen-v1",
+  "selected_candidate": "two_part_20_05",
+  "selected_on": "development_only"
+}
