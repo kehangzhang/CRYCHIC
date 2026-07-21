@@ -1,0 +1,212 @@
+{
+  "comparison_panels": [
+    {
+      "analysis_unit": "sample_id",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_154c4a039aacaa00a03be65e",
+      "conditions": [
+        "CTRL",
+        "IZ"
+      ],
+      "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+      "expected_filters": {
+        "variant": "spatial_neighbor_max"
+      },
+      "expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+      "expected_variant": "spatial_neighbor_max",
+      "scenario": "multi_sample",
+      "score_semantics": "weighted_fgsea_pos_running_sum_gseaParam=1;ranking_statistic=raw_cardinality",
+      "self_pair_policy": "excluded_from_rank_and_truth",
+      "tie_policy": "fgsea_native",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "analysis_unit": "condition_level",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_53e00c3d3f0dca31149471c7",
+      "conditions": [
+        "chronic_active",
+        "control"
+      ],
+      "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+      "expected_filters": {},
+      "expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+      "expected_variant": "not_applicable",
+      "scenario": "condition_aware",
+      "score_semantics": "weighted_fgsea_pos_running_sum_gseaParam=1;ranking_statistic=raw_cardinality",
+      "self_pair_policy": "excluded_from_rank_and_truth",
+      "tie_policy": "fgsea_native",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "analysis_unit": "condition_level",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_c058253ce02f8463d22bd97b",
+      "conditions": [
+        "CTRL",
+        "IZ"
+      ],
+      "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+      "expected_filters": {
+        "variant": "spatial_neighbor_max"
+      },
+      "expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+      "expected_variant": "spatial_neighbor_max",
+      "scenario": "condition_aware",
+      "score_semantics": "weighted_fgsea_pos_running_sum_gseaParam=1;ranking_statistic=raw_cardinality",
+      "self_pair_policy": "excluded_from_rank_and_truth",
+      "tie_policy": "fgsea_native",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "analysis_unit": "sample_id",
+      "cell_pair_direction": "unordered_directions_collapsed",
+      "comparison_panel_id": "spatial_des_panel_cb397b89bbd478bb47ce4649",
+      "conditions": [
+        "chronic_active",
+        "control"
+      ],
+      "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+      "expected_filters": {},
+      "expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+      "expected_variant": "not_applicable",
+      "scenario": "multi_sample",
+      "score_semantics": "weighted_fgsea_pos_running_sum_gseaParam=1;ranking_statistic=raw_cardinality",
+      "self_pair_policy": "excluded_from_rank_and_truth",
+      "tie_policy": "fgsea_native",
+      "top_fractions": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    }
+  ],
+  "inputs": {
+    "evaluation_manifest_aggregate_sha256": "6d7726fad9caf45afb0b4e97f0159ddb3a868c3bbb3682ce1e9f09acbc2aa34e",
+    "evaluation_manifests": [
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "5534067a3fadd6003bb70d9c9754062a4c05cac66ad4cb5cc254b228a9fa3de8",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+        "path_hint": "paper_zero_pos_raw/kuppe_condition_aware/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "fc81bbef9d44892d35659ae660ad0b8a53cb0dd4448a3debe7e41f84699366e4",
+        "sha256": "28174e0e1b90136a35a90463664a6b3010bd03133389f4c08d791f14c7acdfb0"
+      },
+      {
+        "analysis_unit": "sample_id",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "8da71938957a64bc46ae96bcbbd82698ba8cfed043ce9b6c7ad026cb995fc524",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+        "path_hint": "paper_zero_pos_raw/kuppe_multi_sample/manifest.json",
+        "scenario": "multi_sample",
+        "scores_sha256": "40e88f3254191e47b0fc44a7ca40becfb050482ba6c29ff9a26ce002f8f7bf2a",
+        "sha256": "d0a62e033f6cee0acd162a86174c706b2dd58e0006676f2163dc3be01cc91c24"
+      },
+      {
+        "analysis_unit": "condition_level",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "f1c77d2054474b44b027f89ed2f5cf49e67435b4e0eeee5625edd42f6a5e4b35",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+        "path_hint": "paper_zero_pos_raw/ms_condition_aware_5ctrl_6ca/manifest.json",
+        "scenario": "condition_aware",
+        "scores_sha256": "c10a0c98f93ed53754ed7d74fe280f01fee716d921a14dcc7c77d59278cdfd2d",
+        "sha256": "b87b5ffb96e207b87e6f68ecd4736c91975ef3cccbe5e3326e4b1894a6e5c3a6"
+      },
+      {
+        "analysis_unit": "sample_id",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "b184ed4ed0e5351dd7b7fa4d7022374ffde69d718606ccaaecf64ca415a24f31",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+        "path_hint": "paper_zero_pos_raw/ms_multi_sample_5ctrl_6ca/manifest.json",
+        "scenario": "multi_sample",
+        "scores_sha256": "d9fe1d577da6dedf688277f38267f63015b3d9e2301fd22affb81719a98637b4",
+        "sha256": "d1faffaf5f6b455656a5800c52549d1686927cf948183fe553fbc9a22ed0ae2d"
+      },
+      {
+        "analysis_unit": "sample_id",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "4a75f1a1281238264ac0ca593071c38d9bfd86b41be33045bc19f88a6394026a",
+        "dataset": "Kuppe_MI_spatial_CTRL_vs_IZ",
+        "expected_filters": {
+          "variant": "spatial_neighbor_max"
+        },
+        "expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+        "path_hint": "kuppe_multi_sample/crychic_sample_replay_9003484/manifest.json",
+        "scenario": "multi_sample",
+        "scores_sha256": "d78825e7c00bc2acd81331b1dfa7cbd989a6325758ad76591142aeb97c678b95",
+        "sha256": "9f42143af0c9e3229448d08e1f3382c4b1b0dbdf2a4600c0656a0120ff8993ed"
+      },
+      {
+        "analysis_unit": "sample_id",
+        "analysis_unit_source": "evaluation_manifest",
+        "coverage_sha256": "939437c1ab0a857898156dfbc70f808fe39130c08b59f6ff8754c1519527fc88",
+        "dataset": "lerma_martin_ms_ctrl_vs_chronic_active",
+        "expected_filters": {},
+        "expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+        "path_hint": "ms_multi_sample/crychic_sample_replay_9003484/manifest.json",
+        "scenario": "multi_sample",
+        "scores_sha256": "d1ffbafd2ee4776a6609026664a52cd152584ddd6a14d9d706b77068ca28be9d",
+        "sha256": "cfe8ef1079077ba88cd32702c8e0fd9167d13e5c24db3e9741f589db0ef51147"
+      }
+    ]
+  },
+  "output": {
+    "bytes": 8348,
+    "filename": "spatial_des_benchmark_summary.tsv",
+    "rows": 12,
+    "sha256": "b77d3217cfc84d336a89b2d85a21277e05ff22a4758cfcaf876160bf7a31f77f"
+  },
+  "protocol": {
+    "coverage_reporting": "rank_eligible_fraction and expected_pair_coverage_fraction are reported separately as minimum and arithmetic mean across 8 strata",
+    "expected_des_strata_per_method": 8,
+    "no_cross_panel_ranking": true,
+    "panel_isolation": "dataset, scenario, expected-set SHA256, expected filters/variant, analysis unit, condition/fraction strata, cell-pair direction, self-pair policy, tie policy, and score semantics",
+    "rank_eligibility": "all 8 condition-by-fraction DES rows are observed and finite, and all expected sets are declared available",
+    "ranking": "within comparison_panel_id by DES median descending; tied medians share minimum rank; incomplete methods are not ranked",
+    "required_conditions_per_panel": 2,
+    "required_top_fractions": [
+      0.1,
+      0.2,
+      0.3,
+      0.4
+    ],
+    "secondary_ranking": "within comparison_panel_id by DES mean descending; tied means share minimum rank; incomplete methods are not ranked"
+  },
+  "schema_version": "crychic-spatial-des-benchmark-summary-v1",
+  "software": {
+    "numpy": "2.3.5",
+    "pandas": "3.0.3",
+    "python": "3.13.12"
+  },
+  "status": "complete"
+}

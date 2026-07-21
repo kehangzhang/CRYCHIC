@@ -128,3 +128,7 @@ reproduction. The primary publication bundle is in
 `benchmarks/results/spatial_des_figure3_reanalysis_20260721`; all alternative
 arms are indexed in
 `benchmarks/results/spatial_des_figure3_sensitivity_20260721`.
+
+The subsequent CRYCHIC sample-level extension is documented in
+[`FIGURE3_CRYCHIC_EXTENSION_20260722.md`](FIGURE3_CRYCHIC_EXTENSION_20260722.md)
+and is kept separate from this paper-method reconstruction.
