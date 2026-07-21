@@ -43,3 +43,11 @@ remaining gap.  Opportunity amplification could raise DES but would reward
 detection opportunity rather than communication reliability and was rejected.
 A receiver-program gate helped MS but not Kuppe and was threshold-sensitive;
 it should be developed only as a separately calibrated soft evidence channel.
+
+The persisted edge-specific downstream channel cannot support that extension in
+the current runs.  All 3,361,380 Kuppe and 1,750,815 MS score-layer rows have
+`downstream_positive_support` and `downstream_signed_support` missing with
+`status=not_estimable`.  The descriptive receiver-family program table is not
+a substitute for calibrated edge evidence.  A downstream-reliability claim
+therefore requires a new cross-fit run that resolves receiver response coverage
+and subject-fold estimability; no missing support was converted to zero here.
