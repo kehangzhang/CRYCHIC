@@ -46,7 +46,8 @@ REASON_WATERFALL_FILENAME = "downstream_reason_waterfall.tsv"
 
 _SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
     "kuppe": {
-        "dataset_id": "Kuppe_MI_CTRL_vs_IZ",
+        "source_dataset_ids": {"Kuppe_MI_CTRL_vs_IZ"},
+        "ranking_dataset_id": "Kuppe_MI_CTRL_vs_IZ",
         "reference": "CTRL",
         "target": "IZ",
         "condition_column": "condition",
@@ -59,7 +60,8 @@ _SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
         "subjects_by_condition": {"CTRL": 4, "IZ": 7},
     },
     "ms": {
-        "dataset_id": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl_5ctrl_6ca",
+        "source_dataset_ids": {"UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"},
+        "ranking_dataset_id": "UCSC_Lerma_Martin_MS_CA_vs_Ctrl_5ctrl_6ca",
         "reference": "Ctrl",
         "target": "CA",
         "condition_column": "lesion_type",
@@ -97,12 +99,7 @@ def _validate_source_contract(
     contract = _SOURCE_CONTRACTS[dataset]
     if source_manifest.get("status") != "complete":
         raise ValueError("source run must be complete")
-    accepted_dataset_ids = (
-        {"LermaMartin_MS_CA_vs_Ctrl", "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"}
-        if dataset == "ms"
-        else {contract["dataset_id"]}
-    )
-    if source_manifest.get("dataset_id") not in accepted_dataset_ids:
+    if source_manifest.get("dataset_id") not in contract["source_dataset_ids"]:
         raise ValueError("source run dataset identity is not Figure 3 compatible")
     input_record = source_manifest.get("input")
     if not isinstance(input_record, Mapping):
@@ -268,6 +265,18 @@ def run(
         raise FileNotFoundError(manifest_path)
     source_manifest = _read_json(manifest_path)
     contract = _validate_source_contract(source_manifest, dataset=dataset)
+    method = source_manifest.get("method")
+    resource = source_manifest.get("resource")
+    if not isinstance(method, Mapping) or not isinstance(resource, Mapping):
+        raise ValueError("source run lacks method/resource provenance")
+    source_method_version = str(method.get("version"))
+    code_metadata = git_metadata(Path(__file__).resolve().parents[3])
+    replay_commit = code_metadata.get("commit")
+    method_version = (
+        f"{source_method_version};sample_replay={replay_commit[:12]}"
+        if isinstance(replay_commit, str) and replay_commit
+        else f"{source_method_version};sample_replay"
+    )
     score_layer_path = _bound_output(
         source, source_manifest, "sender_lr_score_layers.parquet"
     )
@@ -343,10 +352,10 @@ def run(
     )
     rankings, pair_opportunity = stable_breadth_unordered_cell_pair_rankings(
         effects,
-        dataset=str(contract["dataset_id"]),
+        dataset=str(contract["ranking_dataset_id"]),
         method="crychic",
-        method_version=f"{source_manifest['method']['version']};sample_replay",
-        resource=str(source_manifest["resource"]["resource_id"]),
+        method_version=method_version,
+        resource=str(resource.get("resource_id")),
     )
     rankings["ranking_semantics"] = rankings["ranking_semantics"].astype(str) + (
         ";sample_level_replay"
@@ -371,7 +380,8 @@ def run(
         "schema_version": SCHEMA_VERSION,
         "status": "complete",
         "dataset": dataset,
-        "dataset_id": contract["dataset_id"],
+        "dataset_id": contract["ranking_dataset_id"],
+        "source_dataset_id": source_manifest["dataset_id"],
         "reference": contract["reference"],
         "target": contract["target"],
         "analysis_unit": {
@@ -390,11 +400,15 @@ def run(
         "source_input": source_manifest["input"],
         "method": {
             "id": "crychic",
-            "version": f"{source_manifest['method']['version']};sample_replay",
-            "backbone_version": source_manifest["method"]["version"],
+            "version": method_version,
+            "backbone_version": source_method_version,
         },
-        "resource": source_manifest["resource"],
+        "resource": dict(resource),
         "implementation": {
+            "script_sha256": sha256_file(Path(__file__)),
+            "des_postprocess_sha256": sha256_file(
+                Path(__file__).with_name("des_postprocess.py")
+            ),
             "response": "sender_specific_ligand_x_receptor_availability",
             "statistical_unit": "sample_id",
             "subject_result_reuse": False,
@@ -427,7 +441,7 @@ def run(
                 process_resource.getrusage(process_resource.RUSAGE_SELF).ru_maxrss
             ),
         },
-        "code": git_metadata(Path(__file__).resolve().parents[3]),
+        "code": code_metadata,
         "outputs": {
             DIRECT_EFFECT_FILENAME: _output_record(direct_effect_path, effects),
             RANKING_FILENAME: _output_record(ranking_path, rankings),

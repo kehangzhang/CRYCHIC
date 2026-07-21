@@ -5,6 +5,7 @@ import pytest
 from benchmarks.adapters.crychic.replay_v3_sample import (
     _sample_effects,
     _validate_sample_layer,
+    _validate_source_contract,
 )
 
 
@@ -27,6 +28,31 @@ def _sample_score_layers() -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def test_source_contract_separates_source_and_ranking_dataset_ids() -> None:
+    manifest = {
+        "status": "complete",
+        "dataset_id": "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl",
+        "input": {
+            "sha256": (
+                "433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c"
+            ),
+            "shape": [69168, 32115],
+            "samples": 11,
+            "subject_support": {"Ctrl": 5, "CA": 5},
+        },
+        "parameters": {"outer_folds": 2},
+    }
+
+    contract = _validate_source_contract(manifest, dataset="ms")
+    assert contract["ranking_dataset_id"] == (
+        "UCSC_Lerma_Martin_MS_CA_vs_Ctrl_5ctrl_6ca"
+    )
+
+    manifest["dataset_id"] = "LermaMartin_MS_CA_vs_Ctrl"
+    with pytest.raises(ValueError, match="dataset identity"):
+        _validate_source_contract(manifest, dataset="ms")
 
 
 def test_sample_layer_requires_one_fold_per_sample() -> None:
