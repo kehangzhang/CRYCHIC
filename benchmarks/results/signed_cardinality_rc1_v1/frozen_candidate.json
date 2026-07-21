@@ -1,0 +1,14 @@
+{
+  "candidate": {
+    "delta_fraction": 0.5,
+    "kind": "spike_normal",
+    "name": "eb_delta_0.5"
+  },
+  "config_sha256": "99d4e3cc02c665d46c8ac0e9bc05b3ae64444fa925416d8b647af8550a86999b",
+  "formal_release_allowed": false,
+  "holdout_used_for_selection": false,
+  "probability_status": "candidate_unreleased",
+  "schema_version": "crychic-signed-cardinality-frozen-candidate-v1",
+  "selected_candidate": "eb_delta_0.5",
+  "selected_on": "development_only"
+}

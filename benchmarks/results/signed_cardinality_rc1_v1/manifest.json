@@ -1,0 +1,47 @@
+{
+  "code": {
+    "commit": "36c4aa120a84ad44da667138ec9d84767028de12",
+    "dirty": true
+  },
+  "config": {
+    "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/signed_cardinality_rc1_v1.json",
+    "sha256": "99d4e3cc02c665d46c8ac0e9bc05b3ae64444fa925416d8b647af8550a86999b"
+  },
+  "elapsed_seconds": 41.063192256726325,
+  "limitations": [
+    "not_a_full_pipeline_resampling_calibration",
+    "working_model_probabilities_are_not_released_scientific_posteriors",
+    "real_cohorts_are_not_used_for_candidate_selection"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 84,
+      "sha256": "593eeba7e593e8f195fd89ebada4e965408b99c730413eb383ce130d5c88f7e3"
+    },
+    "candidate_selection.tsv": {
+      "rows": 7,
+      "sha256": "b55a2e56ab805ad56000feadd216844da3c9363f025c55c048287783a52a3102"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 4032,
+      "sha256": "cc0a899f937fc2a58faaf3e9d1eacf966b313944af36f30759c4ef5aa1512bc3"
+    }
+  },
+  "schema_version": "crychic-signed-cardinality-benchmark-result-v1",
+  "selection": {
+    "candidate": {
+      "delta_fraction": 0.5,
+      "kind": "spike_normal",
+      "name": "eb_delta_0.5"
+    },
+    "config_sha256": "99d4e3cc02c665d46c8ac0e9bc05b3ae64444fa925416d8b647af8550a86999b",
+    "formal_release_allowed": false,
+    "holdout_used_for_selection": false,
+    "probability_status": "candidate_unreleased",
+    "schema_version": "crychic-signed-cardinality-frozen-candidate-v1",
+    "selected_candidate": "eb_delta_0.5",
+    "selected_on": "development_only"
+  },
+  "simulation_level": "effect_and_standard_error_summary_only",
+  "status": "complete"
+}
