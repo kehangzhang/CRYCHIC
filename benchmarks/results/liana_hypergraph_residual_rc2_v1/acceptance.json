@@ -1,0 +1,9 @@
+{
+  "accepted": true,
+  "global_null_gate_pass": true,
+  "global_null_gate_q95": 0.0,
+  "structured_gain_pass": true,
+  "structured_holdout_mean_delta": 0.004241312001959776,
+  "wrong_topology_mean_delta": 0.0,
+  "wrong_topology_safety_pass": true
+}

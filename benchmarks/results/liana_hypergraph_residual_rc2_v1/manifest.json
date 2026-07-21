@@ -1,0 +1,41 @@
+{
+  "acceptance": {
+    "accepted": true,
+    "global_null_gate_pass": true,
+    "global_null_gate_q95": 0.0,
+    "structured_gain_pass": true,
+    "structured_holdout_mean_delta": 0.004241312001959776,
+    "wrong_topology_mean_delta": 0.0,
+    "wrong_topology_safety_pass": true
+  },
+  "accepted": true,
+  "code": {
+    "commit": "d6fb7562d21648082db8e80d852ec28eb97d1cac",
+    "dirty": true
+  },
+  "config": {
+    "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/liana_hypergraph_residual_rc2_v1.json",
+    "sha256": "6ecb8c2a5b5381e56f0ac773d36cf7e31663fd1de9096d76c00605586b2ea56d"
+  },
+  "elapsed_seconds": 33.81198938563466,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 24,
+      "sha256": "69a4dedb4c54a0bc588706efd07632a49dd81cccf4600c3acc8a6b9353561902"
+    },
+    "cv_diagnostics.tsv": {
+      "rows": 1728,
+      "sha256": "ce5520f87d6c98125c1ec5f95120cd1eb844e9cff73375c270ae285295e6a154"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 768,
+      "sha256": "af3fc08c674f5107ff0d855dec1e91c48f4d5bd2ccb4c95085cb77fb6f65b792"
+    }
+  },
+  "schema_version": "crychic-liana-hypergraph-residual-result-v1",
+  "status": "complete"
+}
