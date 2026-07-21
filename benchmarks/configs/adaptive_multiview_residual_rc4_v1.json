@@ -1,0 +1,57 @@
+{
+  "schema_version": "crychic-adaptive-multiview-residual-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [701, 702, 703, 704, 705, 706, 707, 708, 709, 710, 711, 712],
+  "holdout_seeds": [7001, 7002, 7003, 7004, 7005, 7006, 7007, 7008, 7009, 7010, 7011, 7012],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "baseline_noise_sd": 1.8,
+    "lr_call_signal_scale": 0.45,
+    "lr_call_noise_sd": 1.4,
+    "scenarios": [
+      "coherent_mixed",
+      "cell_dominant",
+      "molecular_dominant",
+      "corrupted_sender",
+      "corrupted_interaction",
+      "topology_jump",
+      "noisy_anchor",
+      "antagonistic_anchor",
+      "wrong_topology",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "profile_policy": {
+      "profiles": ["all_equal", "reliability_weighted"],
+      "view_reliability": "positive_oof_group_mean_improvement_over_global_mean",
+      "full_reliability_improvement": 0.25,
+      "negative_reliability": 0.0,
+      "fixed_total_penalty_mass": true
+    },
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_profile_relative_improvement": 0.005,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "acceptance": {
+    "primary_metric": "pair_rank_spearman",
+    "heterogeneous_scenarios": ["cell_dominant", "molecular_dominant", "corrupted_sender", "corrupted_interaction"],
+    "coherent_safety_scenarios": ["coherent_mixed", "noisy_anchor", "antagonistic_anchor"],
+    "minimum_heterogeneous_holdout_mean_delta": 0.001,
+    "minimum_heterogeneous_adaptive_selection_rate": 0.2,
+    "maximum_coherent_mean_regression": 0.003,
+    "maximum_topology_jump_mean_regression": 0.005,
+    "wrong_topology_maximum_mean_regression": 0.005,
+    "global_null_maximum_gate_q95": 0.25,
+    "holdout_not_used_for_policy_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
