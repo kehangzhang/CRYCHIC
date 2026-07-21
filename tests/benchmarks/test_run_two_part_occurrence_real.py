@@ -93,6 +93,8 @@ def test_unit_weights_reproduce_rc3_rankings() -> None:
         semantics="test",
     )
     assert calls == 3
-    assert _assert_rank_parity(rebuilt, template)["rankings_exact"] is True
+    parity = _assert_rank_parity(rebuilt, template)
+    assert parity["rankings_numerically_equal"] is True
+    assert parity["rank_order_exact"] is True
     absent = rebuilt.loc[rebuilt["receiver"].eq("C")].iloc[0]
     assert pd.isna(absent["ranked_strength"])

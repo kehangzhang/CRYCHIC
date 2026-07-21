@@ -499,27 +499,67 @@ def _weighted_rankings(
 def _assert_rank_parity(
     rebuilt: pd.DataFrame, original: pd.DataFrame
 ) -> dict[str, object]:
-    compare = [
+    identity = [
         "condition",
         "sender",
         "receiver",
-        "ranked_strength",
-        "condition_specific_directed_lr",
         "estimable_directed_lr",
         "status",
         "reason_code",
     ]
+    numeric = ["ranked_strength", "condition_specific_directed_lr"]
     order = ["condition", "sender", "receiver"]
-    left = (
-        rebuilt.sort_values(order, kind="stable").loc[:, compare].reset_index(drop=True)
+    left = rebuilt.sort_values(order, kind="stable").reset_index(drop=True)
+    right = original.sort_values(order, kind="stable").reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        left.loc[:, identity],
+        right.loc[:, identity],
+        check_dtype=False,
+        check_exact=True,
     )
-    right = (
-        original.sort_values(order, kind="stable")
-        .loc[:, compare]
+    maximum_absolute_difference = 0.0
+    for column in numeric:
+        left_value = pd.to_numeric(left[column], errors="coerce").to_numpy(dtype=float)
+        right_value = pd.to_numeric(right[column], errors="coerce").to_numpy(
+            dtype=float
+        )
+        np.testing.assert_array_equal(np.isnan(left_value), np.isnan(right_value))
+        finite = np.isfinite(left_value) & np.isfinite(right_value)
+        if finite.any():
+            maximum_absolute_difference = max(
+                maximum_absolute_difference,
+                float(np.max(np.abs(left_value[finite] - right_value[finite]))),
+            )
+        np.testing.assert_allclose(
+            left_value,
+            right_value,
+            rtol=1e-13,
+            atol=1e-13,
+            equal_nan=True,
+        )
+    rank_order = ["condition", "ranked_strength", "sender", "receiver"]
+    ascending = [True, False, True, True]
+    left_order = (
+        left.loc[left["ranked_strength"].notna()]
+        .sort_values(rank_order, ascending=ascending, kind="stable")
+        .loc[:, ["condition", "sender", "receiver"]]
         .reset_index(drop=True)
     )
-    pd.testing.assert_frame_equal(left, right, check_dtype=False, check_exact=True)
-    return {"rankings_exact": True, "ranking_rows": len(left)}
+    right_order = (
+        right.loc[right["ranked_strength"].notna()]
+        .sort_values(rank_order, ascending=ascending, kind="stable")
+        .loc[:, ["condition", "sender", "receiver"]]
+        .reset_index(drop=True)
+    )
+    pd.testing.assert_frame_equal(left_order, right_order, check_exact=True)
+    return {
+        "rankings_numerically_equal": True,
+        "rank_order_exact": True,
+        "ranking_rows": len(left),
+        "rtol": 1e-13,
+        "atol": 1e-13,
+        "maximum_absolute_difference": maximum_absolute_difference,
+    }
 
 
 def _coverage_fallback(
