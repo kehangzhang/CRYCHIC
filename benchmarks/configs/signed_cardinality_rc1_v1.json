@@ -1,0 +1,42 @@
+{
+  "schema_version": "crychic-signed-cardinality-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124],
+  "holdout_seeds": [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024],
+  "simulation": {
+    "pair_count": 36,
+    "edge_opportunities": [48, 96, 192],
+    "effect_floor": 0.06,
+    "effect_scale": 0.08,
+    "scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing",
+      "global_null_imbalanced_opportunity"
+    ]
+  },
+  "candidates": [
+    {"name": "hard_z1", "kind": "hard_z", "threshold": 1.0},
+    {"name": "wald_p05", "kind": "hard_z", "threshold": 1.959963984540054},
+    {"name": "continuous_sign", "kind": "continuous_sign"},
+    {"name": "eb_delta_0", "kind": "spike_normal", "delta_fraction": 0.0},
+    {"name": "eb_delta_0.1", "kind": "spike_normal", "delta_fraction": 0.1},
+    {"name": "eb_delta_0.25", "kind": "spike_normal", "delta_fraction": 0.25},
+    {"name": "eb_delta_0.5", "kind": "spike_normal", "delta_fraction": 0.5}
+  ],
+  "selection": {
+    "eligible_scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing"
+    ],
+    "primary_metric": "pair_rank_spearman",
+    "aggregation": "macro_mean_across_scenario_seed_direction",
+    "tie_breakers": ["top_quartile_auroc", "lower_tie_fraction", "candidate_name"],
+    "holdout_not_used_for_selection": true
+  }
+}
