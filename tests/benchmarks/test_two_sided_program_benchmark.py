@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from benchmarks.simulation.two_sided_program_benchmark import (
+    _portable_config_path,
     _select_candidate,
     simulate_two_sided_program_problem,
 )
@@ -39,6 +42,13 @@ def test_biased_program_simulation_is_deterministic_and_less_balanced() -> None:
     pd.testing.assert_frame_equal(first, second)
     finite = first["program_z"].dropna()
     assert finite.gt(0.0).mean() > 0.75
+
+
+def test_config_provenance_is_repository_relative() -> None:
+    assert (
+        _portable_config_path(Path("benchmarks/configs/two_sided_program_rc5_v1.json"))
+        == "benchmarks/configs/two_sided_program_rc5_v1.json"
+    )
 
 
 def test_selection_uses_development_and_safety() -> None:

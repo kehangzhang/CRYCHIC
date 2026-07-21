@@ -41,6 +41,14 @@ def _read_config(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
+def _portable_config_path(path: Path) -> str:
+    repository = Path(__file__).resolve().parents[2]
+    try:
+        return path.resolve().relative_to(repository).as_posix()
+    except ValueError as error:
+        raise ValueError("RC5 config must be stored inside the repository") from error
+
+
 def simulate_two_sided_program_problem(
     config: Mapping[str, Any], *, scenario: str, seed: int
 ) -> pd.DataFrame:
@@ -359,7 +367,7 @@ def run(
         "status": "complete",
         "accepted": acceptance["accepted"],
         "config": {
-            "path": str(config_path.resolve()),
+            "path": _portable_config_path(config_path),
             "sha256": sha256_file(config_path),
         },
         "selection": frozen,
