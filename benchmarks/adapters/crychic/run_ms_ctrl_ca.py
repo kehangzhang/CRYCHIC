@@ -301,7 +301,10 @@ def validate_subset_manifest(
 
 
 def build_crossfit_configuration(
-    *, seed: int, min_cells: int
+    *,
+    seed: int,
+    min_cells: int,
+    outer_fold_partition_seed: int | None = None,
 ) -> tuple[CrychicConfig, CrossFitSpec]:
     """Freeze the two-fold CA-versus-Ctrl descriptive cross-fit policy."""
 
@@ -309,6 +312,14 @@ def build_crossfit_configuration(
         raise ValueError("seed must be a non-negative integer")
     if isinstance(min_cells, bool) or not isinstance(min_cells, int) or min_cells < 1:
         raise ValueError("min_cells must be a positive integer")
+    if outer_fold_partition_seed is None:
+        outer_fold_partition_seed = seed
+    if (
+        isinstance(outer_fold_partition_seed, bool)
+        or not isinstance(outer_fold_partition_seed, int)
+        or outer_fold_partition_seed < 0
+    ):
+        raise ValueError("outer_fold_partition_seed must be a non-negative integer")
     contrast = balanced_contrast((TARGET,), (REFERENCE,), name=CONTRAST)
     tuning = PenaltyTuningSpec(
         lambda1_fractions=(1.0, 0.3, 0.1),
@@ -320,7 +331,7 @@ def build_crossfit_configuration(
     )
     spec = CrossFitSpec(
         contrasts=(contrast,),
-        outer_fold_partition_seed=seed,
+        outer_fold_partition_seed=outer_fold_partition_seed,
         training_spec=FoldTrainingSpec(
             min_cells=min_cells,
             min_pooled_availability=0.0,
@@ -775,6 +786,7 @@ def run_ms_ctrl_ca(
     nichenet_release: str = "v2_2021",
     nichenet_manifest: str | Path | None = None,
     seed: int = 20260717,
+    outer_fold_partition_seed: int | None = None,
     threads: int = 8,
     fold_jobs: int = 1,
     min_cells: int = 10,
@@ -810,7 +822,11 @@ def run_ms_ctrl_ca(
         release=nichenet_release,
         manifest_path=prior_manifest_path,
     )
-    config, spec = build_crossfit_configuration(seed=seed, min_cells=min_cells)
+    config, spec = build_crossfit_configuration(
+        seed=seed,
+        min_cells=min_cells,
+        outer_fold_partition_seed=outer_fold_partition_seed,
+    )
     output = prepare_output(output_dir, overwrite=overwrite)
     started = time.perf_counter()
     method_version = _method_version()
@@ -850,6 +866,7 @@ def run_ms_ctrl_ca(
         },
         "parameters": {
             "seed": seed,
+            "outer_fold_partition_seed": spec.outer_fold_partition_seed,
             "threads": threads,
             "blas_threads_per_fold": threads,
             "fold_jobs": fold_jobs,
@@ -1241,6 +1258,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--nichenet-manifest", type=Path)
     parser.add_argument("--seed", type=int, default=20260717)
     parser.add_argument(
+        "--outer-fold-partition-seed",
+        type=int,
+        help=(
+            "deterministic subject-fold partition seed; defaults to --seed and "
+            "does not change model or tuning random seeds"
+        ),
+    )
+    parser.add_argument(
         "--threads",
         type=int,
         default=8,
@@ -1264,6 +1289,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         nichenet_release=args.nichenet_release,
         nichenet_manifest=args.nichenet_manifest,
         seed=args.seed,
+        outer_fold_partition_seed=args.outer_fold_partition_seed,
         threads=args.threads,
         fold_jobs=args.fold_jobs,
         min_cells=args.min_cells,

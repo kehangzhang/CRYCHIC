@@ -378,6 +378,8 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
             str(tmp_path / "database"),
             "--seed",
             "17",
+            "--outer-fold-partition-seed",
+            "19",
             "--threads",
             "2",
             "--fold-jobs",
@@ -390,6 +392,8 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     manifest = json.loads((output_dir / "manifest.json").read_text())
     assert manifest["status"] == "complete"
     assert manifest["parameters"]["threads"] == 2
+    assert manifest["parameters"]["seed"] == 17
+    assert manifest["parameters"]["outer_fold_partition_seed"] == 19
     assert manifest["parameters"]["blas_threads_per_fold"] == 2
     assert manifest["parameters"]["fold_jobs"] == 2
     assert manifest["parameters"]["effective_fold_jobs"] == 2
@@ -423,6 +427,7 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     assert config.categorical_covariates == ("batch",)
     assert config.design == "~ batch + lesion_type"
     assert spec.allowed_n_splits == (2,)
+    assert spec.outer_fold_partition_seed == 19
     assert spec.contrasts[0].name == "CA_vs_Ctrl"
 
     scores = pd.read_parquet(output_dir / module.SCORE_FILENAME)
@@ -462,20 +467,16 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     assert by_condition.loc["Ctrl", "condition_specific_directed_lr"] == 0
     assert by_condition["estimable_directed_lr"].eq(2).all()
     direct_by_ligand = direct_effects.set_index("ligand")
-    assert direct_by_ligand.loc[
-        "L1", "effect_target_minus_reference"
-    ] == pytest.approx(0.4)
-    assert direct_by_ligand.loc[
-        "L2", "effect_target_minus_reference"
-    ] == pytest.approx(0.6)
+    assert direct_by_ligand.loc["L1", "effect_target_minus_reference"] == pytest.approx(
+        0.4
+    )
+    assert direct_by_ligand.loc["L2", "effect_target_minus_reference"] == pytest.approx(
+        0.6
+    )
     assert direct_effects["one_standard_error_stable"].all()
     mechanistic_by_condition = mechanistic_rankings.set_index("condition")
-    assert mechanistic_by_condition.loc[
-        "CA", "ranked_strength"
-    ] == pytest.approx(1.0)
-    assert mechanistic_by_condition.loc[
-        "Ctrl", "ranked_strength"
-    ] == pytest.approx(0.0)
+    assert mechanistic_by_condition.loc["CA", "ranked_strength"] == pytest.approx(1.0)
+    assert mechanistic_by_condition.loc["Ctrl", "ranked_strength"] == pytest.approx(0.0)
     assert not rankings["formal_inference_allowed"].any()
     forbidden = {"p", "p_value", "q", "q_value", "pval", "qval"}
     assert not forbidden.intersection(scores.columns)
