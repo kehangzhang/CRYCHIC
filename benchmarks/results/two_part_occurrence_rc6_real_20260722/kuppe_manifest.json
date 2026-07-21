@@ -1,0 +1,370 @@
+{
+  "alignment": {
+    "magnitude_coverage": 0.4304253785147801,
+    "magnitude_observed_edges": 4776,
+    "occurrence_coverage": 0.8251622206200433,
+    "occurrence_observed_edges": 9156,
+    "rc3_call_set_modified": false,
+    "rc3_edges": 11096,
+    "selected_rc3_calls": 3203,
+    "structural_absence_is_missing": true,
+    "subjects": 11,
+    "subjects_by_condition": {
+      "CTRL": 4,
+      "IZ": 7
+    }
+  },
+  "backbone_modified": false,
+  "benchmark_head_modified": true,
+  "code": {
+    "commit": "bc18809efb111fb97ec5f675776184367f87d1a7",
+    "dirty": false
+  },
+  "contrast": {
+    "reference": "CTRL",
+    "target": "IZ"
+  },
+  "dataset": "kuppe",
+  "formal_release_allowed": false,
+  "frozen_candidate": {
+    "accepted_for_real_benchmark": true,
+    "candidate": {
+      "magnitude_alpha": 0.5,
+      "name": "two_part_20_05",
+      "occurrence_alpha": 2.0
+    },
+    "config_sha256": "3596c29fa0732296077218425ff53970070c001819db942b416efaaff4689623",
+    "formal_release_allowed": false,
+    "holdout_used_for_candidate_selection": false,
+    "hurdle_policy": {
+      "beta_prior": 0.5,
+      "channel_alpha_cap": 1.0,
+      "conditional_presence_threshold": 0.5,
+      "log_weight_cap": 1.5,
+      "magnitude_log_sd_floor": 0.05,
+      "minimum_active_subjects": 3,
+      "minimum_concordance_edges": 200,
+      "minimum_subjects": 3
+    },
+    "program_policy": {
+      "alpha_cap": 1.5,
+      "maximum_alpha": 4.0,
+      "minimum_concordance_edges": 200
+    },
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-two-part-occurrence-frozen-v1",
+    "selected_candidate": "two_part_20_05",
+    "selected_on": "development_only"
+  },
+  "inputs": {
+    "acceptance": {
+      "bytes": 733,
+      "filename": "acceptance.json",
+      "sha256": "51efab810accc1b0c8c90a1d30d3bf5fd2f5149e88f846ae710a6494f29f4667"
+    },
+    "config": {
+      "bytes": 3515,
+      "filename": "two_part_occurrence_rc6_v1.json",
+      "sha256": "3596c29fa0732296077218425ff53970070c001819db942b416efaaff4689623"
+    },
+    "frozen_candidate": {
+      "bytes": 900,
+      "filename": "frozen_candidate.json",
+      "sha256": "625d1aba84dec8ee33ab49f38dca041060f379c21983b26182e779982ee0e2d0"
+    },
+    "liana": {
+      "lr_results": {
+        "bytes": 1147862,
+        "filename": "liana_lr_results.tsv.gz",
+        "sha256": "9e9ce7e893028a10ff3a6af7de000044319609b8a55cacb53101d83e2d57bc73"
+      },
+      "manifest": {
+        "bytes": 18866,
+        "filename": "run_manifest.json",
+        "sha256": "8ed32d46bcfd2704ef32d21aff96eee45c5c5d1198d51133cc82b734aaa2dbf8"
+      },
+      "pseudobulk": {
+        "bytes": 10036874,
+        "filename": "pseudobulk_counts.h5ad",
+        "sha256": "77ec3f27057539ea9f6865890d62137729821ff283674354b1aa0444d4b321d0"
+      }
+    },
+    "rc3": {
+      "edges": {
+        "bytes": 621258,
+        "filename": "directed_edge_program_weights.parquet",
+        "sha256": "739634cac2a49aad71a05413799555faae5cae4b00b39547418ee71500ee0026"
+      },
+      "expected_sets": {
+        "bytes": 436981,
+        "filename": "kuppe_misty_expected_sets.tsv",
+        "sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655"
+      },
+      "manifest": {
+        "bytes": 10273,
+        "filename": "manifest.json",
+        "sha256": "617f6814a79e9b832398f0f9e33fde5052a27eae37a2e2f73d968501d010dd01"
+      },
+      "rankings": {
+        "bytes": 341490,
+        "filename": "condition_cell_pair_rankings.tsv",
+        "sha256": "78ef42d18063c01f18d554c1200d28116ede89c210a36f0694c60e3ed2990ea6"
+      }
+    }
+  },
+  "limitations": [
+    "working_beta_and_normal_probabilities_are_benchmark_weights",
+    "spatial_colocalization_is_an_indirect_proxy",
+    "receiver_program_source_remains_partial_pipeline_evidence"
+  ],
+  "magnitude_fit": {
+    "alpha_cap": 1.0,
+    "channel": "magnitude",
+    "effective_alpha": 0.298785594639866,
+    "fit_status": "candidate_unreleased",
+    "formal_release_allowed": false,
+    "maximum_alpha": 0.5,
+    "n_concordance_edges": 4776,
+    "reliability": 0.597571189279732,
+    "sign_concordance": 0.798785594639866
+  },
+  "occurrence_fit": {
+    "alpha_cap": 1.0,
+    "channel": "occurrence",
+    "effective_alpha": 0.48274355613805175,
+    "fit_status": "candidate_unreleased",
+    "formal_release_allowed": false,
+    "maximum_alpha": 2.0,
+    "n_concordance_edges": 9156,
+    "reliability": 0.24137177806902588,
+    "sign_concordance": 0.6206858890345129
+  },
+  "outputs": {
+    "condition_cell_pair_rankings.tsv": {
+      "bytes": 420200,
+      "columns": [
+        "dataset",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "sender",
+        "receiver",
+        "estimable_directed_lr",
+        "condition",
+        "ranked_strength",
+        "condition_specific_directed_lr",
+        "status",
+        "reason_code"
+      ],
+      "filename": "condition_cell_pair_rankings.tsv",
+      "rows": 1716,
+      "sha256": "fe230d5ffe5546f832992493a7bef514082a44868551b04c2a9e4efea37b53b8"
+    },
+    "directed_edge_two_part_weights.parquet": {
+      "bytes": 1464194,
+      "columns": [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "ligand",
+        "receptor",
+        "interaction_stat",
+        "interaction_pvalue",
+        "crychic_z",
+        "residual_theta",
+        "final_sign_statistic",
+        "baseline_sign",
+        "final_sign",
+        "sign_flipped",
+        "probability_status",
+        "family_id",
+        "program_z",
+        "program_status",
+        "program_evidence",
+        "program_weight",
+        "program_available",
+        "selected_rc2_call",
+        "formal_inference_allowed",
+        "hurdle_occurrence_effect",
+        "hurdle_occurrence_standard_error",
+        "hurdle_occurrence_z",
+        "hurdle_occurrence_reference_posterior_mean",
+        "hurdle_occurrence_target_posterior_mean",
+        "hurdle_occurrence_reference_subjects",
+        "hurdle_occurrence_target_subjects",
+        "hurdle_occurrence_status",
+        "hurdle_magnitude_effect",
+        "hurdle_magnitude_standard_error",
+        "hurdle_magnitude_z",
+        "hurdle_magnitude_reference_active_subjects",
+        "hurdle_magnitude_target_active_subjects",
+        "hurdle_magnitude_status",
+        "occurrence_evidence",
+        "magnitude_evidence",
+        "hurdle_weight",
+        "combined_program_hurdle_weight",
+        "selected_rc3_call"
+      ],
+      "filename": "directed_edge_two_part_weights.parquet",
+      "rows": 11096,
+      "sha256": "319530e3c88b4d90ac0fc7bb83d6308d49d62247f34bdea3acccfa4505f10cab"
+    },
+    "edge_occurrence_effects.parquet": {
+      "bytes": 566281,
+      "columns": [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "ligand",
+        "receptor",
+        "occurrence_effect",
+        "occurrence_standard_error",
+        "occurrence_z",
+        "occurrence_reference_posterior_mean",
+        "occurrence_target_posterior_mean",
+        "occurrence_reference_subjects",
+        "occurrence_target_subjects",
+        "occurrence_status",
+        "magnitude_effect",
+        "magnitude_standard_error",
+        "magnitude_z",
+        "magnitude_reference_active_subjects",
+        "magnitude_target_active_subjects",
+        "magnitude_status",
+        "target_condition",
+        "reference_condition",
+        "formal_inference_allowed"
+      ],
+      "filename": "edge_occurrence_effects.parquet",
+      "rows": 11096,
+      "sha256": "c6698f5b02335654b31a3cece5e87ddcd4117590e2f1563ca53a1b6ad67ac951"
+    },
+    "edge_subject_hurdle.parquet": {
+      "bytes": 1492441,
+      "columns": [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "ligand",
+        "receptor",
+        "subject_id",
+        "condition",
+        "presence_probability",
+        "positive_magnitude",
+        "status"
+      ],
+      "filename": "edge_subject_hurdle.parquet",
+      "rows": 122056,
+      "sha256": "d628a9011e657037a682cf06a1a89b4fbc0842ac7b8884a7881d280c2e55c6dc"
+    },
+    "spatial_des_coverage.tsv": {
+      "bytes": 33542,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "expected_set_available",
+        "expected_input_rows",
+        "expected_input_mode",
+        "expected_pairs",
+        "expected_pairs_covered",
+        "expected_pairs_missing",
+        "expected_pair_coverage_fraction",
+        "rank_rows_total",
+        "rank_pairs_eligible",
+        "rank_pairs_noneligible",
+        "rank_eligible_fraction",
+        "ranked_background_pairs",
+        "tied_strength_blocks",
+        "ranked_pairs_in_ties",
+        "rank_status_counts_json"
+      ],
+      "filename": "spatial_des_coverage.tsv",
+      "rows": 104,
+      "sha256": "0e9927d001025b7a6d6e7132ad257329cad55e9a8c9e616c64f8adec40f61d60"
+    },
+    "spatial_des_scores.tsv": {
+      "bytes": 48745,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "metric",
+        "des",
+        "signed_peak_es",
+        "peak_rank",
+        "score_type",
+        "score_semantics",
+        "fgsea_analogue",
+        "weight_exponent",
+        "tie_policy",
+        "cell_pair_direction",
+        "missing_policy"
+      ],
+      "filename": "spatial_des_scores.tsv",
+      "rows": 104,
+      "sha256": "12f9a8ab89df2ce5018a21c03a43ad68636411992d2fa3d833cfa22e32df1d38"
+    },
+    "spatial_des_summary.tsv": {
+      "bytes": 3172,
+      "columns": [
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "count",
+        "median",
+        "mean",
+        "min",
+        "max"
+      ],
+      "filename": "spatial_des_summary.tsv",
+      "rows": 13,
+      "sha256": "a77504587148fc9bd6483e3c7d7443e510d8e84955fb88b2e6b4f4ba4fd8b969"
+    },
+    "subject_cell_type_support.tsv": {
+      "bytes": 3628,
+      "columns": [
+        "subject_id",
+        "condition",
+        "cell_type",
+        "pseudobulk_samples",
+        "subject_cell_count",
+        "subject_library_size"
+      ],
+      "filename": "subject_cell_type_support.tsv",
+      "rows": 103,
+      "sha256": "19fd647387278d5bc656dfb700ac05763ad8fe179b4d496b35a09a09f83fd0da"
+    }
+  },
+  "performance": {
+    "elapsed_seconds": 2.504430909641087,
+    "peak_rss_kib": 553052
+  },
+  "rc3_parity": {
+    "atol": 1e-13,
+    "maximum_absolute_difference": 5.684341886080802e-14,
+    "rank_order_exact": true,
+    "ranking_rows": 132,
+    "rankings_numerically_equal": true,
+    "rtol": 1e-13,
+    "selected_calls": 3203
+  },
+  "schema_version": "crychic-two-part-occurrence-real-v1",
+  "status": "complete"
+}
