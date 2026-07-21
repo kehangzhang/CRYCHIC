@@ -2,17 +2,22 @@
 
 The metric compares a condition-specific ranked list of *ordered* sender to
 receiver cell-type pairs with a condition-specific expected spatial set.  It
-uses the unweighted GSEA running sum: hits add ``1 / n_hits`` and misses
-subtract ``1 / n_misses``.  ``score_type="pos"`` returns the largest positive
-excursion and is the pure-Python analogue of fgsea with ``gseaParam=0`` and
-``scoreType="pos"``.  ``score_type="abs"`` returns the largest absolute
-excursion; this is an explicitly labelled diagnostic and is not a literal
-fgsea ``scoreType`` (fgsea calls its signed two-sided mode ``"std"``).
+uses the weighted GSEA running sum used by ``fgsea``: hits add their absolute
+ranked strength raised to ``weight_exponent`` and misses subtract
+``1 / n_misses``.  The paper reports an ``fgsea`` call without a parameter
+override; we therefore use the installed fgsea default ``gseaParam=1`` as the
+primary policy.  Setting ``weight_exponent=0`` reproduces the former
+unweighted sensitivity analysis.
+``score_type="std"`` returns the signed excursion with the largest absolute
+magnitude, matching the fgsea default.  ``score_type="pos"`` returns the
+largest positive excursion.  ``score_type="abs"`` returns the magnitude of
+the ``std`` result as an explicitly labelled non-negative diagnostic.
 
-Scientific ties are processed as simultaneous score blocks.  The running sum
-is inspected only after the whole block, so row order and cell-type names
-cannot break a tie.  Missing or non-estimable ranked rows are excluded from
-the walk and reported as coverage loss; they are never imputed as zero.
+The paper-compatible evaluator can reproduce fgsea's stable input-order tie
+handling.  A simultaneous-block policy is also available as a row-order-
+invariant sensitivity analysis.  Missing or non-estimable ranked rows are
+excluded from the walk and reported as coverage loss; they are never imputed
+as zero.
 """
 
 from __future__ import annotations
@@ -40,8 +45,9 @@ RANK_STATUSES = frozenset(
         "not_supported",
     }
 )
-ScoreType = Literal["pos", "abs"]
+ScoreType = Literal["std", "pos", "abs"]
 CellPairMode = Literal["ordered", "unordered"]
+TiePolicy = Literal["fgsea_native", "simultaneous"]
 
 
 def _column_names(values: tuple[str, ...], *, field: str) -> tuple[str, ...]:
@@ -102,7 +108,9 @@ class SpatialDESSpec:
     fraction_column: str = "top_fraction"
     expected_member_column: str | None = None
     top_fractions: tuple[float, ...] = SUPPORTED_TOP_FRACTIONS
-    score_type: ScoreType = "pos"
+    score_type: ScoreType = "std"
+    weight_exponent: float = 1.0
+    tie_policy: TiePolicy = "simultaneous"
     cell_pair_mode: CellPairMode = "ordered"
 
     def __post_init__(self) -> None:
@@ -166,8 +174,22 @@ class SpatialDESSpec:
                 )
         if not isinstance(self.higher_is_better, bool):
             raise ValueError("higher_is_better must be boolean")
-        if self.score_type not in {"pos", "abs"}:
-            raise ValueError("score_type must be 'pos' or 'abs'")
+        if self.score_type not in {"std", "pos", "abs"}:
+            raise ValueError("score_type must be 'std', 'pos', or 'abs'")
+        if isinstance(self.weight_exponent, bool):
+            raise ValueError("weight_exponent must be a finite non-negative number")
+        try:
+            weight_exponent = float(self.weight_exponent)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "weight_exponent must be a finite non-negative number"
+            ) from error
+        if not math.isfinite(weight_exponent) or weight_exponent < 0.0:
+            raise ValueError("weight_exponent must be a finite non-negative number")
+        if self.tie_policy not in {"fgsea_native", "simultaneous"}:
+            raise ValueError(
+                "tie_policy must be 'fgsea_native' or 'simultaneous'"
+            )
         if self.cell_pair_mode not in {"ordered", "unordered"}:
             raise ValueError("cell_pair_mode must be 'ordered' or 'unordered'")
         if not self.top_fractions:
@@ -183,6 +205,7 @@ class SpatialDESSpec:
         object.__setattr__(self, "stratum_columns", strata)
         object.__setattr__(self, "eligible_statuses", statuses)
         object.__setattr__(self, "top_fractions", tuple(sorted(fractions)))
+        object.__setattr__(self, "weight_exponent", weight_exponent)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -445,7 +468,7 @@ def _tie_diagnostics(table: pd.DataFrame) -> tuple[int, int]:
     return len(ties), int(ties.sum())
 
 
-def _unweighted_es(
+def _simultaneous_gsea_es(
     ranked: pd.DataFrame,
     expected: set[tuple[str, str]],
     spec: SpatialDESSpec,
@@ -455,20 +478,38 @@ def _unweighted_es(
         "_oriented_strength", ascending=False, kind="stable", ignore_index=True
     )
     pairs = list(ranked.loc[:, pair_columns].itertuples(index=False, name=None))
-    hit_count = sum(pair in expected for pair in pairs)
+    hit_mask = np.fromiter(
+        (pair in expected for pair in pairs), dtype=bool, count=len(pairs)
+    )
+    hit_count = int(hit_mask.sum())
     miss_count = len(pairs) - hit_count
     if hit_count < 1 or miss_count < 1:
-        raise ValueError("unweighted ES requires at least one hit and one miss")
+        raise ValueError("gsea ES requires at least one hit and one miss")
+
+    if spec.weight_exponent == 0.0:
+        weights = np.ones(len(ranked), dtype=float)
+    else:
+        strengths = ranked["_oriented_strength"].to_numpy(dtype=float, copy=False)
+        weights = np.power(np.abs(strengths), spec.weight_exponent)
+    hit_weight_total = float(weights[hit_mask].sum())
+    if not math.isfinite(hit_weight_total):
+        raise ValueError("gsea hit weights are non-finite")
+    if hit_weight_total <= 0.0:
+        weights[hit_mask] = 1.0
+        hit_weight_total = float(hit_count)
+    ranked = ranked.assign(_gsea_weight=weights, _gsea_hit=hit_mask)
 
     running = 0.0
     peak_signed = 0.0
     peak_rank = 0
     traversed = 0
     for _, block in ranked.groupby("_oriented_strength", sort=False, observed=True):
-        block_pairs = block.loc[:, pair_columns].itertuples(index=False, name=None)
-        block_hits = sum(pair in expected for pair in block_pairs)
+        block_hits = int(block["_gsea_hit"].sum())
         block_misses = len(block) - block_hits
-        running += block_hits / hit_count - block_misses / miss_count
+        block_hit_weight = float(
+            block.loc[block["_gsea_hit"], "_gsea_weight"].sum()
+        )
+        running += block_hit_weight / hit_weight_total - block_misses / miss_count
         traversed += len(block)
         running = min(1.0, max(-1.0, running))
         current = running if spec.score_type == "pos" else abs(running)
@@ -479,19 +520,104 @@ def _unweighted_es(
 
     if abs(peak_signed) < 1e-15:
         peak_signed = 0.0
-    score = max(0.0, peak_signed) if spec.score_type == "pos" else abs(peak_signed)
+    if spec.score_type == "pos":
+        score = max(0.0, peak_signed)
+    elif spec.score_type == "std":
+        score = peak_signed
+    else:
+        score = abs(peak_signed)
     return float(score), float(peak_signed), peak_rank
 
 
-def _score_semantics(score_type: ScoreType) -> tuple[str, str]:
+def _fgsea_native_es(
+    ranked: pd.DataFrame,
+    expected: set[tuple[str, str]],
+    spec: SpatialDESSpec,
+) -> tuple[float, float, int]:
+    """Reproduce ``fgsea::calcGseaStat`` for one ranked cell-pair set."""
+    pair_columns = [spec.sender_column, spec.receiver_column]
+    ranked = ranked.sort_values(
+        "_oriented_strength", ascending=False, kind="stable", ignore_index=True
+    )
+    pairs = list(ranked.loc[:, pair_columns].itertuples(index=False, name=None))
+    hit_mask = np.fromiter(
+        (pair in expected for pair in pairs), dtype=bool, count=len(pairs)
+    )
+    selected = np.flatnonzero(hit_mask) + 1
+    hit_count = len(selected)
+    miss_count = len(ranked) - hit_count
+    if hit_count < 1 or miss_count < 1:
+        raise ValueError("gsea ES requires at least one hit and one miss")
+
+    strengths = ranked["_oriented_strength"].to_numpy(dtype=float, copy=False)
+    adjusted = np.power(np.abs(strengths[hit_mask]), spec.weight_exponent)
+    total = float(adjusted.sum())
+    if not math.isfinite(total):
+        raise ValueError("gsea hit weights are non-finite")
+    if total == 0.0:
+        cumulative = np.arange(1, hit_count + 1, dtype=float) / hit_count
+        hit_steps = np.full(hit_count, 1.0 / hit_count, dtype=float)
+    else:
+        hit_steps = adjusted / total
+        cumulative = np.cumsum(hit_steps)
+
+    hit_numbers = np.arange(1, hit_count + 1, dtype=float)
+    tops = cumulative - (selected - hit_numbers) / miss_count
+    bottoms = tops - hit_steps
+    max_index = int(np.argmax(tops))
+    min_index = int(np.argmin(bottoms))
+    max_positive = float(tops[max_index])
+    min_negative = float(bottoms[min_index])
+
+    if spec.score_type == "pos":
+        peak_signed = max_positive
+        peak_rank = int(selected[max_index])
+        score = max_positive
+    elif max_positive == -min_negative:
+        peak_signed = 0.0
+        peak_rank = 0
+        score = 0.0 if spec.score_type == "std" else abs(max_positive)
+    elif max_positive > -min_negative:
+        peak_signed = max_positive
+        peak_rank = int(selected[max_index])
+        score = max_positive
+    else:
+        peak_signed = min_negative
+        peak_rank = int(selected[min_index] - 1)
+        score = min_negative if spec.score_type == "std" else -min_negative
+
+    return float(score), float(peak_signed), peak_rank
+
+
+def _gsea_es(
+    ranked: pd.DataFrame,
+    expected: set[tuple[str, str]],
+    spec: SpatialDESSpec,
+) -> tuple[float, float, int]:
+    if spec.tie_policy == "fgsea_native":
+        return _fgsea_native_es(ranked, expected, spec)
+    return _simultaneous_gsea_es(ranked, expected, spec)
+
+
+def _score_semantics(
+    score_type: ScoreType, weight_exponent: float
+) -> tuple[str, str]:
+    exponent = f"{weight_exponent:g}"
+    weighting = "unweighted" if weight_exponent == 0.0 else "weighted"
+    if score_type == "std":
+        return (
+            f"signed_largest_absolute_{weighting}_fgsea_running_sum",
+            f"fgsea_scoreType=std;gseaParam={exponent}",
+        )
     if score_type == "pos":
         return (
-            "maximum_positive_unweighted_running_sum",
-            "fgsea_scoreType=pos;gseaParam=0",
+            f"maximum_positive_{weighting}_fgsea_running_sum",
+            f"fgsea_scoreType=pos;gseaParam={exponent}",
         )
     return (
-        "maximum_absolute_unweighted_running_sum_nonnegative",
-        "custom_abs_excursion;not_a_literal_fgsea_scoreType;gseaParam=0",
+        f"maximum_absolute_{weighting}_fgsea_running_sum_nonnegative",
+        "custom_abs_excursion;not_a_literal_fgsea_scoreType;"
+        f"gseaParam={exponent}",
     )
 
 
@@ -533,7 +659,9 @@ def evaluate_spatial_des(
             dropna=False,
         )
     }
-    semantics, fgsea_analogue = _score_semantics(spec.score_type)
+    semantics, fgsea_analogue = _score_semantics(
+        spec.score_type, spec.weight_exponent
+    )
     score_records: list[dict[str, object]] = []
     coverage_records: list[dict[str, object]] = []
 
@@ -589,9 +717,12 @@ def evaluate_spatial_des(
             elif len(background_pairs) == 0:
                 reason_code = "no_ranked_background_pairs"
             else:
-                des, signed_peak, peak_rank = _unweighted_es(
-                    eligible, expected_members, spec
-                )
+                try:
+                    des, signed_peak, peak_rank = _gsea_es(
+                        eligible, expected_members, spec
+                    )
+                except ValueError as error:
+                    reason_code = str(error).replace(" ", "_")
             status = "observed" if reason_code is None else "not_estimable"
 
             common = {
@@ -610,8 +741,12 @@ def evaluate_spatial_des(
                     "score_type": spec.score_type,
                     "score_semantics": semantics,
                     "fgsea_analogue": fgsea_analogue,
-                    "weight_exponent": 0.0,
-                    "tie_policy": "simultaneous_equal_strength_blocks",
+                    "weight_exponent": spec.weight_exponent,
+                    "tie_policy": (
+                        "fgsea_native_stable_input_order"
+                        if spec.tie_policy == "fgsea_native"
+                        else "simultaneous_equal_strength_blocks"
+                    ),
                     "cell_pair_direction": (
                         "ordered_sender_to_receiver"
                         if spec.cell_pair_mode == "ordered"
@@ -665,5 +800,6 @@ __all__ = [
     "ScoreType",
     "SpatialDESSpec",
     "SpatialDESTables",
+    "TiePolicy",
     "evaluate_spatial_des",
 ]

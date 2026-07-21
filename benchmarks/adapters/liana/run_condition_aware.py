@@ -436,6 +436,8 @@ def _build_rankings(
     target: str,
     reference: str,
     dataset_id: str,
+    replicate_key: str,
+    subject_key: str,
 ) -> pd.DataFrame:
     call_required = {"condition", "source", "target", "interaction_id"}
     missing_calls = call_required.difference(calls.columns)
@@ -513,18 +515,18 @@ def _build_rankings(
     result["method"] = METHOD_ID
     result["method_version"] = METHOD_VERSION
     result["resource"] = RESOURCE_ID
+    analysis_unit = "subject" if replicate_key == subject_key else "sample"
     result["ranking_semantics"] = (
         "cardinality_of_unadjusted_interaction_pvalue_lt_0.05_condition_specific_"
         "directed_lr_by_interaction_stat_sign_after_unordered_cell_pair_collapse;"
-        "subject_pseudobulk_primary;LIANA_df_to_lr_expr_prop_0.1;"
-        "PyDESeq2_Wald_stat"
+        f"{analysis_unit}_pseudobulk;LIANA_df_to_lr_expr_prop_0.1;PyDESeq2_Wald_stat"
     )
     result["condition_specific_directed_lr"] = result["ranked_strength"]
     result["status"] = np.where(result["pair_eligible"], "observed", "not_estimable")
     result["reason_code"] = np.where(
         result["pair_eligible"],
         "",
-        "cell_type_not_estimable_for_subject_pseudobulk_de",
+        f"cell_type_not_estimable_for_{analysis_unit}_pseudobulk_de",
     )
     return result.loc[
         :,
@@ -654,7 +656,8 @@ def run(
         "analysis_unit": {
             "replicate_key": replicate_key,
             "subject_key": subject_key,
-            "primary_panel": replicate_key == subject_key,
+            "primary_panel": replicate_key != subject_key,
+            "paper_figure3_primary_panel": replicate_key != subject_key,
             "technical_sections_collapsed_before_de": replicate_key == subject_key,
         },
         "contrast": {"target": target, "reference": reference},
@@ -901,6 +904,8 @@ def run(
             target=target,
             reference=reference,
             dataset_id=dataset_id,
+            replicate_key=replicate_key,
+            subject_key=subject_key,
         )
         ranking_path = output / "condition_cell_pair_rankings.tsv"
         rankings.to_csv(ranking_path, sep="\t", index=False)

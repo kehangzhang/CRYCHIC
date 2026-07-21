@@ -1,0 +1,5 @@
+dataset	scenario	cohort	paper_plot_median_approx	unweighted_pos_p0	weighted_pos_p1_raw	weighted_std_p1_raw	weighted_pos_p1_average_rank	weighted_pos_p1_include_self_ceil	strict_native_pos_p1_raw	strict_observed_strata
+Kuppe_MI	condition_aware	public_snRNA_and_4_CTRL_9_IZ_spatial	0.53	0.2237554113	0.4031236986	0.4031236986	0.4240949616	0.4990941442	0.3060956006	8
+Kuppe_MI	multi_sample	4_CTRL_11_IZ_snRNA_and_4_CTRL_9_IZ_spatial	0.44	0.2426470588	0.7007672634	0.7007672634	0.4253706111	0.6945642796	0.2163742690	8
+Lerma_Martin_MS	condition_aware	5_CTRL_6_CA_tissues	0.51	0.2804487179	0.4130434783	0.1005434783	0.3538135593	0.4667119565	0.2602657005	8
+Lerma_Martin_MS	multi_sample	5_CTRL_6_CA_tissues	0.82	0.5750000000	0.8250000000	0.8250000000	0.6233193277	0.9229629630	0.6000000000	6

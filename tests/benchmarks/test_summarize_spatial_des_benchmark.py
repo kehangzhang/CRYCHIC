@@ -33,6 +33,8 @@ def _write_evaluation(
     rank_coverage: float = 0.75,
     expected_coverage: list[float] | None = None,
     ranking_semantics: str | None = None,
+    schema_version: str = "crychic-spatial-des-evaluation-v1",
+    tie_policy: str | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     strata = [
@@ -83,7 +85,7 @@ def _write_evaluation(
     scores.to_csv(score_path, sep="\t", index=False, lineterminator="\n")
     coverage.to_csv(coverage_path, sep="\t", index=False, lineterminator="\n")
     manifest = {
-        "schema_version": "crychic-spatial-des-evaluation-v1",
+        "schema_version": schema_version,
         "status": "complete",
         "scenario": scenario,
         "analysis_unit": analysis_unit,
@@ -109,6 +111,8 @@ def _write_evaluation(
             },
         },
     }
+    if tie_policy is not None:
+        manifest["tie_policy"] = tie_policy
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
@@ -199,6 +203,32 @@ def test_expected_checksum_unit_and_variant_form_separate_panels(
     assert summary["median_rank"].tolist() == [1, 1, 1]
     assert set(summary["analysis_unit"]) == {"subject_id", "sample_id"}
     assert set(summary["expected_variant"]) == {"primary", "juxta_only"}
+
+
+def test_tie_policies_form_separate_comparison_panels(tmp_path: Path) -> None:
+    native = _write_evaluation(
+        tmp_path / "native",
+        method="same",
+        values=[0.8] * 8,
+        schema_version="crychic-spatial-des-evaluation-v2",
+        tie_policy="fgsea_native",
+    )
+    simultaneous = _write_evaluation(
+        tmp_path / "simultaneous",
+        method="same",
+        values=[0.4] * 8,
+        schema_version="crychic-spatial-des-evaluation-v2",
+        tie_policy="simultaneous",
+    )
+
+    summary, _, panels = summarize_evaluations([native, simultaneous])
+
+    assert len(panels) == 2
+    assert summary["comparison_panel_id"].nunique() == 2
+    assert {panel["tie_policy"] for panel in panels.values()} == {
+        "fgsea_native",
+        "simultaneous",
+    }
 
 
 def test_explicit_condition_level_unit_overrides_campaign_path_hint(

@@ -370,7 +370,8 @@ def _plot_facets(
     x_label: str,
     x_limit: tuple[float, float] | None = None,
 ) -> None:
-    panels = list(table.groupby("comparison_panel_id", sort=True, observed=True))
+    # The leaderboard is already sorted dataset-first and scenario-second.
+    panels = list(table.groupby("comparison_panel_id", sort=False, observed=True))
     columns = min(2, len(panels))
     rows = math.ceil(len(panels) / columns)
     max_methods = max(len(group) for _, group in panels)
@@ -546,12 +547,13 @@ def run(
     report = (
         "# Spatial differential CCC benchmark\n\n"
         "Results are ranked only within checksum-compatible comparison panels. "
-        "Panels never mix datasets, spatial truth variants, analysis units, or "
-        "DES semantics. A method is ranked only when all eight condition-by-top-"
+        "Panels never mix datasets, spatial truth variants, analysis units, self-"
+        "pair policies, tie policies, or DES semantics. A method is ranked only "
+        "when all eight condition-by-top-"
         "fraction strata are observed. The primary report excludes the LIANA "
         "1.7.3 descriptive sensitivity arm. MultiNicheNet is a declared skip "
         "because no validated frozen adapter was available; see "
-        "the adjacent protocol document for the full scope and deviations.\n\n"
+        "the benchmark protocol for the full scope and deviations.\n\n"
         "## Leaderboard\n\n"
         f"{_markdown_table(leaderboard)}\n\n"
         "## Figures\n\n"

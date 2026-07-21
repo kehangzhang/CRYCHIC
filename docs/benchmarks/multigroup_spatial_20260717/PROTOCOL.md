@@ -16,21 +16,23 @@ does not constitute an omnibus benchmark for an arbitrary number of groups.
 
 | Dataset | Molecular input | Primary contrast | Primary unit | Spatial evidence |
 |---|---:|---|---|---|
-| Kuppe myocardial infarction | 76,141 nuclei, 29,126 genes | IZ vs CTRL | subject | MISTy 1.3.5 recomputation over 13 public Visium sections |
-| Lerma-Martin multiple sclerosis | 75,004 nuclei, 32,115 genes | chronic active vs control | subject | Pearson correlation of public Visium cell-type proportions |
+| Kuppe myocardial infarction | 76,141 nuclei, 29,126 genes | IZ vs CTRL | sample/library (4 CTRL + 11 IZ) | MISTy 1.3.5 recomputation over 4 CTRL + 9 IZ public Visium sections |
+| Lerma-Martin multiple sclerosis | 69,168 nuclei, 32,115 genes | chronic active vs control | tissue/sample (5 control + 6 chronic active) | Pearson correlation of public Visium cell-type proportions |
 
-Both molecular inputs retain raw integer counts. Repeated sections from one
-person are averaged within subject and condition before subject-level spatial
-testing. Sample-level outputs are retained only as sensitivity analyses and are
-never ranked against subject-level outputs.
+Both molecular inputs retain raw integer counts. Figure 3 uses the declared
+sample/library or tissue as the multi-sample unit. Kuppe has 4 CTRL + 11 IZ
+snRNA-seq libraries but 4 CTRL + 9 IZ spatial sections; this public-data
+cross-modality difference is retained rather than silently collapsing repeated
+sections. Subject-collapsed outputs are separate sensitivity analyses and are
+never ranked against the sample-level Figure 3 outputs.
 
 Frozen molecular-input SHA256 values are
 `c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926`
 for Kuppe and
-`612fe9c4cdaf88694a47e13ba4458c828f206cd945eba9e9c72f46e9bd0196c7`
+`433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c`
 for MS. The corresponding primary expected-set SHA256 values are
-`151fadcb1a805a43c1ffb673e6b43ed2019b1c5a6d61c704ef2e1c6a635ed57e`
-and `ab7e12a62aeedb343d8abc961741786f2a451549e0828c8e85cc30c7d5c67bd0`.
+`1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655`
+and `402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2`.
 
 The Kuppe authors' exact MISTy importance table was not publicly available.
 The primary Kuppe truth is therefore a protocol-level recomputation from the
@@ -43,30 +45,48 @@ multi-R2 filter. This limitation is part of the comparison-panel identity.
 
 All methods use the same frozen human ConnectomeDB2020 resource: 2,293
 directed simple ligand-receptor pairs. The resource table, method-specific ID
-maps, and manifest are checksum-bound. A method can mark an interaction or
-cell pair `not_estimable`; absent evidence is never converted to a numerical
-zero. The shared table SHA256 is
+maps, and manifest are checksum-bound. Structural ineligibility remains
+`not_estimable`. In the strict arm it is never converted to a numerical zero;
+the paper-compatible scSeqCommDiff arm separately zero-completes only
+cell-type-eligible pairs with no significant interaction. The shared table SHA256 is
 `e781363288a26c15e03246500111bfecb818eef997f5ebe1b936aaa465151c3a`.
 
 ## Spatial truth
 
-Cell-pair direction is collapsed to an unordered canonical pair, including
-self-pairs. For each condition, spatial cell-pair effects are ranked and the
-top 10%, 20%, 30%, and 40% define expected sets. Exact zero spatial effects are
-tied and are not expected members.
+Cell-pair direction is collapsed to an unordered canonical pair. The Figure 3
+primary arm excludes self-pairs, matching the Liu et al. DES implementation;
+an include-self arm is reported separately because the paper does not state
+the background policy. For each condition, spatial cell-pair effects are
+ranked and the top 10%, 20%, 30%, and 40% define expected sets. The primary
+top-set size uses floor, as in the published Liu code, while ceil is retained
+as a sensitivity arm. Exact zero spatial effects are tied and are not expected
+members.
 
 The condition-aware truth uses the absolute difference between condition
-means. The multi-sample truth uses a two-sided Mann-Whitney U test on subjects,
-ordered by raw p-value and then absolute effect. No p-value correction is
-applied to the multi-sample spatial truth, matching the paper's small-cohort
-policy.
+means. The multi-sample truth uses a two-sided Mann-Whitney U test on the
+declared sample/tissue units, ordered by raw p-value and then absolute effect.
+No p-value correction is applied to the multi-sample spatial truth, matching
+the paper's small-cohort policy.
 
 ## Metric and ranking
 
-The Distance Enrichment Score (DES) is an unweighted positive-running-sum
-GSEA analogue over each method's condition-specific unordered cell-pair
-ranking. Each method has eight required strata: two conditions by four top
-fractions.
+The paper-compatible Distance Enrichment Score (DES) uses the weighted fgsea
+running sum over each method's condition-specific unordered cell-pair ranking.
+The paper reports `fgsea` without parameter overrides, so the strict-default
+arm uses `gseaParam=1` and `scoreType="std"`. Figure 3 displays non-negative
+scores, but the unpublished benchmark script does not reveal whether the
+authors explicitly used `scoreType="pos"`; a separate Figure-compatible arm
+therefore uses `gseaParam=1` and `scoreType="pos"`. The implementation
+reproduces `fgsea::calcGseaStat`, including its uniform-hit fallback when all
+expected hit weights are zero and its stable input-order treatment of tied
+cardinalities. Each method has eight required strata: two conditions by four
+top fractions.
+
+Additional sensitivity arms remain separate: `gseaParam=0` tests the former
+unweighted definition, simultaneous equal-strength tie blocks remove
+input-order dependence, average cardinality rank tests the paper's ambiguous
+"sorted" wording, and include-self/ceil variants test universe construction.
+None is merged silently into the Figure 3 comparison.
 
 The primary summary and rank use median DES across all eight strata. Mean DES
 and its separate within-panel rank are secondary summaries. Higher DES is
@@ -86,6 +106,7 @@ semantics. No ranking is allowed across comparison panels.
 | condition-aware | scSeqCommDiff | 2.0.0 | 1,000 permutations; Wilcoxon; BH p<0.05; max intracellular score >0.5 or unavailable |
 | multi-sample | scSeqCommDiff | 2.0.0 | pseudo-Wilcoxon; raw p<0.05; max intracellular score >0.5 or unavailable |
 | multi-sample | LIANA+ | 1.5.0 | decoupler 1.8.0 and pydeseq2 0.5.0 Wald workflow; raw interaction p<0.05 |
+| multi-sample | MultiNicheNet | 2.0.1 | declared skip until a validated native adapter is available; never scored as zero |
 | multi-sample sensitivity | LIANA rank aggregate | 1.7.3 | descriptive common-resource sensitivity arm; never ranked as the exact S4 method |
 | multi-sample | CRYCHIC | source tree | subject-blocked two-fold descriptive cross-fit; subject-level condition effect |
 
@@ -116,6 +137,15 @@ MultiNicheNet 2.0.1 is not included in the primary leaderboard because no
 validated frozen native adapter was available in this run and its ligand-target
 prioritization estimand is not directly interchangeable with the LR-only arms.
 This is a declared skip, not a zero score.
+
+scSeqCommDiff emits two explicitly named ranking files from the same native
+result. The Figure-compatible file zero-completes every cell-type-eligible
+pair, matching the likely paper/CClens counting universe. The strict
+estimability file marks a pair observed only when at least one native
+intercellular p-value is finite; a tested pair with no significant interactions
+has cardinality zero, while an entirely untested pair is `not_estimable`.
+Pair-level finite-test counts are emitted with every run, and the two policies
+are never mixed in one panel.
 
 ## Estimability exceptions
 

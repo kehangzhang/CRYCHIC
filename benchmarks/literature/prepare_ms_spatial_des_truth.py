@@ -8,10 +8,9 @@ the two expected-set rankings described by Cesaro et al.:
 * condition-aware: rank the absolute difference between condition means;
 * multi-sample: rank two-sided Mann-Whitney U p-values, then absolute effects.
 
-No multiple-testing correction is performed or reported.  The default
-multi-sample unit is ``subject_id``; repeated sections from one subject are
-averaged before testing.  ``--multi-sample-unit sample_id`` is available only
-as an explicitly recorded paper-protocol sensitivity analysis.
+No multiple-testing correction is performed or reported. Figure 3 defaults to
+the declared tissue/sample unit and floor-sized expected sets. Subject-collapsed
+units and ceil-sized sets remain explicit sensitivity options.
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ CHRONIC_ACTIVE = "chronic_active"
 CONDITIONS = (CONTROL, CHRONIC_ACTIVE)
 CELL_TYPES = ("AS", "BC", "EC", "MG", "NEU", "OL", "OPC", "SC", "TC")
 TOP_FRACTIONS = (0.1, 0.2, 0.3, 0.4)
+TopCountRule = Literal["floor", "ceil"]
 SCHEMA_VERSION = "crychic-ms-spatial-des-truth-v1"
 
 
@@ -476,8 +476,13 @@ def _assign_stable_ranks(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def _expected_memberships(
-    rankings: pd.DataFrame, fractions: tuple[float, ...]
+    rankings: pd.DataFrame,
+    fractions: tuple[float, ...],
+    *,
+    top_count_rule: TopCountRule,
 ) -> pd.DataFrame:
+    if top_count_rule not in {"floor", "ceil"}:
+        raise ValueError("top_count_rule must be 'floor' or 'ceil'")
     records: list[dict[str, object]] = []
     for scenario, scenario_table in rankings.groupby(
         "scenario", sort=True, observed=True
@@ -486,7 +491,13 @@ def _expected_memberships(
         n_rankable = len(rankable)
         for condition in CONDITIONS:
             for fraction in fractions:
-                top_count = math.ceil(fraction * n_rankable) if n_rankable else 0
+                top_count = (
+                    (math.floor if top_count_rule == "floor" else math.ceil)(
+                        fraction * n_rankable
+                    )
+                    if n_rankable
+                    else 0
+                )
                 for row in scenario_table.itertuples(index=False):
                     rank = row.spatial_rank
                     selected = (
@@ -505,7 +516,8 @@ def _expected_memberships(
                             "is_expected": bool(selected),
                             "spatial_rank": rank,
                             "rankable_pairs": n_rankable,
-                            "top_count_ceiling": top_count,
+                            "top_count": top_count,
+                            "top_count_rule": top_count_rule,
                             "cell_pair_direction": "unordered_canonical",
                         }
                     )
@@ -523,7 +535,8 @@ def build_ms_spatial_des_truth(
     sample_design: pd.DataFrame,
     *,
     top_fractions: Sequence[float] = TOP_FRACTIONS,
-    multi_sample_unit: Literal["subject_id", "sample_id"] = "subject_id",
+    multi_sample_unit: Literal["subject_id", "sample_id"] = "sample_id",
+    top_count_rule: TopCountRule = "floor",
 ) -> MSSpatialTruthTables:
     """Build condition-aware and multi-sample spatial expected sets."""
 
@@ -547,7 +560,9 @@ def build_ms_spatial_des_truth(
         na_position="last",
         ignore_index=True,
     )
-    expected = _expected_memberships(rankings, fractions)
+    expected = _expected_memberships(
+        rankings, fractions, top_count_rule=top_count_rule
+    )
     correlations = merged.assign(dataset=DATASET_ID).loc[
         :,
         [
@@ -781,8 +796,9 @@ def prepare_ms_spatial_des_truth(
     output_root: str | Path,
     *,
     include_self: bool,
-    multi_sample_unit: Literal["subject_id", "sample_id"] = "subject_id",
+    multi_sample_unit: Literal["subject_id", "sample_id"] = "sample_id",
     top_fractions: Sequence[float] = TOP_FRACTIONS,
+    top_count_rule: TopCountRule = "floor",
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Validate public files, reconstruct expected sets, and write compact outputs."""
@@ -800,6 +816,7 @@ def prepare_ms_spatial_des_truth(
         design,
         top_fractions=fractions,
         multi_sample_unit=multi_sample_unit,
+        top_count_rule=top_count_rule,
     )
     filenames = {
         "sample_correlations": "ms_spatial_sample_correlations.tsv",
@@ -835,7 +852,7 @@ def prepare_ms_spatial_des_truth(
                 "arithmetic mean of observed section Pearson correlations within "
                 "subject and condition"
                 if multi_sample_unit == "subject_id"
-                else "none; explicit paper-protocol sample-unit sensitivity"
+                else "none; Figure 3 tissue/sample unit"
             ),
         },
         "protocol": {
@@ -857,7 +874,9 @@ def prepare_ms_spatial_des_truth(
             "p_value_adjustment": "none",
             "q_values_generated": False,
             "top_fractions": list(fractions),
-            "top_count_rule": "ceil(top_fraction * rankable_pairs)",
+            "top_count_rule": (
+                f"{top_count_rule}(top_fraction * rankable_pairs)"
+            ),
             "direction_rule": (
                 "positive chronic_active-minus-control effect => chronic_active; "
                 "negative => control; exact zero => tied and never expected"
@@ -918,7 +937,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--multi-sample-unit",
         choices=("subject_id", "sample_id"),
-        default="subject_id",
+        default="sample_id",
+    )
+    parser.add_argument(
+        "--top-count-rule", choices=("floor", "ceil"), default="floor"
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -927,6 +949,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.output_root,
         include_self=bool(args.include_self),
         multi_sample_unit=args.multi_sample_unit,
+        top_count_rule=args.top_count_rule,
         dry_run=args.dry_run,
     )
     print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))

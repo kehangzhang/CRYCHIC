@@ -1,0 +1,13 @@
+dataset	scenario	method	version	status	note
+Kuppe_MI	condition_aware	scSeqCommDiff	2.0.0	complete	1000 permutations; BH q<0.05
+Kuppe_MI	condition_aware	CellChat	2.1.2	complete	triMean; official-vignette ligand-logFC primary
+Kuppe_MI	condition_aware	scDiffCom	1.1.1	complete	1000 permutations; BH q<0.05; abs logFC>log(1.5)
+Kuppe_MI	multi_sample	scSeqCommDiff	2.0.0	complete	sample_id; raw p<0.05
+Kuppe_MI	multi_sample	LIANA+	1.5.0	complete	sample_id pseudobulk; decoupler 1.8.0; pydeseq2 0.5.0
+Kuppe_MI	multi_sample	MultiNicheNet	2.0.1	skipped	validated native adapter unavailable; never scored as zero
+Lerma_Martin_MS	condition_aware	scSeqCommDiff	2.0.0	complete	5 control plus 6 chronic-active tissues
+Lerma_Martin_MS	condition_aware	CellChat	2.1.2	complete	5 control plus 6 chronic-active tissues
+Lerma_Martin_MS	condition_aware	scDiffCom	1.1.1	complete	5 control plus 6 chronic-active tissues
+Lerma_Martin_MS	multi_sample	scSeqCommDiff	2.0.0	complete	sample_id; 5 control plus 6 chronic-active tissues
+Lerma_Martin_MS	multi_sample	LIANA+	1.5.0	complete	sample_id pseudobulk; 6 of 8 DES strata observed
+Lerma_Martin_MS	multi_sample	MultiNicheNet	2.0.1	skipped	validated native adapter unavailable; never scored as zero

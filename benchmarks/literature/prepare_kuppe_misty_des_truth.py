@@ -5,7 +5,9 @@ This postprocessor consumes the checksum-bound combined artifacts written by
 from public CELLxGENE files; they are not the authors' unpublished importance
 table.  MISTy target models are filtered at ``multi.R2 >= 10`` before any
 directional or view aggregation, matching Kuppe's ``summarize_interactions``
-script.
+script.  Figure 3 defaults to sample/library units, excludes self-pairs through
+the caller's explicit switch, and uses floor-sized expected sets. Subject units
+and ceil-sized sets remain explicit sensitivity options.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ MISTYR_TAG_COMMIT = "19248ea7e02803063d1e1112a8af6c3f06c59e03"
 RECOMPUTATION_MARKER = "not the authors' published MISTy importance table"
 MULTI_R2_THRESHOLD = 10.0
 TOP_FRACTIONS = (0.1, 0.2, 0.3, 0.4)
+TopCountRule = Literal["floor", "ceil"]
 ONTOLOGY_ALIASES = {"Cycling.cells": "Cycling cells"}
 RAW_CELL_TYPES = (
     "Adipocyte",
@@ -584,8 +587,13 @@ def _rank_variant_scenario(
 
 
 def _expected_memberships(
-    rankings: pd.DataFrame, fractions: tuple[float, ...]
+    rankings: pd.DataFrame,
+    fractions: tuple[float, ...],
+    *,
+    top_count_rule: TopCountRule,
 ) -> pd.DataFrame:
+    if top_count_rule not in {"floor", "ceil"}:
+        raise ValueError("top_count_rule must be 'floor' or 'ceil'")
     records: list[dict[str, object]] = []
     for (variant, scenario), table in rankings.groupby(
         ["variant", "scenario"], sort=True, observed=True
@@ -594,7 +602,11 @@ def _expected_memberships(
         for condition in CONDITIONS:
             for fraction in fractions:
                 top_count = (
-                    math.ceil(fraction * rankable_pairs) if rankable_pairs else 0
+                    (math.floor if top_count_rule == "floor" else math.ceil)(
+                        fraction * rankable_pairs
+                    )
+                    if rankable_pairs
+                    else 0
                 )
                 for row in table.itertuples(index=False):
                     selected = (
@@ -614,7 +626,8 @@ def _expected_memberships(
                             "is_expected": bool(selected),
                             "spatial_rank": row.spatial_rank,
                             "rankable_pairs": rankable_pairs,
-                            "top_count_ceiling": top_count,
+                            "top_count": top_count,
+                            "top_count_rule": top_count_rule,
                             "cell_pair_direction": "unordered_canonical",
                         }
                     )
@@ -640,9 +653,10 @@ def build_kuppe_misty_des_truth(
     sample_design: pd.DataFrame,
     *,
     include_self: bool,
-    multi_sample_unit: Literal["subject_id", "sample_id"] = "subject_id",
+    multi_sample_unit: Literal["subject_id", "sample_id"] = "sample_id",
     multi_r2_threshold: float = MULTI_R2_THRESHOLD,
     top_fractions: Sequence[float] = TOP_FRACTIONS,
+    top_count_rule: TopCountRule = "floor",
     expected_raw_cell_types: Sequence[str] | None = None,
 ) -> KuppeMistyDESTables:
     """Build all Kuppe MISTy spatial variants and DES expected memberships."""
@@ -686,7 +700,9 @@ def build_kuppe_misty_des_truth(
         na_position="last",
         ignore_index=True,
     )
-    expected = _expected_memberships(rankings, fractions)
+    expected = _expected_memberships(
+        rankings, fractions, top_count_rule=top_count_rule
+    )
     return KuppeMistyDESTables(
         sample_pair_strengths=strengths,
         pair_rankings=rankings,
@@ -901,7 +917,8 @@ def prepare_kuppe_misty_des_truth(
     output_root: str | Path,
     *,
     include_self: bool,
-    multi_sample_unit: Literal["subject_id", "sample_id"] = "subject_id",
+    multi_sample_unit: Literal["subject_id", "sample_id"] = "sample_id",
+    top_count_rule: TopCountRule = "floor",
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Validate a full MISTy run and write compact DES truth artifacts."""
@@ -921,6 +938,7 @@ def prepare_kuppe_misty_des_truth(
         design,
         include_self=include_self,
         multi_sample_unit=multi_sample_unit,
+        top_count_rule=top_count_rule,
         expected_raw_cell_types=RAW_CELL_TYPES,
     )
     filenames = {
@@ -957,7 +975,7 @@ def prepare_kuppe_misty_des_truth(
                 "arithmetic mean of observed slide importance within subject, "
                 "condition, variant, and unordered pair"
                 if multi_sample_unit == "subject_id"
-                else "none; explicit paper-protocol sample_id sensitivity"
+                else "none; Figure 3 sample/library unit"
             ),
         },
         "protocol": {
@@ -995,7 +1013,9 @@ def prepare_kuppe_misty_des_truth(
             "p_value_adjustment": "none",
             "q_values_generated": False,
             "top_fractions": list(TOP_FRACTIONS),
-            "top_count_rule": "ceil(top_fraction * rankable_pairs)",
+            "top_count_rule": (
+                f"{top_count_rule}(top_fraction * rankable_pairs)"
+            ),
             "direction_rule": (
                 "positive IZ-minus-CTRL effect => IZ; negative => CTRL; exact zero "
                 "=> tied and never expected"
@@ -1058,7 +1078,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--multi-sample-unit",
         choices=("subject_id", "sample_id"),
-        default="subject_id",
+        default="sample_id",
+    )
+    parser.add_argument(
+        "--top-count-rule", choices=("floor", "ceil"), default="floor"
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -1067,6 +1090,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.output_root,
         include_self=bool(args.include_self),
         multi_sample_unit=args.multi_sample_unit,
+        top_count_rule=args.top_count_rule,
         dry_run=args.dry_run,
     )
     print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))

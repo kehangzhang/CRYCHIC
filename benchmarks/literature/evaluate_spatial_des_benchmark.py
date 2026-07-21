@@ -10,11 +10,18 @@ from typing import Any
 
 import pandas as pd
 
-from benchmarks.metrics.spatial_des import SpatialDESSpec, evaluate_spatial_des
+from benchmarks.metrics.spatial_des import (
+    ScoreType,
+    SpatialDESSpec,
+    TiePolicy,
+    evaluate_spatial_des,
+)
 
-SCHEMA_VERSION = "crychic-spatial-des-evaluation-v1"
+SCHEMA_VERSION = "crychic-spatial-des-evaluation-v2"
 METHOD_COLUMNS = ("method", "method_version", "resource", "ranking_semantics")
 ANALYSIS_UNITS = frozenset({"condition_level", "sample_id", "subject_id"})
+RankingStatistic = str
+RANKING_STATISTICS = frozenset({"raw_cardinality", "average_rank"})
 
 
 def _sha256(path: Path) -> str:
@@ -33,10 +40,19 @@ def evaluate_rankings(
     dataset_map: dict[str, str] | None = None,
     condition_map: dict[str, str] | None = None,
     expected_filters: dict[str, str] | None = None,
+    score_type: ScoreType = "std",
+    weight_exponent: float = 1.0,
+    tie_policy: TiePolicy = "fgsea_native",
+    exclude_self_pairs: bool = True,
+    ranking_statistic: RankingStatistic = "raw_cardinality",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Align one or more method rankings and evaluate a frozen spatial scenario."""
     if not scenario or scenario != scenario.strip():
         raise ValueError("scenario must be a canonical non-empty string")
+    if ranking_statistic not in RANKING_STATISTICS:
+        raise ValueError(
+            "ranking_statistic must be 'raw_cardinality' or 'average_rank'"
+        )
     required_rank = {
         "dataset",
         *METHOD_COLUMNS,
@@ -101,6 +117,24 @@ def evaluate_rankings(
     ranked["scenario"] = scenario
     if condition_map:
         ranked["condition"] = ranked["condition"].replace(condition_map)
+    if not isinstance(exclude_self_pairs, bool):
+        raise ValueError("exclude_self_pairs must be boolean")
+    if exclude_self_pairs:
+        ranked = ranked.loc[
+            ranked["sender"].astype(str).ne(ranked["receiver"].astype(str))
+        ].copy()
+        expected = expected.loc[
+            expected["sender"].astype(str).ne(expected["receiver"].astype(str))
+        ].copy()
+    if ranking_statistic == "average_rank":
+        rank_groups = ["dataset", "scenario", *METHOD_COLUMNS, "condition"]
+        ranked["ranked_strength"] = ranked.groupby(
+            rank_groups, sort=False, observed=True
+        )["ranked_strength"].transform(
+            lambda values: pd.to_numeric(values, errors="coerce").rank(
+                method="average", ascending=True
+            )
+        )
     observed_conditions = set(ranked["condition"].astype(str))
     expected_conditions = set(expected["condition"].astype(str))
     if observed_conditions != expected_conditions:
@@ -115,6 +149,9 @@ def evaluate_rankings(
             method_columns=METHOD_COLUMNS,
             stratum_columns=("dataset", "scenario"),
             expected_member_column="is_expected",
+            score_type=score_type,
+            weight_exponent=weight_exponent,
+            tie_policy=tie_policy,
             cell_pair_mode="unordered",
         ),
     )
@@ -226,6 +263,11 @@ def run(
     dataset_map: dict[str, str],
     condition_map: dict[str, str],
     expected_filters: dict[str, str],
+    score_type: ScoreType = "std",
+    weight_exponent: float = 1.0,
+    tie_policy: TiePolicy = "fgsea_native",
+    exclude_self_pairs: bool = True,
+    ranking_statistic: RankingStatistic = "raw_cardinality",
     overwrite: bool,
     run_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -259,6 +301,11 @@ def run(
         dataset_map=dataset_map,
         condition_map=condition_map,
         expected_filters=expected_filters,
+        score_type=score_type,
+        weight_exponent=weight_exponent,
+        tie_policy=tie_policy,
+        exclude_self_pairs=exclude_self_pairs,
+        ranking_statistic=ranking_statistic,
     )
     score_path = output_dir / "spatial_des_scores.tsv"
     coverage_path = output_dir / "spatial_des_coverage.tsv"
@@ -272,6 +319,7 @@ def run(
     )
     summary_path = output_dir / "spatial_des_method_summary.tsv"
     summary.to_csv(summary_path, sep="\t", index=False)
+    weighting = "unweighted" if weight_exponent == 0.0 else "weighted"
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "status": "complete",
@@ -282,7 +330,17 @@ def run(
         "condition_map": condition_map,
         "expected_filters": expected_filters,
         "cell_pair_direction": "unordered_directions_collapsed",
-        "score": "unweighted_fgsea_positive_running_sum_analogue",
+        "score": (
+            f"{weighting}_fgsea_{score_type}_running_sum_gseaParam="
+            f"{weight_exponent:g};ranking_statistic={ranking_statistic}"
+        ),
+        "score_type": score_type,
+        "weight_exponent": weight_exponent,
+        "tie_policy": tie_policy,
+        "self_pair_policy": (
+            "excluded_from_rank_and_truth" if exclude_self_pairs else "included"
+        ),
+        "ranking_statistic": ranking_statistic,
         "inputs": {
             "rankings": [
                 {"filename": path.name, "sha256": _sha256(path)}
@@ -336,6 +394,35 @@ def main() -> None:
     parser.add_argument("--dataset-map", action="append", default=[])
     parser.add_argument("--condition-map", action="append", default=[])
     parser.add_argument("--expected-filter", action="append", default=[])
+    parser.add_argument(
+        "--score-type",
+        choices=("std", "pos", "abs"),
+        default="std",
+        help="fgsea scoreType; paper-compatible default is std",
+    )
+    parser.add_argument(
+        "--weight-exponent",
+        type=float,
+        default=1.0,
+        help="fgsea gseaParam; paper-compatible default is 1",
+    )
+    parser.add_argument(
+        "--tie-policy",
+        choices=("fgsea_native", "simultaneous"),
+        default="fgsea_native",
+        help="paper-compatible fgsea order or tie-safe simultaneous blocks",
+    )
+    parser.add_argument(
+        "--include-self-pairs",
+        action="store_true",
+        help="retain diagonal cell pairs as a sensitivity analysis",
+    )
+    parser.add_argument(
+        "--ranking-statistic",
+        choices=sorted(RANKING_STATISTICS),
+        default="raw_cardinality",
+        help="statistic passed to fgsea; average_rank is a sensitivity arm",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     manifest = run(
@@ -347,6 +434,11 @@ def main() -> None:
         dataset_map=_parse_dataset_map(args.dataset_map),
         condition_map=_parse_condition_map(args.condition_map),
         expected_filters=_parse_expected_filters(args.expected_filter),
+        score_type=args.score_type,
+        weight_exponent=args.weight_exponent,
+        tie_policy=args.tie_policy,
+        exclude_self_pairs=not args.include_self_pairs,
+        ranking_statistic=args.ranking_statistic,
         overwrite=args.overwrite,
         run_manifest_path=args.run_manifest,
     )

@@ -18,7 +18,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-EVALUATION_SCHEMA = "crychic-spatial-des-evaluation-v1"
+EVALUATION_SCHEMA = "crychic-spatial-des-evaluation-v2"
+LEGACY_EVALUATION_SCHEMA = "crychic-spatial-des-evaluation-v1"
+SUPPORTED_EVALUATION_SCHEMAS = frozenset(
+    {EVALUATION_SCHEMA, LEGACY_EVALUATION_SCHEMA}
+)
 SUMMARY_SCHEMA = "crychic-spatial-des-benchmark-summary-v1"
 METHOD_COLUMNS = ("method", "method_version", "resource", "ranking_semantics")
 TOP_FRACTIONS = (0.1, 0.2, 0.3, 0.4)
@@ -43,6 +47,8 @@ class EvaluationBundle:
     conditions: tuple[str, ...]
     fractions: tuple[float, ...]
     cell_pair_direction: str
+    self_pair_policy: str
+    tie_policy: str
     score_semantics: str
     scores_sha256: str
     coverage_sha256: str
@@ -363,7 +369,7 @@ def _validate_coverage(table: pd.DataFrame) -> None:
 def _load_evaluation(path: str | Path) -> EvaluationBundle:
     manifest_path = _resolve_manifest(path)
     manifest = _read_manifest(manifest_path)
-    if manifest.get("schema_version") != EVALUATION_SCHEMA:
+    if manifest.get("schema_version") not in SUPPORTED_EVALUATION_SCHEMAS:
         raise ValueError(f"unsupported evaluation schema: {manifest_path}")
     if manifest.get("status") != "complete":
         raise ValueError(f"evaluation is not complete: {manifest_path}")
@@ -371,6 +377,14 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
     expected_filters = _canonical_filters(manifest.get("expected_filters"))
     direction = _canonical_string(
         manifest.get("cell_pair_direction"), field="cell_pair_direction"
+    )
+    self_pair_policy = _canonical_string(
+        manifest.get("self_pair_policy", "included_legacy"),
+        field="self_pair_policy",
+    )
+    tie_policy = _canonical_string(
+        manifest.get("tie_policy", "simultaneous_legacy"),
+        field="tie_policy",
     )
     score_semantics = _canonical_string(manifest.get("score"), field="score")
     inputs = manifest.get("inputs")
@@ -435,6 +449,8 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
         conditions=conditions,
         fractions=fractions,
         cell_pair_direction=direction,
+        self_pair_policy=self_pair_policy,
+        tie_policy=tie_policy,
         score_semantics=score_semantics,
         scores_sha256=score_sha256,
         coverage_sha256=coverage_sha256,
@@ -454,6 +470,8 @@ def _panel_contract(bundle: EvaluationBundle) -> dict[str, Any]:
         "conditions": list(bundle.conditions),
         "top_fractions": list(bundle.fractions),
         "cell_pair_direction": bundle.cell_pair_direction,
+        "self_pair_policy": bundle.self_pair_policy,
+        "tie_policy": bundle.tie_policy,
         "score_semantics": bundle.score_semantics,
     }
 
@@ -712,8 +730,8 @@ def run(
             ),
             "panel_isolation": (
                 "dataset, scenario, expected-set SHA256, expected filters/variant, "
-                "analysis unit, condition/fraction strata, cell-pair direction, and "
-                "score semantics"
+                "analysis unit, condition/fraction strata, cell-pair direction, "
+                "self-pair policy, tie policy, and score semantics"
             ),
             "coverage_reporting": (
                 "rank_eligible_fraction and expected_pair_coverage_fraction are "
@@ -780,10 +798,12 @@ if __name__ == "__main__":
 __all__ = [
     "ANALYSIS_UNITS",
     "EVALUATION_SCHEMA",
+    "LEGACY_EVALUATION_SCHEMA",
     "MANIFEST_FILENAME",
     "METHOD_COLUMNS",
     "SUMMARY_FILENAME",
     "SUMMARY_SCHEMA",
+    "SUPPORTED_EVALUATION_SCHEMAS",
     "TOP_FRACTIONS",
     "EvaluationBundle",
     "run",

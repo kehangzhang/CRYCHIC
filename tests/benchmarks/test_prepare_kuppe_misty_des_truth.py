@@ -174,9 +174,35 @@ def test_subject_unit_averages_repeats_and_expected_universe_is_stable() -> None
         design.sample(frac=1, random_state=13).reset_index(drop=True),
         include_self=False,
         top_fractions=(0.5,),
+        multi_sample_unit="subject_id",
     )
     pd.testing.assert_frame_equal(subject.pair_rankings, shuffled.pair_rankings)
     pd.testing.assert_frame_equal(subject.expected_sets, shuffled.expected_sets)
+
+
+def test_top_count_rule_distinguishes_floor_and_ceil() -> None:
+    importance, performance, design = _synthetic_tables()
+    floor = build_kuppe_misty_des_truth(
+        importance,
+        performance,
+        design,
+        include_self=False,
+        top_fractions=(0.5,),
+        top_count_rule="floor",
+    )
+    ceil = build_kuppe_misty_des_truth(
+        importance,
+        performance,
+        design,
+        include_self=False,
+        top_fractions=(0.5,),
+        top_count_rule="ceil",
+    )
+
+    assert set(floor.expected_sets["top_count"]) == {1}
+    assert set(floor.expected_sets["top_count_rule"]) == {"floor"}
+    assert set(ceil.expected_sets["top_count"]) == {2}
+    assert set(ceil.expected_sets["top_count_rule"]) == {"ceil"}
 
 
 def _sha256(path: Path) -> str:

@@ -18,6 +18,7 @@ from benchmarks.adapters.scseqcommdiff.run import (
     _filter_multi_sample_metadata,
     _input_manifest_sha256,
     _prepare_metadata,
+    _validate_native_pair_outputs,
     _validate_resource,
 )
 from benchmarks.adapters.scseqcommdiff.run import (
@@ -205,6 +206,77 @@ def test_multi_condition_filter_excludes_cluster_with_fewer_than_two_cells() -> 
     excluded = support.loc[support["cell_type"].ne("shared")]
     assert not excluded["analysis_eligible"].any()
     assert set(excluded["reason_code"]) == {"insufficient_common_condition_support"}
+
+
+def test_native_pair_output_validation_rejects_zero_imputed_untested_pair(
+    tmp_path: Path,
+) -> None:
+    rankings = pd.DataFrame(
+        {
+            "condition": ["case", "control", "case", "control"],
+            "sender": ["A", "A", "A", "A"],
+            "receiver": ["A", "A", "B", "B"],
+            "ranked_strength": [2.0, 0.0, np.nan, np.nan],
+            "status": ["observed", "observed", "not_estimable", "not_estimable"],
+            "reason_code": [
+                "",
+                "",
+                "no_finite_native_intercellular_test_for_cell_pair",
+                "no_finite_native_intercellular_test_for_cell_pair",
+            ],
+        }
+    )
+    support = pd.DataFrame(
+        {
+            "sender": ["A", "A"],
+            "receiver": ["A", "B"],
+            "finite_native_p_rows": [5, 0],
+            "finite_native_interactions": [3, 0],
+            "pair_native_tested": [True, False],
+            "cell_type_eligible": [True, True],
+            "status": ["observed", "not_estimable"],
+            "reason_code": [
+                "",
+                "no_finite_native_intercellular_test_for_cell_pair",
+            ],
+        }
+    )
+    ranking_path = tmp_path / "rankings.tsv"
+    support_path = tmp_path / "support.tsv"
+    rankings.to_csv(ranking_path, sep="\t", index=False)
+    support.to_csv(support_path, sep="\t", index=False)
+
+    paper_rankings = rankings.copy()
+    paper_rankings.loc[
+        paper_rankings["receiver"].eq("B"), ["ranked_strength", "status", "reason_code"]
+    ] = [0.0, "observed", ""]
+    paper_ranking_path = tmp_path / "paper_rankings.tsv"
+    paper_rankings.to_csv(paper_ranking_path, sep="\t", index=False)
+
+    audit = _validate_native_pair_outputs(
+        ranking_path, paper_ranking_path, support_path
+    )
+
+    assert audit == {
+        "pairs": 2,
+        "tested_pairs": 1,
+        "not_estimable_pairs": 1,
+        "finite_native_p_rows": 5,
+    }
+    rankings.loc[rankings["receiver"].eq("B"), "ranked_strength"] = 0.0
+    rankings.to_csv(ranking_path, sep="\t", index=False)
+    with pytest.raises(RuntimeError, match="require missing strength"):
+        _validate_native_pair_outputs(
+            ranking_path, paper_ranking_path, support_path
+        )
+    rankings.loc[rankings["receiver"].eq("B"), "ranked_strength"] = np.nan
+    rankings.to_csv(ranking_path, sep="\t", index=False)
+    support.loc[support["receiver"].eq("B"), "status"] = "observed"
+    support.to_csv(support_path, sep="\t", index=False)
+    with pytest.raises(RuntimeError, match="eligibility and finite tests"):
+        _validate_native_pair_outputs(
+            ranking_path, paper_ranking_path, support_path
+        )
 
 
 def test_failed_external_process_is_recorded_in_manifest(

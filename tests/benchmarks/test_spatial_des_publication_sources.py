@@ -34,7 +34,7 @@ def test_spatial_des_protocol_and_notebook_are_portable() -> None:
     )
     for index, cell in enumerate(code_cells):
         compile("".join(cell["source"]), f"notebook-cell-{index}", "exec")
-    assert "docs/benchmarks/multigroup_spatial_20260717/results" in source
+    assert "benchmarks/results/spatial_des_figure3_reanalysis_20260721" in source
     assert "benchmark_work" not in source
 
 

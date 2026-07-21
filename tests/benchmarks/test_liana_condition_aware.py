@@ -69,6 +69,8 @@ def test_build_rankings_counts_calls_and_preserves_not_estimable_pairs() -> None
         target="case",
         reference="ctrl",
         dataset_id="toy",
+        replicate_key="sample_id",
+        subject_key="subject_id",
     )
     case_ab = result.loc[
         result["condition"].eq("case")
@@ -90,6 +92,8 @@ def test_build_rankings_counts_calls_and_preserves_not_estimable_pairs() -> None
     ].iloc[0]
     assert pair_ac["status"] == "not_estimable"
     assert pd.isna(pair_ac["ranked_strength"])
+    assert ";sample_pseudobulk;" in case_ab["ranking_semantics"]
+    assert pair_ac["reason_code"] == "cell_type_not_estimable_for_sample_pseudobulk_de"
 
 
 def test_build_rankings_rejects_duplicate_directed_calls() -> None:
@@ -111,6 +115,8 @@ def test_build_rankings_rejects_duplicate_directed_calls() -> None:
             target="case",
             reference="ctrl",
             dataset_id="toy",
+            replicate_key="subject_id",
+            subject_key="subject_id",
         )
 
 
@@ -126,7 +132,7 @@ def test_validate_resource_requires_frozen_checksum(
         runner._validate_resource(resource, manifest)
 
 
-def test_subject_primary_metadata_columns_are_unique() -> None:
+def test_subject_metadata_columns_are_unique() -> None:
     columns = list(
         dict.fromkeys(["subject_id", "subject_id", "condition", "cell_type"])
     )

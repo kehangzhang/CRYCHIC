@@ -145,7 +145,10 @@ selected <- differential |>
     score_target = first(.data[[target_score]]),
     score_reference = first(.data[[reference_score]]),
     logFC = first(logFC_S_inter),
-    p_value = first(.data[[p_column]]),
+    p_value = {
+      finite_p <- .data[[p_column]][is.finite(.data[[p_column]])]
+      if (length(finite_p)) first(finite_p) else NA_real_
+    },
     max_S_intra = if (all(is.na(S_intra))) NA_real_ else max(S_intra, na.rm = TRUE),
     .groups = "drop"
   ) |>
@@ -186,10 +189,80 @@ universe <- universe[c("condition", "sender", "receiver")]
 counts <- selected |>
   count(condition, sender_unordered, receiver_unordered, name = "ranked_strength") |>
   rename(sender = sender_unordered, receiver = receiver_unordered)
-rankings <- left_join(universe, counts, by = c("condition", "sender", "receiver"))
-rankings$pair_eligible <- (
+pair_support <- differential |>
+  mutate(
+    sender = ifelse(cluster_L <= cluster_R, cluster_L, cluster_R),
+    receiver = ifelse(cluster_L <= cluster_R, cluster_R, cluster_L),
+    finite_native_p = is.finite(.data[[p_column]]),
+    native_interaction_id = paste(cluster_L, cluster_R, LR_pair, sep = "|")
+  ) |>
+  group_by(sender, receiver) |>
+  summarise(
+    native_result_rows = n(),
+    finite_native_p_rows = sum(finite_native_p),
+    finite_native_interactions = n_distinct(
+      native_interaction_id[finite_native_p]
+    ),
+    pair_native_tested = any(finite_native_p),
+    .groups = "drop"
+  )
+rankings <- left_join(
+  universe,
+  counts,
+  by = c("condition", "sender", "receiver")
+) |>
+  left_join(pair_support, by = c("sender", "receiver"))
+rankings$native_result_rows[is.na(rankings$native_result_rows)] <- 0L
+rankings$finite_native_p_rows[is.na(rankings$finite_native_p_rows)] <- 0L
+rankings$finite_native_interactions[
+  is.na(rankings$finite_native_interactions)
+] <- 0L
+rankings$pair_native_tested[is.na(rankings$pair_native_tested)] <- FALSE
+rankings$cell_type_eligible <- (
   rankings$sender %in% eligible_cell_types &
     rankings$receiver %in% eligible_cell_types
+)
+rankings$pair_eligible <- (
+  rankings$cell_type_eligible & rankings$pair_native_tested
+)
+paper_rankings <- rankings
+paper_rankings$ranked_strength[
+  paper_rankings$cell_type_eligible & is.na(paper_rankings$ranked_strength)
+] <- 0
+paper_rankings$dataset <- dataset_id
+paper_rankings$method <- "scseqcommdiff"
+paper_rankings$method_version <- "2.0.0"
+paper_rankings$resource <- "ConnectomeDB2020_Hou_2020_human"
+paper_rankings$ranking_semantics <- paste0(
+  "cardinality_of_native_significant_directed_lr_after_unordered_cell_pair_collapse;",
+  ifelse(scenario == "multi-condition", "BH_q<0.05", "raw_p<0.05"),
+  ";max_S_intra>0.5_or_all_NA;paper_zero_completed_cell_type_eligible_universe"
+)
+paper_rankings$status <- ifelse(
+  paper_rankings$cell_type_eligible, "observed", "not_estimable"
+)
+paper_rankings$reason_code <- ifelse(
+  paper_rankings$cell_type_eligible,
+  "",
+  ifelse(
+    scenario == "multi-condition",
+    "cell_type_not_eligible_for_native_condition_permutation",
+    "cell_type_not_eligible_for_native_multisample"
+  )
+)
+paper_rankings <- paper_rankings[c(
+  "dataset", "method", "method_version", "resource", "ranking_semantics",
+  "condition", "sender", "receiver", "ranked_strength", "status", "reason_code"
+)]
+write.table(
+  paper_rankings,
+  file.path(
+    output_dir,
+    "condition_cell_pair_rankings_paper_zero_completed.tsv"
+  ),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
 )
 rankings$ranked_strength[
   rankings$pair_eligible & is.na(rankings$ranked_strength)
@@ -201,16 +274,20 @@ rankings$resource <- "ConnectomeDB2020_Hou_2020_human"
 rankings$ranking_semantics <- paste0(
   "cardinality_of_native_significant_directed_lr_after_unordered_cell_pair_collapse;",
   ifelse(scenario == "multi-condition", "BH_q<0.05", "raw_p<0.05"),
-  ";max_S_intra>0.5_or_all_NA;common_native_pseudobulk_estimability"
+  ";max_S_intra>0.5_or_all_NA;pair_level_finite_native_p_estimability"
 )
 rankings$status <- ifelse(rankings$pair_eligible, "observed", "not_estimable")
 rankings$reason_code <- ifelse(
   rankings$pair_eligible,
   "",
   ifelse(
-    scenario == "multi-condition",
-    "cell_type_not_eligible_for_native_condition_permutation",
-    "cell_type_not_eligible_for_native_multisample"
+    !rankings$cell_type_eligible,
+    ifelse(
+      scenario == "multi-condition",
+      "cell_type_not_eligible_for_native_condition_permutation",
+      "cell_type_not_eligible_for_native_multisample"
+    ),
+    "no_finite_native_intercellular_test_for_cell_pair"
   )
 )
 rankings <- rankings[c(
@@ -220,6 +297,46 @@ rankings <- rankings[c(
 write.table(
   rankings,
   file.path(output_dir, "condition_cell_pair_rankings.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+pair_audit <- left_join(pairs, pair_support, by = c("sender", "receiver"))
+pair_audit$native_result_rows[is.na(pair_audit$native_result_rows)] <- 0L
+pair_audit$finite_native_p_rows[is.na(pair_audit$finite_native_p_rows)] <- 0L
+pair_audit$finite_native_interactions[
+  is.na(pair_audit$finite_native_interactions)
+] <- 0L
+pair_audit$pair_native_tested[is.na(pair_audit$pair_native_tested)] <- FALSE
+pair_audit$cell_type_eligible <- (
+  pair_audit$sender %in% eligible_cell_types &
+    pair_audit$receiver %in% eligible_cell_types
+)
+pair_audit$status <- ifelse(
+  pair_audit$cell_type_eligible & pair_audit$pair_native_tested,
+  "observed",
+  "not_estimable"
+)
+pair_audit$reason_code <- ifelse(
+  pair_audit$status == "observed",
+  "",
+  ifelse(
+    !pair_audit$cell_type_eligible,
+    "cell_type_not_eligible",
+    "no_finite_native_intercellular_test_for_cell_pair"
+  )
+)
+pair_audit$dataset <- dataset_id
+pair_audit$scenario <- scenario
+pair_audit <- pair_audit[c(
+  "dataset", "scenario", "sender", "receiver", "native_result_rows",
+  "finite_native_p_rows", "finite_native_interactions",
+  "pair_native_tested", "cell_type_eligible", "status", "reason_code"
+)]
+write.table(
+  pair_audit,
+  file.path(output_dir, "cell_pair_native_test_support.tsv"),
   sep = "\t",
   quote = FALSE,
   row.names = FALSE

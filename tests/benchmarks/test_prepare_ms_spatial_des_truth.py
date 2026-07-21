@@ -190,6 +190,27 @@ def test_nonestimable_pairs_remain_in_fixed_expected_universe() -> None:
     )
 
 
+def test_top_count_rule_distinguishes_floor_and_ceil() -> None:
+    correlations, design = _synthetic_correlations()
+    floor = build_ms_spatial_des_truth(
+        correlations,
+        design,
+        top_fractions=(0.5,),
+        top_count_rule="floor",
+    )
+    ceil = build_ms_spatial_des_truth(
+        correlations,
+        design,
+        top_fractions=(0.5,),
+        top_count_rule="ceil",
+    )
+
+    assert set(floor.expected_sets["top_count"]) == {1}
+    assert set(floor.expected_sets["top_count_rule"]) == {"floor"}
+    assert set(ceil.expected_sets["top_count"]) == {1, 2}
+    assert set(ceil.expected_sets["top_count_rule"]) == {"ceil"}
+
+
 def _write_public_fixture(root: Path, sample: MSSpatialSample, *, seed: int) -> None:
     rng = np.random.default_rng(seed)
     proportions = rng.dirichlet(np.arange(1, 10), size=12)

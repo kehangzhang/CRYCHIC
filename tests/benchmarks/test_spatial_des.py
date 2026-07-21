@@ -61,8 +61,9 @@ def test_perfect_top_enrichment_at_all_preregistered_fractions() -> None:
     assert result.scores["top_fraction"].tolist() == [0.1, 0.2, 0.3, 0.4]
     assert result.scores["des"].tolist() == pytest.approx([1.0] * 4)
     assert set(result.scores["status"]) == {"observed"}
-    assert set(result.scores["score_type"]) == {"pos"}
-    assert set(result.scores["fgsea_analogue"]) == {"fgsea_scoreType=pos;gseaParam=0"}
+    assert set(result.scores["score_type"]) == {"std"}
+    assert set(result.scores["fgsea_analogue"]) == {"fgsea_scoreType=std;gseaParam=1"}
+    assert set(result.scores["weight_exponent"]) == {1.0}
     assert set(result.scores["cell_pair_direction"]) == {"ordered_sender_to_receiver"}
     assert result.coverage["expected_pair_coverage_fraction"].tolist() == [
         1.0,
@@ -81,16 +82,47 @@ def test_pos_and_custom_abs_have_explicitly_different_bottom_hit_semantics() -> 
     positive = evaluate_spatial_des(
         ranked, expected, SpatialDESSpec(**common, score_type="pos")
     )
+    standard = evaluate_spatial_des(
+        ranked, expected, SpatialDESSpec(**common, score_type="std")
+    )
     absolute = evaluate_spatial_des(
         ranked, expected, SpatialDESSpec(**common, score_type="abs")
     )
 
     assert positive.scores.iloc[0]["des"] == pytest.approx(0.0)
     assert positive.scores.iloc[0]["signed_peak_es"] == pytest.approx(0.0)
+    assert standard.scores.iloc[0]["des"] == pytest.approx(-1.0)
+    assert standard.scores.iloc[0]["signed_peak_es"] == pytest.approx(-1.0)
+    assert standard.scores.iloc[0]["fgsea_analogue"] == (
+        "fgsea_scoreType=std;gseaParam=1"
+    )
     assert absolute.scores.iloc[0]["des"] == pytest.approx(1.0)
     assert absolute.scores.iloc[0]["signed_peak_es"] == pytest.approx(-1.0)
     assert absolute.scores.iloc[0]["fgsea_analogue"] == (
-        "custom_abs_excursion;not_a_literal_fgsea_scoreType;gseaParam=0"
+        "custom_abs_excursion;not_a_literal_fgsea_scoreType;gseaParam=1"
+    )
+
+
+def test_weight_exponent_zero_is_an_explicit_unweighted_sensitivity() -> None:
+    pairs = [("hit1", "R"), ("miss", "R"), ("hit2", "R"), ("other", "R")]
+    ranked = _ranked([10.0, 9.0, 1.0, 0.5], pairs)
+    expected = _expected({0.1: [pairs[0], pairs[2]]})
+
+    weighted = evaluate_spatial_des(
+        ranked,
+        expected,
+        SpatialDESSpec(top_fractions=(0.1,), weight_exponent=1.0),
+    )
+    unweighted = evaluate_spatial_des(
+        ranked,
+        expected,
+        SpatialDESSpec(top_fractions=(0.1,), weight_exponent=0.0),
+    )
+
+    assert weighted.scores.iloc[0]["des"] == pytest.approx(10 / 11)
+    assert unweighted.scores.iloc[0]["des"] == pytest.approx(0.5)
+    assert unweighted.scores.iloc[0]["fgsea_analogue"] == (
+        "fgsea_scoreType=std;gseaParam=0"
     )
 
 
@@ -111,6 +143,57 @@ def test_equal_strength_blocks_are_order_invariant_and_never_name_broken() -> No
     assert first.scores.iloc[0]["tie_policy"] == ("simultaneous_equal_strength_blocks")
     assert first.coverage.iloc[0]["tied_strength_blocks"] == 1
     assert first.coverage.iloc[0]["ranked_pairs_in_ties"] == 2
+
+
+def test_fgsea_native_policy_matches_calc_gsea_stat_tie_order() -> None:
+    pairs = [("hit", "R"), ("miss", "R"), ("other1", "R"), ("other2", "R")]
+    ranked = _ranked([5.0, 5.0, 2.0, 1.0], pairs)
+    expected = _expected({0.1: [pairs[0]]})
+    native = SpatialDESSpec(
+        top_fractions=(0.1,), tie_policy="fgsea_native"
+    )
+
+    result = evaluate_spatial_des(ranked, expected, native)
+
+    assert result.scores.iloc[0]["des"] == pytest.approx(1.0)
+    assert result.scores.iloc[0]["peak_rank"] == 1
+    assert result.scores.iloc[0]["tie_policy"] == (
+        "fgsea_native_stable_input_order"
+    )
+
+
+def test_fgsea_native_zero_hit_weights_use_uniform_fallback() -> None:
+    pairs = [("miss1", "R"), ("miss2", "R"), ("hit1", "R"), ("hit2", "R")]
+    ranked = _ranked([3.0, 2.0, 0.0, 0.0], pairs)
+    expected = _expected({0.1: pairs[2:]})
+    spec = SpatialDESSpec(top_fractions=(0.1,), tie_policy="fgsea_native")
+
+    result = evaluate_spatial_des(ranked, expected, spec)
+
+    assert result.scores.iloc[0]["status"] == "observed"
+    assert result.scores.iloc[0]["des"] == pytest.approx(-1.0)
+    assert result.scores.iloc[0]["signed_peak_es"] == pytest.approx(-1.0)
+
+
+def test_zero_weight_exponent_is_labelled_unweighted() -> None:
+    pairs = [("hit", "R"), ("miss1", "R"), ("miss2", "R")]
+    ranked = _ranked([3.0, 2.0, 1.0], pairs)
+    expected = _expected({0.1: [pairs[0]]})
+    spec = SpatialDESSpec(
+        top_fractions=(0.1,),
+        score_type="pos",
+        weight_exponent=0.0,
+        tie_policy="fgsea_native",
+    )
+
+    result = evaluate_spatial_des(ranked, expected, spec)
+
+    assert result.scores.iloc[0]["score_semantics"] == (
+        "maximum_positive_unweighted_fgsea_running_sum"
+    )
+    assert result.scores.iloc[0]["fgsea_analogue"] == (
+        "fgsea_scoreType=pos;gseaParam=0"
+    )
 
 
 def test_sender_receiver_pairs_are_directional() -> None:
@@ -299,7 +382,10 @@ def test_full_membership_tables_require_a_fixed_spatial_pair_universe() -> None:
     [
         {"top_fractions": (0.5,)},
         {"top_fractions": (0.1, 0.1)},
-        {"score_type": "std"},
+        {"score_type": "signed"},
+        {"weight_exponent": -1.0},
+        {"weight_exponent": float("inf")},
+        {"tie_policy": "alphabetical"},
     ],
 )
 def test_invalid_scoring_policy_is_rejected(kwargs: dict[str, object]) -> None:

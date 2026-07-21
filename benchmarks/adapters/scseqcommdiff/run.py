@@ -24,10 +24,115 @@ ZENODO_ARCHIVE_SHA256 = (
 RESOURCE_ID = "ConnectomeDB2020_Hou_2020_human"
 RESOURCE_SHA256 = "e781363288a26c15e03246500111bfecb818eef997f5ebe1b936aaa465151c3a"
 RESOURCE_ROWS = 2293
-SCHEMA_VERSION = "crychic-scseqcommdiff-paper-benchmark-v1"
+SCHEMA_VERSION = "crychic-scseqcommdiff-paper-benchmark-v2"
 VALID_SCENARIOS = frozenset({"multi-condition", "multi-sample"})
 MIN_VALID_PSEUDOBULK_UNITS = 2
 MIN_VALID_CONDITION_CELLS = 2
+
+
+def _validate_native_pair_outputs(
+    ranking_path: Path, paper_ranking_path: Path, support_path: Path
+) -> dict[str, Any]:
+    rankings = pd.read_csv(ranking_path, sep="\t")
+    paper_rankings = pd.read_csv(paper_ranking_path, sep="\t")
+    support = pd.read_csv(support_path, sep="\t")
+    required_rankings = {
+        "condition",
+        "sender",
+        "receiver",
+        "ranked_strength",
+        "status",
+        "reason_code",
+    }
+    required_support = {
+        "sender",
+        "receiver",
+        "finite_native_p_rows",
+        "finite_native_interactions",
+        "pair_native_tested",
+        "cell_type_eligible",
+        "status",
+        "reason_code",
+    }
+    if rankings.empty or required_rankings.difference(rankings.columns):
+        raise RuntimeError("scSeqCommDiff ranking output schema is invalid")
+    if paper_rankings.empty or required_rankings.difference(paper_rankings.columns):
+        raise RuntimeError("scSeqCommDiff paper ranking output schema is invalid")
+    if support.empty or required_support.difference(support.columns):
+        raise RuntimeError("scSeqCommDiff native pair support schema is invalid")
+    if support.duplicated(["sender", "receiver"]).any():
+        raise RuntimeError("scSeqCommDiff native pair support contains duplicates")
+    if not set(rankings["status"]).issubset({"observed", "not_estimable"}):
+        raise RuntimeError("scSeqCommDiff rankings contain unsupported statuses")
+    if not set(paper_rankings["status"]).issubset(
+        {"observed", "not_estimable"}
+    ):
+        raise RuntimeError("scSeqCommDiff paper rankings contain unsupported statuses")
+    strength = pd.to_numeric(rankings["ranked_strength"], errors="coerce")
+    observed = rankings["status"].eq("observed")
+    if strength.loc[observed].isna().any() or strength.loc[observed].lt(0).any():
+        raise RuntimeError("observed scSeqCommDiff rankings require finite strengths")
+    if strength.loc[~observed].notna().any():
+        raise RuntimeError("not-estimable scSeqCommDiff rankings require missing strength")
+    tested_text = support["pair_native_tested"].astype(str).str.lower()
+    if not tested_text.isin({"true", "false"}).all():
+        raise RuntimeError("pair_native_tested must be boolean")
+    tested = tested_text.eq("true")
+    eligible_text = support["cell_type_eligible"].astype(str).str.lower()
+    if not eligible_text.isin({"true", "false"}).all():
+        raise RuntimeError("cell_type_eligible must be boolean")
+    cell_type_eligible = eligible_text.eq("true")
+    finite_rows = pd.to_numeric(support["finite_native_p_rows"], errors="coerce")
+    if finite_rows.isna().any() or finite_rows.lt(0).any():
+        raise RuntimeError("finite native p-value counts must be non-negative")
+    if not tested.eq(finite_rows.gt(0)).all():
+        raise RuntimeError("pair_native_tested disagrees with finite p-value counts")
+    expected_support_observed = cell_type_eligible & tested
+    if not set(support["status"]).issubset({"observed", "not_estimable"}):
+        raise RuntimeError("scSeqCommDiff native pair support has unsupported statuses")
+    expected_support_status = expected_support_observed.map(
+        {True: "observed", False: "not_estimable"}
+    )
+    if not support["status"].eq(expected_support_status).all():
+        raise RuntimeError(
+            "native pair support status disagrees with eligibility and finite tests"
+        )
+    pair_status = support.set_index(["sender", "receiver"])["status"]
+    aligned = rankings.set_index(["sender", "receiver"]).index.map(pair_status)
+    if pd.isna(aligned).any() or not rankings["status"].eq(aligned).all():
+        raise RuntimeError("ranking estimability disagrees with native pair support")
+    paper_strength = pd.to_numeric(
+        paper_rankings["ranked_strength"], errors="coerce"
+    )
+    paper_observed = paper_rankings["status"].eq("observed")
+    if (
+        paper_strength.loc[paper_observed].isna().any()
+        or paper_strength.loc[paper_observed].lt(0).any()
+    ):
+        raise RuntimeError(
+            "observed paper-compatible rankings require finite strengths"
+        )
+    if paper_strength.loc[~paper_observed].notna().any():
+        raise RuntimeError(
+            "not-estimable paper-compatible rankings require missing strength"
+        )
+    support_cell_eligible = pd.Series(
+        cell_type_eligible.to_numpy(),
+        index=pd.MultiIndex.from_frame(support[["sender", "receiver"]]),
+    )
+    paper_aligned = paper_rankings.set_index(["sender", "receiver"]).index.map(
+        support_cell_eligible
+    )
+    if pd.isna(paper_aligned).any() or not paper_observed.eq(paper_aligned).all():
+        raise RuntimeError(
+            "paper-compatible ranking disagrees with cell-type eligibility"
+        )
+    return {
+        "pairs": len(support),
+        "tested_pairs": int(tested.sum()),
+        "not_estimable_pairs": int((~support["status"].eq("observed")).sum()),
+        "finite_native_p_rows": int(finite_rows.sum()),
+    }
 
 
 def _input_manifest_sha256(payload: dict[str, Any], filename: str) -> str:
@@ -462,6 +567,12 @@ def run(
             "BH q<0.05" if scenario == "multi-condition" else "raw p<0.05"
         ),
         "intracellular_gate": "max_S_intra>0.5_or_all_NA",
+        "cell_pair_estimability": (
+            "at_least_one_finite_native_intercellular_p_value"
+        ),
+        "paper_compatible_cell_pair_policy": (
+            "zero_complete_all_cell_type_eligible_pairs"
+        ),
         "tf_target_prior": "TRRUSTv2+HTRIdb+RegNetwork_high",
         "receptor_tf_prior": "KEGG_human",
         "backend": "doMC",
@@ -543,11 +654,18 @@ def run(
         manifest["failure"] = _external_process_failure(completed)
         write_json(output_dir / "run_manifest.json", manifest)
         raise RuntimeError("scSeqCommDiff R runner failed; inspect stderr.log")
+    pair_estimability = _validate_native_pair_outputs(
+        output_dir / "condition_cell_pair_rankings.tsv",
+        output_dir / "condition_cell_pair_rankings_paper_zero_completed.tsv",
+        output_dir / "cell_pair_native_test_support.tsv",
+    )
     outputs: dict[str, Any] = {}
     for filename in (
         "differential_comm.rds",
         "selected_differential_interactions.tsv.gz",
         "condition_cell_pair_rankings.tsv",
+        "condition_cell_pair_rankings_paper_zero_completed.tsv",
+        "cell_pair_native_test_support.tsv",
         "session_info.txt",
     ):
         path = output_dir / filename
@@ -563,6 +681,7 @@ def run(
             "returncode": 0,
             "elapsed_seconds": time.time() - started,
             "outputs": outputs,
+            "native_pair_estimability": pair_estimability,
         }
     )
     write_json(output_dir / "run_manifest.json", manifest)

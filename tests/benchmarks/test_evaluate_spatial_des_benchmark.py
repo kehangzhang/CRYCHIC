@@ -54,12 +54,63 @@ def test_evaluator_aligns_condition_aliases_and_unordered_mode() -> None:
         scenario="multi_sample",
         dataset_map={"local": "truth"},
         condition_map={"case": "disease", "ctrl": "control"},
+        exclude_self_pairs=False,
     )
 
     assert len(scores) == 8
     assert scores["des"].eq(1.0).all()
+    assert scores["score_type"].eq("std").all()
+    assert scores["weight_exponent"].eq(1.0).all()
+    assert scores["fgsea_analogue"].eq(
+        "fgsea_scoreType=std;gseaParam=1"
+    ).all()
+    assert scores["tie_policy"].eq("fgsea_native_stable_input_order").all()
     assert scores["cell_pair_direction"].eq("unordered_directions_collapsed").all()
     assert coverage["expected_pair_coverage_fraction"].eq(1.0).all()
+
+
+def test_exclude_self_pairs_filters_rankings_and_full_truth_universe() -> None:
+    pairs = [("A", "A"), ("A", "B"), ("A", "C")]
+    rankings = pd.DataFrame(
+        {
+            "dataset": ["fixture"] * 3,
+            "method": ["m"] * 3,
+            "method_version": ["1"] * 3,
+            "resource": ["r"] * 3,
+            "ranking_semantics": ["test"] * 3,
+            "condition": ["case"] * 3,
+            "sender": [pair[0] for pair in pairs],
+            "receiver": [pair[1] for pair in pairs],
+            "ranked_strength": [3.0, 2.0, 1.0],
+            "status": ["observed"] * 3,
+        }
+    )
+    expected = pd.DataFrame.from_records(
+        {
+            "dataset": "fixture",
+            "scenario": "multi_sample",
+            "condition": "case",
+            "top_fraction": fraction,
+            "sender": sender,
+            "receiver": receiver,
+            "is_expected": receiver in {"A", "B"},
+        }
+        for fraction in (0.1, 0.2, 0.3, 0.4)
+        for sender, receiver in pairs
+    )
+
+    scores, coverage = evaluate_rankings(
+        rankings,
+        expected,
+        scenario="multi_sample",
+        exclude_self_pairs=True,
+    )
+
+    assert scores["status"].eq("observed").all()
+    assert scores["des"].eq(1.0).all()
+    assert coverage["expected_pairs"].eq(1).all()
+    assert coverage["expected_pair_coverage_fraction"].eq(1.0).all()
+    assert coverage["rank_pairs_eligible"].eq(2).all()
 
 
 def test_condition_map_parser_rejects_ambiguous_values() -> None:
@@ -107,6 +158,7 @@ def test_dataset_binding_is_explicit_and_fail_closed() -> None:
         expected,
         scenario="multi_sample",
         dataset_map={"method_dataset": "truth_dataset"},
+        exclude_self_pairs=False,
     )
     assert scores["dataset"].eq("truth_dataset").all()
     assert _parse_dataset_map(["method=truth"]) == {"method": "truth"}
@@ -188,6 +240,7 @@ def test_evaluator_filters_one_frozen_spatial_variant() -> None:
         scenario="multi_sample",
         dataset_map={"local": "truth"},
         expected_filters={"variant": "primary"},
+        exclude_self_pairs=False,
     )
 
     assert scores.loc[0, "des"] == pytest.approx(1.0)

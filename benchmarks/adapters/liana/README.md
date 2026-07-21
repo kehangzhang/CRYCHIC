@@ -12,10 +12,11 @@ recorded in every run manifest. The targeted notebook is Git blob
 `105c49abcab2a278f0f5e88ade5a57d0e85a7d48`, SHA256
 `56712d7c35ce9fb558f3adfa066dad904b0bbdbce728fe006696454f7eac621e`.
 
-The primary Kuppe and MS panels use `subject_id` as the pseudobulk replicate.
-This collapses repeated tissue sections before differential expression and
-prevents pseudoreplication. A `sample_id` run, if produced, is a separate paper
-sensitivity panel and must not be mixed into the subject-level leaderboard.
+The Figure 3 Kuppe and MS panels use `sample_id` as the pseudobulk replicate,
+matching the paper's section/tissue analysis unit. A `subject_id` run collapses
+repeated tissue sections before differential expression and is retained as a
+scientifically conservative sensitivity panel. Sample- and subject-level
+results must not be mixed in one leaderboard.
 
 The protocol follows the LIANA 1.5 targeted differential-expression vignette:
 
@@ -40,7 +41,7 @@ that converts the same boolean values to NumPy arrays. The bridge does not
 modify installed files or aggregation semantics and is recorded in each run
 manifest.
 
-Example primary run:
+Example Figure 3 run:
 
 ```bash
 uv run python -m benchmarks.adapters.liana.run_condition_aware \
@@ -51,7 +52,7 @@ uv run python -m benchmarks.adapters.liana.run_condition_aware \
   --exact-python /path/to/liana_1_5_0/bin/python \
   --output-dir OUTPUT \
   --dataset-id DATASET \
-  --replicate-key subject_id \
+  --replicate-key sample_id \
   --condition-key condition \
   --target TARGET \
   --reference REFERENCE \
