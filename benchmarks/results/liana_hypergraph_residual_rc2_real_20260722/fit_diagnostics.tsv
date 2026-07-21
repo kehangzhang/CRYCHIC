@@ -1,0 +1,3 @@
+dataset	liana_calls_exact	liana_rankings_exact	liana_edges	crychic_anchor_coverage	baseline_anchor_spearman	baseline_anchor_sign_concordance	lambda_hypergraph	anchor_weight	cv_relative_improvement	fallback_gate	sign_flips
+kuppe	true	true	11096	0.9528658976207642	0.8096173611147497	0.7303508937860588	0.05	0.1	0.43693809068903056	1.0	248
+ms	true	true	6237	0.9094115760782427	0.6011848945453395	0.7016925246826516	0.05	0.0	0.2367296040028425	1.0	176
