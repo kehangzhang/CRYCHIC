@@ -1,0 +1,57 @@
+{
+  "acceptance": {
+    "accepted": true,
+    "coherent_safety_mean_delta": -0.00014162161216209798,
+    "coherent_safety_pass": true,
+    "global_null_gate_pass": true,
+    "global_null_gate_q95": 0.0,
+    "heterogeneous_adaptive_selection_rate": 0.4375,
+    "heterogeneous_gain_pass": true,
+    "heterogeneous_holdout_mean_delta": 0.0016589935622594038,
+    "heterogeneous_selection_pass": true,
+    "topology_jump_mean_delta": -4.315978708709552e-05,
+    "topology_jump_safety_pass": true,
+    "wrong_topology_mean_delta": 0.0,
+    "wrong_topology_safety_pass": true
+  },
+  "accepted": true,
+  "code": {
+    "commit": "758d4bc4a9415ccd2026df9923cdbaa6fabb37a1",
+    "dirty": true
+  },
+  "config": {
+    "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/adaptive_multiview_residual_rc4_v1.json",
+    "sha256": "e40867a75fa348d9caf4288b33e9df0a671764aba2707a8d414ed78dcaa4a9ff"
+  },
+  "elapsed_seconds": 126.66334377601743,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "view_reliability_is_group_mean_predictive_not_outcome_calibrated",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 60,
+      "sha256": "560a5f88e71d2ecf2659359eae59e4198bf2aaab7f0c4463dae4aedfbe369c97"
+    },
+    "cv_diagnostics.tsv": {
+      "rows": 4320,
+      "sha256": "f0914f09ccc2d97904c37a4478cf815f5425e3375b595071e25c30b4eb5bf967"
+    },
+    "profile_selection.tsv": {
+      "rows": 36,
+      "sha256": "015f8eaa8336ec32b75a17cf54891ea5cdc6970d82a3505abab9bc78b17d0d31"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 1440,
+      "sha256": "25a330867ad1e419426d1c6f2004e8c92b0384468863fa87f502d2bc161a4ed8"
+    }
+  },
+  "schema_version": "crychic-adaptive-multiview-residual-result-v1",
+  "selection": {
+    "holdout_seeds_used_for_policy_selection": false,
+    "real_cohorts_used_for_selection": false,
+    "within_replicate_edge_cv_profile_fitting": true
+  },
+  "status": "complete"
+}

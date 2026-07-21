@@ -1,0 +1,15 @@
+{
+  "accepted": true,
+  "coherent_safety_mean_delta": -0.00014162161216209798,
+  "coherent_safety_pass": true,
+  "global_null_gate_pass": true,
+  "global_null_gate_q95": 0.0,
+  "heterogeneous_adaptive_selection_rate": 0.4375,
+  "heterogeneous_gain_pass": true,
+  "heterogeneous_holdout_mean_delta": 0.0016589935622594038,
+  "heterogeneous_selection_pass": true,
+  "topology_jump_mean_delta": -4.315978708709552e-05,
+  "topology_jump_safety_pass": true,
+  "wrong_topology_mean_delta": 0.0,
+  "wrong_topology_safety_pass": true
+}
