@@ -178,6 +178,7 @@ def _candidate_weights(
     candidates: Sequence[Mapping[str, Any]],
     *,
     min_slab_scale_fraction: float = 0.01,
+    directional_min_slab_scale_fraction: float | None = None,
 ) -> dict[str, tuple[np.ndarray, np.ndarray, dict[str, object]]]:
     effect = table["effect"].to_numpy(dtype=float)
     se = table["standard_error"].to_numpy(dtype=float)
@@ -205,12 +206,17 @@ def _candidate_weights(
         candidate["kind"] == "directional_spike_normal"
         for candidate in candidates
     )
+    directional_floor = (
+        min_slab_scale_fraction
+        if directional_min_slab_scale_fraction is None
+        else directional_min_slab_scale_fraction
+    )
     directional_fit = (
         fit_directional_spike_normal_working_prior(
             effect,
             se,
             min_fit_edges=200,
-            min_slab_scale_fraction=min_slab_scale_fraction,
+            min_slab_scale_fraction=directional_floor,
         )
         if needs_directional
         else None
@@ -280,11 +286,15 @@ def evaluate_candidates(
     *,
     split: str,
     min_slab_scale_fraction: float = 0.01,
+    directional_min_slab_scale_fraction: float | None = None,
 ) -> pd.DataFrame:
     weights = _candidate_weights(
         table,
         candidates,
         min_slab_scale_fraction=min_slab_scale_fraction,
+        directional_min_slab_scale_fraction=(
+            directional_min_slab_scale_fraction
+        ),
     )
     records: list[dict[str, object]] = []
     for candidate, (target, reference, metadata) in weights.items():
@@ -439,6 +449,12 @@ def run(
     min_slab_scale_fraction = float(
         working_prior.get("min_slab_scale_fraction", 0.01)
     )
+    directional_min_slab_scale_fraction = float(
+        working_prior.get(
+            "directional_min_slab_scale_fraction",
+            min_slab_scale_fraction,
+        )
+    )
     tables: list[pd.DataFrame] = []
     for split, field in (
         ("development", "development_seeds"),
@@ -455,6 +471,9 @@ def run(
                         candidates,
                         split=split,
                         min_slab_scale_fraction=min_slab_scale_fraction,
+                        directional_min_slab_scale_fraction=(
+                            directional_min_slab_scale_fraction
+                        ),
                     )
                 )
     records = pd.concat(tables, ignore_index=True)
