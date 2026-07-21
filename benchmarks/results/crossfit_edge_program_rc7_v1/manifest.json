@@ -1,0 +1,88 @@
+{
+  "acceptance": {
+    "accepted": false,
+    "global_null_gate_pass": true,
+    "global_null_reconstruction_reliability_q95": 0.0,
+    "holdout_coordinated_gain_pass": false,
+    "holdout_coordinated_mean_delta_vs_rc6": -0.0009295460472491142,
+    "holdout_isolated_occurrence_delta_vs_rc6": 0.0007593920590394793,
+    "holdout_isolated_occurrence_pass": true,
+    "holdout_primary_gain_pass": false,
+    "holdout_primary_mean_delta_vs_rc6": -0.0013938365370315545,
+    "holdout_safety_mean_delta_vs_rc6": 0.00015187841180789585,
+    "holdout_safety_pass": true,
+    "holdout_structural_missingness_delta_vs_rc6": -0.003250998496161316,
+    "holdout_structural_missingness_pass": false,
+    "novel_candidate": true,
+    "novel_candidate_pass": true,
+    "selected_candidate": "rank1_shrink05"
+  },
+  "accepted": false,
+  "code": {
+    "commit": "7b97331b27e9f4c19bd83d06f940d0101019e4d2",
+    "dirty": false
+  },
+  "config": {
+    "path": "benchmarks/configs/crossfit_edge_program_rc7_v1.json",
+    "sha256": "31ea7caacfc85f66d6f9744c375b93f77dd1b305f04d6ba6d6e1fe2e1750cd54"
+  },
+  "elapsed_seconds": 190.8507150169462,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "program_loadings_are_label_free_but_not_external_atlas_priors",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 154,
+      "sha256": "3c7a66c6054d233691ba60542a4a34180ff91f78edddd00babe959be22f026cc"
+    },
+    "candidate_selection.tsv": {
+      "rows": 7,
+      "sha256": "91790b32a2d06118d6108f3a00041f0a8ff909442ef820c5334a9ae17bec2187"
+    },
+    "fold_diagnostics.tsv": {
+      "rows": 20328,
+      "sha256": "6228026a33dab8413b1407b3e27ae38f6ce96455aea85b90088884b0618412bf"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 3696,
+      "sha256": "dc1eb8689a5f5b45cedc77b407b192acc2297a14185e452f358bf9b02e77b1e8"
+    }
+  },
+  "schema_version": "crychic-crossfit-edge-program-result-v1",
+  "selection": {
+    "accepted_for_real_benchmark": false,
+    "candidate": {
+      "name": "rank1_shrink05",
+      "projection_shrinkage": 0.5,
+      "rank": 1
+    },
+    "config_sha256": "31ea7caacfc85f66d6f9744c375b93f77dd1b305f04d6ba6d6e1fe2e1750cd54",
+    "formal_release_allowed": false,
+    "holdout_used_for_candidate_selection": false,
+    "hurdle_policy": {
+      "beta_prior": 0.5,
+      "channel_alpha_cap": 1.0,
+      "conditional_presence_threshold": 0.5,
+      "log_weight_cap": 1.5,
+      "magnitude_alpha": 0.5,
+      "magnitude_log_sd_floor": 0.05,
+      "minimum_active_subjects": 3,
+      "minimum_concordance_edges": 200,
+      "minimum_subjects": 3,
+      "occurrence_alpha": 2.0
+    },
+    "real_cohorts_used_for_selection": false,
+    "reconstruction_policy": {
+      "full_reliability_improvement": 0.05,
+      "minimum_edges": 200,
+      "minimum_relative_improvement": 0.01,
+      "minimum_training_subjects": 3
+    },
+    "schema_version": "crychic-crossfit-edge-program-frozen-v1",
+    "selected_candidate": "rank1_shrink05",
+    "selected_on": "development_only"
+  },
+  "status": "complete"
+}

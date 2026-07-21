@@ -1,0 +1,8 @@
+development_rank	candidate	candidate_priority	primary_mean_delta_vs_rc6	coordinated_mean_delta_vs_rc6	safety_mean_delta_vs_rc6	global_null_reconstruction_reliability_q95	safety_pass	global_null_pass	eligible	selected
+1	rank1_shrink05	1	0.0003131358097666343	0.00036106097002868283	5.8678764199759927e-05	0.0	True	True	True	True
+2	rank2_shrink10	4	0.0002791667190950614	0.0007429998946461841	0.00011649729473027226	0.0	True	True	True	False
+3	rank1_shrink10	2	0.00026796509663189145	0.0006200491608552433	0.00011175433553152389	0.0	True	True	True	False
+4	rank2_shrink05	3	0.0001047850488309729	0.00028553041488065846	0.00010188650091770187	0.0	True	True	True	False
+5	raw_rc6_reference	0	0.0	0.0	0.0	0.0	True	True	True	False
+6	rank3_shrink05	5	-1.3595464401693532e-06	0.0002718504205855143	3.584874743663332e-05	0.0	True	True	True	False
+7	rank3_shrink10	6	-3.0421002762987907e-05	0.00047490746265904025	0.00011649729473027226	0.0	True	True	True	False

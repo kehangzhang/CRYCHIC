@@ -1,0 +1,18 @@
+{
+  "accepted": false,
+  "global_null_gate_pass": true,
+  "global_null_reconstruction_reliability_q95": 0.0,
+  "holdout_coordinated_gain_pass": false,
+  "holdout_coordinated_mean_delta_vs_rc6": -0.0009295460472491142,
+  "holdout_isolated_occurrence_delta_vs_rc6": 0.0007593920590394793,
+  "holdout_isolated_occurrence_pass": true,
+  "holdout_primary_gain_pass": false,
+  "holdout_primary_mean_delta_vs_rc6": -0.0013938365370315545,
+  "holdout_safety_mean_delta_vs_rc6": 0.00015187841180789585,
+  "holdout_safety_pass": true,
+  "holdout_structural_missingness_delta_vs_rc6": -0.003250998496161316,
+  "holdout_structural_missingness_pass": false,
+  "novel_candidate": true,
+  "novel_candidate_pass": true,
+  "selected_candidate": "rank1_shrink05"
+}

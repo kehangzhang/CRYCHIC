@@ -1,0 +1,33 @@
+{
+  "accepted_for_real_benchmark": false,
+  "candidate": {
+    "name": "rank1_shrink05",
+    "projection_shrinkage": 0.5,
+    "rank": 1
+  },
+  "config_sha256": "31ea7caacfc85f66d6f9744c375b93f77dd1b305f04d6ba6d6e1fe2e1750cd54",
+  "formal_release_allowed": false,
+  "holdout_used_for_candidate_selection": false,
+  "hurdle_policy": {
+    "beta_prior": 0.5,
+    "channel_alpha_cap": 1.0,
+    "conditional_presence_threshold": 0.5,
+    "log_weight_cap": 1.5,
+    "magnitude_alpha": 0.5,
+    "magnitude_log_sd_floor": 0.05,
+    "minimum_active_subjects": 3,
+    "minimum_concordance_edges": 200,
+    "minimum_subjects": 3,
+    "occurrence_alpha": 2.0
+  },
+  "real_cohorts_used_for_selection": false,
+  "reconstruction_policy": {
+    "full_reliability_improvement": 0.05,
+    "minimum_edges": 200,
+    "minimum_relative_improvement": 0.01,
+    "minimum_training_subjects": 3
+  },
+  "schema_version": "crychic-crossfit-edge-program-frozen-v1",
+  "selected_candidate": "rank1_shrink05",
+  "selected_on": "development_only"
+}
