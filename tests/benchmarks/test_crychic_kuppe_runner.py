@@ -250,6 +250,28 @@ class _FakeResult:
         assert status is None
         return self._lr.copy(deep=True)
 
+    def read_state_semantic_availability(self) -> pd.DataFrame:
+        return (
+            self._scores.loc[
+                :,
+                [
+                    "crossfit_id",
+                    "fold_id",
+                    "sample_id",
+                    "subject_id",
+                    "sender",
+                    "receiver",
+                    "interaction_id",
+                    "mode",
+                    "global_sender_lr_score",
+                    "status",
+                    "reason_code",
+                ],
+            ]
+            .rename(columns={"global_sender_lr_score": "availability_score"})
+            .copy(deep=True)
+        )
+
 
 def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     tmp_path: Path,
@@ -392,8 +414,15 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     mechanistic_effects = pd.read_parquet(
         output_dir / module.MECHANISTIC_DIRECTED_EFFECT_FILENAME
     )
+    direct_effects = pd.read_parquet(
+        output_dir / module.SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME
+    )
     des_rankings = pd.read_csv(
         output_dir / module.UNORDERED_RANKING_FILENAME,
+        sep="\t",
+    )
+    mechanistic_des_rankings = pd.read_csv(
+        output_dir / module.MECHANISTIC_UNORDERED_RANKING_FILENAME,
         sep="\t",
     )
     assert tuple(scores.columns) == module.SCORE_COLUMNS
@@ -420,7 +449,7 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     )
     assert not ranking["formal_inference_allowed"].any()
     assert set(des_rankings["condition"]) == {"CTRL", "IZ"}
-    assert des_rankings["ranked_strength"].tolist() == pytest.approx([0.6, 0.6])
+    assert des_rankings["ranked_strength"].tolist() == pytest.approx([1.0, 1.0])
     assert des_rankings["condition_specific_directed_lr"].eq(1).all()
     assert des_rankings["status"].eq("observed").all()
     assert not des_rankings["formal_inference_allowed"].any()
@@ -434,6 +463,22 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     assert module.UNORDERED_RANKING_FILENAME in manifest["outputs"]
     assert module.SCORE_LAYER_FILENAME in manifest["outputs"]
     assert module.MECHANISTIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
+    direct_by_ligand = direct_effects.set_index("ligand")
+    assert direct_by_ligand.loc[
+        "L1", "effect_target_minus_reference"
+    ] == pytest.approx(0.6)
+    assert direct_by_ligand.loc[
+        "L2", "effect_target_minus_reference"
+    ] == pytest.approx(-0.6)
+    assert direct_effects["one_standard_error_stable"].all()
+    assert mechanistic_des_rankings["ranked_strength"].tolist() == pytest.approx(
+        [0.6, 0.6]
+    )
+    assert module.SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
+    assert module.MECHANISTIC_UNORDERED_RANKING_FILENAME in manifest["outputs"]
+    assert module.PAIR_OPPORTUNITY_FILENAME in manifest["outputs"]
+    assert module.REASON_WATERFALL_FILENAME in manifest["outputs"]
+    assert module.EDGE_COMPONENT_DELTA_FILENAME in manifest["outputs"]
     assert mechanistic_effects["effect_semantics"].str.contains("selected_score").all()
 
     for filename in (
@@ -448,8 +493,28 @@ def test_kuppe_ctrl_iz_cli_exports_subject_equal_directional_rankings(
     )
     postprocessed = postprocess_spatial_des(output_dir)
     assert postprocessed["spatial_des_postprocess"]["full_model_refit"] is False
+    assert postprocessed["spatial_des_postprocess"]["ranking_source"] == (
+        "persisted_sender_specific_direct_effects"
+    )
     assert (output_dir / module.DIRECTED_EFFECT_FILENAME).is_file()
     assert (output_dir / module.UNORDERED_RANKING_FILENAME).is_file()
+
+    for filename in (
+        module.DIRECTED_EFFECT_FILENAME,
+        module.UNORDERED_RANKING_FILENAME,
+        module.SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME,
+    ):
+        (output_dir / filename).unlink()
+        postprocessed["outputs"].pop(filename)
+    postprocessed["schema_version"] = "crychic-kuppe-ctrl-iz-crossfit-run-v2"
+    (output_dir / "manifest.json").write_text(
+        json.dumps(postprocessed, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    legacy = postprocess_spatial_des(output_dir)
+    assert legacy["spatial_des_postprocess"]["ranking_source"] == (
+        "legacy_global_sender_lr_scores"
+    )
 
 
 def test_heldout_coverage_rejects_silently_missing_input_sample() -> None:

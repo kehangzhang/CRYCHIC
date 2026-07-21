@@ -11358,6 +11358,128 @@ class CrossFitResult:
 
         return self.read_semantic_score("availability_score")
 
+    def read_state_semantic_availability(self) -> pd.DataFrame:
+        """Read the held-out state availability view with column projection.
+
+        Multigroup differential post-processing only needs the sender-specific
+        state score and its row identity.  Reading this projection avoids
+        materializing the ecosystem rows and the wider provenance payload.
+        The persisted bytes are still authenticated against the result
+        manifest before the projection is returned.
+        """
+
+        table_name = CROSSFIT_SEMANTIC_AVAILABILITY_TABLE
+        records = cast(dict[str, dict[str, Any]], self._manifest["tables"])
+        if table_name not in records:
+            raise KeyError("semantic score views require a schema v8 result")
+        record = records[table_name]
+        path = self.path / _TABLE_FILENAMES[table_name]
+        try:
+            digest = _sha256_file(path)
+        except Exception as error:
+            raise ResultValidationError(
+                "State semantic availability is missing or corrupted",
+                code="corrupted_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and regenerate it from intact artifacts",
+            ) from error
+        if digest != record["sha256"]:
+            raise ResultValidationError(
+                "State semantic availability does not match its manifest",
+                code="crossfit_result_digest_mismatch",
+                field=table_name,
+                remediation="Reject the bundle and regenerate it from intact artifacts",
+            )
+
+        columns = (
+            "crossfit_id",
+            "fold_id",
+            "sample_id",
+            "subject_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+            "mode",
+            "availability_score",
+            "status",
+            "reason_code",
+        )
+        if not set(columns).issubset(record["columns"]):
+            raise ResultValidationError(
+                "State semantic availability manifest lacks required columns",
+                code="crossfit_result_digest_mismatch",
+                field=table_name,
+                remediation="Reject the bundle and regenerate it from intact artifacts",
+            )
+        try:
+            frame = pd.read_parquet(
+                path,
+                columns=list(columns),
+                filters=[("mode", "==", "state")],
+            )
+        except Exception as error:
+            raise ResultValidationError(
+                "State semantic availability is corrupted",
+                code="corrupted_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and regenerate it from intact artifacts",
+            ) from error
+        if frame.empty or tuple(frame.columns) != columns:
+            raise ResultValidationError(
+                "State semantic availability projection is empty or malformed",
+                code="invalid_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        if not frame["mode"].astype(str).eq("state").all():
+            raise ResultValidationError(
+                "State semantic availability contains another communication mode",
+                code="invalid_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        if set(frame["crossfit_id"].astype(str)) != {
+            str(self._manifest["crossfit_id"])
+        }:
+            raise ResultValidationError(
+                "State semantic availability has invalid cross-fit identity",
+                code="crossfit_result_identity_mismatch",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        keys = ("fold_id", "sample_id", "sender", "receiver", "interaction_id")
+        if frame.duplicated(list(keys)).any():
+            raise ResultValidationError(
+                "State semantic availability keys are not unique",
+                code="invalid_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        status = frame["status"].astype(str)
+        if not set(status).issubset({"observed", "not_estimable"}):
+            raise ResultValidationError(
+                "State semantic availability has unsupported statuses",
+                code="invalid_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        score = pd.to_numeric(frame["availability_score"], errors="coerce")
+        observed = status.eq("observed")
+        invalid_observed = (
+            score.loc[observed].isna()
+            | ~score.loc[observed].between(0.0, 1.0)
+            | np.isinf(score.loc[observed])
+        )
+        if invalid_observed.any() or score.loc[~observed].notna().any():
+            raise ResultValidationError(
+                "State semantic availability score/status semantics are invalid",
+                code="invalid_crossfit_result_table",
+                field=table_name,
+                remediation="Reject the bundle and rerun its producer",
+            )
+        frame["availability_score"] = score
+        return frame.reset_index(drop=True)
+
     def read_semantic_receiver_programs(self) -> pd.DataFrame:
         """Return source-agnostic held-out receiver-program scores."""
 

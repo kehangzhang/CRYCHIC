@@ -21,7 +21,12 @@ from benchmarks.adapters.common import (
     write_json,
 )
 from benchmarks.adapters.crychic.des_postprocess import (
+    adjusted_subject_directed_lr_effects,
+    condition_ranking_diagnostics,
     heldout_sample_coverage_audit,
+    score_reason_waterfall,
+    sender_specific_direct_scores,
+    stable_breadth_unordered_cell_pair_rankings,
     subject_equal_directed_lr_effects,
     unordered_cell_pair_des_rankings,
 )
@@ -53,7 +58,7 @@ DATASET_ID = "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
 DES_DATASET_ID = "LermaMartin_MS_CA_vs_Ctrl"
 PREPARATION_SCHEMA = "crychic-prepared-subset-v1"
 DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-ms-ctrl-ca-downsample-v1"
-RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v2"
+RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v3"
 CONTRAST = "CA_vs_Ctrl"
 REFERENCE = "Ctrl"
 TARGET = "CA"
@@ -75,7 +80,16 @@ SCORE_FILENAME = "sender_lr_scores.parquet"
 SCORE_LAYER_FILENAME = "sender_lr_score_layers.parquet"
 DIRECTED_EFFECT_FILENAME = "directed_lr_effects.parquet"
 MECHANISTIC_DIRECTED_EFFECT_FILENAME = "mechanistic_directed_lr_effects.parquet"
+SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME = (
+    "sender_specific_directed_lr_effects.parquet"
+)
 UNORDERED_RANKING_FILENAME = "condition_cell_pair_rankings.tsv"
+MECHANISTIC_UNORDERED_RANKING_FILENAME = (
+    "mechanistic_condition_cell_pair_rankings.tsv"
+)
+PAIR_OPPORTUNITY_FILENAME = "pair_opportunity.tsv"
+REASON_WATERFALL_FILENAME = "downstream_reason_waterfall.tsv"
+EDGE_COMPONENT_DELTA_FILENAME = "edge_component_delta.parquet"
 
 SCORE_COLUMNS = (
     "crossfit_result_id",
@@ -142,6 +156,8 @@ class MSCrossFitResult(Protocol):
         mode: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame: ...
+
+    def read_state_semantic_availability(self) -> pd.DataFrame: ...
 
 
 def _read_json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -691,9 +707,15 @@ def _heldout_fold_audit(
 
 def _method_version() -> str:
     try:
-        return importlib.metadata.version("CRYCHIC")
+        package_version = importlib.metadata.version("CRYCHIC")
     except importlib.metadata.PackageNotFoundError:
-        return "source-tree"
+        package_version = "source-tree"
+    commit = git_metadata(REPO_ROOT).get("commit")
+    return (
+        package_version
+        if not isinstance(commit, str) or not commit
+        else f"{package_version}@{commit[:12]}"
+    )
 
 
 def _output_record(path: Path, table: pd.DataFrame) -> dict[str, object]:
@@ -798,7 +820,14 @@ def run_ms_ctrl_ca(
                 "technical_sample_policy": "mean_within_subject_and_lesion_type",
                 "min_subjects_per_condition": 3,
                 "cell_pair_mode": "unordered_directions_collapsed",
-                "positive_effect_aggregation": "sum",
+                "direct_response": "sender_specific_ligand_x_receptor_availability",
+                "covariate_adjustment": "categorical_fixed_effects:batch",
+                "uncertainty": (
+                    "contrast_specific_hc2_heteroskedasticity_robust_"
+                    "standard_error"
+                ),
+                "primary_aggregation": "one_standard_error_stable_lr_breadth",
+                "release_status": "exploratory_v3",
             },
             "config": config.to_dict(),
             "crossfit_spec": spec.to_dict(),
@@ -821,16 +850,19 @@ def run_ms_ctrl_ca(
             "downstream_confirmed_sample_score": (
                 "heldout_receiver_balanced_descriptive_sender_lr_strength"
             ),
-            "primary_sample_score": "mechanistic_sender_lr_score",
-            "primary_score_policy": "annotate",
+            "primary_sample_score": "sender_specific_availability_state",
+            "primary_score_policy": "direct_differential_head_exploratory_v3",
             "mechanistic_score": (
                 "heldout_availability_x_prior_quality_x_frozen_sender_assignment"
             ),
             "downstream_support": "signed_receiver_family_loss_ratio_annotation",
-            "directed_effect": "CA_minus_Ctrl_subject_equal_mean",
-            "primary_ranking": (
-                "mechanistic_unordered_cell_pair_condition_specific_positive_sum"
+            "directed_effect": (
+                "CA_minus_Ctrl_subject_level_batch_adjusted_hc2_direct_sender_lr"
             ),
+            "primary_ranking": (
+                "one_standard_error_stable_sender_specific_differential_lr_breadth"
+            ),
+            "legacy_mechanistic_ranking_retained": True,
             "technical_sample_policy": "mean_within_subject_and_lesion_type",
             "cells_are_independent_replicates": False,
             "formal_inference_allowed": False,
@@ -885,6 +917,7 @@ def run_ms_ctrl_ca(
             sender_components=sender_components,
             lr_components=lr_components,
         )
+        del sender_components, lr_components
         fold_audit = _heldout_fold_audit(scores, sample_metadata)
         strict_directed_effects = subject_equal_directed_lr_effects(
             scores,
@@ -906,18 +939,110 @@ def run_ms_ctrl_ca(
             score_column="selected_score",
             min_subjects_per_condition=3,
         )
-        rankings = unordered_cell_pair_des_rankings(
+        del mechanistic_scores
+        mechanistic_rankings = unordered_cell_pair_des_rankings(
             mechanistic_directed_effects,
             dataset=DES_DATASET_ID,
             method="crychic",
             method_version=method_version,
             resource=bundle.resource_id,
         )
+        semantic_availability = result.read_state_semantic_availability()
+        direct_scores = sender_specific_direct_scores(
+            score_layers,
+            semantic_availability,
+            condition_column="lesion_type",
+            covariate_columns=("batch",),
+            edge_columns=DIRECTED_EDGE_COLUMNS,
+            response_transform="identity",
+        )
+        del semantic_availability
+        reason_waterfall = score_reason_waterfall(score_layers, direct_scores)
+        direct_effects = adjusted_subject_directed_lr_effects(
+            direct_scores,
+            reference=REFERENCE,
+            target=TARGET,
+            condition_column="lesion_type",
+            categorical_covariates=("batch",),
+            edge_columns=DIRECTED_EDGE_COLUMNS,
+            min_subjects_per_condition=3,
+        )
+        del direct_scores
+        rankings, pair_opportunity = stable_breadth_unordered_cell_pair_rankings(
+            direct_effects,
+            dataset=DES_DATASET_ID,
+            method="crychic",
+            method_version=method_version,
+            resource=bundle.resource_id,
+        )
+        ranking_diagnostics = condition_ranking_diagnostics(rankings)
+        if ranking_diagnostics["any_degenerate_condition"]:
+            raise RuntimeError("primary condition-level ranking is degenerate")
+        direct_component = direct_effects.loc[
+            :,
+            [
+                *DIRECTED_EDGE_COLUMNS,
+                "mean_strength_reference",
+                "mean_strength_target",
+                "effect_target_minus_reference",
+                "effect_standard_error_hc2",
+                "one_standard_error_stable",
+                "status",
+                "reason_code",
+            ],
+        ].rename(
+            columns={
+                column: f"direct_{column}"
+                for column in (
+                    "mean_strength_reference",
+                    "mean_strength_target",
+                    "effect_target_minus_reference",
+                    "effect_standard_error_hc2",
+                    "one_standard_error_stable",
+                    "status",
+                    "reason_code",
+                )
+            }
+        )
+        mechanistic_component = mechanistic_directed_effects.loc[
+            :,
+            [
+                *DIRECTED_EDGE_COLUMNS,
+                "mean_strength_reference",
+                "mean_strength_target",
+                "effect_target_minus_reference",
+                "status",
+                "reason_code",
+            ],
+        ].rename(
+            columns={
+                column: f"mechanistic_{column}"
+                for column in (
+                    "mean_strength_reference",
+                    "mean_strength_target",
+                    "effect_target_minus_reference",
+                    "status",
+                    "reason_code",
+                )
+            }
+        )
+        edge_component_delta = direct_component.merge(
+            mechanistic_component,
+            on=list(DIRECTED_EDGE_COLUMNS),
+            how="outer",
+            validate="one_to_one",
+            sort=False,
+        )
         score_path = output / SCORE_FILENAME
         score_layer_path = output / SCORE_LAYER_FILENAME
         strict_directed_path = output / DIRECTED_EFFECT_FILENAME
         mechanistic_directed_path = output / MECHANISTIC_DIRECTED_EFFECT_FILENAME
+        direct_effect_path = output / SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME
         ranking_path = output / UNORDERED_RANKING_FILENAME
+        mechanistic_ranking_path = output / MECHANISTIC_UNORDERED_RANKING_FILENAME
+        pair_opportunity_path = output / PAIR_OPPORTUNITY_FILENAME
+        reason_waterfall_path = output / REASON_WATERFALL_FILENAME
+        edge_component_path = output / EDGE_COMPONENT_DELTA_FILENAME
         scores.to_parquet(score_path, index=False, compression="zstd")
         score_layers.to_parquet(score_layer_path, index=False, compression="zstd")
         strict_directed_effects.to_parquet(
@@ -926,7 +1051,25 @@ def run_ms_ctrl_ca(
         mechanistic_directed_effects.to_parquet(
             mechanistic_directed_path, index=False, compression="zstd"
         )
+        direct_effects.to_parquet(
+            direct_effect_path, index=False, compression="zstd"
+        )
         rankings.to_csv(ranking_path, sep="\t", index=False, lineterminator="\n")
+        mechanistic_rankings.to_csv(
+            mechanistic_ranking_path,
+            sep="\t",
+            index=False,
+            lineterminator="\n",
+        )
+        pair_opportunity.to_csv(
+            pair_opportunity_path, sep="\t", index=False, lineterminator="\n"
+        )
+        reason_waterfall.to_csv(
+            reason_waterfall_path, sep="\t", index=False, lineterminator="\n"
+        )
+        edge_component_delta.to_parquet(
+            edge_component_path, index=False, compression="zstd"
+        )
         crossfit_manifest_path = result.path / "crossfit_manifest.json"
         if not crossfit_manifest_path.is_file():
             raise FileNotFoundError(
@@ -968,6 +1111,27 @@ def run_ms_ctrl_ca(
                         score_column="selected_score",
                         status_column="selected_score_status",
                     ),
+                    "primary_condition_rankings": ranking_diagnostics,
+                    "sender_specific_direct_effect_signs": {
+                        "positive": int(
+                            direct_effects.loc[
+                                direct_effects["status"].eq("observed"),
+                                "effect_target_minus_reference",
+                            ].gt(0.0).sum()
+                        ),
+                        "negative": int(
+                            direct_effects.loc[
+                                direct_effects["status"].eq("observed"),
+                                "effect_target_minus_reference",
+                            ].lt(0.0).sum()
+                        ),
+                        "zero": int(
+                            direct_effects.loc[
+                                direct_effects["status"].eq("observed"),
+                                "effect_target_minus_reference",
+                            ].eq(0.0).sum()
+                        ),
+                    },
                 },
                 "outputs": {
                     SCORE_FILENAME: _output_record(score_path, scores),
@@ -980,7 +1144,22 @@ def run_ms_ctrl_ca(
                     MECHANISTIC_DIRECTED_EFFECT_FILENAME: _output_record(
                         mechanistic_directed_path, mechanistic_directed_effects
                     ),
+                    SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME: _output_record(
+                        direct_effect_path, direct_effects
+                    ),
                     UNORDERED_RANKING_FILENAME: _output_record(ranking_path, rankings),
+                    MECHANISTIC_UNORDERED_RANKING_FILENAME: _output_record(
+                        mechanistic_ranking_path, mechanistic_rankings
+                    ),
+                    PAIR_OPPORTUNITY_FILENAME: _output_record(
+                        pair_opportunity_path, pair_opportunity
+                    ),
+                    REASON_WATERFALL_FILENAME: _output_record(
+                        reason_waterfall_path, reason_waterfall
+                    ),
+                    EDGE_COMPONENT_DELTA_FILENAME: _output_record(
+                        edge_component_path, edge_component_delta
+                    ),
                 },
             }
         )

@@ -12,6 +12,7 @@ import pandas as pd
 
 from benchmarks.adapters.common import sha256_file, write_json
 from benchmarks.adapters.crychic.des_postprocess import (
+    stable_breadth_unordered_cell_pair_rankings,
     subject_equal_directed_lr_effects,
     unordered_cell_pair_des_rankings,
 )
@@ -22,11 +23,16 @@ from benchmarks.adapters.crychic.run_kuppe_ctrl_iz import (
     REFERENCE,
     RUN_SCHEMA,
     SCORE_FILENAME,
+    SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME,
     TARGET,
     UNORDERED_RANKING_FILENAME,
 )
 
 POSTPROCESS_SCHEMA = "crychic-kuppe-spatial-des-postprocess-v1"
+SUPPORTED_RUN_SCHEMAS = {
+    "crychic-kuppe-ctrl-iz-crossfit-run-v2",
+    RUN_SCHEMA,
+}
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
@@ -64,7 +70,7 @@ def run(run_dir: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
         raise FileNotFoundError(manifest_path)
     manifest = _read_manifest(manifest_path)
     if (
-        manifest.get("schema_version") != RUN_SCHEMA
+        manifest.get("schema_version") not in SUPPORTED_RUN_SCHEMAS
         or manifest.get("status") != "complete"
     ):
         raise ValueError("Kuppe run must be complete and use the expected schema")
@@ -106,13 +112,40 @@ def run(run_dir: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
         edge_columns=DIRECTED_EDGE_COLUMNS,
         min_subjects_per_condition=3,
     )
-    rankings = unordered_cell_pair_des_rankings(
-        directed,
-        dataset=DATASET_ID,
-        method="crychic",
-        method_version=method_version,
-        resource=resource_id,
-    )
+    direct_record = outputs.get(SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME)
+    if isinstance(direct_record, Mapping):
+        direct_path = root / SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME
+        if (
+            not direct_path.is_file()
+            or direct_record.get("filename")
+            != SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME
+            or direct_record.get("sha256") != sha256_file(direct_path)
+        ):
+            raise ValueError(
+                "sender-specific directed effects disagree with the run manifest"
+            )
+        direct_effects = pd.read_parquet(direct_path)
+        if direct_record.get("rows") != len(direct_effects):
+            raise ValueError(
+                "sender-specific directed effect rows disagree with the run manifest"
+            )
+        rankings, _ = stable_breadth_unordered_cell_pair_rankings(
+            direct_effects,
+            dataset=DATASET_ID,
+            method="crychic",
+            method_version=method_version,
+            resource=resource_id,
+        )
+        ranking_source = "persisted_sender_specific_direct_effects"
+    else:
+        rankings = unordered_cell_pair_des_rankings(
+            directed,
+            dataset=DATASET_ID,
+            method="crychic",
+            method_version=method_version,
+            resource=resource_id,
+        )
+        ranking_source = "legacy_global_sender_lr_scores"
     directed.to_parquet(directed_path, index=False, compression="zstd")
     rankings.to_csv(ranking_path, sep="\t", index=False, lineterminator="\n")
 
@@ -122,9 +155,8 @@ def run(run_dir: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
     if not isinstance(semantics, dict):
         semantics = {}
         manifest["score_semantics"] = semantics
-    semantics["primary_spatial_des_ranking"] = (
-        "sum_positive_subject_equal_directed_lr_effects_after_unordered_"
-        "cell_pair_collapse"
+    semantics["primary_spatial_des_ranking"] = str(
+        rankings["ranking_semantics"].iloc[0]
     )
     manifest["spatial_des_postprocess"] = {
         "schema_version": POSTPROCESS_SCHEMA,
@@ -133,6 +165,7 @@ def run(run_dir: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
         "technical_sample_policy": "mean_within_subject_and_condition",
         "minimum_subjects_per_condition": 3,
         "full_model_refit": False,
+        "ranking_source": ranking_source,
     }
     write_json(manifest_path, manifest)
     return manifest

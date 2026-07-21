@@ -252,6 +252,28 @@ class _FakeResult:
         assert status is None
         return self._lr.copy(deep=True)
 
+    def read_state_semantic_availability(self) -> pd.DataFrame:
+        return (
+            self._scores.loc[
+                :,
+                [
+                    "crossfit_id",
+                    "fold_id",
+                    "sample_id",
+                    "subject_id",
+                    "sender",
+                    "receiver",
+                    "interaction_id",
+                    "mode",
+                    "global_sender_lr_score",
+                    "status",
+                    "reason_code",
+                ],
+            ]
+            .rename(columns={"global_sender_lr_score": "availability_score"})
+            .copy(deep=True)
+        )
+
 
 def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     tmp_path: Path,
@@ -409,7 +431,14 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     mechanistic_effects = pd.read_parquet(
         output_dir / module.MECHANISTIC_DIRECTED_EFFECT_FILENAME
     )
+    direct_effects = pd.read_parquet(
+        output_dir / module.SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME
+    )
     rankings = pd.read_csv(output_dir / module.UNORDERED_RANKING_FILENAME, sep="\t")
+    mechanistic_rankings = pd.read_csv(
+        output_dir / module.MECHANISTIC_UNORDERED_RANKING_FILENAME,
+        sep="\t",
+    )
     assert len(scores) == 14
     assert tuple(score_layers.columns) == module.SCORE_LAYER_COLUMNS
     assert score_layers["selected_score"].equals(
@@ -427,11 +456,26 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
         {"sender": "A", "receiver": "B"},
     ]
     by_condition = rankings.set_index("condition")
-    assert by_condition.loc["CA", "ranked_strength"] == pytest.approx(1.0)
+    assert by_condition.loc["CA", "ranked_strength"] == pytest.approx(2.0)
     assert by_condition.loc["CA", "condition_specific_directed_lr"] == 2
     assert by_condition.loc["Ctrl", "ranked_strength"] == pytest.approx(0.0)
     assert by_condition.loc["Ctrl", "condition_specific_directed_lr"] == 0
     assert by_condition["estimable_directed_lr"].eq(2).all()
+    direct_by_ligand = direct_effects.set_index("ligand")
+    assert direct_by_ligand.loc[
+        "L1", "effect_target_minus_reference"
+    ] == pytest.approx(0.4)
+    assert direct_by_ligand.loc[
+        "L2", "effect_target_minus_reference"
+    ] == pytest.approx(0.6)
+    assert direct_effects["one_standard_error_stable"].all()
+    mechanistic_by_condition = mechanistic_rankings.set_index("condition")
+    assert mechanistic_by_condition.loc[
+        "CA", "ranked_strength"
+    ] == pytest.approx(1.0)
+    assert mechanistic_by_condition.loc[
+        "Ctrl", "ranked_strength"
+    ] == pytest.approx(0.0)
     assert not rankings["formal_inference_allowed"].any()
     forbidden = {"p", "p_value", "q", "q_value", "pval", "qval"}
     assert not forbidden.intersection(scores.columns)
@@ -439,6 +483,11 @@ def test_ms_cli_subject_averages_repeats_and_exports_unordered_des(
     assert not forbidden.intersection(rankings.columns)
     assert module.SCORE_LAYER_FILENAME in manifest["outputs"]
     assert module.MECHANISTIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
+    assert module.SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME in manifest["outputs"]
+    assert module.MECHANISTIC_UNORDERED_RANKING_FILENAME in manifest["outputs"]
+    assert module.PAIR_OPPORTUNITY_FILENAME in manifest["outputs"]
+    assert module.REASON_WATERFALL_FILENAME in manifest["outputs"]
+    assert module.EDGE_COMPONENT_DELTA_FILENAME in manifest["outputs"]
 
 
 def test_ms_subset_manifest_fails_closed_on_output_hash(

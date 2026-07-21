@@ -471,6 +471,12 @@ def test_v8_roundtrip_replays_all_tuned_semantic_views_exactly(
             loaded.read_semantic_score(semantic_output),
             tuned_scores.table(semantic_output),
         )
+    projected_state = loaded.read_state_semantic_availability()
+    expected_state = tuned_scores.availability_score.loc[
+        tuned_scores.availability_score["mode"].astype(str).eq("state"),
+        list(projected_state.columns),
+    ].reset_index(drop=True)
+    pd.testing.assert_frame_equal(projected_state, expected_state)
     assert tuple(loaded.query_integrated_lr_scores().columns) == (
         CROSSFIT_INTEGRATED_LR_QUERY_COLUMNS
     )

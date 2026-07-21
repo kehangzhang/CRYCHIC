@@ -87,14 +87,18 @@ semantics. No ranking is allowed across comparison panels.
 | multi-sample | scSeqCommDiff | 2.0.0 | pseudo-Wilcoxon; raw p<0.05; max intracellular score >0.5 or unavailable |
 | multi-sample | LIANA+ | 1.5.0 | decoupler 1.8.0 and pydeseq2 0.5.0 Wald workflow; raw interaction p<0.05 |
 | multi-sample sensitivity | LIANA rank aggregate | 1.7.3 | descriptive common-resource sensitivity arm; never ranked as the exact S4 method |
-| multi-sample | CRYCHIC | source tree | subject-blocked three-fold descriptive cross-fit; subject-equal condition effect |
+| multi-sample | CRYCHIC | source tree | subject-blocked two-fold descriptive cross-fit; subject-level condition effect |
 
 CRYCHIC emits descriptive held-out strengths, not formal p-values, in this
-benchmark. Its condition-specific ranking is the sum of positive subject-equal
-LR strength changes after collapsing communication directions. Independent
-outer folds may be scheduled in parallel. The fold-worker count affects only
-execution scheduling: fold membership, held-out predictions, aggregation, and
-the scientific comparison identity are unchanged.
+benchmark. Its exploratory V3 ranking counts sender-specific LR effects whose
+absolute subject-level, covariate-adjusted contrast is at least one
+contrast-specific HC2 standard error, after collapsing communication
+directions. Absolute condition means, signed effects, opportunity-normalized
+magnitudes, stable-edge breadth, and the correlation between breadth and the
+number of estimable LR edges are reported separately. Independent outer folds
+may be scheduled in parallel. The fold-worker count affects only execution
+scheduling: fold membership, held-out predictions, aggregation, and the
+scientific comparison identity are unchanged.
 
 CellChat's Supplementary S4 prose describes sender-ligand and
 receiver-receptor fold-change filtering, while the official 2.1.2 comparison
