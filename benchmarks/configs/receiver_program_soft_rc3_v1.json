@@ -1,0 +1,53 @@
+{
+  "schema_version": "crychic-receiver-program-soft-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [601, 602, 603, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614, 615, 616, 617, 618, 619, 620],
+  "holdout_seeds": [6001, 6002, 6003, 6004, 6005, 6006, 6007, 6008, 6009, 6010, 6011, 6012, 6013, 6014, 6015, 6016, 6017, 6018, 6019, 6020],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "lr_call_signal_scale": 0.45,
+    "lr_call_noise_sd": 1.4,
+    "program_scenarios": [
+      "helpful_program",
+      "weak_program",
+      "missing_helpful_program",
+      "noisy_program",
+      "antagonistic_program",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "program_candidates": [
+    {"name": "program_max_alpha_0", "maximum_alpha": 0.0},
+    {"name": "program_max_alpha_1", "maximum_alpha": 1.0},
+    {"name": "program_max_alpha_2", "maximum_alpha": 2.0},
+    {"name": "program_max_alpha_4", "maximum_alpha": 4.0},
+    {"name": "program_max_alpha_6", "maximum_alpha": 6.0}
+  ],
+  "program_policy": {
+    "alpha_cap": 1.5,
+    "minimum_concordance_edges": 200,
+    "missing_evidence_weight": 1.0,
+    "reliability": "max(0,2*(lr_program_sign_concordance-0.5))"
+  },
+  "selection": {
+    "primary_scenarios": ["helpful_program", "weak_program", "missing_helpful_program"],
+    "safety_scenarios": ["noisy_program", "antagonistic_program"],
+    "primary_metric": "pair_rank_spearman",
+    "maximum_safety_mean_regression": 0.005,
+    "global_null_maximum_effective_alpha_q95": 0.25,
+    "holdout_not_used_for_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
