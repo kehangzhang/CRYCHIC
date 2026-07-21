@@ -28,6 +28,23 @@ class ReceiverProgramSoftFit:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class TwoSidedProgramCalibration:
+    """Coverage-derived attenuation for contradictory program evidence."""
+
+    positive_program_edges: int
+    negative_program_edges: int
+    nonzero_program_edges: int
+    minority_sign_fraction: float
+    required_two_sided_fraction: float
+    contradiction_scale: float
+    fit_status: str = "candidate_unreleased"
+    formal_release_allowed: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 def fit_receiver_program_reliability(
     lr_statistic: Any,
     program_z: Any,
@@ -94,9 +111,55 @@ def receiver_program_weights(
     return weights, evidence
 
 
+def two_sided_calibrated_program_weights(
+    direction: Any,
+    program_z: Any,
+    fit: ReceiverProgramSoftFit,
+    *,
+    required_two_sided_fraction: float,
+) -> tuple[np.ndarray, np.ndarray, TwoSidedProgramCalibration]:
+    """Attenuate contradiction penalties when program signs are one-sided."""
+
+    if (
+        not np.isfinite(required_two_sided_fraction)
+        or required_two_sided_fraction < 0.0
+        or required_two_sided_fraction > 0.5
+    ):
+        raise ValueError("required two-sided fraction must lie in [0, 0.5]")
+    _, oriented_evidence = receiver_program_weights(direction, program_z, fit)
+    program = np.asarray(program_z, dtype=float)
+    positive = int(np.sum(np.isfinite(program) & (program > 0.0)))
+    negative = int(np.sum(np.isfinite(program) & (program < 0.0)))
+    nonzero = positive + negative
+    minority_fraction = min(positive, negative) / nonzero if nonzero else 0.0
+    if required_two_sided_fraction == 0.0:
+        contradiction_scale = 1.0
+    else:
+        contradiction_scale = min(1.0, minority_fraction / required_two_sided_fraction)
+    calibrated_evidence = np.where(
+        oriented_evidence < 0.0,
+        contradiction_scale * oriented_evidence,
+        oriented_evidence,
+    )
+    weights = np.exp(fit.effective_alpha * calibrated_evidence)
+    if not np.isfinite(weights).all() or (weights <= 0.0).any():
+        raise AssertionError("calibrated program weights must be finite and positive")
+    calibration = TwoSidedProgramCalibration(
+        positive_program_edges=positive,
+        negative_program_edges=negative,
+        nonzero_program_edges=nonzero,
+        minority_sign_fraction=minority_fraction,
+        required_two_sided_fraction=required_two_sided_fraction,
+        contradiction_scale=contradiction_scale,
+    )
+    return weights, calibrated_evidence, calibration
+
+
 __all__ = [
     "MIN_CONCORDANCE_EDGES",
     "ReceiverProgramSoftFit",
+    "TwoSidedProgramCalibration",
     "fit_receiver_program_reliability",
     "receiver_program_weights",
+    "two_sided_calibrated_program_weights",
 ]

@@ -1,0 +1,62 @@
+{
+  "schema_version": "crychic-two-sided-program-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820],
+  "holdout_seeds": [8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 8010, 8011, 8012, 8013, 8014, 8015, 8016, 8017, 8018, 8019, 8020],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "lr_call_signal_scale": 0.45,
+    "lr_call_noise_sd": 1.4,
+    "program_sign_bias": 2.0,
+    "scenarios": [
+      "balanced_helpful_program",
+      "weak_program",
+      "missing_helpful_program",
+      "positive_biased_helpful_program",
+      "negative_biased_helpful_program",
+      "balanced_noisy_program",
+      "positive_biased_noisy_program",
+      "negative_biased_noisy_program",
+      "antagonistic_program",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "program_policy": {
+    "maximum_alpha": 4.0,
+    "alpha_cap": 1.5,
+    "minimum_concordance_edges": 200,
+    "missing_evidence_weight": 1.0
+  },
+  "candidates": [
+    {"name": "signed_rc3_reference", "required_two_sided_fraction": 0.0},
+    {"name": "two_sided_005", "required_two_sided_fraction": 0.05},
+    {"name": "two_sided_010", "required_two_sided_fraction": 0.1},
+    {"name": "two_sided_020", "required_two_sided_fraction": 0.2},
+    {"name": "two_sided_030", "required_two_sided_fraction": 0.3}
+  ],
+  "selection": {
+    "balanced_primary_scenarios": ["balanced_helpful_program", "weak_program", "missing_helpful_program"],
+    "biased_primary_scenarios": ["positive_biased_helpful_program", "negative_biased_helpful_program"],
+    "safety_scenarios": ["balanced_noisy_program", "positive_biased_noisy_program", "negative_biased_noisy_program", "antagonistic_program"],
+    "maximum_development_safety_mean_regression": 0.003,
+    "global_null_maximum_effective_alpha_q95": 0.25,
+    "minimum_holdout_biased_mean_delta_vs_signed": 0.002,
+    "maximum_holdout_balanced_mean_regression_vs_signed": 0.003,
+    "maximum_holdout_safety_mean_regression_vs_signed": 0.003,
+    "novel_candidate_required": true,
+    "holdout_not_used_for_candidate_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}

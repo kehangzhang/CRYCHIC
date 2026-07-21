@@ -5,6 +5,7 @@ import numpy as np
 from benchmarks.literature.receiver_program_soft import (
     fit_receiver_program_reliability,
     receiver_program_weights,
+    two_sided_calibrated_program_weights,
 )
 
 
@@ -43,3 +44,38 @@ def test_insufficient_program_coverage_fails_closed() -> None:
     assert fit.effective_alpha == 0.0
     weights, _ = receiver_program_weights(np.ones(20), np.ones(20), fit)
     np.testing.assert_array_equal(weights, np.ones(20))
+
+
+def test_two_sided_calibration_matches_signed_when_coverage_is_balanced() -> None:
+    direction = np.array([1.0, -1.0, 1.0, -1.0])
+    program = np.array([2.0, -2.0, -1.0, 1.0])
+    fit = fit_receiver_program_reliability(
+        direction, program, maximum_alpha=1.0, minimum_edges=1
+    )
+    signed, _ = receiver_program_weights(direction, program, fit)
+    calibrated, _, diagnostics = two_sided_calibrated_program_weights(
+        direction,
+        program,
+        fit,
+        required_two_sided_fraction=0.2,
+    )
+    np.testing.assert_array_equal(calibrated, signed)
+    assert diagnostics.contradiction_scale == 1.0
+
+
+def test_one_sided_calibration_neutralizes_only_contradiction_penalty() -> None:
+    direction = np.array([1.0, -1.0, 1.0, -1.0])
+    program = np.array([2.0, 2.0, 1.0, 1.0])
+    fit = fit_receiver_program_reliability(
+        np.ones(4), program, maximum_alpha=1.0, minimum_edges=1
+    )
+    calibrated, evidence, diagnostics = two_sided_calibrated_program_weights(
+        direction,
+        program,
+        fit,
+        required_two_sided_fraction=0.1,
+    )
+    assert (calibrated[direction > 0.0] > 1.0).all()
+    np.testing.assert_array_equal(calibrated[direction < 0.0], np.ones(2))
+    np.testing.assert_array_equal(evidence[direction < 0.0], np.zeros(2))
+    assert diagnostics.contradiction_scale == 0.0
