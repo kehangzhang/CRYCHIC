@@ -1,0 +1,65 @@
+{
+  "code": {
+    "commit": "56658c192c4d39831e377e355490190131d3e5bd",
+    "dirty": true
+  },
+  "config": {
+    "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/signed_cardinality_rc1_v3.json",
+    "sha256": "b322c140b16605a93b01937cd98c1382a7c7cf0f1d6115718246b994cf36930e"
+  },
+  "elapsed_seconds": 252.89640216808766,
+  "limitations": [
+    "not_a_full_pipeline_resampling_calibration",
+    "working_model_probabilities_are_not_released_scientific_posteriors",
+    "real_cohorts_are_not_used_for_candidate_selection"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 160,
+      "sha256": "06fce2338c1b11d47e9c540a380ca897969c050e12f1226fac3dbdf32aaaf94a"
+    },
+    "candidate_selection.tsv": {
+      "rows": 8,
+      "sha256": "bacb4fe760c859018ca2d130fc9282c91063c36ead4b970dc49e4cba9395ed0e"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 7680,
+      "sha256": "7bfb0c70909b5c972a7670577d3632818c8198bbc2ef406e21956db9ca8d66ae"
+    }
+  },
+  "schema_version": "crychic-signed-cardinality-benchmark-result-v1",
+  "selection": {
+    "candidate": {
+      "delta_fraction": 0.5,
+      "kind": "spike_normal",
+      "name": "symmetric_eb_delta_0.5"
+    },
+    "config_sha256": "b322c140b16605a93b01937cd98c1382a7c7cf0f1d6115718246b994cf36930e",
+    "development_selection_diagnostics": {
+      "candidate": "symmetric_eb_delta_0.5",
+      "development_rank": 1,
+      "evaluations": 432,
+      "null_false_count_rate_mean": 0.00017374803217280253,
+      "null_false_count_rate_quantile": 0.0006992551966946996,
+      "null_gate_pass": true,
+      "pair_rank_spearman": 0.8603791905541628,
+      "selected": true,
+      "tie_fraction": 0.0,
+      "top_quartile_auroc": 0.9451573992224761
+    },
+    "formal_release_allowed": false,
+    "holdout_used_for_selection": false,
+    "probability_status": "candidate_unreleased",
+    "schema_version": "crychic-signed-cardinality-frozen-candidate-v1",
+    "selected_candidate": "symmetric_eb_delta_0.5",
+    "selected_on": "development_only",
+    "working_prior": {
+      "family": "zero_spike_with_direction_specific_half_normal_slabs",
+      "fit": "heteroskedastic_marginal_mle",
+      "min_slab_scale_fraction": 1.5,
+      "reason": "direction_specific_scale_and_prevalence_with_null_identifiability"
+    }
+  },
+  "simulation_level": "effect_and_standard_error_summary_only",
+  "status": "complete"
+}
