@@ -79,6 +79,21 @@ def test_nonzero_effect_with_zero_se_fails_closed() -> None:
         )
 
 
+def test_identifiable_slab_collapses_pure_null_to_null_boundary() -> None:
+    rng = np.random.default_rng(41)
+    se = rng.lognormal(mean=np.log(0.07), sigma=0.35, size=5000)
+    effect = rng.normal(scale=se)
+    fit = fit_spike_normal_working_prior(
+        effect, se, min_slab_scale_fraction=1.5
+    )
+    probabilities = signed_working_probabilities(
+        effect, se, fit, delta_fraction=0.5
+    )
+    assert fit.null_weight > 0.99
+    assert np.mean(probabilities["working_p_target_active"]) < 0.001
+    assert np.mean(probabilities["working_p_reference_active"]) < 0.001
+
+
 def test_simulation_is_deterministic_and_selection_ignores_holdout() -> None:
     config = {
         "simulation": {
@@ -110,3 +125,46 @@ def test_simulation_is_deterministic_and_selection_ignores_holdout() -> None:
             )
     selected, _ = _select_candidate(pd.DataFrame(rows), config)
     assert selected == "a"
+
+
+def test_selection_applies_development_null_gate_before_performance() -> None:
+    rows = []
+    for candidate, performance, null_rate in (("fast", 0.9, 0.1), ("safe", 0.8, 0.0)):
+        rows.extend(
+            [
+                {
+                    "split": "development",
+                    "scenario": "sparse_low_n",
+                    "candidate": candidate,
+                    "pair_rank_spearman": performance,
+                    "top_quartile_auroc": performance,
+                    "tie_fraction": 0.0,
+                    "mean_predicted_count": 1.0,
+                    "mean_opportunities": 100.0,
+                },
+                {
+                    "split": "development",
+                    "scenario": "global_null",
+                    "candidate": candidate,
+                    "pair_rank_spearman": np.nan,
+                    "top_quartile_auroc": np.nan,
+                    "tie_fraction": 0.0,
+                    "mean_predicted_count": null_rate * 100.0,
+                    "mean_opportunities": 100.0,
+                },
+            ]
+        )
+    config = {
+        "selection": {
+            "eligible_scenarios": ["sparse_low_n"],
+            "null_gate": {
+                "scenario": "global_null",
+                "quantile": 0.95,
+                "maximum_false_count_per_opportunity": 0.001,
+            },
+        }
+    }
+    selected, summary = _select_candidate(pd.DataFrame(rows), config)
+    assert selected == "safe"
+    fast = summary.loc[summary["candidate"].eq("fast")].iloc[0]
+    assert not bool(fast["null_gate_pass"])

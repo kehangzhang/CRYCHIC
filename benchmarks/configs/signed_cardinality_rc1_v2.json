@@ -1,0 +1,54 @@
+{
+  "schema_version": "crychic-signed-cardinality-simulation-v2",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224],
+  "holdout_seeds": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+  "simulation": {
+    "pair_count": 36,
+    "edge_opportunities": [48, 96, 192],
+    "effect_floor": 0.06,
+    "effect_scale": 0.08,
+    "scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing",
+      "global_null_imbalanced_opportunity"
+    ]
+  },
+  "working_prior": {
+    "family": "zero_spike_symmetric_normal_slab",
+    "fit": "heteroskedastic_marginal_mle",
+    "min_slab_scale_fraction": 1.5,
+    "reason": "prevent_null_slab_nonidentifiability"
+  },
+  "candidates": [
+    {"name": "hard_z1", "kind": "hard_z", "threshold": 1.0},
+    {"name": "wald_p05", "kind": "hard_z", "threshold": 1.959963984540054},
+    {"name": "continuous_sign", "kind": "continuous_sign"},
+    {"name": "eb_delta_0", "kind": "spike_normal", "delta_fraction": 0.0},
+    {"name": "eb_delta_0.1", "kind": "spike_normal", "delta_fraction": 0.1},
+    {"name": "eb_delta_0.25", "kind": "spike_normal", "delta_fraction": 0.25},
+    {"name": "eb_delta_0.5", "kind": "spike_normal", "delta_fraction": 0.5}
+  ],
+  "selection": {
+    "eligible_scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing"
+    ],
+    "primary_metric": "pair_rank_spearman",
+    "aggregation": "macro_mean_across_scenario_seed_direction",
+    "tie_breakers": ["top_quartile_auroc", "lower_tie_fraction", "candidate_name"],
+    "null_gate": {
+      "scenario": "global_null_imbalanced_opportunity",
+      "metric": "false_expected_count_per_opportunity",
+      "quantile": 0.95,
+      "maximum_false_count_per_opportunity": 0.001
+    },
+    "holdout_not_used_for_selection": true
+  }
+}

@@ -25,6 +25,7 @@ class SpikeNormalFit:
     null_weight: float
     slab_sd: float
     scale: float
+    min_slab_scale_fraction: float
     n_fit_edges: int
     converged: bool
     negative_log_likelihood: float
@@ -56,10 +57,19 @@ def fit_spike_normal_working_prior(
     standard_error: np.ndarray,
     *,
     min_fit_edges: int = MIN_FIT_EDGES,
+    min_slab_scale_fraction: float = 0.01,
 ) -> SpikeNormalFit:
     """Fit a zero-spike/symmetric-normal-slab marginal model by MLE."""
 
     y, se = _validated_effect_se(effect, standard_error)
+    if (
+        not np.isfinite(min_slab_scale_fraction)
+        or min_slab_scale_fraction <= 0.0
+        or min_slab_scale_fraction > 10.0
+    ):
+        raise ValueError(
+            "min_slab_scale_fraction must be finite and in the interval (0, 10]"
+        )
     eligible = np.isfinite(y) & np.isfinite(se) & (se > 0.0)
     y_fit = y[eligible]
     se_fit = se[eligible]
@@ -95,7 +105,10 @@ def fit_spike_normal_working_prior(
         )
         return float(-np.sum(log_marginal))
 
-    bounds = ((float(logit(1e-4)), float(logit(1.0 - 1e-4))), (-4.605, 4.605))
+    bounds = (
+        (float(logit(1e-4)), float(logit(1.0 - 1e-4))),
+        (float(np.log(min_slab_scale_fraction)), float(np.log(100.0))),
+    )
     candidates = []
     for slab_weight in (0.05, 0.2, 0.5):
         for relative_sd in (0.5, 1.0, 2.0):
@@ -112,6 +125,7 @@ def fit_spike_normal_working_prior(
         null_weight=1.0 - slab_weight,
         slab_sd=scale * float(np.exp(best.x[1])),
         scale=scale,
+        min_slab_scale_fraction=min_slab_scale_fraction,
         n_fit_edges=len(y_fit),
         converged=bool(best.success),
         negative_log_likelihood=float(best.fun),
@@ -205,6 +219,7 @@ def build_signed_expected_cardinality_head(
     arm: str,
     delta_fraction: float,
     min_fit_edges: int = MIN_FIT_EDGES,
+    min_slab_scale_fraction: float = 0.01,
 ) -> tuple[pd.DataFrame, SpikeNormalFit]:
     """Build edge weights compatible with component-swap pair aggregation."""
 
@@ -234,7 +249,10 @@ def build_signed_expected_cardinality_head(
         effects["effect_standard_error_hc2"], errors="coerce"
     ).to_numpy(dtype=float)
     fit = fit_spike_normal_working_prior(
-        effect[observed], standard_error[observed], min_fit_edges=min_fit_edges
+        effect[observed],
+        standard_error[observed],
+        min_fit_edges=min_fit_edges,
+        min_slab_scale_fraction=min_slab_scale_fraction,
     )
     probabilities = signed_working_probabilities(
         effect, standard_error, fit, delta_fraction=delta_fraction

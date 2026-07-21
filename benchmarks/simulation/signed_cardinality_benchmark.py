@@ -126,7 +126,10 @@ def simulate_effect_summary(
 
 
 def _candidate_weights(
-    table: pd.DataFrame, candidates: Sequence[Mapping[str, Any]]
+    table: pd.DataFrame,
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    min_slab_scale_fraction: float = 0.01,
 ) -> dict[str, tuple[np.ndarray, np.ndarray, dict[str, object]]]:
     effect = table["effect"].to_numpy(dtype=float)
     se = table["standard_error"].to_numpy(dtype=float)
@@ -139,7 +142,12 @@ def _candidate_weights(
     )
     needs_eb = any(candidate["kind"] == "spike_normal" for candidate in candidates)
     fit = (
-        fit_spike_normal_working_prior(effect, se, min_fit_edges=200)
+        fit_spike_normal_working_prior(
+            effect,
+            se,
+            min_fit_edges=200,
+            min_slab_scale_fraction=min_slab_scale_fraction,
+        )
         if needs_eb
         else None
     )
@@ -189,8 +197,13 @@ def evaluate_candidates(
     candidates: Sequence[Mapping[str, Any]],
     *,
     split: str,
+    min_slab_scale_fraction: float = 0.01,
 ) -> pd.DataFrame:
-    weights = _candidate_weights(table, candidates)
+    weights = _candidate_weights(
+        table,
+        candidates,
+        min_slab_scale_fraction=min_slab_scale_fraction,
+    )
     records: list[dict[str, object]] = []
     for candidate, (target, reference, metadata) in weights.items():
         working = table.loc[:, ["pair_id", "n_opportunities"]].copy()
@@ -225,6 +238,7 @@ def evaluate_candidates(
                     "tie_fraction": float(score.duplicated(keep=False).mean()),
                     "mean_predicted_count": float(score.mean()),
                     "mean_true_count": float(truth.mean()),
+                    "mean_opportunities": float(pairs["n_opportunities"].mean()),
                     "opportunity_spearman": _safe_spearman(
                         score, pairs["n_opportunities"]
                     ),
@@ -253,18 +267,55 @@ def _select_candidate(
             evaluations=("pair_rank_spearman", "size"),
         )
         .reset_index()
-        .sort_values(
+    )
+    null_gate = selection.get("null_gate")
+    if isinstance(null_gate, Mapping):
+        null_scenario = str(null_gate["scenario"])
+        quantile = float(null_gate["quantile"])
+        maximum_rate = float(null_gate["maximum_false_count_per_opportunity"])
+        null = records.loc[
+            records["split"].eq("development")
+            & records["scenario"].eq(null_scenario)
+        ].copy()
+        null["false_count_per_opportunity"] = (
+            null["mean_predicted_count"] / null["mean_opportunities"]
+        )
+        gate = (
+            null.groupby("candidate", observed=True, sort=True)[
+                "false_count_per_opportunity"
+            ]
+            .agg(
+                null_false_count_rate_mean="mean",
+                null_false_count_rate_quantile=lambda values: float(
+                    values.quantile(quantile)
+                ),
+            )
+            .reset_index()
+        )
+        summary = summary.merge(gate, on="candidate", how="left", validate="one_to_one")
+        summary["null_gate_pass"] = summary[
+            "null_false_count_rate_quantile"
+        ].le(maximum_rate)
+    else:
+        summary["null_false_count_rate_mean"] = np.nan
+        summary["null_false_count_rate_quantile"] = np.nan
+        summary["null_gate_pass"] = True
+    summary = summary.sort_values(
             [
+                "null_gate_pass",
                 "pair_rank_spearman",
                 "top_quartile_auroc",
                 "tie_fraction",
                 "candidate",
             ],
-            ascending=[False, False, True, True],
+            ascending=[False, False, False, True, True],
             kind="stable",
             ignore_index=True,
         )
-    )
+    if not summary["null_gate_pass"].any():
+        raise ValueError(
+            "no signed-cardinality candidate passed the development null gate"
+        )
     summary.insert(0, "development_rank", np.arange(1, len(summary) + 1))
     summary["selected"] = False
     summary.loc[0, "selected"] = True
@@ -296,6 +347,10 @@ def run(
     output = prepare_output(output_dir, overwrite=overwrite)
     scenarios = [str(value) for value in config["simulation"]["scenarios"]]
     candidates = [cast(Mapping[str, Any], value) for value in config["candidates"]]
+    working_prior = cast(Mapping[str, Any], config.get("working_prior", {}))
+    min_slab_scale_fraction = float(
+        working_prior.get("min_slab_scale_fraction", 0.01)
+    )
     tables: list[pd.DataFrame] = []
     for split, field in (
         ("development", "development_seeds"),
@@ -306,7 +361,14 @@ def run(
                 simulation = simulate_effect_summary(
                     config, scenario=scenario, seed=int(seed)
                 )
-                tables.append(evaluate_candidates(simulation, candidates, split=split))
+                tables.append(
+                    evaluate_candidates(
+                        simulation,
+                        candidates,
+                        split=split,
+                        min_slab_scale_fraction=min_slab_scale_fraction,
+                    )
+                )
     records = pd.concat(tables, ignore_index=True)
     selected, selection = _select_candidate(records, config)
     aggregate = _aggregate(records)
@@ -325,6 +387,10 @@ def run(
         "candidate": next(
             value for value in config["candidates"] if value["name"] == selected
         ),
+        "working_prior": dict(working_prior),
+        "development_selection_diagnostics": selection.loc[
+            selection["candidate"].eq(selected)
+        ].iloc[0].to_dict(),
         "probability_status": "candidate_unreleased",
         "formal_release_allowed": False,
         "config_sha256": sha256_file(config_path),
