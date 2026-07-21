@@ -1,0 +1,33 @@
+{
+  "candidate": {
+    "delta_fraction": 0.5,
+    "kind": "spike_normal",
+    "name": "symmetric_eb_delta_0.5"
+  },
+  "config_sha256": "8949bb57126275fb30949cfb614515345accd988b67413f07b48853d4da5ed56",
+  "development_selection_diagnostics": {
+    "candidate": "symmetric_eb_delta_0.5",
+    "development_rank": 1,
+    "evaluations": 432,
+    "null_false_count_rate_mean": 0.00010475787355625951,
+    "null_false_count_rate_quantile": 0.00033019008564252775,
+    "null_gate_pass": true,
+    "pair_rank_spearman": 0.8614734520140891,
+    "selected": true,
+    "tie_fraction": 0.0,
+    "top_quartile_auroc": 0.9479985456980907
+  },
+  "formal_release_allowed": false,
+  "holdout_used_for_selection": false,
+  "probability_status": "candidate_unreleased",
+  "schema_version": "crychic-signed-cardinality-frozen-candidate-v1",
+  "selected_candidate": "symmetric_eb_delta_0.5",
+  "selected_on": "development_only",
+  "working_prior": {
+    "directional_min_slab_scale_fraction": 3.0,
+    "family": "zero_spike_with_direction_specific_half_normal_slabs",
+    "fit": "heteroskedastic_marginal_mle",
+    "min_slab_scale_fraction": 1.5,
+    "reason": "directional_null_tail_identifiability"
+  }
+}
