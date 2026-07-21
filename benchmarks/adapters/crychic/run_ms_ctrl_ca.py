@@ -58,6 +58,7 @@ DATASET_ID = "UCSC_Lerma_Martin_MS_snRNA_CA_vs_Ctrl"
 DES_DATASET_ID = "LermaMartin_MS_CA_vs_Ctrl"
 PREPARATION_SCHEMA = "crychic-prepared-subset-v1"
 DOWNSAMPLE_PREPARATION_SCHEMA = "crychic-ms-ctrl-ca-downsample-v1"
+FIGURE3_PREPARATION_SCHEMA = "crychic-figure3-ms-paper-matched-subset-v1"
 RUN_SCHEMA = "crychic-ms-ctrl-ca-crossfit-run-v3"
 CONTRAST = "CA_vs_Ctrl"
 REFERENCE = "Ctrl"
@@ -76,17 +77,23 @@ EXPECTED_SAMPLES_PER_SUBJECT = {
     REFERENCE: (1, 1, 1, 1, 1, 1),
     TARGET: (1, 1, 1, 1, 2),
 }
+FIGURE3_EXPECTED_SHAPE = (69_168, 32_115)
+FIGURE3_EXPECTED_OUTPUT_SHA256 = (
+    "433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c"
+)
+FIGURE3_EXPECTED_SAMPLES = {REFERENCE: 5, TARGET: 6}
+FIGURE3_EXPECTED_SUBJECTS = {REFERENCE: 5, TARGET: 5}
+FIGURE3_EXPECTED_SAMPLES_PER_SUBJECT = {
+    REFERENCE: (1, 1, 1, 1, 1),
+    TARGET: (1, 1, 1, 1, 2),
+}
 SCORE_FILENAME = "sender_lr_scores.parquet"
 SCORE_LAYER_FILENAME = "sender_lr_score_layers.parquet"
 DIRECTED_EFFECT_FILENAME = "directed_lr_effects.parquet"
 MECHANISTIC_DIRECTED_EFFECT_FILENAME = "mechanistic_directed_lr_effects.parquet"
-SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME = (
-    "sender_specific_directed_lr_effects.parquet"
-)
+SENDER_SPECIFIC_DIRECTED_EFFECT_FILENAME = "sender_specific_directed_lr_effects.parquet"
 UNORDERED_RANKING_FILENAME = "condition_cell_pair_rankings.tsv"
-MECHANISTIC_UNORDERED_RANKING_FILENAME = (
-    "mechanistic_condition_cell_pair_rankings.tsv"
-)
+MECHANISTIC_UNORDERED_RANKING_FILENAME = "mechanistic_condition_cell_pair_rankings.tsv"
 PAIR_OPPORTUNITY_FILENAME = "pair_opportunity.tsv"
 REASON_WATERFALL_FILENAME = "downstream_reason_waterfall.tsv"
 EDGE_COMPONENT_DELTA_FILENAME = "edge_component_delta.parquet"
@@ -184,6 +191,29 @@ def _required_sha256(value: object, *, field: str) -> str:
     return text
 
 
+def _cohort_expectations(
+    schema_version: str,
+) -> tuple[
+    tuple[int, int], str, dict[str, int], dict[str, int], dict[str, tuple[int, ...]]
+]:
+    """Return the frozen cohort contract selected by an input manifest."""
+    if schema_version == FIGURE3_PREPARATION_SCHEMA:
+        return (
+            FIGURE3_EXPECTED_SHAPE,
+            FIGURE3_EXPECTED_OUTPUT_SHA256,
+            FIGURE3_EXPECTED_SAMPLES,
+            FIGURE3_EXPECTED_SUBJECTS,
+            FIGURE3_EXPECTED_SAMPLES_PER_SUBJECT,
+        )
+    return (
+        EXPECTED_SHAPE,
+        EXPECTED_OUTPUT_SHA256,
+        EXPECTED_SAMPLES,
+        EXPECTED_SUBJECTS,
+        EXPECTED_SAMPLES_PER_SUBJECT,
+    )
+
+
 def validate_subset_manifest(
     input_h5ad: str | Path,
     manifest_path: str | Path,
@@ -205,7 +235,11 @@ def validate_subset_manifest(
     # distinct top-level schema explicitly.
     if schema_version is None and lineage.get("schema_version") == PREPARATION_SCHEMA:
         schema_version = PREPARATION_SCHEMA
-    if schema_version not in {PREPARATION_SCHEMA, DOWNSAMPLE_PREPARATION_SCHEMA}:
+    if schema_version not in {
+        PREPARATION_SCHEMA,
+        DOWNSAMPLE_PREPARATION_SCHEMA,
+        FIGURE3_PREPARATION_SCHEMA,
+    }:
         raise ValueError("input_manifest.schema_version is not a supported MS schema")
     expected_lineage = {
         "schema_version": PREPARATION_SCHEMA,
@@ -231,19 +265,22 @@ def validate_subset_manifest(
         raise ValueError("input_manifest.lineage.source_filename is not canonical")
     if manifest.get("output") != input_path.name:
         raise ValueError("input_manifest.output does not match input_h5ad")
+    expected_shape, cohort_output_sha, expected_samples, expected_subjects, _ = (
+        _cohort_expectations(schema_version)
+    )
     expected_output_sha = _required_sha256(
         manifest.get("output_sha256"), field="input_manifest.output_sha256"
     )
-    if (
-        schema_version == PREPARATION_SCHEMA
-        and expected_output_sha != EXPECTED_OUTPUT_SHA256
+    if schema_version in {PREPARATION_SCHEMA, FIGURE3_PREPARATION_SCHEMA} and (
+        expected_output_sha != cohort_output_sha
     ):
         raise ValueError("input_manifest.output_sha256 is not the canonical MS digest")
     if sha256_file(input_path) != expected_output_sha:
         raise ValueError("input_manifest.output_sha256 does not match input_h5ad")
-    if schema_version == PREPARATION_SCHEMA and manifest.get("shape") != list(
-        EXPECTED_SHAPE
-    ):
+    if schema_version in {
+        PREPARATION_SCHEMA,
+        FIGURE3_PREPARATION_SCHEMA,
+    } and manifest.get("shape") != list(expected_shape):
         raise ValueError("input_manifest.shape differs from the frozen MS subset")
     if schema_version == DOWNSAMPLE_PREPARATION_SCHEMA:
         declared_shape = manifest.get("shape")
@@ -256,15 +293,9 @@ def validate_subset_manifest(
         finally:
             if probe.isbacked:
                 probe.file.close()
-    if manifest.get("samples_by_context") != {
-        TARGET: EXPECTED_SAMPLES[TARGET],
-        REFERENCE: EXPECTED_SAMPLES[REFERENCE],
-    }:
+    if manifest.get("samples_by_context") != expected_samples:
         raise ValueError("input_manifest.samples_by_context is invalid")
-    if manifest.get("subjects_by_context") != {
-        TARGET: EXPECTED_SUBJECTS[TARGET],
-        REFERENCE: EXPECTED_SUBJECTS[REFERENCE],
-    }:
+    if manifest.get("subjects_by_context") != expected_subjects:
         raise ValueError("input_manifest.subjects_by_context is invalid")
     return manifest
 
@@ -335,6 +366,11 @@ def _validate_input_contract(
     config: CrychicConfig,
     *,
     expected_lineage: Mapping[str, object],
+    expected_samples: Mapping[str, int] = EXPECTED_SAMPLES,
+    expected_subjects: Mapping[str, int] = EXPECTED_SUBJECTS,
+    expected_samples_per_subject: Mapping[
+        str, tuple[int, ...]
+    ] = EXPECTED_SAMPLES_PER_SUBJECT,
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict[str, object]]]:
     validated = validate_anndata(
         data,
@@ -376,7 +412,7 @@ def _validate_input_contract(
     subject_support = {
         condition: len(subjects) for condition, subjects in subject_sets.items()
     }
-    if subject_support != EXPECTED_SUBJECTS:
+    if subject_support != dict(expected_subjects):
         raise ValueError(
             f"MS subject support differs from the frozen cohort: {subject_support}"
         )
@@ -388,7 +424,7 @@ def _validate_input_contract(
         )
         for condition in (REFERENCE, TARGET)
     }
-    if sample_support != EXPECTED_SAMPLES:
+    if sample_support != dict(expected_samples):
         raise ValueError(
             f"MS sample support differs from the frozen cohort: {sample_support}"
         )
@@ -410,7 +446,7 @@ def _validate_input_contract(
         )
         for condition in (REFERENCE, TARGET)
     }
-    if observed_distribution != EXPECTED_SAMPLES_PER_SUBJECT:
+    if observed_distribution != dict(expected_samples_per_subject):
         raise ValueError(
             "MS repeated-sample distribution differs from the frozen cohort: "
             f"{observed_distribution}"
@@ -754,6 +790,12 @@ def run_ms_ctrl_ca(
     input_path = Path(input_h5ad).expanduser().resolve()
     preparation_path = Path(input_manifest).expanduser().resolve()
     preparation = validate_subset_manifest(input_path, preparation_path)
+    cohort_schema = str(
+        preparation.get("schema_version") or preparation["lineage"]["schema_version"]
+    )
+    _, _, expected_samples, expected_subjects, expected_samples_per_subject = (
+        _cohort_expectations(cohort_schema)
+    )
     bundle, resource_provenance = load_connectomedb2020_bundle(
         connectomedb_resource, connectomedb_manifest
     )
@@ -790,6 +832,7 @@ def run_ms_ctrl_ca(
                 "filename": preparation_path.name,
                 "sha256": sha256_file(preparation_path),
                 "source_sha256": preparation["lineage"]["source_sha256"],
+                "schema_version": cohort_schema,
             },
         },
         "resource": resource_provenance,
@@ -823,8 +866,7 @@ def run_ms_ctrl_ca(
                 "direct_response": "sender_specific_ligand_x_receptor_availability",
                 "covariate_adjustment": "categorical_fixed_effects:batch",
                 "uncertainty": (
-                    "contrast_specific_hc2_heteroskedasticity_robust_"
-                    "standard_error"
+                    "contrast_specific_hc2_heteroskedasticity_robust_standard_error"
                 ),
                 "primary_aggregation": "one_standard_error_stable_lr_breadth",
                 "release_status": "exploratory_v3",
@@ -880,6 +922,9 @@ def run_ms_ctrl_ca(
             data,
             config,
             expected_lineage=cast(Mapping[str, object], preparation["lineage"]),
+            expected_samples=expected_samples,
+            expected_subjects=expected_subjects,
+            expected_samples_per_subject=expected_samples_per_subject,
         )
         compatibility = _validate_resource_compatibility(data, bundle, target_prior)
         model = Crychic(config, resource_bundle=bundle, target_prior=target_prior)
@@ -1051,9 +1096,7 @@ def run_ms_ctrl_ca(
         mechanistic_directed_effects.to_parquet(
             mechanistic_directed_path, index=False, compression="zstd"
         )
-        direct_effects.to_parquet(
-            direct_effect_path, index=False, compression="zstd"
-        )
+        direct_effects.to_parquet(direct_effect_path, index=False, compression="zstd")
         rankings.to_csv(ranking_path, sep="\t", index=False, lineterminator="\n")
         mechanistic_rankings.to_csv(
             mechanistic_ranking_path,
@@ -1117,19 +1160,25 @@ def run_ms_ctrl_ca(
                             direct_effects.loc[
                                 direct_effects["status"].eq("observed"),
                                 "effect_target_minus_reference",
-                            ].gt(0.0).sum()
+                            ]
+                            .gt(0.0)
+                            .sum()
                         ),
                         "negative": int(
                             direct_effects.loc[
                                 direct_effects["status"].eq("observed"),
                                 "effect_target_minus_reference",
-                            ].lt(0.0).sum()
+                            ]
+                            .lt(0.0)
+                            .sum()
                         ),
                         "zero": int(
                             direct_effects.loc[
                                 direct_effects["status"].eq("observed"),
                                 "effect_target_minus_reference",
-                            ].eq(0.0).sum()
+                            ]
+                            .eq(0.0)
+                            .sum()
                         ),
                     },
                 },
