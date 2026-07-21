@@ -21,7 +21,9 @@ from benchmarks.adapters.common import (
     write_json,
 )
 from benchmarks.literature.signed_expected_cardinality import (
+    fit_directional_spike_normal_working_prior,
     fit_spike_normal_working_prior,
+    signed_directional_working_probabilities,
     signed_working_probabilities,
 )
 
@@ -45,10 +47,43 @@ def _scenario_parameters(scenario: str) -> dict[str, float]:
             "noise": 0.075,
             "missing": 0.0,
         },
+        "target_small_effects": {
+            "density": 0.08,
+            "noise": 0.07,
+            "missing": 0.0,
+            "target_effect_multiplier": 0.4,
+            "reference_effect_multiplier": 1.6,
+        },
+        "reference_small_effects": {
+            "density": 0.08,
+            "noise": 0.07,
+            "missing": 0.0,
+            "target_effect_multiplier": 1.6,
+            "reference_effect_multiplier": 0.4,
+        },
+        "target_rare_effects": {
+            "density": 0.08,
+            "noise": 0.07,
+            "missing": 0.0,
+            "target_prevalence_multiplier": 0.2,
+            "reference_prevalence_multiplier": 1.8,
+        },
+        "reference_rare_effects": {
+            "density": 0.08,
+            "noise": 0.07,
+            "missing": 0.0,
+            "target_prevalence_multiplier": 1.8,
+            "reference_prevalence_multiplier": 0.2,
+        },
     }
     if scenario not in parameters:
         raise ValueError(f"unknown signed-cardinality scenario: {scenario}")
-    return parameters[scenario]
+    result = parameters[scenario].copy()
+    result.setdefault("target_effect_multiplier", 1.0)
+    result.setdefault("reference_effect_multiplier", 1.0)
+    result.setdefault("target_prevalence_multiplier", 1.0)
+    result.setdefault("reference_prevalence_multiplier", 1.0)
+    return result
 
 
 def simulate_effect_summary(
@@ -76,8 +111,16 @@ def simulate_effect_summary(
         target_propensity = 1.0 / (1.0 + np.exp(-target_latent[pair]))
         reference_propensity = 1.0 / (1.0 + np.exp(-reference_latent[pair]))
         density = parameters["density"]
-        p_target = density * (0.2 + 1.6 * target_propensity)
-        p_reference = density * (0.2 + 1.6 * reference_propensity)
+        p_target = (
+            density
+            * (0.2 + 1.6 * target_propensity)
+            * parameters["target_prevalence_multiplier"]
+        )
+        p_reference = (
+            density
+            * (0.2 + 1.6 * reference_propensity)
+            * parameters["reference_prevalence_multiplier"]
+        )
         if p_target + p_reference > 0.8:
             rescale = 0.8 / (p_target + p_reference)
             p_target *= rescale
@@ -89,6 +132,11 @@ def simulate_effect_summary(
         )
         magnitudes = effect_floor + rng.gamma(
             shape=1.6, scale=effect_scale, size=n_edges
+        )
+        magnitudes = magnitudes * np.where(
+            states > 0,
+            parameters["target_effect_multiplier"],
+            np.where(states < 0, parameters["reference_effect_multiplier"], 1.0),
         )
         beta = states * magnitudes
         if scenario == "heteroskedastic":
@@ -140,15 +188,31 @@ def _candidate_weights(
         out=np.zeros(len(table), dtype=float),
         where=observed & (se > 0.0),
     )
-    needs_eb = any(candidate["kind"] == "spike_normal" for candidate in candidates)
-    fit = (
+    needs_symmetric = any(
+        candidate["kind"] == "spike_normal" for candidate in candidates
+    )
+    symmetric_fit = (
         fit_spike_normal_working_prior(
             effect,
             se,
             min_fit_edges=200,
             min_slab_scale_fraction=min_slab_scale_fraction,
         )
-        if needs_eb
+        if needs_symmetric
+        else None
+    )
+    needs_directional = any(
+        candidate["kind"] == "directional_spike_normal"
+        for candidate in candidates
+    )
+    directional_fit = (
+        fit_directional_spike_normal_working_prior(
+            effect,
+            se,
+            min_fit_edges=200,
+            min_slab_scale_fraction=min_slab_scale_fraction,
+        )
+        if needs_directional
         else None
     )
     outputs: dict[str, tuple[np.ndarray, np.ndarray, dict[str, object]]] = {}
@@ -168,17 +232,35 @@ def _candidate_weights(
             target = np.where(observed & (effect > 0.0), evidence, 0.0)
             reference = np.where(observed & (effect < 0.0), evidence, 0.0)
         elif kind == "spike_normal":
-            if fit is None:
+            if symmetric_fit is None:
                 raise AssertionError("spike-normal fit was not constructed")
             delta_fraction = float(candidate["delta_fraction"])
             probabilities = signed_working_probabilities(
-                effect, se, fit, delta_fraction=delta_fraction
+                effect, se, symmetric_fit, delta_fraction=delta_fraction
             )
             target = np.nan_to_num(probabilities["working_p_target_active"])
             reference = np.nan_to_num(
                 probabilities["working_p_reference_active"]
             )
-            metadata.update(fit.to_dict())
+            metadata.update(symmetric_fit.to_dict())
+            metadata["delta_fraction"] = delta_fraction
+        elif kind == "directional_spike_normal":
+            if directional_fit is None:
+                raise AssertionError(
+                    "directional spike-normal fit was not constructed"
+                )
+            delta_fraction = float(candidate["delta_fraction"])
+            probabilities = signed_directional_working_probabilities(
+                effect,
+                se,
+                directional_fit,
+                delta_fraction=delta_fraction,
+            )
+            target = np.nan_to_num(probabilities["working_p_target_active"])
+            reference = np.nan_to_num(
+                probabilities["working_p_reference_active"]
+            )
+            metadata.update(directional_fit.to_dict())
             metadata["delta_fraction"] = delta_fraction
         else:
             raise ValueError(f"unsupported candidate kind: {kind}")
@@ -244,6 +326,12 @@ def evaluate_candidates(
                     ),
                     "fit_null_weight": metadata.get("null_weight"),
                     "fit_slab_sd": metadata.get("slab_sd"),
+                    "fit_target_weight": metadata.get("target_weight"),
+                    "fit_reference_weight": metadata.get("reference_weight"),
+                    "fit_target_slab_sd": metadata.get("target_slab_sd"),
+                    "fit_reference_slab_sd": metadata.get(
+                        "reference_slab_sd"
+                    ),
                     "fit_converged": metadata.get("converged"),
                 }
             )

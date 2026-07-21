@@ -6,7 +6,9 @@ import pytest
 
 from benchmarks.literature.signed_expected_cardinality import (
     build_signed_expected_cardinality_head,
+    fit_directional_spike_normal_working_prior,
     fit_spike_normal_working_prior,
+    signed_directional_working_probabilities,
     signed_working_probabilities,
 )
 from benchmarks.simulation.signed_cardinality_benchmark import (
@@ -90,6 +92,45 @@ def test_identifiable_slab_collapses_pure_null_to_null_boundary() -> None:
         effect, se, fit, delta_fraction=0.5
     )
     assert fit.null_weight > 0.99
+    assert np.mean(probabilities["working_p_target_active"]) < 0.001
+    assert np.mean(probabilities["working_p_reference_active"]) < 0.001
+
+
+def test_directional_prior_recovers_distinct_sign_scales_and_prevalence() -> None:
+    rng = np.random.default_rng(73)
+    beta = np.r_[
+        np.zeros(4000),
+        np.abs(rng.normal(scale=0.05, size=400)),
+        -np.abs(rng.normal(scale=0.25, size=150)),
+    ]
+    se = rng.lognormal(mean=np.log(0.025), sigma=0.2, size=len(beta))
+    effect = beta + rng.normal(scale=se)
+    fit = fit_directional_spike_normal_working_prior(
+        effect, se, min_slab_scale_fraction=1.5
+    )
+    probabilities = signed_directional_working_probabilities(
+        effect, se, fit, delta_fraction=0.25
+    )
+    assert fit.target_slab_sd < fit.reference_slab_sd
+    assert fit.target_weight > fit.reference_weight
+    target_probability = probabilities["working_p_target_active"]
+    reference_probability = probabilities["working_p_reference_active"]
+    assert target_probability[4000:4400].mean() > 4.0 * target_probability[:4000].mean()
+    assert reference_probability[4000:4400].mean() < 0.01
+    assert probabilities["working_p_reference_active"][4400:].mean() > 0.7
+    assert not fit.formal_release_allowed
+
+
+def test_directional_prior_passes_pure_null_false_count_scale() -> None:
+    rng = np.random.default_rng(87)
+    se = rng.lognormal(mean=np.log(0.07), sigma=0.35, size=5000)
+    effect = rng.normal(scale=se)
+    fit = fit_directional_spike_normal_working_prior(
+        effect, se, min_slab_scale_fraction=1.5
+    )
+    probabilities = signed_directional_working_probabilities(
+        effect, se, fit, delta_fraction=0.5
+    )
     assert np.mean(probabilities["working_p_target_active"]) < 0.001
     assert np.mean(probabilities["working_p_reference_active"]) < 0.001
 

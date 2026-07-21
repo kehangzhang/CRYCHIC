@@ -1,0 +1,64 @@
+{
+  "schema_version": "crychic-directional-signed-cardinality-simulation-v3",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324],
+  "holdout_seeds": [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018, 3019, 3020, 3021, 3022, 3023, 3024],
+  "simulation": {
+    "pair_count": 36,
+    "edge_opportunities": [48, 96, 192],
+    "effect_floor": 0.06,
+    "effect_scale": 0.08,
+    "scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing",
+      "target_small_effects",
+      "reference_small_effects",
+      "target_rare_effects",
+      "reference_rare_effects",
+      "global_null_imbalanced_opportunity"
+    ]
+  },
+  "working_prior": {
+    "family": "zero_spike_with_direction_specific_half_normal_slabs",
+    "fit": "heteroskedastic_marginal_mle",
+    "min_slab_scale_fraction": 1.5,
+    "reason": "direction_specific_scale_and_prevalence_with_null_identifiability"
+  },
+  "candidates": [
+    {"name": "hard_z1", "kind": "hard_z", "threshold": 1.0},
+    {"name": "wald_p05", "kind": "hard_z", "threshold": 1.959963984540054},
+    {"name": "continuous_sign", "kind": "continuous_sign"},
+    {"name": "symmetric_eb_delta_0.5", "kind": "spike_normal", "delta_fraction": 0.5},
+    {"name": "directional_eb_delta_0", "kind": "directional_spike_normal", "delta_fraction": 0.0},
+    {"name": "directional_eb_delta_0.25", "kind": "directional_spike_normal", "delta_fraction": 0.25},
+    {"name": "directional_eb_delta_0.5", "kind": "directional_spike_normal", "delta_fraction": 0.5},
+    {"name": "directional_eb_delta_0.75", "kind": "directional_spike_normal", "delta_fraction": 0.75}
+  ],
+  "selection": {
+    "eligible_scenarios": [
+      "sparse_low_n",
+      "dense_low_n",
+      "heteroskedastic",
+      "opposite_signs",
+      "structural_missing",
+      "target_small_effects",
+      "reference_small_effects",
+      "target_rare_effects",
+      "reference_rare_effects"
+    ],
+    "primary_metric": "pair_rank_spearman",
+    "aggregation": "macro_mean_across_scenario_seed_direction",
+    "tie_breakers": ["top_quartile_auroc", "lower_tie_fraction", "candidate_name"],
+    "null_gate": {
+      "scenario": "global_null_imbalanced_opportunity",
+      "metric": "false_expected_count_per_opportunity",
+      "quantile": 0.95,
+      "maximum_false_count_per_opportunity": 0.001
+    },
+    "holdout_not_used_for_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
