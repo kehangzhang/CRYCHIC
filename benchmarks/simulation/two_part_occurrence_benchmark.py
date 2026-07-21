@@ -216,6 +216,9 @@ def _pair_scores(
         {
             "pair_sender": np.minimum(sender, receiver),
             "pair_receiver": np.maximum(sender, receiver),
+            "opportunity": np.ones(len(table), dtype=int),
+            "selected_target": selected & (sign_statistic > 0.0),
+            "selected_reference": selected & (sign_statistic < 0.0),
             "target_score": weights * selected * (sign_statistic > 0.0),
             "reference_score": weights * selected * (sign_statistic < 0.0),
             "target_truth": table["true_effect"].to_numpy(dtype=float) > 0.0,
@@ -296,6 +299,7 @@ def evaluate_problem(
     scenario = str(table["scenario"].iloc[0])
     seed = int(table["seed"].iloc[0])
     records: list[dict[str, object]] = []
+    reference_pairs: pd.DataFrame | None = None
     for priority, candidate_value in enumerate(config["candidates"]):
         candidate = cast(Mapping[str, Any], candidate_value)
         occurrence_fit = fit_hurdle_channel_reliability(
@@ -323,11 +327,33 @@ def evaluate_problem(
             log_weight_cap=float(hurdle_policy["log_weight_cap"]),
         )
         pairs = _pair_scores(table, sign_statistic, program_weights * hurdle_weights)
+        if str(candidate["name"]) == "rc3_reference":
+            reference_pairs = pairs
+        if reference_pairs is None:
+            raise ValueError("rc3_reference must be the first RC6 candidate")
         for label in ("target", "reference"):
             score = pairs[f"{label}_score"]
+            reference_score = reference_pairs[f"{label}_score"]
             truth = pairs[f"{label}_truth"]
             threshold = truth.quantile(0.75)
             binary = truth.ge(threshold).astype(int)
+            null_diagnostic = scenario == "global_null"
+            reference_mean = float(reference_score.mean())
+            null_mean_ratio = (
+                float(score.mean() / reference_mean)
+                if null_diagnostic and reference_mean > 0.0
+                else np.nan
+            )
+            null_opportunity = (
+                _safe_spearman(score, pairs["opportunity"])
+                if null_diagnostic
+                else np.nan
+            )
+            reference_null_opportunity = (
+                _safe_spearman(reference_score, pairs["opportunity"])
+                if null_diagnostic
+                else np.nan
+            )
             records.append(
                 {
                     "split": split,
@@ -345,6 +371,14 @@ def evaluate_problem(
                         else np.nan
                     ),
                     "tie_fraction": float(score.duplicated(keep=False).mean()),
+                    "null_mean_score_ratio_vs_rc3": null_mean_ratio,
+                    "null_opportunity_spearman": null_opportunity,
+                    "null_opportunity_spearman_delta_vs_rc3": (
+                        null_opportunity - reference_null_opportunity
+                        if np.isfinite(null_opportunity)
+                        and np.isfinite(reference_null_opportunity)
+                        else np.nan
+                    ),
                     "occurrence_estimable_fraction": float(
                         hurdle["occurrence_status"].eq("observed").mean()
                     ),
@@ -536,6 +570,18 @@ def _aggregate(metrics: pd.DataFrame) -> pd.DataFrame:
             ),
             magnitude_estimable_fraction_mean=(
                 "magnitude_estimable_fraction",
+                "mean",
+            ),
+            null_mean_score_ratio_vs_rc3_mean=(
+                "null_mean_score_ratio_vs_rc3",
+                "mean",
+            ),
+            null_opportunity_spearman_mean=(
+                "null_opportunity_spearman",
+                "mean",
+            ),
+            null_opportunity_spearman_delta_vs_rc3_mean=(
+                "null_opportunity_spearman_delta_vs_rc3",
                 "mean",
             ),
             evaluations=("pair_rank_spearman", "size"),
