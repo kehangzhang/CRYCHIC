@@ -1,0 +1,38 @@
+{
+  "schema_version": "crychic-liana-hypergraph-residual-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513, 514, 515, 516],
+  "holdout_seeds": [5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010, 5011, 5012, 5013, 5014, 5015, 5016],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "scenarios": [
+      "smooth_helpful_anchor",
+      "smooth_noisy_anchor",
+      "topology_jump",
+      "antagonistic_anchor",
+      "wrong_topology",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "acceptance": {
+    "primary_metric": "pair_rank_spearman",
+    "structured_scenarios": ["smooth_helpful_anchor", "smooth_noisy_anchor", "topology_jump", "antagonistic_anchor"],
+    "minimum_holdout_mean_delta": 0.0,
+    "wrong_topology_maximum_mean_regression": 0.01,
+    "global_null_maximum_gate_q95": 0.25,
+    "holdout_not_used_for_parameter_selection": true,
+    "real_cohorts_not_used_for_parameter_selection": true
+  }
+}
