@@ -1,0 +1,19 @@
+{
+  "candidate": {
+    "maximum_alpha": 4.0,
+    "name": "program_max_alpha_4"
+  },
+  "config_sha256": "42a0d3dbd99ecb1a46d86dd511781d8469e264f2625417bdea21dd281a36c946",
+  "formal_release_allowed": false,
+  "holdout_used_for_selection": false,
+  "program_policy": {
+    "alpha_cap": 1.5,
+    "minimum_concordance_edges": 200,
+    "missing_evidence_weight": 1.0,
+    "reliability": "max(0,2*(lr_program_sign_concordance-0.5))"
+  },
+  "real_cohorts_used_for_selection": false,
+  "schema_version": "crychic-receiver-program-soft-frozen-v1",
+  "selected_candidate": "program_max_alpha_4",
+  "selected_on": "development_only"
+}

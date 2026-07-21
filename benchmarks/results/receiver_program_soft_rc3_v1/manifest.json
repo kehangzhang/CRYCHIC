@@ -1,0 +1,46 @@
+{
+  "code": {
+    "commit": "6a5350e50f6ffb7144ad6714bbc02513929355a2",
+    "dirty": true
+  },
+  "config": {
+    "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/receiver_program_soft_rc3_v1.json",
+    "sha256": "42a0d3dbd99ecb1a46d86dd511781d8469e264f2625417bdea21dd281a36c946"
+  },
+  "elapsed_seconds": 46.9480051221326,
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 60,
+      "sha256": "d3358fbb047dc3d3638ed0ec3edaf70623ba8de9f9af5f7a0edbac7d4a9e4ca6"
+    },
+    "candidate_selection.tsv": {
+      "rows": 5,
+      "sha256": "0ffc9f61a16bebbb8d073db1480cb0d28d893a0fd64fa9948b4459f6c8236946"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 2400,
+      "sha256": "ab3df685914fb10914e3ee74fd25f339d2983e4604b3cb2f5783f3691ad268d1"
+    }
+  },
+  "schema_version": "crychic-receiver-program-soft-result-v1",
+  "selection": {
+    "candidate": {
+      "maximum_alpha": 4.0,
+      "name": "program_max_alpha_4"
+    },
+    "config_sha256": "42a0d3dbd99ecb1a46d86dd511781d8469e264f2625417bdea21dd281a36c946",
+    "formal_release_allowed": false,
+    "holdout_used_for_selection": false,
+    "program_policy": {
+      "alpha_cap": 1.5,
+      "minimum_concordance_edges": 200,
+      "missing_evidence_weight": 1.0,
+      "reliability": "max(0,2*(lr_program_sign_concordance-0.5))"
+    },
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-receiver-program-soft-frozen-v1",
+    "selected_candidate": "program_max_alpha_4",
+    "selected_on": "development_only"
+  },
+  "status": "complete"
+}

@@ -1,0 +1,6 @@
+development_rank	candidate	primary_mean_delta	safety_mean_delta	global_null_effective_alpha_q95	safety_pass	global_null_pass	eligible	selected
+1	program_max_alpha_4	0.027074062712917214	0.0004448238448666639	0.2051851851851847	True	True	True	True
+2	program_max_alpha_2	0.019083246116906847	0.0002736272812498039	0.10259259259259235	True	True	True	False
+3	program_max_alpha_1	0.00985890514080213	0.0002736272812498039	0.05129629629629617	True	True	True	False
+4	program_max_alpha_0	0.0	0.0	0.0	True	True	True	False
+5	program_max_alpha_6	0.023654305575250424	0.00023222495397975108	0.30777777777777704	True	False	False	False
