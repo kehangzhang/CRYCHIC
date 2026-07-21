@@ -1,0 +1,83 @@
+{
+  "schema_version": "crychic-two-part-occurrence-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020],
+  "holdout_seeds": [10001, 10002, 10003, 10004, 10005, 10006, 10007, 10008, 10009, 10010, 10011, 10012, 10013, 10014, 10015, 10016, 10017, 10018, 10019, 10020],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "reference_subjects": 5,
+    "target_subjects": 6,
+    "lr_call_signal_scale": 0.45,
+    "lr_call_noise_sd": 1.4,
+    "occurrence_log_odds_scale": 1.4,
+    "magnitude_log_scale": 0.65,
+    "partial_responder_fraction": 0.5,
+    "structural_missing_probability": 0.25,
+    "scenarios": [
+      "occurrence_helpful",
+      "magnitude_helpful",
+      "concordant_helpful",
+      "partial_responders",
+      "weak_two_part",
+      "structural_missingness",
+      "abundance_only",
+      "noisy_two_part",
+      "antagonistic_two_part",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "program_policy": {
+    "maximum_alpha": 4.0,
+    "alpha_cap": 1.5,
+    "minimum_concordance_edges": 200
+  },
+  "hurdle_policy": {
+    "beta_prior": 0.5,
+    "minimum_subjects": 3,
+    "minimum_active_subjects": 3,
+    "conditional_presence_threshold": 0.5,
+    "magnitude_log_sd_floor": 0.05,
+    "channel_alpha_cap": 1.0,
+    "minimum_concordance_edges": 200,
+    "log_weight_cap": 1.5
+  },
+  "candidates": [
+    {"name": "rc3_reference", "occurrence_alpha": 0.0, "magnitude_alpha": 0.0},
+    {"name": "occurrence_05", "occurrence_alpha": 0.5, "magnitude_alpha": 0.0},
+    {"name": "occurrence_10", "occurrence_alpha": 1.0, "magnitude_alpha": 0.0},
+    {"name": "occurrence_20", "occurrence_alpha": 2.0, "magnitude_alpha": 0.0},
+    {"name": "magnitude_10", "occurrence_alpha": 0.0, "magnitude_alpha": 1.0},
+    {"name": "two_part_05_05", "occurrence_alpha": 0.5, "magnitude_alpha": 0.5},
+    {"name": "two_part_10_05", "occurrence_alpha": 1.0, "magnitude_alpha": 0.5},
+    {"name": "two_part_20_05", "occurrence_alpha": 2.0, "magnitude_alpha": 0.5},
+    {"name": "two_part_10_10", "occurrence_alpha": 1.0, "magnitude_alpha": 1.0}
+  ],
+  "selection": {
+    "occurrence_primary_scenarios": ["occurrence_helpful", "partial_responders", "structural_missingness"],
+    "magnitude_primary_scenarios": ["magnitude_helpful"],
+    "joint_primary_scenarios": ["concordant_helpful", "weak_two_part"],
+    "safety_scenarios": ["abundance_only", "noisy_two_part", "antagonistic_two_part"],
+    "maximum_development_safety_mean_regression": 0.003,
+    "global_null_maximum_total_effective_alpha_q95": 0.25,
+    "minimum_holdout_primary_mean_delta_vs_rc3": 0.002,
+    "minimum_holdout_occurrence_mean_delta_vs_rc3": 0.001,
+    "minimum_holdout_magnitude_mean_delta_vs_rc3": 0.0,
+    "maximum_holdout_safety_mean_regression_vs_rc3": 0.003,
+    "maximum_holdout_structural_missingness_regression_vs_rc3": 0.003,
+    "novel_candidate_required": true,
+    "holdout_not_used_for_candidate_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
