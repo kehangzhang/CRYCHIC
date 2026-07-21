@@ -1,0 +1,308 @@
+{
+  "alignment": {
+    "family_mapped_edges": 10573,
+    "family_mapping_coverage": 0.9528658976207642,
+    "missing_evidence_weight_is_neutral": true,
+    "program_coverage": 0.8602198990627253,
+    "program_observed_edges": 9545,
+    "rc2_edges": 11096,
+    "selected_rc2_calls": 3203
+  },
+  "alpha_zero_rc2_parity": {
+    "ranking_rows": 132,
+    "rankings_exact": true,
+    "selected_calls": 3203
+  },
+  "backbone_modified": false,
+  "benchmark_head_modified": true,
+  "code": {
+    "commit": "6a7d6c0f5bed8e35f3ea4ec9365445b9074ca4d0",
+    "dirty": false
+  },
+  "contrast": {
+    "reference": "CTRL",
+    "target": "IZ"
+  },
+  "dataset": "kuppe",
+  "formal_release_allowed": false,
+  "frozen_candidate": {
+    "candidate": {
+      "maximum_alpha": 4.0,
+      "name": "program_max_alpha_4"
+    },
+    "config_sha256": "42a0d3dbd99ecb1a46d86dd511781d8469e264f2625417bdea21dd281a36c946",
+    "formal_release_allowed": false,
+    "holdout_used_for_selection": false,
+    "program_policy": {
+      "alpha_cap": 1.5,
+      "minimum_concordance_edges": 200,
+      "missing_evidence_weight": 1.0,
+      "reliability": "max(0,2*(lr_program_sign_concordance-0.5))"
+    },
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-receiver-program-soft-frozen-v1",
+    "selected_candidate": "program_max_alpha_4",
+    "selected_on": "development_only"
+  },
+  "inputs": {
+    "frozen_candidate": {
+      "bytes": 624,
+      "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/results/receiver_program_soft_rc3_v1/frozen_candidate.json",
+      "sha256": "9bd7c0c0d8b3d581c5a2e08fd7f9bdd2cfffdc1588f569582de1f274b817545b"
+    },
+    "program": {
+      "crossfit_manifest": {
+        "bytes": 699600387,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/runs/kuppe/crychic_crossfit_connectomedb_perf_formal_perf_894059a_20260721_004919/crossfit_result/crossfit_manifest.json",
+        "sha256": "0c14c65fd1c1eb1beb191eb7acb8daf10f08418bf878fdbee6d8534bb2db9da0"
+      },
+      "crossfit_schema_version": "9.0.0",
+      "family_mapping": {
+        "bytes": 271419,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/runs/kuppe/crychic_crossfit_connectomedb_perf_formal_perf_894059a_20260721_004919/directed_lr_effects.parquet",
+        "sha256": "20adaafe5975a78db06e3dabeb74680124d6e3f1fe43a22ca6e362dc9700a091"
+      },
+      "heldout_fold_audit": {
+        "all_input_samples_observed": true,
+        "all_input_subjects_observed": true,
+        "heldout_subjects_by_fold": {
+          "subject_fold_8017431c81e8b53cd8bf503935f53a3d": [
+            "P13",
+            "P15",
+            "P17",
+            "P3",
+            "P7",
+            "P9"
+          ],
+          "subject_fold_caaf04e9800afca05f3ee88ae6dd4564": [
+            "P1",
+            "P10",
+            "P16",
+            "P2",
+            "P8"
+          ]
+        },
+        "n_folds": 2,
+        "n_samples": 15,
+        "n_subjects": 11,
+        "subject_heldout_once": true
+      },
+      "manifest": {
+        "bytes": 16758,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/runs/kuppe/crychic_crossfit_connectomedb_perf_formal_perf_894059a_20260721_004919/manifest.json",
+        "sha256": "5114a06e83b716ee2072080b2900c56a0c0a6119a05b1a1db72b87ea5527e139"
+      },
+      "receiver_program_scores": {
+        "bytes": 1744598,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/runs/kuppe/crychic_crossfit_connectomedb_perf_formal_perf_894059a_20260721_004919/crossfit_result/semantic_receiver_program_scores.parquet",
+        "sha256": "190f3ac392186929b69e58b9f86dacdb1557e842c5a499973fbdb66d8d015517"
+      },
+      "sample_condition_layer": {
+        "bytes": 30764964,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/runs/kuppe/crychic_crossfit_connectomedb_perf_formal_perf_894059a_20260721_004919/sender_lr_score_layers.parquet",
+        "sha256": "c7dc010bb8dab59e68fe6cd7f1baba85cdcba92be8712c35ba5877294ef451b6"
+      }
+    },
+    "rc2": {
+      "edges": {
+        "bytes": 549060,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/liana_hypergraph_residual_rc2_20260722/runs/kuppe/directed_edge_residuals.parquet",
+        "sha256": "887f12fb5ec8ae727e1591cb25b58d5d5fa4d9c3434f9b0e06435463198c3e9c"
+      },
+      "expected_sets": {
+        "bytes": 436981,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/kuppe_figure3_sample_floor_exclude_self_v2/kuppe_misty_expected_sets.tsv",
+        "sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655"
+      },
+      "manifest": {
+        "bytes": 8356,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/liana_hypergraph_residual_rc2_20260722/runs/kuppe/manifest.json",
+        "sha256": "bbd5998ffd4abfe91e4596d51df65b031750bdc38ddb6916165c26835459b9a5"
+      },
+      "rankings": {
+        "bytes": 261390,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/liana_hypergraph_residual_rc2_20260722/runs/kuppe/condition_cell_pair_rankings.tsv",
+        "sha256": "7888d5e8e5e343125d7ca02a4630db4661b815d4ff75dae4797daf16c60996d6"
+      }
+    }
+  },
+  "limitations": [
+    "receiver-program source is partial-pipeline cross-fit evidence",
+    "source rows and RC3 outputs do not permit formal inference",
+    "sample-level Welch effects are descriptive benchmark weights"
+  ],
+  "outputs": {
+    "condition_cell_pair_rankings.tsv": {
+      "bytes": 341490,
+      "columns": [
+        "dataset",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "sender",
+        "receiver",
+        "estimable_directed_lr",
+        "condition",
+        "ranked_strength",
+        "condition_specific_directed_lr",
+        "status",
+        "reason_code"
+      ],
+      "filename": "condition_cell_pair_rankings.tsv",
+      "rows": 1452,
+      "sha256": "78ef42d18063c01f18d554c1200d28116ede89c210a36f0694c60e3ed2990ea6"
+    },
+    "directed_edge_program_weights.parquet": {
+      "bytes": 621258,
+      "columns": [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "ligand",
+        "receptor",
+        "interaction_stat",
+        "interaction_pvalue",
+        "crychic_z",
+        "residual_theta",
+        "final_sign_statistic",
+        "baseline_sign",
+        "final_sign",
+        "sign_flipped",
+        "probability_status",
+        "family_id",
+        "program_z",
+        "program_status",
+        "program_evidence",
+        "program_weight",
+        "program_available",
+        "selected_rc2_call",
+        "formal_inference_allowed"
+      ],
+      "filename": "directed_edge_program_weights.parquet",
+      "rows": 11096,
+      "sha256": "739634cac2a49aad71a05413799555faae5cae4b00b39547418ee71500ee0026"
+    },
+    "receiver_program_effects.parquet": {
+      "bytes": 739794,
+      "columns": [
+        "receiver",
+        "family_id",
+        "n_samples_target",
+        "mean_target",
+        "variance_target",
+        "n_samples_reference",
+        "mean_reference",
+        "variance_reference",
+        "program_effect_target_minus_reference",
+        "program_standard_error",
+        "program_z",
+        "status",
+        "reason_code",
+        "target_condition",
+        "reference_condition",
+        "effect_semantics",
+        "formal_inference_allowed"
+      ],
+      "filename": "receiver_program_effects.parquet",
+      "rows": 13211,
+      "sha256": "4aa101944774eb51c1dceb8c18e2862dfe4f753cf83bdaf386677224b5e53fd6"
+    },
+    "spatial_des_coverage.tsv": {
+      "bytes": 27843,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "expected_set_available",
+        "expected_input_rows",
+        "expected_input_mode",
+        "expected_pairs",
+        "expected_pairs_covered",
+        "expected_pairs_missing",
+        "expected_pair_coverage_fraction",
+        "rank_rows_total",
+        "rank_pairs_eligible",
+        "rank_pairs_noneligible",
+        "rank_eligible_fraction",
+        "ranked_background_pairs",
+        "tied_strength_blocks",
+        "ranked_pairs_in_ties",
+        "rank_status_counts_json"
+      ],
+      "filename": "spatial_des_coverage.tsv",
+      "rows": 88,
+      "sha256": "2145243c4b2444563c0ee1cf2996b6012e2e5bc0b21a312144c453c3cc7fdaa6"
+    },
+    "spatial_des_scores.tsv": {
+      "bytes": 40687,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "metric",
+        "des",
+        "signed_peak_es",
+        "peak_rank",
+        "score_type",
+        "score_semantics",
+        "fgsea_analogue",
+        "weight_exponent",
+        "tie_policy",
+        "cell_pair_direction",
+        "missing_policy"
+      ],
+      "filename": "spatial_des_scores.tsv",
+      "rows": 88,
+      "sha256": "4cc1eeb63a3be85223516718981bca560baede2c577675db8aefd5a1e203f1b6"
+    },
+    "spatial_des_summary.tsv": {
+      "bytes": 2619,
+      "columns": [
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "count",
+        "median",
+        "mean",
+        "min",
+        "max"
+      ],
+      "filename": "spatial_des_summary.tsv",
+      "rows": 11,
+      "sha256": "7264c3ca41f9c240da81f6932dfdb96c0a64e246db88da797801a8d16dc921d8"
+    }
+  },
+  "performance": {
+    "elapsed_seconds": 3.049086627550423,
+    "peak_rss_kib": 1391848
+  },
+  "rc2_call_set_modified": false,
+  "receiver_program_fit": {
+    "alpha_cap": 1.5,
+    "effective_alpha": 1.5,
+    "fit_status": "candidate_unreleased",
+    "formal_release_allowed": false,
+    "maximum_alpha": 4.0,
+    "n_concordance_edges": 9545,
+    "reliability": 0.412676794133054,
+    "sign_concordance": 0.706338397066527
+  },
+  "schema_version": "crychic-receiver-program-soft-real-v1",
+  "status": "complete"
+}
