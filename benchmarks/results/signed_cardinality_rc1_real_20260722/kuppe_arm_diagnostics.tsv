@@ -1,0 +1,3 @@
+method	condition	observed_pairs	positive_edges	negative_edges	zero_edges	selected_target_edges	selected_reference_edges	selected_edges_per_pair_median	selected_edges_per_pair_max	n_estimable_lr_per_pair_median	n_estimable_lr_per_pair_min	n_estimable_lr_per_pair_max	pair_score_vs_n_estimable_lr_spearman	tie_fraction	zero_pair_fraction
+CRYCHIC_RC1_soft	CTRL	55	66204	94885	63003	181	3077	58.57453961359368	151.05987446629837	3704.0	3704.0	3704.0		0.0	0.0
+CRYCHIC_RC1_soft	IZ	55	66204	94885	63003	181	3077	7.7365661435724515	20.84049691424564	3704.0	3704.0	3704.0		0.0	0.0

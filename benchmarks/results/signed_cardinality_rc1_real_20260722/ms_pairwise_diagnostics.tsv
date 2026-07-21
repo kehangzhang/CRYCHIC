@@ -1,0 +1,3 @@
+condition	left_arm	right_arm	common_estimable_edges	common_nonzero_edges	edge_sign_concordance	edge_rank_spearman	common_estimable_pairs	pair_rank_spearman	top10_pair_overlap_count	top10_pair_overlap_jaccard
+CA	A	CRYCHIC_RC1_soft	96285	68828	1.0	1.0	21	0.4402597402597402	6	0.42857142857142855
+Ctrl	A	CRYCHIC_RC1_soft	96285	68828	1.0	1.0	21	-0.39623256393126366	3	0.17647058823529413
