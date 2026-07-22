@@ -1,0 +1,85 @@
+{
+  "acceptance": {
+    "accepted": true,
+    "development_candidate_eligible": true,
+    "development_candidate_eligible_pass": true,
+    "global_null_pair_score_ratio_q95": 1.0005926275688113,
+    "global_null_pass": true,
+    "holdout_diffuse_mean_delta_vs_rc3": -0.00017890187313395617,
+    "holdout_diffuse_pass": true,
+    "holdout_isolated_mean_delta_vs_rc3": 0.0013950895336397456,
+    "holdout_isolated_pass": true,
+    "holdout_missing_mean_delta_vs_rc3": 0.009260976929673068,
+    "holdout_missing_pass": true,
+    "holdout_primary_gain_pass": true,
+    "holdout_primary_mean_delta_vs_rc3": 0.011787956569740871,
+    "holdout_safety_mean_delta_vs_rc3": 0.0002481160833925156,
+    "holdout_safety_pass": true,
+    "holdout_tail_gain_pass": true,
+    "holdout_tail_mean_delta_vs_rc3": 0.016868317869860212,
+    "selected_candidate": "blend_r050_e020"
+  },
+  "accepted": true,
+  "code": {
+    "commit": "fc5089acea4f19f1b62f383c1c4f0509caa6432e",
+    "dirty": false
+  },
+  "config": {
+    "path": "benchmarks/configs/bounded_program_blend_rc9_v1.json",
+    "sha256": "e597927950dd729a768af70ff43601e0c8f77a2b566d621a51d470cabeaefa53"
+  },
+  "elapsed_seconds": 74.03641466610134,
+  "limitations": [
+    "effect_summary_simulation_not_full_pseudobulk_pipeline",
+    "binary_gate_is_used_only_as_a_bounded_benchmark_expert",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 162,
+      "sha256": "9b8632f0496a32acd9ab5b88b7f778a81e20769acd60544302f9e6463c24f425"
+    },
+    "candidate_selection.tsv": {
+      "rows": 8,
+      "sha256": "f78da37bdf575af389e15826a899d28fc907c882b6e2f8199cd36ed98466d655"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 5184,
+      "sha256": "fa2f85305e90ade7c468dcef7e75f5ea2b82bbfc7bda2d4cb2374f8d11f16113"
+    }
+  },
+  "schema_version": "crychic-bounded-program-blend-result-v1",
+  "selection": {
+    "accepted_for_real_benchmark": true,
+    "candidate": {
+      "blend_fraction": 0.2,
+      "name": "blend_r050_e020",
+      "relative_fdp_reduction": 0.5
+    },
+    "config_sha256": "e597927950dd729a768af70ff43601e0c8f77a2b566d621a51d470cabeaefa53",
+    "formal_release_allowed": false,
+    "gate_policy": {
+      "minimum_calls": 100,
+      "minimum_positive_tail_count": 20,
+      "minimum_positive_tail_fraction": 0.08,
+      "minimum_sign_concordance": 0.6,
+      "minimum_tail_concordance_margin": 0.01,
+      "minimum_validation_concordance_gain": 0.02,
+      "minimum_validation_tail_count": 10,
+      "tail_confidence_z": 1.959963984540054,
+      "validation_folds": 2,
+      "validation_seed": 2741
+    },
+    "holdout_used_for_candidate_selection": false,
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-bounded-program-blend-frozen-v1",
+    "selected_candidate": "blend_r050_e020",
+    "selected_on": "development_only",
+    "soft_program_policy": {
+      "alpha_cap": 1.5,
+      "maximum_alpha": 4.0,
+      "minimum_concordance_edges": 200
+    }
+  },
+  "status": "complete"
+}
