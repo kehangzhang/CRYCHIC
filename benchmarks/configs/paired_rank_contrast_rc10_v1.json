@@ -1,0 +1,49 @@
+{
+  "schema_version": "crychic-paired-rank-contrast-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1711, 1712, 1713, 1714, 1715, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1723, 1724, 1725, 1726, 1727, 1728, 1729, 1730, 1731, 1732, 1733, 1734, 1735, 1736, 1737, 1738, 1739, 1740],
+  "holdout_seeds": [17001, 17002, 17003, 17004, 17005, 17006, 17007, 17008, 17009, 17010, 17011, 17012, 17013, 17014, 17015, 17016, 17017, 17018, 17019, 17020, 17021, 17022, 17023, 17024, 17025, 17026, 17027, 17028, 17029, 17030, 17031, 17032, 17033, 17034, 17035, 17036, 17037, 17038, 17039, 17040],
+  "simulation": {
+    "pair_count": 45,
+    "small_axis_pair_count": 15,
+    "observation_noise_sd": 0.8,
+    "structural_missing_fraction": 0.2,
+    "scenarios": [
+      "mutually_exclusive",
+      "shared_opportunity",
+      "small_axis_shared",
+      "structural_missingness",
+      "independent_bidirectional",
+      "balanced_bidirectional",
+      "asymmetric_bidirectional",
+      "low_noise_independent",
+      "global_null"
+    ]
+  },
+  "candidates": [
+    {"name": "contrast_lambda_010", "subtraction_fraction": 0.1},
+    {"name": "contrast_lambda_025", "subtraction_fraction": 0.25},
+    {"name": "contrast_lambda_050", "subtraction_fraction": 0.5},
+    {"name": "contrast_lambda_075", "subtraction_fraction": 0.75},
+    {"name": "contrast_lambda_100", "subtraction_fraction": 1.0}
+  ],
+  "selection": {
+    "primary_scenarios": ["mutually_exclusive", "shared_opportunity", "small_axis_shared", "structural_missingness"],
+    "safety_scenarios": ["independent_bidirectional", "balanced_bidirectional", "asymmetric_bidirectional", "low_noise_independent"],
+    "independent_scenario": "independent_bidirectional",
+    "asymmetric_scenario": "asymmetric_bidirectional",
+    "structural_scenario": "structural_missingness",
+    "minimum_development_primary_mean_delta_vs_rc9": 0.005,
+    "maximum_development_safety_mean_regression": 0.003,
+    "maximum_development_independent_regression": 0.005,
+    "maximum_development_asymmetric_regression": 0.005,
+    "global_null_maximum_pair_score_ratio_q95": 1.02,
+    "minimum_holdout_primary_mean_delta_vs_rc9": 0.005,
+    "maximum_holdout_safety_mean_regression_vs_rc9": 0.003,
+    "maximum_holdout_independent_regression_vs_rc9": 0.005,
+    "maximum_holdout_asymmetric_regression_vs_rc9": 0.005,
+    "maximum_holdout_structural_regression_vs_rc9": 0.003,
+    "holdout_not_used_for_candidate_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
