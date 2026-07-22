@@ -1,0 +1,5 @@
+primary_rank	method	method_label	rank_eligible	representable_measured_ligands	measured_ligands_scored	representable_scored_fraction	olink_ligand_ap	olink_logfc_spearman	protein_ndcg	ranking_exclusion_reason
+1	liana_rank_aggregate	LIANA	True	123	123	1.000000	0.650441	0.153945	0.692109	
+2	cellchat	CellChat	True	123	123	1.000000	0.574151	0.065116	0.647839	
+	scseqcommdiff	scSeqCommDiff	False	123	71	0.577236	0.722663	0.159010	0.663586	representable_scored_coverage_below_0_80_diagnostic_only
+	crychic	CRYCHIC generic baseline	False	123	71	0.577236	0.656648	0.090203	0.686772	representable_scored_coverage_below_0_80_diagnostic_only

@@ -1,0 +1,5 @@
+primary_rank	method	method_label	mean_prevalence_adjusted_ap	sd_seed_macro_prevalence_adjusted_ap	adjusted_ap_rank	mean_auprc	sd_seed_macro_auprc	auprc_rank	mean_auroc	sd_seed_macro_auroc	auroc_rank	mean_top_k_recall	top_k_recall_rank	mean_direction_accuracy	direction_accuracy_rank	mean_effect_spearman	effect_spearman_rank	mean_coverage	omnibus_status
+1	scseqcommdiff	scSeqCommDiff	0.221197	0.051059	1	0.125878	0.034885	1	0.675058	0.076034	1	0.022222	1	0.244444	3	-0.102924	4	1.000000	NE
+2	cellchat	CellChat	0.142865	0.007610	2	0.076186	0.004987	2	0.526234	0.025477	2	0.000000	3	0.833333	1	0.160263	1	1.000000	NE
+3	crychic	CRYCHIC generic baseline	0.102458	0.003541	3	0.053526	0.002568	3	0.349397	0.007824	3	0.000000	3	0.044444	4	-0.010209	3	1.000000	NE
+4	liana_rank_aggregate	LIANA	0.088342	0.004928	4	0.045609	0.002919	4	0.188969	0.049195	4	0.000000	3	0.800000	2	0.056894	2	1.000000	NE

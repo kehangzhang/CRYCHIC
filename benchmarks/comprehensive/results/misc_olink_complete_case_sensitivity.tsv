@@ -1,0 +1,5 @@
+ap_rank	method	method_label	representable_measured_ligands	representable_scored_fraction	olink_ligand_ap	olink_logfc_spearman	protein_ndcg
+1	liana_rank_aggregate	LIANA	71	1.000000	0.731535	0.188270	0.678833
+2	scseqcommdiff	scSeqCommDiff	71	1.000000	0.722663	0.159010	0.663586
+3	crychic	CRYCHIC generic baseline	71	1.000000	0.656648	0.090203	0.686772
+4	cellchat	CellChat	71	1.000000	0.631815	0.036894	0.636833

@@ -203,6 +203,11 @@ still required before claiming byte-level Figure 3 reproduction.
 
 ## Reproduction commands
 
+The latest corrected five-seed pilot and MIS-C/Olink summary is
+[`results/multigroup_headtohead_20260723.md`](results/multigroup_headtohead_20260723.md).
+It reports the generic CRYCHIC baseline separately from RC9 and binds every
+large external output by checksum.
+
 Generate the independent-subject A/B/C pilot fixture used by the four-method
 head-to-head benchmark. Group sizes are unequal as registered, `X` contains
 deterministic CP10K-log1p expression, and `layers["counts"]` retains raw integer
