@@ -94,3 +94,30 @@ def test_selection_uses_development_only_and_rejects_unsafe_candidate() -> None:
     selected, summary = _select_candidate(pd.DataFrame(rows), _config())
     assert selected == "safe"
     assert not bool(summary.loc[summary["candidate"].eq("unsafe"), "eligible"].iloc[0])
+
+
+def test_selection_persists_best_candidate_when_all_development_gates_fail() -> None:
+    rows = []
+    for scenario in (
+        "tail_separable_program",
+        "dense_flat_program",
+        "missing_tail_program",
+        "noisy_program",
+        "global_null",
+    ):
+        for method in ("rc3_soft", "mirror_reduction_100", "safe", "unsafe"):
+            rows.append(
+                {
+                    "split": "development",
+                    "scenario": scenario,
+                    "seed": 1,
+                    "direction": "target",
+                    "method": method,
+                    "pair_rank_spearman": 0.7,
+                    "gate_mode": "no_gate",
+                }
+            )
+    selected, summary = _select_candidate(pd.DataFrame(rows), _config())
+    assert selected == "mirror_reduction_100"
+    assert not bool(summary.loc[0, "eligible"])
+    assert bool(summary.loc[0, "selected"])

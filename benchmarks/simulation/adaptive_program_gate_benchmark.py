@@ -464,8 +464,6 @@ def _select_candidate(
         kind="stable",
         ignore_index=True,
     )
-    if not selection["eligible"].any():
-        raise ValueError("no RC8 candidate passed development gates")
     selection.insert(0, "development_rank", np.arange(1, len(selection) + 1))
     selection["selected"] = False
     selection.loc[0, "selected"] = True
@@ -473,7 +471,11 @@ def _select_candidate(
 
 
 def _acceptance(
-    metrics: pd.DataFrame, config: Mapping[str, Any], *, selected: str
+    metrics: pd.DataFrame,
+    config: Mapping[str, Any],
+    *,
+    selected: str,
+    development_candidate_eligible: bool,
 ) -> dict[str, Any]:
     policy = cast(Mapping[str, Any], config["selection"])
     holdout = metrics.loc[metrics["split"].eq("holdout")].copy()
@@ -502,6 +504,8 @@ def _acceptance(
     )
     checks: dict[str, Any] = {
         "selected_candidate": selected,
+        "development_candidate_eligible": development_candidate_eligible,
+        "development_candidate_eligible_pass": development_candidate_eligible,
         "holdout_primary_mean_delta_vs_rc3": primary_delta,
         "holdout_primary_gain_pass": primary_delta
         >= float(policy["minimum_holdout_primary_mean_delta_vs_rc3"]),
@@ -526,7 +530,8 @@ def _acceptance(
         checks["novel_candidate"] or not policy["novel_candidate_required"]
     )
     checks["accepted"] = bool(
-        checks["holdout_primary_gain_pass"]
+        checks["development_candidate_eligible_pass"]
+        and checks["holdout_primary_gain_pass"]
         and checks["holdout_tail_gain_pass"]
         and checks["holdout_safety_pass"]
         and checks["holdout_flat_pass"]
@@ -574,7 +579,13 @@ def run(
                 tables.append(evaluate_problem(problem, config, split=split))
     metrics = pd.concat(tables, ignore_index=True)
     selected, selection = _select_candidate(metrics, config)
-    acceptance = _acceptance(metrics, config, selected=selected)
+    development_candidate_eligible = bool(selection.loc[0, "eligible"])
+    acceptance = _acceptance(
+        metrics,
+        config,
+        selected=selected,
+        development_candidate_eligible=development_candidate_eligible,
+    )
     aggregate = _aggregate(metrics)
     candidate = next(
         cast(Mapping[str, Any], item)
