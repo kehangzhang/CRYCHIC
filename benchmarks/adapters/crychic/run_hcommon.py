@@ -307,6 +307,14 @@ def run_hcommon_from_benchmark(
             communication_mode=communication_mode,
             scoring_functional_ids=scoring_functional_ids,
         )
+        score_head_versions = tuple(
+            sorted(table["method_version"].astype(str).unique())
+        )
+        if len(score_head_versions) != 1:
+            raise ValueError("CRYCHIC long table must have one score-head version")
+        cast(dict[str, Any], manifest["method"])["score_head_version"] = (
+            score_head_versions[0]
+        )
         manifest["source_result"] = {
             "directory": result_path.name,
             "run_id": fitted.manifest["run_id"],

@@ -47,6 +47,7 @@ SCSEQ_SCHEMA = "crychic-scseqcommdiff-paper-benchmark-v2"
 MINIMUM_COVERAGE = 0.80
 TARGET_PREVALENCE = 0.10
 METRIC_EFFECT_DECIMALS = 12
+CRYCHIC_SCORE_HEAD_VERSION = "0.1.0-exploratory"
 
 
 @dataclass(frozen=True)
@@ -158,10 +159,15 @@ def _external_table(record: RunRecord) -> pd.DataFrame:
         record.manifest.get("resource"), label="external resource provenance"
     )
     resource_id = resource.get("id", resource.get("resource_id"))
+    table_method_version = (
+        str(method.get("score_head_version", CRYCHIC_SCORE_HEAD_VERSION))
+        if record.method == "crychic"
+        else str(method.get("version"))
+    )
     identities = {
         "dataset_id": record.dataset_id,
         "method_id": record.method,
-        "method_version": str(method.get("version")),
+        "method_version": table_method_version,
         "resource_id": str(resource_id),
         "resource_mode": "H-common",
     }
@@ -671,11 +677,8 @@ def evaluate(
     if code_record.get("dirty") is not False or not expected_code_commit:
         raise ValueError("fixture must be generated from a clean frozen commit")
     evaluator_code = git_metadata(Path(__file__).resolve().parents[2])
-    if (
-        evaluator_code.get("dirty") is not False
-        or evaluator_code.get("commit") != expected_code_commit
-    ):
-        raise ValueError("evaluator must run from the clean frozen fixture commit")
+    if evaluator_code.get("dirty") is not False or not evaluator_code.get("commit"):
+        raise ValueError("evaluator must run from a clean committed revision")
     resource_record = _require_mapping(
         fixture_manifest.get("resource"), label="fixture resource provenance"
     )
@@ -838,6 +841,7 @@ def evaluate(
             "design": "independent_subject_groups",
             "resource_mode": "H-common",
             "frozen_code_commit": expected_code_commit,
+            "method_output_code_commit": expected_code_commit,
             "evaluator_code": evaluator_code,
             "evaluator_script_sha256": sha256_file(Path(__file__)),
             "methods_requested": list(METHODS),
