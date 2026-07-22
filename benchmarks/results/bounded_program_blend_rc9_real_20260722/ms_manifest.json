@@ -1,0 +1,323 @@
+{
+  "alignment": {
+    "missing_program_evidence_is_neutral": true,
+    "rc3_call_set_modified": false,
+    "rc3_edges": 6237,
+    "selected_rc3_calls": 782
+  },
+  "backbone_modified": false,
+  "benchmark_head_modified": true,
+  "blend_fit": {
+    "blend_fraction": 0.2,
+    "blended_call_mean": 1.0,
+    "call_count": 782,
+    "fit_status": "candidate_unreleased",
+    "formal_release_allowed": false,
+    "gate_call_mean": 0.14194373401534527,
+    "soft_call_mean": 1.6654577916842321
+  },
+  "code": {
+    "commit": "40a30f25352bfdf4dfe2276e95714a7205d24f14",
+    "dirty": false
+  },
+  "contrast": {
+    "reference": "Ctrl",
+    "target": "CA"
+  },
+  "dataset": "ms",
+  "formal_release_allowed": false,
+  "frozen_candidate": {
+    "accepted_for_real_benchmark": true,
+    "candidate": {
+      "blend_fraction": 0.2,
+      "name": "blend_r050_e020",
+      "relative_fdp_reduction": 0.5
+    },
+    "config_sha256": "e597927950dd729a768af70ff43601e0c8f77a2b566d621a51d470cabeaefa53",
+    "formal_release_allowed": false,
+    "gate_policy": {
+      "minimum_calls": 100,
+      "minimum_positive_tail_count": 20,
+      "minimum_positive_tail_fraction": 0.08,
+      "minimum_sign_concordance": 0.6,
+      "minimum_tail_concordance_margin": 0.01,
+      "minimum_validation_concordance_gain": 0.02,
+      "minimum_validation_tail_count": 10,
+      "tail_confidence_z": 1.959963984540054,
+      "validation_folds": 2,
+      "validation_seed": 2741
+    },
+    "holdout_used_for_candidate_selection": false,
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-bounded-program-blend-frozen-v1",
+    "selected_candidate": "blend_r050_e020",
+    "selected_on": "development_only",
+    "soft_program_policy": {
+      "alpha_cap": 1.5,
+      "maximum_alpha": 4.0,
+      "minimum_concordance_edges": 200
+    }
+  },
+  "gate_fit": {
+    "baseline_mirror_fdp": 0.33766233766233766,
+    "eligible_call_count": 720,
+    "fit_status": "candidate_unreleased",
+    "formal_release_allowed": false,
+    "gate_mode": "enriched_tail",
+    "minimum_calls": 100,
+    "minimum_positive_tail_count": 20,
+    "minimum_positive_tail_fraction": 0.08,
+    "minimum_sign_concordance": 0.6,
+    "minimum_tail_concordance_margin": 0.01,
+    "minimum_validation_concordance_gain": 0.02,
+    "minimum_validation_tail_count": 10,
+    "negative_call_count": 181,
+    "positive_call_count": 539,
+    "rejected_negative_calls": 181,
+    "relative_fdp_reduction": 0.5,
+    "retained_positive_calls": 49,
+    "selected_minimum_validation_concordance_gain": 0.0540567951318458,
+    "selected_mirror_fdp": 0.16326530612244897,
+    "selected_tail_concordance_lower_bound": 0.7637452344180986,
+    "sign_concordance": 0.7486111111111111,
+    "tail_confidence_z": 1.959963984540054,
+    "target_mirror_fdp": 0.16883116883116883,
+    "threshold": 4.860707079361741,
+    "validation_fold_count": 2
+  },
+  "inputs": {
+    "acceptance": {
+      "bytes": 808,
+      "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/results/bounded_program_blend_rc9_v1/acceptance.json",
+      "sha256": "63ad7c639d3d4bf832a3146d6462c6d019dd5e56899ff6478dd22c217129745a"
+    },
+    "config": {
+      "bytes": 3735,
+      "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/configs/bounded_program_blend_rc9_v1.json",
+      "sha256": "e597927950dd729a768af70ff43601e0c8f77a2b566d621a51d470cabeaefa53"
+    },
+    "frozen_candidate": {
+      "bytes": 1035,
+      "path": "/media/subunit/bioinfo/crychic_dev/CRYCHIC_multigroup_v3_worktree/benchmarks/results/bounded_program_blend_rc9_v1/frozen_candidate.json",
+      "sha256": "94ee6bf1fa95aa6a22804c64b06f2741dd806bb15556f9b2a92d293c6cee956d"
+    },
+    "rc3": {
+      "edges": {
+        "bytes": 396876,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/receiver_program_soft_rc3_20260722/runs/ms/directed_edge_program_weights.parquet",
+        "sha256": "e275f7ab4587c7e5ac911500d2321758b2e96c1e6eff6cd13862aab1f21113fa"
+      },
+      "expected_sets": {
+        "bytes": 66713,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/ms_figure3_sample_floor_exclude_self_v2/ms_spatial_expected_sets.tsv",
+        "sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2"
+      },
+      "manifest": {
+        "bytes": 10331,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/receiver_program_soft_rc3_20260722/runs/ms/manifest.json",
+        "sha256": "d9c9c582af3be2613b0ef93251ebf1bc1281c2073128c8986cce4205ba74db54"
+      },
+      "rankings": {
+        "bytes": 250090,
+        "path": "/media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/receiver_program_soft_rc3_20260722/runs/ms/condition_cell_pair_rankings.tsv",
+        "sha256": "cc3388a40ab7288f99df909d821e868e86a76f8a6a22995f1d4e514d748892d2"
+      }
+    }
+  },
+  "limitations": [
+    "receiver_program_source_is_partial_pipeline_crossfit_evidence",
+    "binary_gate_is_used_only_as_a_bounded_benchmark_expert",
+    "spatial_colocalization_is_an_indirect_proxy"
+  ],
+  "outputs": {
+    "condition_cell_pair_rankings.tsv": {
+      "bytes": 303043,
+      "columns": [
+        "dataset",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "sender",
+        "receiver",
+        "estimable_directed_lr",
+        "condition",
+        "ranked_strength",
+        "condition_specific_directed_lr",
+        "status",
+        "reason_code"
+      ],
+      "filename": "condition_cell_pair_rankings.tsv",
+      "rows": 1170,
+      "sha256": "c2765385db92ab1f805df29628ecda5819581a95e5091042988a1cf7251fd934"
+    },
+    "directed_edge_bounded_program_weights.parquet": {
+      "bytes": 421345,
+      "columns": [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "ligand",
+        "receptor",
+        "interaction_stat",
+        "interaction_pvalue",
+        "crychic_z",
+        "residual_theta",
+        "final_sign_statistic",
+        "baseline_sign",
+        "final_sign",
+        "sign_flipped",
+        "probability_status",
+        "family_id",
+        "program_z",
+        "program_status",
+        "program_evidence",
+        "program_weight",
+        "program_available",
+        "selected_rc2_call",
+        "formal_inference_allowed",
+        "rc9_gate_weight",
+        "rc9_blended_weight",
+        "rc9_validation_fold"
+      ],
+      "filename": "directed_edge_bounded_program_weights.parquet",
+      "rows": 6237,
+      "sha256": "f8b2ad40604e1640a243877a337bc8e1852b7ecfc5ae4da877942ed961ad6353"
+    },
+    "fit_diagnostics.tsv": {
+      "bytes": 1191,
+      "columns": [
+        "dataset",
+        "gate_relative_fdp_reduction",
+        "gate_threshold",
+        "gate_gate_mode",
+        "gate_eligible_call_count",
+        "gate_positive_call_count",
+        "gate_negative_call_count",
+        "gate_sign_concordance",
+        "gate_baseline_mirror_fdp",
+        "gate_target_mirror_fdp",
+        "gate_selected_mirror_fdp",
+        "gate_selected_tail_concordance_lower_bound",
+        "gate_retained_positive_calls",
+        "gate_rejected_negative_calls",
+        "gate_minimum_calls",
+        "gate_minimum_sign_concordance",
+        "gate_minimum_positive_tail_count",
+        "gate_minimum_positive_tail_fraction",
+        "gate_tail_confidence_z",
+        "gate_minimum_tail_concordance_margin",
+        "gate_validation_fold_count",
+        "gate_minimum_validation_tail_count",
+        "gate_minimum_validation_concordance_gain",
+        "gate_selected_minimum_validation_concordance_gain",
+        "gate_fit_status",
+        "gate_formal_release_allowed",
+        "blend_blend_fraction",
+        "blend_call_count",
+        "blend_soft_call_mean",
+        "blend_gate_call_mean",
+        "blend_blended_call_mean",
+        "blend_fit_status",
+        "blend_formal_release_allowed"
+      ],
+      "filename": "fit_diagnostics.tsv",
+      "rows": 1,
+      "sha256": "d93d289d177d4d32fbe822e703a813f8cb2df84897ea71c1b187492318a13ca1"
+    },
+    "spatial_des_coverage.tsv": {
+      "bytes": 38167,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "expected_set_available",
+        "expected_input_rows",
+        "expected_input_mode",
+        "expected_pairs",
+        "expected_pairs_covered",
+        "expected_pairs_missing",
+        "expected_pair_coverage_fraction",
+        "rank_rows_total",
+        "rank_pairs_eligible",
+        "rank_pairs_noneligible",
+        "rank_eligible_fraction",
+        "ranked_background_pairs",
+        "tied_strength_blocks",
+        "ranked_pairs_in_ties",
+        "rank_status_counts_json"
+      ],
+      "filename": "spatial_des_coverage.tsv",
+      "rows": 104,
+      "sha256": "d61b8e3fc3d286c0555568b3a377122f4b1cd5fa6a29077be4cae1552655f9b0"
+    },
+    "spatial_des_scores.tsv": {
+      "bytes": 49411,
+      "columns": [
+        "dataset",
+        "scenario",
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "condition",
+        "top_fraction",
+        "status",
+        "reason_code",
+        "metric",
+        "des",
+        "signed_peak_es",
+        "peak_rank",
+        "score_type",
+        "score_semantics",
+        "fgsea_analogue",
+        "weight_exponent",
+        "tie_policy",
+        "cell_pair_direction",
+        "missing_policy"
+      ],
+      "filename": "spatial_des_scores.tsv",
+      "rows": 104,
+      "sha256": "d7fc557572ccb0a118292ddf196a499ecb331150fbef6e8a558fc8bc64a39474"
+    },
+    "spatial_des_summary.tsv": {
+      "bytes": 3007,
+      "columns": [
+        "method",
+        "method_version",
+        "resource",
+        "ranking_semantics",
+        "count",
+        "median",
+        "mean",
+        "min",
+        "max"
+      ],
+      "filename": "spatial_des_summary.tsv",
+      "rows": 13,
+      "sha256": "66828bda82309c03223f33b7b7e21d5d60cfb8a5e55f4f70bdc1cb7ebd5e34c5"
+    }
+  },
+  "performance": {
+    "elapsed_seconds": 0.5045035546645522,
+    "peak_rss_kib": 300164
+  },
+  "rc3_parity": {
+    "atol": 1e-13,
+    "maximum_absolute_difference": 7.105427357601002e-15,
+    "rank_order_exact": true,
+    "ranking_rows": 90,
+    "rankings_numerically_equal": true,
+    "rtol": 1e-13,
+    "selected_calls": 782
+  },
+  "schema_version": "crychic-bounded-program-blend-real-v1",
+  "status": "complete"
+}
