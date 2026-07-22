@@ -1,0 +1,78 @@
+{
+  "schema_version": "crychic-adaptive-program-gate-simulation-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "development_seeds": [1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1409, 1410, 1411, 1412, 1413, 1414, 1415, 1416],
+  "holdout_seeds": [14001, 14002, 14003, 14004, 14005, 14006, 14007, 14008, 14009, 14010, 14011, 14012, 14013, 14014, 14015, 14016],
+  "simulation": {
+    "cell_type_count": 6,
+    "interaction_count": 60,
+    "lr_call_signal_scale": 0.45,
+    "lr_call_noise_sd": 1.4,
+    "missing_program_fraction": 0.4,
+    "program_scenarios": [
+      "dense_flat_program",
+      "tail_separable_program",
+      "weak_tail_program",
+      "missing_tail_program",
+      "diffuse_program",
+      "isolated_program",
+      "noisy_program",
+      "antagonistic_program",
+      "global_null"
+    ]
+  },
+  "residual": {
+    "views": ["view_sender", "view_receiver", "view_ligand", "view_receptor", "view_interaction"],
+    "key_columns": ["sender", "receiver", "interaction_id"],
+    "lambda_grid": [0.05, 0.25, 1.0],
+    "anchor_grid": [0.0, 0.1, 0.25],
+    "folds": 3,
+    "seed": 1729,
+    "minimum_cv_improvement": 0.01,
+    "full_gate_improvement": 0.05,
+    "sign_correction_max_abs_baseline": 1.0
+  },
+  "soft_program_policy": {
+    "maximum_alpha": 4.0,
+    "alpha_cap": 1.5,
+    "minimum_concordance_edges": 200
+  },
+  "gate_policy": {
+    "minimum_calls": 100,
+    "minimum_sign_concordance": 0.6,
+    "minimum_positive_tail_count": 20,
+    "minimum_positive_tail_fraction": 0.08,
+    "tail_confidence_z": 1.959963984540054,
+    "minimum_tail_concordance_margin": 0.01,
+    "validation_folds": 2,
+    "validation_seed": 2741,
+    "minimum_validation_tail_count": 10,
+    "minimum_validation_concordance_gain": 0.02
+  },
+  "gate_candidates": [
+    {"name": "mirror_reduction_100", "relative_fdp_reduction": 1.0},
+    {"name": "mirror_reduction_075", "relative_fdp_reduction": 0.75},
+    {"name": "mirror_reduction_050", "relative_fdp_reduction": 0.5},
+    {"name": "mirror_reduction_025", "relative_fdp_reduction": 0.25}
+  ],
+  "selection": {
+    "primary_scenarios": ["dense_flat_program", "tail_separable_program", "weak_tail_program", "missing_tail_program"],
+    "tail_scenarios": ["tail_separable_program", "weak_tail_program", "missing_tail_program"],
+    "safety_scenarios": ["diffuse_program", "isolated_program", "noisy_program", "antagonistic_program"],
+    "flat_scenario": "dense_flat_program",
+    "missing_scenario": "missing_tail_program",
+    "minimum_development_primary_mean_delta_vs_rc3": 0.002,
+    "minimum_development_tail_mean_delta_vs_rc3": 0.005,
+    "maximum_development_safety_mean_regression": 0.003,
+    "maximum_development_flat_regression_vs_sign_only": 0.003,
+    "global_null_maximum_gate_activation_rate": 0.1,
+    "minimum_holdout_primary_mean_delta_vs_rc3": 0.005,
+    "minimum_holdout_tail_mean_delta_vs_rc3": 0.01,
+    "maximum_holdout_safety_mean_regression_vs_rc3": 0.003,
+    "maximum_holdout_flat_regression_vs_sign_only": 0.003,
+    "maximum_holdout_missing_regression_vs_rc3": 0.003,
+    "novel_candidate_required": true,
+    "holdout_not_used_for_candidate_selection": true,
+    "real_cohorts_not_used_for_selection": true
+  }
+}
