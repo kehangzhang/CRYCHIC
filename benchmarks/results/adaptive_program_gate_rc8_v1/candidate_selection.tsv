@@ -1,0 +1,5 @@
+development_rank	candidate	relative_fdp_reduction	primary_mean_delta_vs_rc3	tail_mean_delta_vs_rc3	safety_mean_delta_vs_rc3	flat_mean_delta_vs_sign_only	global_null_gate_activation_rate	primary_pass	tail_pass	safety_pass	flat_pass	global_null_pass	novel	novel_pass	eligible	selected
+1	mirror_reduction_075	0.75	-0.0014604812602847374	0.00042623836831220545	-0.004089957612409636	0.0	0.0	False	False	False	True	True	True	True	False	True
+2	mirror_reduction_050	0.5	-0.005047701038982266	-0.004356721336617832	-0.008285174106694831	0.0	0.0	False	False	False	True	True	True	True	False	False
+3	mirror_reduction_100	1.0	-0.009231990700533724	-0.009935774218686444	-0.0024931267943052904	0.0	0.0	False	False	True	True	True	False	False	False	False
+4	mirror_reduction_025	0.25	-0.010874044230749443	-0.012125178925640731	-0.0024931267943052904	0.0	0.0	False	False	True	True	True	True	True	False	False

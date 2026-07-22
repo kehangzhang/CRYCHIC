@@ -1,0 +1,31 @@
+{
+  "accepted_for_real_benchmark": false,
+  "candidate": {
+    "name": "mirror_reduction_075",
+    "relative_fdp_reduction": 0.75
+  },
+  "config_sha256": "e48eb0bfb771e4047d2b288f731b71bf6586bae57615fd26107554d17736d999",
+  "formal_release_allowed": false,
+  "gate_policy": {
+    "minimum_calls": 100,
+    "minimum_positive_tail_count": 20,
+    "minimum_positive_tail_fraction": 0.08,
+    "minimum_sign_concordance": 0.6,
+    "minimum_tail_concordance_margin": 0.01,
+    "minimum_validation_concordance_gain": 0.02,
+    "minimum_validation_tail_count": 10,
+    "tail_confidence_z": 1.959963984540054,
+    "validation_folds": 2,
+    "validation_seed": 2741
+  },
+  "holdout_used_for_candidate_selection": false,
+  "real_cohorts_used_for_selection": false,
+  "schema_version": "crychic-adaptive-program-gate-frozen-v1",
+  "selected_candidate": "mirror_reduction_075",
+  "selected_on": "development_only",
+  "soft_program_policy": {
+    "alpha_cap": 1.5,
+    "maximum_alpha": 4.0,
+    "minimum_concordance_edges": 200
+  }
+}
