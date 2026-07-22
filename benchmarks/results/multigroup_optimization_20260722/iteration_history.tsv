@@ -1,0 +1,12 @@
+iteration	direction	simulation_decision	real_benchmark	kuppe_median_des	ms_median_des	decision_commit	final_decision
+RC0	component_swap_diagnosis	diagnostic	complete	0.4283959249945076	0.04999999999999999	9f3f015	baseline_only
+RC1	signed_soft_cardinality	accepted	complete	0.360	0.520	204c8a5	rejected_as_default
+RC2	liana_baseline_signed_hypergraph_residual	accepted	complete	0.5573729491796717	0.7	87ae19d	accepted_baseline
+RC3	receiver_program_soft_evidence	accepted	complete	0.5763029086816149	0.743421052631579	c8e051a	accepted_general_default
+RC4	adaptive_multiview_residual	accepted	complete	0.559594961856769	0.768421052631579	9dbce3d	ms_specialist_only
+RC5	two_sided_program_attenuation	rejected	not_run	NA	NA	f88bd6b	rejected
+RC6	occurrence_magnitude_hurdle	accepted	complete	0.5140008406108438	0.743421052631579	24eb10b	rejected_after_real
+RC7	crossfit_occurrence_program_svd	rejected	not_run	NA	NA	a03d456	rejected
+RC8	adaptive_hard_program_gate	rejected	not_run	NA	NA	208c263	rejected
+RC9	bounded_soft_gate_program_blend	accepted	complete	0.6130159169998453	0.7960526315789473	6433a2e	recommended
+RC10	paired_rank_contrast	rejected	not_run	NA	NA	f0075e5	rejected

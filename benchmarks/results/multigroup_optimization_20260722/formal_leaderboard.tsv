@@ -1,0 +1,19 @@
+dataset	rank	method	method_version	complete_strata	median_des	mean_des	formal_status
+kuppe	1	scSeqCommDiff native	2.0.0	8	0.7007672634271098	0.691284052661179	external_reference
+kuppe	2	CRYCHIC RC9 bounded program blend	bounded-program-blend-rc9-v1	8	0.6130159169998453	0.5832996286664186	recommended
+kuppe	3	CRYCHIC RC3 receiver-program soft	receiver-program-soft-rc3-v1	8	0.5763029086816149	0.5626130034877006	superseded
+kuppe	4	CRYCHIC RC4 adaptive program	adaptive-multiview-residual-rc4-v1	8	0.559594961856769	0.5484150076015901	dataset_specialist
+kuppe	5	CRYCHIC RC2 LIANA residual	liana-hypergraph-residual-rc2-v1	8	0.5573729491796717	0.5559072588233278	superseded
+kuppe	6	CRYCHIC RC6 two-part hurdle	two-part-occurrence-rc6-v1	8	0.5140008406108438	0.5430021747742895	rejected_after_real
+kuppe	7	LIANA+ native	1.5.0	8	0.49023199023199027	0.46977237596005433	external_reference
+kuppe	8	CRYCHIC RC0 one-SE hard count	component-swap-rc0-v1	8	0.4283959249945076	0.4369485621827065	baseline
+kuppe	9	CRYCHIC RC1 signed soft cardinality	signed-cardinality-rc1-v2	8	0.360	NA	rejected_after_real
+ms	1	scSeqCommDiff native	2.0.0	8	0.825	0.6725877192982457	external_reference
+ms	2	CRYCHIC RC9 bounded program blend	bounded-program-blend-rc9-v1	8	0.7960526315789473	0.7538295377867746	recommended
+ms	3	CRYCHIC RC4 adaptive program	adaptive-multiview-residual-rc4-v1	8	0.768421052631579	0.735537884005541	dataset_specialist
+ms	4	CRYCHIC RC3 receiver-program soft	receiver-program-soft-rc3-v1	8	0.743421052631579	0.7342287249790149	superseded
+ms	4	CRYCHIC RC6 two-part hurdle	two-part-occurrence-rc6-v1	8	0.743421052631579	0.7054521180825627	rejected_after_real
+ms	6	CRYCHIC RC2 LIANA residual	liana-hypergraph-residual-rc2-v1	8	0.7	0.6280629892037787	superseded
+ms	7	CRYCHIC RC1 signed soft cardinality	signed-cardinality-rc1-v2	8	0.520	NA	rejected_after_real
+ms	incomplete	LIANA+ native	1.5.0	6	0.5	0.4006754893851668	external_incomplete
+ms	8	CRYCHIC RC0 one-SE hard count	component-swap-rc0-v1	8	0.04999999999999999	0.06886099451081691	baseline
