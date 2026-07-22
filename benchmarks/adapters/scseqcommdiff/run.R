@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 12) {
-  stop("expected 12 arguments")
+if (length(args) != 13) {
+  stop("expected 13 arguments")
 }
 
 input_h5ad <- args[[1]]
@@ -17,6 +17,7 @@ cores <- as.integer(args[[9]])
 nrep <- as.integer(args[[10]])
 min_cells <- as.integer(args[[11]])
 support_path <- args[[12]]
+resource_id <- args[[13]]
 
 suppressPackageStartupMessages(library(scSeqComm))
 suppressPackageStartupMessages(library(doRNG))
@@ -71,7 +72,10 @@ if (!setequal(unique(metadata$Cluster_ID), eligible_cell_types)) {
 
 anndata <- import("anndata", convert = FALSE)
 adata <- anndata$read_h5ad(input_h5ad)
-cell_gene <- py_to_r(adata$X$tocsc())
+# Matrix::dgCMatrix requires a double-valued x slot. Raw count H5ADs commonly
+# store integer sparse values, so normalize only the storage dtype at the
+# Python/R boundary without changing any count values.
+cell_gene <- py_to_r(adata$X$astype("float64")$tocsc())
 gene_expr <- as(Matrix::t(cell_gene), "dgCMatrix")
 rownames(gene_expr) <- py_to_r(adata$var_names$to_list())
 colnames(gene_expr) <- py_to_r(adata$obs_names$to_list())
@@ -87,8 +91,12 @@ if (!identical(colnames(gene_expr), metadata$Cell_ID)) {
 }
 
 resource <- read.delim(resource_path, check.names = FALSE, stringsAsFactors = FALSE)
-if (nrow(resource) != 2293L || anyDuplicated(resource[c("ligand", "receptor")])) {
-  stop("ConnectomeDB2020 resource mismatch")
+if (
+  nrow(resource) < 1L ||
+    !all(c("ligand", "receptor") %in% names(resource)) ||
+    anyDuplicated(resource[c("ligand", "receptor")])
+) {
+  stop("validated ligand-receptor resource is empty, incomplete, or duplicated")
 }
 LR_db <- resource[c("ligand", "receptor")]
 data(TF_TG_TRRUSTv2_HTRIdb_RegNetwork_High)
@@ -139,6 +147,45 @@ if (length(missing_result)) {
   stop(paste("result columns are missing:", paste(missing_result, collapse = ",")))
 }
 
+event_scores <- differential |>
+  group_by(ligand, receptor, LR_pair, cluster_L, cluster_R) |>
+  summarise(
+    score_target = first(.data[[target_score]]),
+    score_reference = first(.data[[reference_score]]),
+    logFC = first(logFC_S_inter),
+    p_value = {
+      finite_p <- .data[[p_column]][is.finite(.data[[p_column]])]
+      if (length(finite_p)) first(finite_p) else NA_real_
+    },
+    native_rows_collapsed = n(),
+    .groups = "drop"
+  )
+event_scores$effect <- event_scores$score_target - event_scores$score_reference
+event_scores$status <- ifelse(
+  is.finite(event_scores$score_target) &
+    is.finite(event_scores$score_reference) &
+    is.finite(event_scores$effect),
+  "observed",
+  "not_estimable"
+)
+event_scores$reason_code <- ifelse(
+  event_scores$status == "observed", "", "non_finite_native_intercellular_score"
+)
+event_scores$target <- target
+event_scores$reference <- reference
+event_scores$native_p_column <- p_column
+event_connection <- gzfile(
+  file.path(output_dir, "differential_event_scores.tsv.gz"), "wt"
+)
+write.table(
+  event_scores,
+  event_connection,
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+close(event_connection)
+
 selected <- differential |>
   group_by(ligand, receptor, LR_pair, cluster_L, cluster_R, interaction) |>
   summarise(
@@ -187,8 +234,12 @@ universe <- do.call(
 )
 universe <- universe[c("condition", "sender", "receiver")]
 counts <- selected |>
-  count(condition, sender_unordered, receiver_unordered, name = "ranked_strength") |>
-  rename(sender = sender_unordered, receiver = receiver_unordered)
+  transmute(
+    condition = as.character(condition),
+    sender = as.character(sender_unordered),
+    receiver = as.character(receiver_unordered)
+  ) |>
+  count(condition, sender, receiver, name = "ranked_strength")
 pair_support <- differential |>
   mutate(
     sender = ifelse(cluster_L <= cluster_R, cluster_L, cluster_R),
@@ -232,7 +283,7 @@ paper_rankings$ranked_strength[
 paper_rankings$dataset <- dataset_id
 paper_rankings$method <- "scseqcommdiff"
 paper_rankings$method_version <- "2.0.0"
-paper_rankings$resource <- "ConnectomeDB2020_Hou_2020_human"
+paper_rankings$resource <- resource_id
 paper_rankings$ranking_semantics <- paste0(
   "cardinality_of_native_significant_directed_lr_after_unordered_cell_pair_collapse;",
   ifelse(scenario == "multi-condition", "BH_q<0.05", "raw_p<0.05"),
@@ -270,7 +321,7 @@ rankings$ranked_strength[
 rankings$dataset <- dataset_id
 rankings$method <- "scseqcommdiff"
 rankings$method_version <- "2.0.0"
-rankings$resource <- "ConnectomeDB2020_Hou_2020_human"
+rankings$resource <- resource_id
 rankings$ranking_semantics <- paste0(
   "cardinality_of_native_significant_directed_lr_after_unordered_cell_pair_collapse;",
   ifelse(scenario == "multi-condition", "BH_q<0.05", "raw_p<0.05"),

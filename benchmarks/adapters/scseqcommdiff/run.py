@@ -11,9 +11,16 @@ from pathlib import Path
 from typing import Any, cast
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 
-from benchmarks.adapters.common import sha256_file, write_json
+from benchmarks.adapters.common import (
+    git_metadata,
+    load_harmonized_resource,
+    method_frozen_resource,
+    sha256_file,
+    write_json,
+)
 
 METHOD_VERSION = "2.0.0"
 PAPER_NEIGHBOR_COMMIT = "5a29240a237c5520c83ab82527ba55e0e1ceaff5"
@@ -31,7 +38,11 @@ MIN_VALID_CONDITION_CELLS = 2
 
 
 def _validate_native_pair_outputs(
-    ranking_path: Path, paper_ranking_path: Path, support_path: Path
+    ranking_path: Path,
+    paper_ranking_path: Path,
+    support_path: Path,
+    *,
+    expected_resource: str | None = None,
 ) -> dict[str, Any]:
     rankings = pd.read_csv(ranking_path, sep="\t")
     paper_rankings = pd.read_csv(paper_ranking_path, sep="\t")
@@ -58,22 +69,31 @@ def _validate_native_pair_outputs(
         raise RuntimeError("scSeqCommDiff ranking output schema is invalid")
     if paper_rankings.empty or required_rankings.difference(paper_rankings.columns):
         raise RuntimeError("scSeqCommDiff paper ranking output schema is invalid")
+    if expected_resource is not None:
+        for label, table in (("ranking", rankings), ("paper ranking", paper_rankings)):
+            if (
+                "resource" not in table
+                or set(table["resource"].astype(str)) != {expected_resource}
+            ):
+                raise RuntimeError(
+                    f"scSeqCommDiff {label} resource identity is invalid"
+                )
     if support.empty or required_support.difference(support.columns):
         raise RuntimeError("scSeqCommDiff native pair support schema is invalid")
     if support.duplicated(["sender", "receiver"]).any():
         raise RuntimeError("scSeqCommDiff native pair support contains duplicates")
     if not set(rankings["status"]).issubset({"observed", "not_estimable"}):
         raise RuntimeError("scSeqCommDiff rankings contain unsupported statuses")
-    if not set(paper_rankings["status"]).issubset(
-        {"observed", "not_estimable"}
-    ):
+    if not set(paper_rankings["status"]).issubset({"observed", "not_estimable"}):
         raise RuntimeError("scSeqCommDiff paper rankings contain unsupported statuses")
     strength = pd.to_numeric(rankings["ranked_strength"], errors="coerce")
     observed = rankings["status"].eq("observed")
     if strength.loc[observed].isna().any() or strength.loc[observed].lt(0).any():
         raise RuntimeError("observed scSeqCommDiff rankings require finite strengths")
     if strength.loc[~observed].notna().any():
-        raise RuntimeError("not-estimable scSeqCommDiff rankings require missing strength")
+        raise RuntimeError(
+            "not-estimable scSeqCommDiff rankings require missing strength"
+        )
     tested_text = support["pair_native_tested"].astype(str).str.lower()
     if not tested_text.isin({"true", "false"}).all():
         raise RuntimeError("pair_native_tested must be boolean")
@@ -101,9 +121,7 @@ def _validate_native_pair_outputs(
     aligned = rankings.set_index(["sender", "receiver"]).index.map(pair_status)
     if pd.isna(aligned).any() or not rankings["status"].eq(aligned).all():
         raise RuntimeError("ranking estimability disagrees with native pair support")
-    paper_strength = pd.to_numeric(
-        paper_rankings["ranked_strength"], errors="coerce"
-    )
+    paper_strength = pd.to_numeric(paper_rankings["ranked_strength"], errors="coerce")
     paper_observed = paper_rankings["status"].eq("observed")
     if (
         paper_strength.loc[paper_observed].isna().any()
@@ -135,6 +153,63 @@ def _validate_native_pair_outputs(
     }
 
 
+def _validate_event_scores(
+    path: Path, *, target: str, reference: str
+) -> dict[str, Any]:
+    table = pd.read_csv(path, sep="\t")
+    required = {
+        "ligand",
+        "receptor",
+        "cluster_L",
+        "cluster_R",
+        "score_target",
+        "score_reference",
+        "effect",
+        "logFC",
+        "p_value",
+        "native_rows_collapsed",
+        "status",
+        "reason_code",
+        "target",
+        "reference",
+        "native_p_column",
+    }
+    missing = required.difference(table.columns)
+    if table.empty or missing:
+        raise RuntimeError(
+            f"scSeqCommDiff event score output is invalid: missing={sorted(missing)}"
+        )
+    key = ["ligand", "receptor", "cluster_L", "cluster_R"]
+    if table.duplicated(key).any():
+        raise RuntimeError("scSeqCommDiff event score output contains duplicates")
+    if set(table["target"].astype(str)) != {target} or set(
+        table["reference"].astype(str)
+    ) != {reference}:
+        raise RuntimeError("scSeqCommDiff event score contrast labels disagree")
+    if not set(table["status"].astype(str)).issubset({"observed", "not_estimable"}):
+        raise RuntimeError("scSeqCommDiff event score statuses are invalid")
+    numeric = table[["score_target", "score_reference", "effect"]].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    observed = table["status"].eq("observed")
+    if not np.isfinite(numeric.loc[observed].to_numpy(dtype=float)).all():
+        raise RuntimeError("observed scSeqCommDiff event scores must be finite")
+    expected = numeric["score_target"] - numeric["score_reference"]
+    if (
+        not expected.loc[observed]
+        .sub(numeric.loc[observed, "effect"])
+        .abs()
+        .le(1e-12)
+        .all()
+    ):
+        raise RuntimeError("scSeqCommDiff event effects disagree with native scores")
+    return {
+        "rows": len(table),
+        "observed_rows": int(observed.sum()),
+        "not_estimable_rows": int((~observed).sum()),
+    }
+
+
 def _input_manifest_sha256(payload: dict[str, Any], filename: str) -> str:
     output = payload.get("output")
     if isinstance(output, dict) and output.get("filename") == filename:
@@ -148,7 +223,29 @@ def _input_manifest_sha256(payload: dict[str, Any], filename: str) -> str:
     raise ValueError("input manifest does not bind the requested h5ad checksum")
 
 
-def _validate_resource(resource_path: Path, manifest_path: Path) -> dict[str, Any]:
+def _validate_resource(
+    resource_path: Path,
+    manifest_path: Path,
+    *,
+    resource_mode: str = "native",
+) -> dict[str, Any]:
+    if resource_mode == "H-common":
+        table, manifest = load_harmonized_resource(resource_path, manifest_path)
+        frozen = method_frozen_resource(
+            table,
+            method="scseqcommdiff",
+            resource_mode=resource_mode,
+        )
+        return {
+            "resource_id": str(manifest["resource_id"]),
+            "version": str(manifest.get("version", "unversioned")),
+            "mode": resource_mode,
+            "sha256": sha256_file(resource_path),
+            "rows": len(frozen),
+            "manifest_sha256": sha256_file(manifest_path),
+        }
+    if resource_mode != "native":
+        raise ValueError("resource_mode must be 'H-common' or 'native'")
     if sha256_file(resource_path) != RESOURCE_SHA256:
         raise ValueError("ConnectomeDB2020 payload checksum does not match the pin")
     manifest_object: object = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -169,7 +266,14 @@ def _validate_resource(resource_path: Path, manifest_path: Path) -> dict[str, An
         raise ValueError("scSeqCommDiff must cover all 2293 ConnectomeDB2020 pairs")
     if table.duplicated(["ligand", "receptor"]).any():
         raise ValueError("ConnectomeDB2020 contains duplicate directed pairs")
-    return manifest
+    return {
+        "resource_id": RESOURCE_ID,
+        "version": str(manifest.get("version", "2020")),
+        "mode": resource_mode,
+        "sha256": RESOURCE_SHA256,
+        "rows": RESOURCE_ROWS,
+        "manifest_sha256": sha256_file(manifest_path),
+    }
 
 
 def _r_environment(rscript: Path) -> dict[str, Any]:
@@ -420,6 +524,7 @@ def preflight(
     resource_manifest: Path,
     rscript: Path,
     *,
+    resource_mode: str,
     cell_type_key: str,
     condition_key: str,
     sample_unit_key: str,
@@ -443,7 +548,11 @@ def preflight(
     actual_input_sha = sha256_file(input_h5ad)
     if actual_input_sha != expected_input_sha:
         raise ValueError("prepared h5ad checksum does not match its manifest")
-    resource_payload = _validate_resource(resource_path, resource_manifest)
+    resource_payload = _validate_resource(
+        resource_path,
+        resource_manifest,
+        resource_mode=resource_mode,
+    )
     metadata, input_audit = _prepare_metadata(
         input_h5ad,
         cell_type_key=cell_type_key,
@@ -461,11 +570,8 @@ def preflight(
             **input_audit,
         },
         "resource": {
-            "resource_id": resource_payload["resource_id"],
             "filename": resource_path.name,
-            "sha256": RESOURCE_SHA256,
-            "rows": RESOURCE_ROWS,
-            "manifest_sha256": sha256_file(resource_manifest),
+            **resource_payload,
         },
         "environment": _r_environment(rscript),
     }
@@ -478,6 +584,7 @@ def run(
     input_manifest: Path,
     resource_path: Path,
     resource_manifest: Path,
+    resource_mode: str,
     rscript: Path,
     python_executable: Path,
     dataset_id: str,
@@ -510,6 +617,7 @@ def run(
         resource_path,
         resource_manifest,
         rscript,
+        resource_mode=resource_mode,
         cell_type_key=cell_type_key,
         condition_key=condition_key,
         sample_unit_key=sample_unit_key,
@@ -553,7 +661,8 @@ def run(
         "scenario": scenario,
         "contrast_order": [target, reference],
         "intercellular_score": "scSeqComm",
-        "lr_resource": RESOURCE_ID,
+        "lr_resource": audit["resource"]["resource_id"],
+        "resource_mode": resource_mode,
         "permutations": nrep if scenario == "multi-condition" else None,
         "intercellular_test": (
             "condition-label permutation"
@@ -567,9 +676,7 @@ def run(
             "BH q<0.05" if scenario == "multi-condition" else "raw p<0.05"
         ),
         "intracellular_gate": "max_S_intra>0.5_or_all_NA",
-        "cell_pair_estimability": (
-            "at_least_one_finite_native_intercellular_p_value"
-        ),
+        "cell_pair_estimability": ("at_least_one_finite_native_intercellular_p_value"),
         "paper_compatible_cell_pair_policy": (
             "zero_complete_all_cell_type_eligible_pairs"
         ),
@@ -595,6 +702,7 @@ def run(
                 "version to 2.0.0 while preserving the submitted R implementation."
             ),
         },
+        "code": git_metadata(Path(__file__).resolve().parents[3]),
         "protocol": protocol,
         "preflight": audit,
         "metadata": {
@@ -632,6 +740,7 @@ def run(
         str(nrep),
         str(min_cells),
         str(support_path),
+        str(audit["resource"]["resource_id"]),
     ]
     manifest["command"] = command
     write_json(output_dir / "run_manifest.json", manifest)
@@ -658,10 +767,17 @@ def run(
         output_dir / "condition_cell_pair_rankings.tsv",
         output_dir / "condition_cell_pair_rankings_paper_zero_completed.tsv",
         output_dir / "cell_pair_native_test_support.tsv",
+        expected_resource=str(audit["resource"]["resource_id"]),
+    )
+    event_estimability = _validate_event_scores(
+        output_dir / "differential_event_scores.tsv.gz",
+        target=target,
+        reference=reference,
     )
     outputs: dict[str, Any] = {}
     for filename in (
         "differential_comm.rds",
+        "differential_event_scores.tsv.gz",
         "selected_differential_interactions.tsv.gz",
         "condition_cell_pair_rankings.tsv",
         "condition_cell_pair_rankings_paper_zero_completed.tsv",
@@ -682,6 +798,7 @@ def run(
             "elapsed_seconds": time.time() - started,
             "outputs": outputs,
             "native_pair_estimability": pair_estimability,
+            "native_event_estimability": event_estimability,
         }
     )
     write_json(output_dir / "run_manifest.json", manifest)
@@ -695,6 +812,9 @@ def main() -> None:
     parser.add_argument("--input-manifest", required=True, type=Path)
     parser.add_argument("--resource", required=True, type=Path)
     parser.add_argument("--resource-manifest", required=True, type=Path)
+    parser.add_argument(
+        "--resource-mode", choices=("H-common", "native"), default="native"
+    )
     parser.add_argument("--rscript", required=True, type=Path)
     parser.add_argument("--python-executable", required=True, type=Path)
     parser.add_argument("--dataset-id", required=True)
@@ -716,6 +836,7 @@ def main() -> None:
         input_manifest=args.input_manifest,
         resource_path=args.resource,
         resource_manifest=args.resource_manifest,
+        resource_mode=args.resource_mode,
         rscript=args.rscript,
         python_executable=args.python_executable,
         dataset_id=args.dataset_id,

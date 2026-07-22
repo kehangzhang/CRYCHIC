@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from benchmarks.adapters.scseqcommdiff.run import (
     _filter_multi_sample_metadata,
     _input_manifest_sha256,
     _prepare_metadata,
+    _validate_event_scores,
     _validate_native_pair_outputs,
     _validate_resource,
 )
@@ -25,6 +27,62 @@ from benchmarks.adapters.scseqcommdiff.run import (
     run as run_benchmark,
 )
 from scipy import sparse
+
+
+def test_r_driver_casts_integer_sparse_counts_to_double() -> None:
+    module = importlib.import_module("benchmarks.adapters.scseqcommdiff.run")
+    driver = Path(module.__file__).with_name("run.R").read_text(encoding="utf-8")
+
+    assert 'adata$X$astype("float64")$tocsc()' in driver
+
+
+def test_r_driver_types_empty_selected_result_keys_as_character() -> None:
+    module = importlib.import_module("benchmarks.adapters.scseqcommdiff.run")
+    driver = Path(module.__file__).with_name("run.R").read_text(encoding="utf-8")
+
+    assert "sender = as.character(sender_unordered)" in driver
+    assert "receiver = as.character(receiver_unordered)" in driver
+
+
+def test_validate_event_scores_requires_unique_finite_native_effects(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.tsv.gz"
+    table = pd.DataFrame(
+        {
+            "ligand": ["L", "L2"],
+            "receptor": ["R", "R2"],
+            "cluster_L": ["A", "A"],
+            "cluster_R": ["B", "B"],
+            "score_target": [0.7, np.nan],
+            "score_reference": [0.2, np.nan],
+            "effect": [0.5, np.nan],
+            "logFC": [1.0, np.nan],
+            "p_value": [0.01, np.nan],
+            "native_rows_collapsed": [2, 1],
+            "status": ["observed", "not_estimable"],
+            "reason_code": ["", "non_finite_native_intercellular_score"],
+            "target": ["case", "case"],
+            "reference": ["control", "control"],
+            "native_p_column": ["pvalue_S_inter", "pvalue_S_inter"],
+        }
+    )
+    table.to_csv(path, sep="\t", index=False)
+
+    assert _validate_event_scores(path, target="case", reference="control") == {
+        "rows": 2,
+        "observed_rows": 1,
+        "not_estimable_rows": 1,
+    }
+    table.loc[0, "effect"] = 0.4
+    table.to_csv(path, sep="\t", index=False)
+    with pytest.raises(RuntimeError, match="disagree"):
+        _validate_event_scores(path, target="case", reference="control")
+    table.loc[0, "score_target"] = np.inf
+    table.loc[0, "effect"] = np.inf
+    table.to_csv(path, sep="\t", index=False)
+    with pytest.raises(RuntimeError, match="finite"):
+        _validate_event_scores(path, target="case", reference="control")
 
 
 def test_input_manifest_digest_supports_both_prepared_schemas() -> None:
@@ -140,6 +198,52 @@ def test_validate_resource_rejects_non_object_manifest(
 
     with pytest.raises(ValueError, match="must be a JSON object"):
         _validate_resource(resource, manifest)
+
+
+def test_validate_resource_accepts_checksum_bound_hcommon_subset(
+    tmp_path: Path,
+) -> None:
+    resource = tmp_path / "harmonized_lr.tsv"
+    table = pd.DataFrame(
+        {
+            "harmonized_interaction_id": ["h1", "h2"],
+            "ligand": ["L1", "L2"],
+            "receptor": ["R1", "R2"],
+            "scseqcommdiff_source_interaction_id": ["n1", "n2"],
+            "scseqcommdiff_covered": [True, True],
+        }
+    )
+    table.to_csv(resource, sep="\t", index=False)
+    digest = hashlib.sha256(resource.read_bytes()).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "resource_id": "test_hcommon",
+                "version": "v1",
+                "payload": {
+                    "filename": resource.name,
+                    "sha256": digest,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    observed = _validate_resource(
+        resource,
+        manifest,
+        resource_mode="H-common",
+    )
+
+    assert observed == {
+        "resource_id": "test_hcommon",
+        "version": "v1",
+        "mode": "H-common",
+        "sha256": digest,
+        "rows": 2,
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    }
 
 
 def test_multi_sample_filter_excludes_cell_type_missing_from_reference() -> None:
@@ -266,17 +370,13 @@ def test_native_pair_output_validation_rejects_zero_imputed_untested_pair(
     rankings.loc[rankings["receiver"].eq("B"), "ranked_strength"] = 0.0
     rankings.to_csv(ranking_path, sep="\t", index=False)
     with pytest.raises(RuntimeError, match="require missing strength"):
-        _validate_native_pair_outputs(
-            ranking_path, paper_ranking_path, support_path
-        )
+        _validate_native_pair_outputs(ranking_path, paper_ranking_path, support_path)
     rankings.loc[rankings["receiver"].eq("B"), "ranked_strength"] = np.nan
     rankings.to_csv(ranking_path, sep="\t", index=False)
     support.loc[support["receiver"].eq("B"), "status"] = "observed"
     support.to_csv(support_path, sep="\t", index=False)
     with pytest.raises(RuntimeError, match="eligibility and finite tests"):
-        _validate_native_pair_outputs(
-            ranking_path, paper_ranking_path, support_path
-        )
+        _validate_native_pair_outputs(ranking_path, paper_ranking_path, support_path)
 
 
 def test_failed_external_process_is_recorded_in_manifest(
@@ -297,7 +397,7 @@ def test_failed_external_process_is_recorded_in_manifest(
     )
     audit: dict[str, Any] = {
         "input": {"units_by_condition": {"case": 4, "control": 4}},
-        "resource": {},
+        "resource": {"resource_id": RESOURCE_ID},
         "environment": {},
     }
     monkeypatch.setattr(
@@ -325,6 +425,7 @@ def test_failed_external_process_is_recorded_in_manifest(
             input_manifest=tmp_path / "input.json",
             resource_path=tmp_path / "resource.tsv",
             resource_manifest=tmp_path / "resource.json",
+            resource_mode="native",
             rscript=tmp_path / "Rscript",
             python_executable=Path(sys.executable),
             dataset_id="failure-test",

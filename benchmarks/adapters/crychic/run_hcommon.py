@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import anndata as ad
 
+import crychic
 from benchmarks.adapters.common import (
     begin_manifest,
     fail_manifest,
@@ -185,10 +186,18 @@ def run_hcommon_from_benchmark(
             context_keys=tuple(config.context_keys),
         )
         method_version = _package_version()
+        algorithm_root = Path(crychic.__file__).resolve().parents[2]
+        algorithm_code = git_metadata(algorithm_root)
         manifest = begin_manifest(
             repo_root=root,
             dataset_id=str(spec["dataset_id"]),
-            method={"id": METHOD_ID, "version": method_version},
+            method={
+                "id": METHOD_ID,
+                "version": method_version,
+                "benchmark_identity": "generic_multigroup_baseline",
+                "entrypoint": "benchmarks.adapters.crychic.run_hcommon",
+                "algorithm_code": algorithm_code,
+            },
             environment=python_environment(
                 environment_name="crychic_project_uv",
                 packages=(
@@ -223,6 +232,9 @@ def run_hcommon_from_benchmark(
                 "benchmark_config": config_path.name,
                 "benchmark_config_sha256": sha256_file(config_path),
                 "benchmark_dataset": dataset,
+                "benchmark_scope": spec.get("benchmark_scope"),
+                "input_mode": spec.get("input_mode"),
+                "counts_layer": config.counts_layer,
                 "analysis_subset": {
                     "include_cell_types": (
                         None if included is None else list(map(str, included))

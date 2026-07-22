@@ -1,9 +1,11 @@
 # scSeqCommDiff 2.0.0 paper benchmark adapter
 
 This adapter reproduces the differential communication protocol in Cesaro et
-al. (2025). It runs the method's two-condition or multi-sample scenario against
-the frozen 2,293 directed pairs in ConnectomeDB2020 and retains the paper's
-intracellular evidence gate.
+al. (2025). It runs the method's two-condition or multi-sample scenario and
+retains the paper's intracellular evidence gate. The `native` arm uses the
+frozen 2,293 directed pairs in ConnectomeDB2020. The `H-common` arm accepts a
+checksum-bound, fully covered subset of those pairs so that methods can be
+compared on the same LR axis; it does not change the scSeqCommDiff algorithm.
 
 For the multi-sample scenario, intercellular scores use the native Wilcoxon
 test, intracellular evidence uses pseudo-Wilcoxon, and significant calls use
@@ -25,6 +27,12 @@ The benchmark resource has checksum
 `e781363288a26c15e03246500111bfecb818eef997f5ebe1b936aaa465151c3a`.
 It exactly matches the 2,293 unique ligand-receptor pairs in the fixed package's
 `LR_pairs_ConnectomeDB_2020` object.
+
+For a harmonized comparison, pass `--resource-mode H-common` together with a
+manifest accepted by `load_harmonized_resource`; every row must have
+`scseqcommdiff_covered=true`. Native runs may omit `--resource-mode` because
+`native` is the default. Native and H-common outputs are separate benchmark
+arms and must not share a leaderboard.
 
 ## Environment
 

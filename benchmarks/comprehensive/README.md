@@ -162,9 +162,14 @@ the supplied workbook is a 1,463-analyte group summary, not subject-level data.
 4. Any method change after viewing an outer-test result creates a new candidate
    version and requires a new hidden seed or cohort.
 
-CRYCHIC RC9 is the frozen current head. It supports multiple contexts and
-prespecified contrasts, but a calibrated omnibus test is not yet validated;
-formal p/q fields remain disabled. This benchmark must not imply otherwise.
+CRYCHIC RC9 is the frozen current head for the checksum-bound Kuppe/MS replay.
+It has no general adapter for a new three-group H5AD, and a calibrated omnibus
+test is not yet validated; formal p/q fields remain disabled. This benchmark
+must not imply otherwise.
+The general-purpose `run_hcommon.py` entrypoint exercises the generic CRYCHIC
+multigroup baseline, not the dataset-specific RC9 held-out replay adapter. A
+result from that entrypoint must therefore be labelled `CRYCHIC generic
+multigroup baseline`; it cannot be presented as an RC9 result.
 
 ## Execution order
 
@@ -197,6 +202,63 @@ for regression and protocol-compatible comparison, but an exact R rerun is
 still required before claiming byte-level Figure 3 reproduction.
 
 ## Reproduction commands
+
+Generate the independent-subject A/B/C pilot fixture used by the four-method
+head-to-head benchmark. Group sizes are unequal as registered, `X` contains
+deterministic CP10K-log1p expression, and `layers["counts"]` retains raw integer
+counts for CRYCHIC. The generator freezes the exact five-pair simulation subset
+from the supplied four-method resource and writes pairwise inputs because
+scSeqCommDiff is natively two-condition:
+
+```bash
+.venv/bin/python -m benchmarks.comprehensive.generate_three_group_fixture \
+  --output-dir <output>/fixture-5seed \
+  --resource <output>/misc-prepared/resource/harmonized_lr.tsv \
+  --seeds 20260723,20260724,20260725,20260726,20260727 \
+  --group-subjects 8,10,12 --mean-cells-per-sample 180
+```
+
+CellChat, LIANA, and scSeqCommDiff must read normalized `X`; do not pass the
+raw `counts` layer. CRYCHIC reads `layers["counts"]`. The scSeqCommDiff calls
+must pass the generated five-pair table and manifest with
+`--resource-mode H-common`; its 2,293-pair native arm is a separate diagnostic.
+
+After all four method adapters finish, score the active and matched global-null
+runs on the exact 45-event axis:
+
+```bash
+.venv/bin/python -m benchmarks.comprehensive.evaluate_three_group \
+  --fixture-dir <output>/fixture-5seed \
+  --runs-dir <output>/method-runs \
+  --output-dir <output>/evaluation
+```
+
+Prepare MIS-C pairwise inputs and the exact 455-LR four-method intersection:
+
+```bash
+.venv/bin/python -m benchmarks.comprehensive.prepare_misc_benchmark \
+  --input-h5ad ../benchmark_work/comprehensive_multicontext_20260722/prepared/misc_olink/misc_olink.h5ad \
+  --input-manifest ../benchmark_work/comprehensive_multicontext_20260722/prepared/misc_olink/preparation_manifest.json \
+  --harmonized-resource ../benchmark_work/multicondition_v01/resources/harmonized_simple_lr/harmonized_lr.tsv \
+  --harmonized-manifest ../benchmark_work/multicondition_v01/resources/harmonized_simple_lr/manifest.json \
+  --connectome-resource ../benchmark_work/multi-group/resources/connectomedb2020/connectomedb2020.tsv \
+  --connectome-manifest ../benchmark_work/multi-group/resources/connectomedb2020/manifest.json \
+  --output-dir <output>/misc-prepared
+```
+
+Freeze RNA-only M-vs-S ligand predictions before invoking the Olink evaluator:
+
+```bash
+.venv/bin/python -m benchmarks.comprehensive.export_misc_olink_predictions \
+  --prepared-dir <output>/misc-prepared \
+  --runs-dir <output>/misc-method-runs \
+  --input-h5ad ../benchmark_work/comprehensive_multicontext_20260722/prepared/misc_olink/misc_olink.h5ad \
+  --output-dir <output>/misc-predictions-frozen
+```
+
+The optional `derive_misc_complete_case` output is a post-hoc method-support
+sensitivity universe. It is never substituted for the preregistered 251-ligand
+primary universe.
 
 Audit all registries, local assets, environments, and the expanded execution
 matrix:
