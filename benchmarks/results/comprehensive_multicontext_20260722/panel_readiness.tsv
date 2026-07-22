@@ -1,0 +1,14 @@
+panel_id	phase	role	track	matrix_rows	method_dataset_pairs	eligible_new_runs	reusable_runs	skipped_runs	blocked_runs	not_estimable_runs	eligible_pairs	reusable_pairs	skipped_pairs	blocked_pairs	not_estimable_pairs	readiness_fraction	minimum_coverage	coverage_gate
+P01_hidden_sample_truth	minimal	primary	differential_sample	18	9	0	0	18	0	0	0	0	9	0	0	0.000000	0.80	not_met
+P02_hidden_pooled_truth	minimal	secondary	differential_pooled	4	4	0	0	4	0	0	0	0	4	0	0	0.000000	0.80	not_met
+P03_external_dynamic_program	minimal	primary	context_program	6	3	0	0	6	0	0	0	0	3	0	0	0.000000	0.80	not_met
+P04_misc_olink	minimal	primary	orthogonal_validation	22	11	12	0	10	0	0	7	0	4	0	0	0.636364	0.80	not_met
+P05_brca_difference_in_differences	full	secondary	differential_sample	20	10	10	0	10	0	0	5	0	5	0	0	0.500000	0.80	not_met
+P06_legacy_figure3_sample	minimal	legacy	orthogonal_validation	8	8	6	0	2	0	0	6	0	2	0	0	0.750000	0.80	not_met
+P07_legacy_figure3_pooled	minimal	legacy	orthogonal_validation	8	8	6	2	0	0	0	6	2	0	0	0	1.000000	0.80	pass
+P08_pdac_spatial	full	secondary	orthogonal_validation	18	9	11	0	7	0	0	6	0	3	0	0	0.666667	0.80	not_met
+P09_context_phenotype	full	secondary	context_program	18	9	4	0	14	0	0	2	0	7	0	0	0.222222	0.80	not_met
+P10_cytosig_historical_methods	minimal	static	orthogonal_static	40	20	36	0	4	0	0	18	0	2	0	0	0.900000	0.80	pass
+P11_static_orthogonal	full	static	orthogonal_static	52	26	42	0	10	0	0	22	0	4	0	0	0.846154	0.80	pass
+P12_scaling	minimal	primary	performance	18	18	6	0	12	0	0	6	0	12	0	0	0.333333	0.80	not_met
+P13_patient_graph_phenotype	full	secondary	phenotype	28	28	0	0	28	0	0	0	0	28	0	0	0.000000	0.80	not_met

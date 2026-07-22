@@ -1,0 +1,37 @@
+metric_id	track	gold_tiers	endpoint_level	primary	direction	requires_calibrated	requires_truth	aggregation	definition
+prevalence_adjusted_ap	differential_sample	G1	event	true	higher	false	binary event truth	scenario then equal-weight dataset macro mean	Average precision adjusted to a preregistered common positive prevalence; report native AP beside it.
+differential_auroc	differential_sample	G1	event	false	higher	false	binary event truth	scenario macro mean	Threshold-free discrimination; secondary because positives are sparse.
+differential_mcc	differential_sample	G1	event	false	higher	false	binary event truth	fixed preregistered threshold	Matthews correlation coefficient.
+effect_rmse	differential_sample	G1	event	true	lower	false	continuous effect truth	scenario macro mean	Root mean squared error of target-minus-reference or model coefficient effects.
+effect_spearman	differential_sample	G1/G2	event	false	higher	false	continuous or perturbation effect	scenario macro mean	Rank correlation between estimated and true/held-out effects.
+sign_accuracy	differential_sample	G1/G2	event	true	higher	false	signed effect truth	nonzero truth events	Correct effect direction; zero estimates count as incorrect for nonzero truth.
+type1_error_005	differential_sample	G1	event	true	closer_to_0.05	true	null labels	scenario and hypothesis family	Fraction of null hypotheses below alpha=0.05 under legal subject-level permutations.
+empirical_fdr_005	differential_sample	G1	event	true	lower	true	null/non-null truth	scenario and hypothesis family	False discoveries among q<=0.05 calls; rank-only methods are NE.
+ci_coverage_95	differential_sample	G1	event	true	closer_to_0.95	true	continuous effect truth	scenario macro mean	Fraction of 95% intervals containing the planted effect.
+omnibus_power	differential_sample	G1/G2	event	true	higher	true	three-or-more-group truth	scenario macro mean	Power of the preregistered omnibus group test before pairwise contrasts.
+pooled_event_ap	differential_pooled	G1	event	true	higher	false	binary event truth	scenario macro mean	Pooled-condition event AP; never mixed with subject-aware inference.
+target_program_ap	downstream_response	G1/G2	receiver-program	true	higher	false	independent target or perturbation truth	receiver then dataset macro mean	Signed ligand-to-target program average precision.
+target_direction_accuracy	downstream_response	G1/G2	receiver-program	false	higher	false	signed independent target truth	receiver macro mean	Direction agreement of downstream target response.
+factor_context_correlation	context_program	G1/G5	factor	true	higher	false	planted program or phenotype	Hungarian-matched factor macro mean	Pearson/Spearman correlation of matched context loadings.
+factor_event_auprc	context_program	G1	factor-event	true	higher	false	planted program events	Hungarian-matched factor macro mean	Recovery of LR-sender-receiver events within matched factors.
+normalized_reconstruction_error	context_program	G1/G5	tensor	false	lower	false	observed tensor	dataset macro mean	Squared Frobenius reconstruction error divided by squared tensor norm.
+heldout_context_error	context_program	G1/G5	context	true	lower	false	held-out observations	outer context fold	Reconstruction or prediction error for contexts excluded from factor fitting.
+olink_ligand_ap	orthogonal_validation	G3	ligand	true	higher	false	held-out external Olink protein differential	H-common contrast then dataset	AP for predicted differential ligands against direction-matched Olink q<=0.05 truth within the frozen Olink-blind representable ligand universe.
+olink_logfc_spearman	orthogonal_validation	G3	ligand	false	higher	false	held-out external Olink protein differential	contrast then dataset	Spearman correlation between aggregated ligand score and Olink differential abundance.
+protein_ndcg	orthogonal_validation	G3	ligand/receptor	false	higher	false	held-out protein evidence	dataset macro mean	Normalized discounted cumulative gain using protein effect magnitude as relevance.
+spatial_des	orthogonal_validation	G4	cell-pair	true	higher	false	condition-specific spatial support	equal mean over frozen 10/20/30/40 percent strata	Paper-matched positive GSEA DES with gseaParam=1, raw cardinality, non-self pairs, floor and native ties.
+matched_topk_des	orthogonal_validation	G4	cell-pair	false	higher	false	condition-specific spatial support	equal mean over matched output counts	DES after matching the number of predicted cell pairs across methods.
+spatial_direction_agreement	orthogonal_validation	G4	cell-pair	false	higher	false	condition-specific spatial effect	dataset macro mean	Agreement between predicted condition direction and independent spatial direction.
+cytosig_controlled_auroc	orthogonal_static	G3	ligand-target	true	higher	false	CytoSig-derived response truth	dataset only; never merge TNBC/HER2 truth definitions	Controlled unique ligand-target AUROC for static communication rankings.
+citeseq_receptor_auroc	orthogonal_static	G3	receptor-cell	true	higher	false	ADT receptor abundance	dataset macro mean	Static receptor-protein AUROC on the paper-defined eligible universe.
+ipf_literature_ap	orthogonal_static	G5	event	false	higher	false	incomplete literature positives	dataset only	Average precision against literature-curated IPF positives; unlabelled edges are not confirmed negatives.
+phenotype_ari	phenotype	G5	subject graph	true	higher	false	patient group labels	dataset then equal-weight macro mean	Adjusted Rand index after preregistered patient-network clustering.
+phenotype_rand_index	phenotype	G5	subject graph	false	higher	false	patient group labels	dataset then equal-weight macro mean	Unadjusted Rand index at the known number of phenotype labels; secondary because chance agreement is not removed.
+phenotype_max_k_ari	phenotype	G5	subject graph	false	higher	false	patient group labels	dataset only; never used for primary ranking	Maximum adjusted Rand index over k=2 through 7; an optimistic paper-comparability diagnostic selected on the truth labels.
+donor_subsample_spearman	performance	G1/G2/G3/G4/G5	event	true	higher	false	full-data reference	dataset and retained-subject fraction	Correlation between full-cohort and donor-subsampled effect estimates.
+topk_jaccard	performance	G1/G2/G3/G4/G5	event	false	higher	false	full-data reference	dataset, k and perturbation level	Tie-inclusive top-k overlap under donor/cell/annotation/resource perturbations.
+wall_time_seconds	performance	G1/G2/G3/G4/G5	run	true	lower	false	none	one-core and best-practical profiles separately	Elapsed wall time for the complete declared pipeline.
+core_hours	performance	G1/G2/G3/G4/G5	run	false	lower	false	none	one-core and best-practical profiles separately	Wall hours multiplied by allocated CPU cores.
+peak_rss_gib	performance	G1/G2/G3/G4/G5	run	true	lower	false	none	one-core and best-practical profiles separately	Peak resident memory of the process tree.
+scaling_exponent	performance	G1/G5	run	true	lower	false	none	method and scaling axis	Slope b in log(runtime)=a+b*log(problem size), reported by cells, subjects, LR and cell types.
+failure_rate	performance	G1/G2/G3/G4/G5	run	true	lower	false	none	method and eligible panel	Fraction of eligible frozen runs ending failed or resource-guard terminated; NE is separate.

@@ -1,0 +1,4 @@
+profile_id	cpu_threads	parallel_jobs	gpu_policy	soft_memory_fraction	hard_memory_fraction	rss_scope	timing_scope	purpose
+one_core	1	1	disabled	0.70	0.78	root process plus descendants sampled at 0.2 seconds	complete declared pipeline	Comparable algorithmic scaling baseline.
+best_practical	auto_physical_cores_minus_4	memory_guarded	adapter_declared	0.70	0.78	root process plus descendants sampled at 0.2 seconds	complete declared pipeline	Efficient production profile without oversubscribing nested BLAS or R workers.
+gpu_sensitivity	auto_physical_cores_minus_4	1	validated_only	0.70	0.78	CPU process tree plus GPU peak allocation	complete declared pipeline	Separate sensitivity arm only after CPU/GPU numerical agreement is tested.
