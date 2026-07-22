@@ -1,0 +1,65 @@
+{
+  "acceptance": {
+    "accepted": false,
+    "development_candidate_eligible": false,
+    "development_candidate_eligible_pass": false,
+    "global_null_pair_score_ratio_q95": 0.4710265700483092,
+    "global_null_pass": true,
+    "holdout_asymmetric_mean_delta_vs_rc9": -0.4567463812416365,
+    "holdout_asymmetric_pass": false,
+    "holdout_independent_mean_delta_vs_rc9": -0.20089504451021584,
+    "holdout_independent_pass": false,
+    "holdout_primary_gain_pass": true,
+    "holdout_primary_mean_delta_vs_rc9": 0.11892511472228011,
+    "holdout_safety_mean_delta_vs_rc9": -0.33259047019641785,
+    "holdout_safety_pass": false,
+    "holdout_structural_mean_delta_vs_rc9": 0.0727478785755665,
+    "holdout_structural_pass": true,
+    "selected_candidate": "contrast_lambda_075"
+  },
+  "accepted": false,
+  "code": {
+    "commit": "50d843c8af15177181f22157ced0e4004d681bda",
+    "dirty": false
+  },
+  "config": {
+    "path": "benchmarks/configs/paired_rank_contrast_rc10_v1.json",
+    "sha256": "f2137a5c54dd357007326c4355eadccaf7b9431cdfbc7c3e9a43d16e71923516"
+  },
+  "elapsed_seconds": 16.76235054805875,
+  "limitations": [
+    "pair_summary_simulation_not_full_edge_pipeline",
+    "spatial_des_is_an_indirect_pair_level_proxy",
+    "candidate_is_not_released_scientific_inference"
+  ],
+  "outputs": {
+    "aggregate_metrics.tsv": {
+      "rows": 108,
+      "sha256": "cee021840a3f69ae887a2f1a90c16f5dc3c1d1acd433aebc3b718e0b8301e823"
+    },
+    "candidate_selection.tsv": {
+      "rows": 5,
+      "sha256": "c311e1a7fff36cdceeae9d9d0c82e851cdc4b0bffbb5803c4702d017784b700e"
+    },
+    "replicate_metrics.tsv": {
+      "rows": 8640,
+      "sha256": "32aff5cc21437db2b59098daa2fb8e63fb89099e1ee981fce0f8ff89df3d0c87"
+    }
+  },
+  "schema_version": "crychic-paired-rank-contrast-result-v1",
+  "selection": {
+    "accepted_for_real_benchmark": false,
+    "candidate": {
+      "name": "contrast_lambda_075",
+      "subtraction_fraction": 0.75
+    },
+    "config_sha256": "f2137a5c54dd357007326c4355eadccaf7b9431cdfbc7c3e9a43d16e71923516",
+    "formal_release_allowed": false,
+    "holdout_used_for_candidate_selection": false,
+    "real_cohorts_used_for_selection": false,
+    "schema_version": "crychic-paired-rank-contrast-frozen-v1",
+    "selected_candidate": "contrast_lambda_075",
+    "selected_on": "development_only"
+  },
+  "status": "complete"
+}
