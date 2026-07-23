@@ -711,6 +711,29 @@ def test_public_facade_atomically_persists_queryable_v0_1_result(tmp_path) -> No
     assert result.manifest["mode"] == "exploratory"
     assert result.manifest["workflow_parameters"]["pseudobulk"] == {"min_cells": 2}
     assert len(result.manifest["workflow_digest"]) == 64
+    profiling = result.manifest["profiling"]
+    assert profiling["clock"] == "time.perf_counter"
+    assert profiling["scope"] == "fit_baseline_excludes_result_persistence"
+    stage_seconds = profiling["stage_seconds"]
+    assert set(stage_seconds) == {
+        "validate_design",
+        "pseudobulk",
+        "response",
+        "availability",
+        "sender_assignment",
+        "attribution",
+        "scoring_preparation",
+        "score_integration",
+        "score_materialization",
+        "edge_evidence",
+        "finalization",
+        "artifact_validation",
+        "fit_total",
+    }
+    assert all(value >= 0.0 for value in stage_seconds.values())
+    assert stage_seconds["fit_total"] >= max(
+        value for name, value in stage_seconds.items() if name != "fit_total"
+    )
     availability_parameters = result.manifest["workflow_parameters"]["availability"]
     assert availability_parameters["filter_application"] == "training_selection_v1"
     assert availability_parameters["application_subject_ids"] == (

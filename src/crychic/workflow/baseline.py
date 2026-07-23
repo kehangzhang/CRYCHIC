@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections.abc import Hashable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, cast
 
 import numpy as np
@@ -1929,6 +1931,8 @@ def fit_baseline(
 ) -> BaselineArtifacts:
     """Fit the deterministic, explicitly non-cross-fitted v0.1 baseline."""
 
+    fit_started = time.perf_counter()
+    stage_seconds: dict[str, float] = {}
     if not isinstance(resource_bundle, ResourceBundle):
         raise TypeError("resource_bundle must be a ResourceBundle")
     if target_prior is not None and not isinstance(target_prior, TargetPrior):
@@ -1945,6 +1949,7 @@ def fit_baseline(
         min_pooled_availability=min_pooled_availability,
         prior_quality=prior_quality,
     )
+    stage_started = time.perf_counter()
     schema = _input_schema(config)
     validated = validate_anndata(adata, schema)
     if validated.report.duplicate_genes:
@@ -1975,8 +1980,12 @@ def fit_baseline(
             "baseline design/resources are incompatible: "
             + ",".join(sorted(set(plan_reasons)))
         )
+    stage_seconds["validate_design"] = time.perf_counter() - stage_started
 
+    stage_started = time.perf_counter()
     aggregate = aggregate_pseudobulk(validated, min_cells=min_cells)
+    stage_seconds["pseudobulk"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     response = estimate_gene_response(
         aggregate,
         graph,
@@ -1986,6 +1995,8 @@ def fit_baseline(
         subject_fixed_effects=subject_fixed_effects,
         design_audit=plan.design_audit,
     )
+    stage_seconds["response"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     availability = estimate_bundle_availability(
         aggregate,
         resource_bundle,
@@ -1994,9 +2005,13 @@ def fit_baseline(
         min_pooled_availability=min_pooled_availability,
         max_interactions=max_interactions,
     )
+    stage_seconds["availability"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     sender_assignment = assign_senders(
         _sender_input(availability, config), sender_parameters
     )
+    stage_seconds["sender_assignment"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     attribution_runs = _run_attribution(
         response,
         availability,
@@ -2006,12 +2021,16 @@ def fit_baseline(
         lambda2=lambda2,
         cosine_threshold=cosine_threshold,
     )
+    stage_seconds["attribution"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     scoring_availability = _scoring_availability(
         availability,
         config,
         graph,
         sender_assignment,
     )
+    stage_seconds["scoring_preparation"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     candidate_score_runs = _score_runs(
         response,
         scoring_availability,
@@ -2027,6 +2046,8 @@ def fit_baseline(
         filter_universe_id=availability.filter_universe_id,
         cosine_threshold=cosine_threshold,
     )
+    stage_seconds["score_integration"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     score_runs = tuple(
         run
         for run in candidate_score_runs
@@ -2052,6 +2073,8 @@ def fit_baseline(
     else:
         sample_scores = pd.DataFrame()
         mode = BaselineMode.AVAILABILITY_BASELINE
+    stage_seconds["score_materialization"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     edge_evidence = _build_edge_evidence(
         scoring_availability,
         attribution_runs,
@@ -2060,7 +2083,9 @@ def fit_baseline(
         config_modes=config.communication_modes,
         attribution_support_method=attribution_support_method,
     )
+    stage_seconds["edge_evidence"] = time.perf_counter() - stage_started
 
+    stage_started = time.perf_counter()
     reason_codes = [
         *validated.report.reason_codes,
         *validated.report.warnings,
@@ -2074,7 +2099,31 @@ def fit_baseline(
     reason_codes.extend(
         run.reason_code for run in attribution_runs if run.reason_code is not None
     )
-    return BaselineArtifacts(
+    run_parameters = _effective_run_parameters(
+        graph=graph,
+        availability=availability,
+        availability_parameters=availability_parameters,
+        sender_assignment=sender_assignment,
+        min_cells=min_cells,
+        min_samples_per_context=min_samples_per_context,
+        min_subjects_per_context=min_subjects_per_context,
+        min_pooled_availability=min_pooled_availability,
+        max_interactions=max_interactions,
+        subject_fixed_effects=subject_fixed_effects,
+        lambda1=lambda1,
+        lambda2=lambda2,
+        cosine_threshold=cosine_threshold,
+        prior_quality=prior_quality,
+        component_weights=component_weights,
+        component_scales=component_scales,
+        communication_modes=tuple(
+            CommunicationMode(mode).value for mode in config.communication_modes
+        ),
+        attribution_support_method=attribution_support_method,
+    )
+    stage_seconds["finalization"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
+    artifacts = BaselineArtifacts(
         config=config,
         input_schema=schema,
         validated_input=validated,
@@ -2092,27 +2141,15 @@ def fit_baseline(
         edge_evidence=edge_evidence,
         mode=mode,
         reason_codes=tuple(reason_codes),
-        run_parameters=_effective_run_parameters(
-            graph=graph,
-            availability=availability,
-            availability_parameters=availability_parameters,
-            sender_assignment=sender_assignment,
-            min_cells=min_cells,
-            min_samples_per_context=min_samples_per_context,
-            min_subjects_per_context=min_subjects_per_context,
-            min_pooled_availability=min_pooled_availability,
-            max_interactions=max_interactions,
-            subject_fixed_effects=subject_fixed_effects,
-            lambda1=lambda1,
-            lambda2=lambda2,
-            cosine_threshold=cosine_threshold,
-            prior_quality=prior_quality,
-            component_weights=component_weights,
-            component_scales=component_scales,
-            communication_modes=tuple(
-                CommunicationMode(mode).value for mode in config.communication_modes
-            ),
-            attribution_support_method=attribution_support_method,
-        ),
+        run_parameters=run_parameters,
+        stage_seconds=stage_seconds,
         method_version=_METHOD_VERSION,
     )
+    stage_seconds["artifact_validation"] = time.perf_counter() - stage_started
+    stage_seconds["fit_total"] = time.perf_counter() - fit_started
+    object.__setattr__(
+        artifacts,
+        "stage_seconds",
+        MappingProxyType(dict(stage_seconds)),
+    )
+    return artifacts

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -581,6 +581,7 @@ class BaselineArtifacts:
     reason_codes: tuple[str, ...]
     run_parameters: Mapping[str, object]
     method_version: str = "0.1.0-exploratory"
+    stage_seconds: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         mode = BaselineMode(self.mode)
@@ -610,11 +611,23 @@ class BaselineArtifacts:
         edge_evidence = EdgeEvidenceLedger(self.edge_evidence).table
         _validate_edge_evidence_links(edge_evidence, self.sample_scores)
         canonical_json(self.run_parameters)
+        stage_seconds = dict(self.stage_seconds)
+        if any(
+            not isinstance(name, str)
+            or not name
+            or isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not np.isfinite(value)
+            or value < 0.0
+            for name, value in stage_seconds.items()
+        ):
+            raise ValueError("baseline stage timings must be finite and non-negative")
         object.__setattr__(self, "sample_scores", self.sample_scores.copy(deep=True))
         object.__setattr__(self, "edge_evidence", edge_evidence)
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "reason_codes", tuple(sorted(set(self.reason_codes))))
         object.__setattr__(self, "run_parameters", _freeze(self.run_parameters))
+        object.__setattr__(self, "stage_seconds", _freeze(stage_seconds))
 
     @property
     def run_parameters_digest(self) -> str:
@@ -670,6 +683,6 @@ def _freeze(value: Any) -> Any:
         return MappingProxyType(
             {str(key): _freeze(item) for key, item in value.items()}
         )
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return tuple(_freeze(item) for item in value)
     return value

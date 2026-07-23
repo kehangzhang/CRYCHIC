@@ -693,6 +693,12 @@ def write_baseline_result(
         ],
         "warnings": sorted(set(warnings)),
     }
+    if artifacts.stage_seconds:
+        manifest["profiling"] = {
+            "clock": "time.perf_counter",
+            "scope": "fit_baseline_excludes_result_persistence",
+            "stage_seconds": dict(artifacts.stage_seconds),
+        }
     return write_result(
         destination,
         config=artifacts.config,

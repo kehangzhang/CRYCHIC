@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -95,7 +96,7 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
         "stages",
         "warnings",
     }
-    optional = {"extensions"}
+    optional = {"extensions", "profiling"}
     if not required.issubset(value) or set(value).difference(required) - optional:
         _fail(
             "Run manifest fields do not match the v0.1 schema",
@@ -204,6 +205,39 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
                 f"Run manifest table record {table_name!r} is invalid",
                 code="invalid_run_manifest",
                 field_name=table_name,
+            )
+    if "profiling" in value:
+        profiling = value["profiling"]
+        if not isinstance(profiling, Mapping) or set(profiling) != {
+            "clock",
+            "scope",
+            "stage_seconds",
+        }:
+            _fail(
+                "Run manifest profiling record is invalid",
+                code="invalid_run_manifest",
+                field_name="profiling",
+            )
+        stages = profiling["stage_seconds"]
+        if (
+            profiling["clock"] != "time.perf_counter"
+            or profiling["scope"] != "fit_baseline_excludes_result_persistence"
+            or not isinstance(stages, Mapping)
+            or "fit_total" not in stages
+            or any(
+                not isinstance(name, str)
+                or not name
+                or isinstance(seconds, bool)
+                or not isinstance(seconds, int | float)
+                or not math.isfinite(float(seconds))
+                or float(seconds) < 0.0
+                for name, seconds in stages.items()
+            )
+        ):
+            _fail(
+                "Run manifest profiling values are incompatible",
+                code="invalid_run_manifest",
+                field_name="profiling",
             )
         if (
             record["filename"] != contract.filename

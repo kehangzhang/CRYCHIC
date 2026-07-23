@@ -31,6 +31,21 @@
     "config_digest": {"$ref": "#/$defs/sha256"},
     "workflow_parameters": {"type": "object"},
     "workflow_digest": {"$ref": "#/$defs/sha256"},
+    "profiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clock", "scope", "stage_seconds"],
+      "properties": {
+        "clock": {"const": "time.perf_counter"},
+        "scope": {"const": "fit_baseline_excludes_result_persistence"},
+        "stage_seconds": {
+          "type": "object",
+          "minProperties": 1,
+          "required": ["fit_total"],
+          "additionalProperties": {"type": "number", "minimum": 0}
+        }
+      }
+    },
     "provenance_digest": {"$ref": "#/$defs/sha256"},
     "input_digest": {
       "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -112,6 +113,37 @@ def _normalise_stage(value: object) -> dict[str, object]:
     return {"name": name, "status": status, "reason_code": reason_code}
 
 
+def _normalise_profiling(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise TypeError("run manifest profiling must be an object")
+    if set(value) != {"clock", "scope", "stage_seconds"}:
+        raise ValueError("run manifest profiling fields are invalid")
+    if value["clock"] != "time.perf_counter":
+        raise ValueError("run manifest profiling clock is unsupported")
+    if value["scope"] != "fit_baseline_excludes_result_persistence":
+        raise ValueError("run manifest profiling scope is unsupported")
+    stages = value["stage_seconds"]
+    if not isinstance(stages, Mapping) or not stages:
+        raise ValueError("run manifest profiling requires stage timings")
+    normalized: dict[str, float] = {}
+    for name, raw_value in stages.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("profiling stage names must be non-empty strings")
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+            raise ValueError("profiling stage seconds must be numeric")
+        seconds = float(raw_value)
+        if not math.isfinite(seconds) or seconds < 0.0:
+            raise ValueError("profiling stage seconds must be finite and non-negative")
+        normalized[name] = seconds
+    if "fit_total" not in normalized:
+        raise ValueError("run manifest profiling requires fit_total")
+    return {
+        "clock": value["clock"],
+        "scope": value["scope"],
+        "stage_seconds": dict(sorted(normalized.items())),
+    }
+
+
 def _build_manifest(
     supplied: Mapping[str, object],
     *,
@@ -127,6 +159,7 @@ def _build_manifest(
         "stages",
         "warnings",
         "workflow_parameters",
+        "profiling",
     }
     unknown = set(supplied).difference(allowed)
     if unknown:
@@ -170,6 +203,8 @@ def _build_manifest(
         "stages": [_normalise_stage(stage) for stage in raw_stages],
         "warnings": list(warnings),
     }
+    if "profiling" in supplied:
+        manifest["profiling"] = _normalise_profiling(supplied["profiling"])
     if extension_records:
         manifest["extensions"] = dict(extension_records)
     return manifest
