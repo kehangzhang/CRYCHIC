@@ -635,6 +635,7 @@ def generate(
     target_prior_path: Path,
     output_dir: Path,
     *,
+    database_root: Path | None = None,
     seeds: Sequence[int],
     minimum_source_cells: int = 20,
     cap_per_sample_cell_type: int = 40,
@@ -671,6 +672,13 @@ def generate(
     for path in (input_h5ad, resource_path, target_prior_path):
         if not path.is_file():
             raise FileNotFoundError(path)
+    database_root = (
+        (Path(__file__).resolve().parents[2] / "../databases").resolve()
+        if database_root is None
+        else database_root.expanduser().resolve()
+    )
+    if not database_root.is_dir():
+        raise NotADirectoryError(database_root)
     output_dir = output_dir.expanduser().resolve()
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     staged = Path(
@@ -906,9 +914,7 @@ def generate(
         plans.to_csv(plan_path, sep="\t", index=False, lineterminator="\n")
         config = {
             "schema_version": "canonical-v0.1",
-            "database_root": str(
-                (Path(__file__).resolve().parents[2] / "../databases").resolve()
-            ),
+            "database_root": str(database_root),
             "output_root": str((output_dir.parent / "runs/crychic").resolve()),
             "resources": {
                 "brca_semisynthetic_hcommon": {
@@ -947,6 +953,7 @@ def generate(
                 "filename": input_h5ad.name,
                 "sha256": sha256_file(input_h5ad),
             },
+            "database_root": str(database_root),
             "design": {
                 "primary_estimand": "(On-Pre in E) - (On-Pre in NE)",
                 "true_pairing_key": "subject_id",
@@ -1022,6 +1029,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-h5ad", required=True, type=Path)
     parser.add_argument("--resource", required=True, type=Path)
     parser.add_argument("--target-prior", required=True, type=Path)
+    parser.add_argument("--database-root", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--seeds", type=_parse_seeds, default=(20260723,))
     parser.add_argument("--minimum-source-cells", type=int, default=20)
@@ -1044,6 +1052,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.resource,
         args.target_prior,
         args.output_dir,
+        database_root=args.database_root,
         seeds=args.seeds,
         minimum_source_cells=args.minimum_source_cells,
         cap_per_sample_cell_type=args.cap_per_sample_cell_type,

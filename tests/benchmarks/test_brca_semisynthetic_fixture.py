@@ -127,6 +127,9 @@ def test_brca_semisynthetic_fixture_is_truth_and_checksum_bound(
     )
 
     assert manifest["status"] == "complete"
+    assert Path(manifest["database_root"]).is_dir()
+    config = json.loads((output / "crychic_config.json").read_text(encoding="utf-8"))
+    assert config["database_root"] == manifest["database_root"]
     assert manifest["design"]["subjects_by_expansion"] == {"E": 4, "NE": 4}
     assert manifest["records"][0]["shape"] == [320, 26]
     bundle = harmonized_resource_bundle(
