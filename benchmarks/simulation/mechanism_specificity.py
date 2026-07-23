@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -611,15 +612,37 @@ def generate_mechanism_specificity_evidence(
 ) -> GeneratedMechanismEvidence:
     """Generate deterministic model-derived evidence for all registered edges."""
 
-    _validate_catalog(truth)
     seed_lineages = phase_seed_lineages(phase, seed_count)
+    return generate_mechanism_specificity_evidence_from_lineages(
+        phase=phase,
+        seed_lineages=seed_lineages,
+        truth=truth,
+    )
+
+
+def generate_mechanism_specificity_evidence_from_lineages(
+    *,
+    phase: str,
+    seed_lineages: Sequence[SeedLineage],
+    truth: ComponentTruthMatrix,
+) -> GeneratedMechanismEvidence:
+    """Generate evidence from an explicitly frozen, caller-owned seed namespace."""
+
+    if not isinstance(phase, str) or not phase.strip() or phase != phase.strip():
+        raise ValueError("phase must be a canonical non-empty string")
+    lineages = tuple(seed_lineages)
+    if not lineages or any(not isinstance(item, SeedLineage) for item in lineages):
+        raise TypeError("seed_lineages must contain at least one SeedLineage")
+    if len({lineage.seed for lineage in lineages}) != len(lineages):
+        raise ValueError("seed_lineages must resolve to unique derived seeds")
+    _validate_catalog(truth)
     rows: list[dict[str, object]] = []
     functional_ids: list[str] = []
     statuses: list[str] = []
     gain_denominator_records: list[tuple[str, str]] = []
     null_losses: list[float | None] = []
     ecosystem_effects: list[float] = []
-    for lineage in seed_lineages:
+    for lineage in lineages:
         for edge_id in truth.known_edge_ids:
             profile = EDGE_PROFILES[edge_id]
             shared = _shared_inputs(lineage, profile)
@@ -658,11 +681,11 @@ def generate_mechanism_specificity_evidence(
         .drop(columns=["_scenario_order", "_edge_order"])
         .reset_index(drop=True)
     )
-    _validate_generated_table(evidence, truth=truth, seed_lineages=seed_lineages)
+    _validate_generated_table(evidence, truth=truth, seed_lineages=lineages)
     return GeneratedMechanismEvidence(
         phase=phase,
         evidence=evidence,
-        seed_lineages=seed_lineages,
+        seed_lineages=lineages,
         functional_ids=tuple(functional_ids),
         application_statuses=tuple(statuses),
         gain_denominator_records=tuple(gain_denominator_records),
@@ -752,5 +775,6 @@ __all__ = [
     "GeneratedMechanismEvidence",
     "frozen_design_manifest",
     "generate_mechanism_specificity_evidence",
+    "generate_mechanism_specificity_evidence_from_lineages",
     "phase_seed_lineages",
 ]

@@ -1,0 +1,75 @@
+{
+  "schema_version": "crychic-native-hypergraph-truth-benchmark-v1",
+  "benchmark_status": "preregistered_before_holdout_execution",
+  "truth": {
+    "path": "benchmarks/truth/component_truth_matrix.yaml",
+    "sha256": "fa586029c96e84404a38d699ac974eaa6c9379134e01b8573a716416191879b5",
+    "truth_set_id": "mechanism_specificity_components_v1"
+  },
+  "holdout": {
+    "root_seed": 1729072301,
+    "namespace": "crychic:native-hypergraph-truth:v1:independent-holdout:frozen-20260723",
+    "seed_count": 200,
+    "tuning_performed": false
+  },
+  "candidate_universe": {
+    "grain": "seed_x_known_edge_x_mechanism_scenario",
+    "scenarios": [
+      "active",
+      "global_null",
+      "abundance_only",
+      "ligand_only",
+      "target_only",
+      "receiver_autonomous",
+      "receptor_knockout"
+    ],
+    "missing_policy": "fail_campaign_never_zero_impute",
+    "coverage_policy": "identical_complete_candidate_universe_for_every_method"
+  },
+  "truth_endpoints": {
+    "exact_hyperedge": {
+      "positive_scenarios": ["active"],
+      "meaning": "complete sender-LR-receiver-program mechanism"
+    },
+    "partial_canonical_lr": {
+      "positive_scenarios": ["active", "ligand_only"],
+      "meaning": "sender-ligand-receptor partial event without downstream requirement"
+    }
+  },
+  "methods": {
+    "crychic_native_hyperedge": {
+      "formula": "integrated_lr_effect",
+      "uses_downstream_program": true
+    },
+    "pairwise_union": {
+      "formula": "max(availability_effect,receptor_gate,sender_effect)",
+      "uses_downstream_program": false
+    },
+    "clique_expansion": {
+      "formula": "cuberoot(availability_effect*receptor_gate*sender_effect)",
+      "uses_downstream_program": false
+    },
+    "simple_complex_min": {
+      "formula": "min(availability_effect,receptor_gate,sender_effect)",
+      "uses_downstream_program": false
+    }
+  },
+  "aggregation": {
+    "candidate_metric": "average_precision",
+    "within_seed": "equal_mean_across_known_edges",
+    "across_seed_interval": "paired_student_t_95pct"
+  },
+  "gate": {
+    "minimum_complete_seeds": 200,
+    "minimum_crychic_exact_ap": 0.95,
+    "minimum_exact_ap_paired_difference_ci_low": 0.20,
+    "required_baselines": [
+      "pairwise_union",
+      "clique_expansion",
+      "simple_complex_min"
+    ],
+    "require_identical_candidate_count": true,
+    "require_identical_coverage": true,
+    "partial_ap_role": "required_reported_specificity_tradeoff_not_gate"
+  }
+}
