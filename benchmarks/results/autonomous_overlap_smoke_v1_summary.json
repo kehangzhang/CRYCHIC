@@ -1,7 +1,7 @@
 {
   "artifact": {
-    "canonical_sha256": "8eaf932501698d314bd78b39ca51c2f268b4b3c1ece68d806c1367c54fd56e27",
-    "file_sha256": "ec7b063d39e28d688bba3c7b678b10d666427c24d1cd2e3e3121bda8e2086ad7",
+    "canonical_sha256": "9f87ab9ce432d0d827f3e4ba1fa2bb8337710f13893bcda702c26b8a1652c844",
+    "file_sha256": "c08c748c8e68621390dd9292ce8b0dc55869ee887222480e9da1083450cad66a",
     "path": "benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
     "size_bytes": 4332,
     "tracked": false
@@ -23,7 +23,7 @@
       "benchmarks/simulation/run_autonomous_overlap_smoke.py": "6a41d71f3ff4687c93192e687afd39734ba32f0387540a31c3286aa370686dd3",
       "src/crychic/attribution/__init__.py": "f04969c98c8d194357e81dd2f06384aee846d739d9751746fe29be5b244575bb",
       "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
-      "src/crychic/attribution/solver.py": "681c036435f3deed69cd100a49f7448c034e9091a7f567a34e4ca38f51428a21",
+      "src/crychic/attribution/solver.py": "e9a553c5cab918edbf75383c67c341cada9d652ed5a1fc3bc9acd21d96cd659a",
       "src/crychic/attribution/tuning.py": "56aea80da9548cad9f8122cf1952599dd264d7574b8f9c8fa7897ed956814489",
       "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
       "src/crychic/core/errors.py": "1683c3ca6f08f7160387a086f2fda7983c0ee15035d008934827035ebd7903cc",
@@ -34,7 +34,7 @@
       "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
       "src/crychic/response/__init__.py": "a8fa8fe1490dba5518501ce137487ee890a0c9833da218b6c1bf811bc85b3c1d",
       "src/crychic/response/autonomous.py": "ed21139eaa1a8939db08918d16094a0234a2616decffa3981aeb8dbc5ecbb9cf",
-      "src/crychic/scoring/__init__.py": "2b0c636270b8f6988a800e79170f9dfaa2456fa3986df023269f011078231b09",
+      "src/crychic/scoring/__init__.py": "36e326289092e2bec11b8a26aed926a9f07ca16dc16f0bd1b13553b394b2d374",
       "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
       "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a"
     }

@@ -1,12 +1,12 @@
 {
-  "base_revision": "c99385b3b48e2b5aa8109a7a4711894e3baa93a5",
+  "base_revision": "56ac19030b4f0db570a78589930fb45ea78bfa95",
   "full_artifact": {
-    "canonical_sha256": "92ff61a25a9836590a2bbaa577c9839351aef45c3646bc541e36d477e03bdc94",
-    "file_sha256": "96f88069a808a53d3cf77695596d45f4a2d19a924ce896dd31256d069e079606",
+    "canonical_sha256": "d2542bb0996e4bca6df5fa159ed26f8418edf581caffb54f1495f3017a0358cf",
+    "file_sha256": "c4733d7ed60d9f0f0f19df9ea4ae3a13fa26f350defc1d22ff545574b001698b",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
-    "size_bytes": 15182
+    "size_bytes": 15180
   },
-  "generated_on": "2026-07-18",
+  "generated_on": "2026-07-23",
   "guardrails": {
     "active_vs_ligand_only_mechanism_claim_allowed": false,
     "biological_claim_allowed": false,
@@ -17,14 +17,14 @@
   },
   "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract after the v7 coordinate, lineage, and factorized-nuisance updates. Active has positive bounded and raw diagnostic gain (0.0510551), while ligand-only has zero bounded gain and negative raw gain (-0.0174719). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
   "process_performance": {
-    "peak_rss_kib": 843304,
-    "wall_clock_seconds": 30.917910812422633
+    "peak_rss_kib": 446460,
+    "wall_clock_seconds": 14.33193588256836
   },
   "records": [
     {
       "crossfit_id": "subject_crossfit_12d9f4d79a8cdce3280158b940e9b6a1",
       "dataset": "synthetic_active",
-      "elapsed_seconds": 15.854746232740581,
+      "elapsed_seconds": 8.617265721783042,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -46,7 +46,7 @@
     {
       "crossfit_id": "subject_crossfit_5162be2290d99abde3b671a707f3b492",
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 15.063164579682052,
+      "elapsed_seconds": 5.714670160785317,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -85,16 +85,16 @@
     "src/crychic/attribution/__init__.py": "f04969c98c8d194357e81dd2f06384aee846d739d9751746fe29be5b244575bb",
     "src/crychic/attribution/basis.py": "79a33dae2fca754a368ed7a6d724a62879902ffb3dba7b8ccd7f301ba2cd93da",
     "src/crychic/attribution/contracts.py": "cde2b752bfa6c1534c661227f9665fec9e2299617429045c43bde9b62168a178",
-    "src/crychic/attribution/families.py": "dd5add5743b70606209c794f5a44dac87335b5d223257b5194811695a73cf0c6",
+    "src/crychic/attribution/families.py": "42d26751591a905a9be9d7f0715a221f1e3bebe606c6eac991f105f90432f656",
     "src/crychic/attribution/family_first.py": "2bd129165d7f711258cecc391f33076b19ba8a7b6141f9ecbd767e40d13493bc",
     "src/crychic/attribution/frozen_family.py": "b5a2c74289dbaa25b39935204fd90a55d40c063afe221b507018accfe4ed504e",
     "src/crychic/attribution/precision.py": "e5758e41436d33e404fcaf76520ca0bee93be45a6f458dd839c1932e7f0e0fd4",
-    "src/crychic/attribution/solver.py": "681c036435f3deed69cd100a49f7448c034e9091a7f567a34e4ca38f51428a21",
+    "src/crychic/attribution/solver.py": "e9a553c5cab918edbf75383c67c341cada9d652ed5a1fc3bc9acd21d96cd659a",
     "src/crychic/attribution/tuning.py": "56aea80da9548cad9f8122cf1952599dd264d7574b8f9c8fa7897ed956814489",
     "src/crychic/availability/__init__.py": "c87ed1ae2d387e00f80bb597c9702aee1fdcc986e226bd29e47bb336887ed151",
     "src/crychic/availability/contracts.py": "a1f6168389e938424325a9ea44cb4760c1072ff4922bc2934dcb02c26cf8f4bb",
     "src/crychic/availability/estimation.py": "daa9a5af1100fcee8bcde9cb8d9b9de255c865d4739be4b7c48f69da4a34ba9f",
-    "src/crychic/availability/table.py": "ebdb6e20abfcf69e9a743aec25081cf1e3afc664900d4e5ee194c8ccc944b696",
+    "src/crychic/availability/table.py": "d77da8915631b0e2c1a3d579a89037272a1fe1a732334ad6fb90355dff3d6660",
     "src/crychic/availability/transforms.py": "44a060e008b4dbbc4c89c387cdd45071da9d8a80fdf970dc35c7491f7fbd2e6f",
     "src/crychic/core/__init__.py": "049283415975a4383e7350ea5080cf1dcf88f91a13d3d15d0d9d6b96b1a6c5ff",
     "src/crychic/core/config.py": "6b11c21cc97504367af874ab36c90d0415c295664d3b319998e69e3379e41407",
@@ -112,7 +112,7 @@
     "src/crychic/design/contrasts.py": "295db3666b01bf8e456e70d3781ae190db5adc72d95283577ddbbc8c722d31d7",
     "src/crychic/design/frozen_encoder.py": "b6c3eb1b93764f534259d82c5a4250f4790d940a921b664d4496efbf2d612de2",
     "src/crychic/pseudobulk/__init__.py": "6ae1228c646af0a2ee85a30a2ad64fd847e7c0e3f257f9215f3af7a24d52dcf4",
-    "src/crychic/pseudobulk/aggregation.py": "4b7999916f9971eb5639fffe96ff60029319e6606e65e7e40f852da17b7db04f",
+    "src/crychic/pseudobulk/aggregation.py": "99ff97fe02497baeafd396898c688eb3c38852e1b56da0f2403aff1be9e9a439",
     "src/crychic/pseudobulk/contracts.py": "e26e41328e0b93efedde974d11b3eafc013c9ab2ec0514be150547d4908c3d95",
     "src/crychic/resampling/__init__.py": "1bd5df0129431ab374ac5cd25a66120f26c1d26187f9a266439ec192a7e8ff30",
     "src/crychic/resampling/contracts.py": "c00bcae35b34c2252b02b65d1612e2eb3ae786fbd1fcab02f71446b4411626d5",
@@ -124,28 +124,28 @@
     "src/crychic/resources/cellphonedb.py": "1c88e1f101c7d14e88a6de34f14a6d79adaedcb59838c259786354afa5197c4a",
     "src/crychic/resources/contracts.py": "98d628dda1e821911a23d2188f60d7d1fb8ae9070974ac58a52c5c10f7aeb0e8",
     "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
-    "src/crychic/resources/nichenet.py": "938b39380128b1838d242025191c8d5e60848b151e6783c2e5e96f60471ddf37",
+    "src/crychic/resources/nichenet.py": "309b74b1a0be974a3a1d893f0d6b81c18768032a8fff6aee99f2711bf7a07818",
     "src/crychic/response/__init__.py": "a8fa8fe1490dba5518501ce137487ee890a0c9833da218b6c1bf811bc85b3c1d",
     "src/crychic/response/autonomous.py": "ed21139eaa1a8939db08918d16094a0234a2616decffa3981aeb8dbc5ecbb9cf",
     "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
-    "src/crychic/response/fold.py": "98d140745ed6b324ef108e1792da71b9019271ebd18b2aba296b160a0910f734",
+    "src/crychic/response/fold.py": "d801caff1b411db202c48d5017ac0168f97d0e8ba873d1dab501c9590b3f8fec",
     "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
-    "src/crychic/scoring/__init__.py": "2b0c636270b8f6988a800e79170f9dfaa2456fa3986df023269f011078231b09",
+    "src/crychic/scoring/__init__.py": "36e326289092e2bec11b8a26aed926a9f07ca16dc16f0bd1b13553b394b2d374",
     "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
     "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a",
-    "src/crychic/scoring/family_common.py": "252ea21602532cfcaa8e8848504667d651ad3a20fdedb2830ee8f98bfb4a5b42",
-    "src/crychic/scoring/integration.py": "b831ba63ad577243b79d4f7657aeda372e6c7d66c60da1bb3c65a95bec5da3db",
+    "src/crychic/scoring/family_common.py": "546133b652600f2073756f220b1a3a6d4d7f0d6d41479e47eae103106593f616",
+    "src/crychic/scoring/integration.py": "e322f57b6322f6afdbe1bda39c31654ab53968fcf2fcff90a3c619589fd42c71",
     "src/crychic/scoring/receiver_family.py": "b019c67322587d510c116f5f082c542a363ca156bbeab16c5524ab7ac759314c",
-    "src/crychic/sender/__init__.py": "376cab147509ae142d132682814c78101ebf1ba0cbf1a1aee5bca38af706af28",
+    "src/crychic/sender/__init__.py": "3477805908d512e0ebe995806300b523bff8fc118e591f2e14486ed92487d6ff",
     "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
-    "src/crychic/sender/common.py": "c60be4f5ef8cd4a269fb9045d31623c7a591024f65ec9b06e37d84d7402f780d",
-    "src/crychic/sender/contracts.py": "11fdb32cc4f3d2b5320d3d898203b551ece4cc9016a7636f752173470892de7d",
+    "src/crychic/sender/common.py": "0f98d38f0048fbc2e45d531c7caaa35cdf51eb81dd1f3478918d306a8db1de22",
+    "src/crychic/sender/contracts.py": "de44ba7f338ea00364373591aae830eda01ec76cf1365697f1530c24087a362b",
     "src/crychic/workflow/__init__.py": "03559aa0dc6f227b00e169675f17834cfc156184fec3ece733f75ec1dce8f784",
-    "src/crychic/workflow/application.py": "b5b6901a016b9134489dbea34b072b6f571de4f70b13484b2af04a656bf635fc",
-    "src/crychic/workflow/contracts.py": "b1ec145876e255890490ed777e4ca7fb3f182dc86be438b2219e551eea9241af",
-    "src/crychic/workflow/crossfit.py": "7e224114ad87021ff3679dbd319bdbe63be98fb65c510d31af0c979be2984cd9",
+    "src/crychic/workflow/application.py": "ffdc9a1f4dadbb1cc759d992b0f0e46ec19223ad6851cfcfb775fd11bef6a98a",
+    "src/crychic/workflow/contracts.py": "3e9b3a0b32d12be47df094b021600d93ea1976038f2ca2c149883fb0594c6d36",
+    "src/crychic/workflow/crossfit.py": "58be3cbf919e9089423c7e39fde0a0829c81ca89fb222fbe9b96d1366a36556c",
     "src/crychic/workflow/receiver_incremental.py": "6f774ba14e9831cb6ddcc0fad87b4b3ff0a9e6bf8e6930037936e621da6aee70",
     "src/crychic/workflow/repeated_crossfit.py": "f6d6837716fff23f10e19880ea238742a6fafcceb7bf53a6cb6d17cfe64d5ef3",
-    "src/crychic/workflow/training.py": "daa8e6ffa7853b8ddbccaf827c591a638a90fa888106dc6c30f94d7d7392bd01"
+    "src/crychic/workflow/training.py": "318db5ab3281b3b5ef96b6fbce2cf555744a48c8741630337bdb3bf26e491959"
   }
 }

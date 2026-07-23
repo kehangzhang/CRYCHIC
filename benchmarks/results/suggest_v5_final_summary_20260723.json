@@ -1,0 +1,125 @@
+{
+  "schema_version": "crychic-suggest-v5-final-summary-v1",
+  "generated_on": "2026-07-23",
+  "objective": "establish at least two of canonical noninferiority, statistical calibration, and native hypergraph truth superiority",
+  "code_commits": {
+    "signed_contract": "e732770",
+    "exact_performance": "98ac3dc",
+    "mechanistic_score_layer": "22f3024",
+    "complete_replicate_panel": "a20cc6a",
+    "randomized_null_calibration": "8ac672b",
+    "native_hypergraph_holdout": "56ac190"
+  },
+  "score_contract": {
+    "canonical_score": "mechanistic_sender_lr_score",
+    "formula": "availability * prior_quality * sender_component",
+    "downstream_role": "independent annotation for canonical analysis",
+    "strict_downstream_score": "retained for explicitly high-order mechanism tasks"
+  },
+  "gates": {
+    "A_signed_estimand_contract": {
+      "status": "PASS",
+      "hand_computable_cases": "15/15",
+      "invariants": "11/11"
+    },
+    "B_randomized_global_null_calibration": {
+      "status": "PASS",
+      "replicates": 50,
+      "formal_tests": 13500,
+      "formal_test_fraction": 1.0,
+      "unadjusted_type_i_005_mean": 0.03414814814814815,
+      "unadjusted_type_i_one_sided_upper_95": 0.03776358407654481,
+      "ci_95_coverage_mean": 0.9658518518518519,
+      "ci_95_coverage_one_sided_lower_95": 0.9622364159234552,
+      "bh_any_false_discovery_replicates": "0/50",
+      "bh_fwer_one_sided_upper_95": 0.05815507911697225
+    },
+    "C_canonical_event_noninferiority": {
+      "status": "MIXED_NOT_ESTABLISHED_CONSERVATIVELY",
+      "complete_replicate_panel": {
+        "status": "PASS",
+        "comparator": "scSeqCommDiff",
+        "paired_replicates": 20,
+        "crychic_auprc": 0.9292,
+        "comparator_auprc": 0.9002,
+        "mean_difference": 0.0290,
+        "difference_ci": [-0.0187, 0.0768],
+        "noninferiority_margin": 0.05
+      },
+      "conservative_all_baseline_panel": {
+        "status": "REJECT",
+        "comparator": "CellChat",
+        "paired_replicates": 19,
+        "mean_difference": -0.0578,
+        "difference_ci": [-0.0947, -0.0209],
+        "cellchat_complete_replicates": "19/20"
+      }
+    },
+    "D_native_hypergraph_truth": {
+      "status": "PASS",
+      "holdout_seeds": 200,
+      "known_edges": 3,
+      "candidates_per_seed": 21,
+      "coverage_all_methods": 1.0,
+      "exact_ap": {
+        "crychic_native_hyperedge": 1.0,
+        "clique_expansion": 0.5,
+        "simple_complex_min": 0.5,
+        "pairwise_union": 0.2
+      },
+      "partial_canonical_lr_ap": {
+        "crychic_native_hyperedge": 0.6428571428571427,
+        "clique_expansion": 1.0,
+        "simple_complex_min": 1.0,
+        "pairwise_union": 0.4
+      },
+      "minimum_exact_ap_paired_difference_ci_low": 0.5
+    },
+    "E_exact_performance": {
+      "status": "PASS",
+      "full_wall_speedup": 4.89,
+      "core_fit_speedup": 4.60,
+      "attribution_speedup": 7.21,
+      "prior_load_speedup": 32.81,
+      "persisted_score_tables_byte_identical": true
+    }
+  },
+  "critical_objective": {
+    "status": "PASS_TWO_OF_THREE",
+    "established_pillars": [
+      "statistical_calibration",
+      "synthetic_native_hypergraph_exact_truth"
+    ],
+    "not_established": [
+      "canonical_all_baseline_noninferiority"
+    ]
+  },
+  "limitations": [
+    "The randomized-null campaign uses a real BRCA background with randomized between-subject expansion labels; it validates the released subject-level Welch DID track, not a refit-per-permutation exact test.",
+    "The native hypergraph holdout is synthetic, contains three registered LR edges, and uses mechanism near-misses with structural hard zeros; it is not real-data accuracy evidence.",
+    "CRYCHIC wins exact hyperedge AP but loses partial canonical-LR AP to clique and complex-min baselines, reflecting stricter downstream-mechanism specificity.",
+    "CellChat has the highest finite-replicate BRCA AUPRC and one deterministic coverage failure; it is not valid to claim CRYCHIC beats CellChat overall."
+  ],
+  "artifacts": {
+    "signed_contract_manifest": {
+      "path": "benchmark_work/suggest_v5_iterations/iteration_01_signed_contract_20260723/manifest.json",
+      "sha256": "68e2b2889f98c7bd4fce3d4707a34945eec583bbbe5dcce855209bada4798e9b"
+    },
+    "exact_performance_manifest": {
+      "path": "benchmark_work/suggest_v5_iterations/iteration_08_performance_v3_exact_20260723/manifest.json",
+      "sha256": "8a2f5763524a5254ef329273e248e2d2678873ee7ce1ebf1d7e79dec504c6b03"
+    },
+    "canonical_summary_manifest": {
+      "path": "benchmark_work/suggest_v5_iterations/iteration_12_brca_mechanistic_holdout_additional15_20260723/summary_combined_20seed_v2_complete_panel/manifest.json",
+      "sha256": "d7433216bf4f915d15734c88f2ad023f51f96a66a26b2fd34fc634a87b08b93a"
+    },
+    "null_calibration_manifest": {
+      "path": "benchmark_work/suggest_v5_iterations/iteration_14_brca_randomized_null_50seed_20260723/summary/manifest.json",
+      "sha256": "b501a88579c7995168ed3d271140a4ae2377d95c89d7e4c3ce06bf5b6a13af85"
+    },
+    "native_hypergraph_manifest": {
+      "path": "benchmark_work/suggest_v5_iterations/iteration_15_native_hypergraph_truth_200seed_20260723/result/manifest.json",
+      "sha256": "e5a13ec5d9f480ad8614ef88ed7e60461694833a10b75e7e2aac031e07f4221e"
+    }
+  }
+}
