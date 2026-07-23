@@ -43,6 +43,31 @@ def test_paired_effect_is_difference_of_within_subject_changes() -> None:
     assert np.isclose(result.loc[0, "difference_in_differences"], 1.5)
     assert result.loc[0, "n_subjects_E"] == 4
     assert result.loc[0, "n_subjects_NE"] == 4
+    assert np.isfinite(result.loc[0, "standard_error"])
+    assert result.loc[0, "ci_low_95"] < 1.5 < result.loc[0, "ci_high_95"]
+
+
+def test_degenerate_zero_did_has_conservative_formal_inference() -> None:
+    records = []
+    for expansion in ("E", "NE"):
+        for subject in range(4):
+            records.append(
+                {
+                    "subject_id": f"{expansion}{subject}",
+                    "expansion": expansion,
+                    **_event(0),
+                    "paired_delta": 0.0,
+                }
+            )
+
+    result = _paired_effects(
+        pd.DataFrame.from_records(records), min_subjects_per_group=4
+    )
+
+    assert result.loc[0, "p_value"] == 1.0
+    assert result.loc[0, "q_value"] == 1.0
+    assert result.loc[0, "ci_low_95"] == 0.0
+    assert result.loc[0, "ci_high_95"] == 0.0
 
 
 def test_metrics_separate_signed_truth_and_main_effect_leakage() -> None:

@@ -16,12 +16,12 @@ from typing import Any
 import anndata as ad
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_ind
+from scipy.stats import t as student_t
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 
-SCHEMA_VERSION = "crychic-brca-semisynthetic-evaluation-v2"
+SCHEMA_VERSION = "crychic-brca-semisynthetic-evaluation-v3"
 EVENT_KEYS = ("sender", "receiver", "interaction_id", "ligand", "receptor")
 SCSEQ_EVENT_KEYS = ("ligand", "receptor", "cluster_L", "cluster_R")
 REQUIRED_SCORE_COLUMNS = {
@@ -471,6 +471,62 @@ def _subject_deltas(table: pd.DataFrame) -> pd.DataFrame:
     return paired[["paired_delta"]].reset_index()
 
 
+def _welch_inference(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    effect: float,
+    confidence: float = 0.95,
+) -> dict[str, float]:
+    """Return two-sided Welch inference with an explicit degenerate-null case."""
+
+    left_variance = float(np.var(left, ddof=1))
+    right_variance = float(np.var(right, ddof=1))
+    left_component = left_variance / len(left)
+    right_component = right_variance / len(right)
+    standard_error = math.sqrt(left_component + right_component)
+    if standard_error == 0.0:
+        if effect == 0.0:
+            return {
+                "standard_error": 0.0,
+                "degrees_of_freedom": math.inf,
+                "p_value": 1.0,
+                "ci_low_95": 0.0,
+                "ci_high_95": 0.0,
+            }
+        return {
+            "standard_error": 0.0,
+            "degrees_of_freedom": math.nan,
+            "p_value": math.nan,
+            "ci_low_95": math.nan,
+            "ci_high_95": math.nan,
+        }
+    denominator = (
+        left_component**2 / (len(left) - 1)
+        + right_component**2 / (len(right) - 1)
+    )
+    degrees_of_freedom = (
+        (left_component + right_component) ** 2 / denominator
+        if denominator > 0.0
+        else math.inf
+    )
+    statistic = effect / standard_error
+    p_value = float(
+        2.0 * student_t.sf(abs(statistic), df=degrees_of_freedom)
+    )
+    critical = float(
+        student_t.ppf(0.5 + confidence / 2.0, df=degrees_of_freedom)
+    )
+    radius = critical * standard_error
+    return {
+        "standard_error": standard_error,
+        "degrees_of_freedom": degrees_of_freedom,
+        "p_value": p_value,
+        "ci_low_95": effect - radius,
+        "ci_high_95": effect + radius,
+    }
+
+
 def _paired_effects(
     deltas: pd.DataFrame,
     *,
@@ -491,11 +547,17 @@ def _paired_effects(
             and np.isfinite(right).all()
         )
         effect = float(left.mean() - right.mean()) if estimable else math.nan
-        p_value = math.nan
-        if estimable and (np.var(left) > 0.0 or np.var(right) > 0.0):
-            p_value = float(
-                ttest_ind(left, right, equal_var=False, nan_policy="raise").pvalue
-            )
+        inference = (
+            _welch_inference(left, right, effect=effect)
+            if estimable
+            else {
+                "standard_error": math.nan,
+                "degrees_of_freedom": math.nan,
+                "p_value": math.nan,
+                "ci_low_95": math.nan,
+                "ci_high_95": math.nan,
+            }
+        )
         records.append(
             {
                 **dict(zip(EVENT_KEYS, event, strict=True)),
@@ -504,7 +566,7 @@ def _paired_effects(
                 "mean_delta_E": float(left.mean()) if len(left) else math.nan,
                 "mean_delta_NE": float(right.mean()) if len(right) else math.nan,
                 "difference_in_differences": effect,
-                "p_value": p_value,
+                **inference,
                 "status": "observed" if estimable else "not_estimable",
                 "reason_code": (
                     ""
@@ -523,7 +585,11 @@ def _paired_effects(
                 "mean_delta_E",
                 "mean_delta_NE",
                 "difference_in_differences",
+                "standard_error",
+                "degrees_of_freedom",
                 "p_value",
+                "ci_low_95",
+                "ci_high_95",
                 "q_value",
                 "status",
                 "reason_code",
@@ -562,7 +628,28 @@ def _metrics(
     negative = directions < 0
     main_control = scored["planted_main_effect_control"].astype(bool).to_numpy()
     no_effect = ~(active | main_control)
-    discovered = pd.to_numeric(scored["q_value"], errors="coerce").lt(0.05).to_numpy()
+    null = ~active
+    p_values = pd.to_numeric(
+        scored.get("p_value", pd.Series(np.nan, index=scored.index)),
+        errors="coerce",
+    ).to_numpy(dtype=float)
+    q_values = pd.to_numeric(
+        scored.get("q_value", pd.Series(np.nan, index=scored.index)),
+        errors="coerce",
+    ).to_numpy(dtype=float)
+    ci_low = pd.to_numeric(
+        scored.get("ci_low_95", pd.Series(np.nan, index=scored.index)),
+        errors="coerce",
+    ).to_numpy(dtype=float)
+    ci_high = pd.to_numeric(
+        scored.get("ci_high_95", pd.Series(np.nan, index=scored.index)),
+        errors="coerce",
+    ).to_numpy(dtype=float)
+    finite_p = np.isfinite(p_values)
+    finite_ci = np.isfinite(ci_low) & np.isfinite(ci_high)
+    null_finite_p = null & finite_p
+    null_finite_ci = null & finite_ci
+    discovered = np.isfinite(q_values) & (q_values < 0.05)
     true_positives = int(np.sum(discovered & active))
     false_positives = int(np.sum(discovered & ~active))
     active_median = (
@@ -603,6 +690,33 @@ def _metrics(
             float(np.std(values[no_effect], ddof=1))
             if np.sum(no_effect) > 1
             else math.nan
+        ),
+        "n_formal_tests": int(finite_p.sum()) if formal_did_p_value else math.nan,
+        "formal_test_fraction": (
+            float(finite_p.mean()) if formal_did_p_value and len(finite_p) else math.nan
+        ),
+        "null_unadjusted_rejections_p_lt_005": (
+            int(np.sum(null_finite_p & (p_values < 0.05)))
+            if formal_did_p_value
+            else math.nan
+        ),
+        "null_type_i_005": (
+            float(np.mean(p_values[null_finite_p] < 0.05))
+            if formal_did_p_value and null_finite_p.any()
+            else math.nan
+        ),
+        "null_ci_95_coverage": (
+            float(
+                np.mean(
+                    (ci_low[null_finite_ci] <= 0.0)
+                    & (ci_high[null_finite_ci] >= 0.0)
+                )
+            )
+            if formal_did_p_value and null_finite_ci.any()
+            else math.nan
+        ),
+        "null_bh_any_false_discovery": (
+            int(np.any(discovered & null)) if formal_did_p_value else math.nan
         ),
         "discoveries_q_lt_005": (
             int(discovered.sum()) if formal_did_p_value else math.nan
@@ -922,6 +1036,10 @@ def evaluate(
             "native_did_engine": SCSEQ_NATIVE_ENGINE,
             "minimum_subjects_per_expansion": min_subjects_per_group,
             "missing_policy": "complete_paired_subjects_per_event;never_zero_imputed",
+            "formal_inference": (
+                "subject_level_within_pair_deltas;between_arm_welch_t;"
+                "two_sided_95pct_welch_ci;BH_within_dataset_method_view_engine"
+            ),
             "native_did_inference_policy": (
                 "subtract_native_pairwise_effects;do_not_reuse_arm_p_values_for_DID"
             ),

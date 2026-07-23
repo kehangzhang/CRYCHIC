@@ -193,3 +193,42 @@ def test_brca_semisynthetic_fixture_is_truth_and_checksum_bound(
         assert pair_record["dimensions"]["units_by_condition"] == {
             condition: 4 for condition in expected_conditions[expansion]
         }
+
+    null_output = tmp_path / "null_fixture"
+    null_manifest = generate(
+        source_path,
+        resource_path,
+        prior_path,
+        null_output,
+        seeds=(23,),
+        fixture_mode="randomized_global_null",
+        minimum_source_cells=10,
+        cap_per_sample_cell_type=10,
+        n_interactions=8,
+        events_per_class=1,
+        targets_per_ligand=1,
+        background_genes=2,
+        ligand_add=4,
+        receptor_add=4,
+        target_add=2,
+    )
+    assert null_manifest["fixture_mode"] == "randomized_global_null"
+    assert not null_manifest["injection"]["enabled"]
+    assert null_manifest["records"][0]["expansion_assignment_digest"].startswith(
+        "expansion_assignment_"
+    )
+    null_truth = pd.read_csv(null_output / "event_truth.tsv", sep="\t")
+    null_plan = pd.read_csv(null_output / "injection_plan.tsv", sep="\t")
+    assert not null_truth["truth_label"].any()
+    assert set(null_plan["event_class"]) == {"no_effect"}
+    null_fixture = ad.read_h5ad(
+        null_output / null_manifest["records"][0]["h5ad"]
+    )
+    assert not null_fixture.uns["semisynthetic_contract"][
+        "count_injection_enabled"
+    ]
+    assert (
+        null_fixture.obs["timepoint"].astype(str)
+        + null_fixture.obs["expansion"].astype(str)
+        == null_fixture.obs["condition"].astype(str)
+    ).all()

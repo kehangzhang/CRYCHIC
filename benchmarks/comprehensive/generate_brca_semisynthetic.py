@@ -16,9 +16,16 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
+from benchmarks.adapters.common import (
+    canonical_digest,
+    git_metadata,
+    json_safe,
+    sha256_file,
+)
 
 SCHEMA_VERSION = "crychic-brca-semisynthetic-fixture-v2"
+NULL_SCHEMA_VERSION = "crychic-brca-randomized-global-null-fixture-v1"
+FIXTURE_MODES = ("planted", "randomized_global_null")
 CONDITIONS = ("PreE", "OnE", "PreNE", "OnNE")
 PAIRWISE_CONTRASTS = {
     "E": {"target": "OnE", "reference": "PreE"},
@@ -383,6 +390,53 @@ def _event_plan(
     return plan
 
 
+def _randomize_expansion_labels(
+    obs: pd.DataFrame,
+    *,
+    seed: int,
+) -> tuple[pd.DataFrame, str]:
+    """Randomize the between-subject arm while preserving paired samples."""
+
+    subject_design = (
+        obs.loc[:, ["subject_id", "expansion"]]
+        .astype(str)
+        .drop_duplicates()
+        .sort_values("subject_id", kind="stable", ignore_index=True)
+    )
+    if subject_design.duplicated("subject_id", keep=False).any():
+        raise ValueError("one subject maps to multiple source expansion labels")
+    labels = subject_design["expansion"].to_numpy(dtype=object)
+    if set(map(str, labels)) != {"E", "NE"}:
+        raise ValueError("randomized null requires source E and NE labels")
+    rng = np.random.default_rng(np.random.SeedSequence([int(seed), 76123]))
+    randomized = labels[rng.permutation(len(labels))]
+    assignment = dict(
+        zip(subject_design["subject_id"].astype(str), randomized, strict=True)
+    )
+    result = obs.copy()
+    result["expansion"] = result["subject_id"].astype(str).map(assignment)
+    if result["expansion"].isna().any():
+        raise RuntimeError("randomized expansion assignment is incomplete")
+    result["condition"] = result["timepoint"].astype(str) + result[
+        "expansion"
+    ].astype(str)
+    randomized_counts = (
+        result.loc[:, ["subject_id", "expansion"]]
+        .astype(str)
+        .drop_duplicates()["expansion"]
+        .value_counts()
+        .to_dict()
+    )
+    source_counts = subject_design["expansion"].value_counts().to_dict()
+    if randomized_counts != source_counts:
+        raise RuntimeError("randomization changed expansion group sizes")
+    assignment_digest = canonical_digest(
+        {str(subject): str(assignment[str(subject)]) for subject in sorted(assignment)},
+        prefix="expansion_assignment",
+    )
+    return result, assignment_digest
+
+
 def _injected_counts(
     counts: sparse.csr_matrix,
     obs: pd.DataFrame,
@@ -465,6 +519,7 @@ def _truth_table(
     *,
     dataset_id: str,
     seed: int,
+    schema_version: str = SCHEMA_VERSION,
 ) -> pd.DataFrame:
     plan_by_interaction = plan.set_index("harmonized_interaction_id")
     records: list[dict[str, Any]] = []
@@ -485,7 +540,7 @@ def _truth_table(
                 )
                 records.append(
                     {
-                        "schema_version": SCHEMA_VERSION,
+                        "schema_version": schema_version,
                         "dataset_id": dataset_id,
                         "seed": int(seed),
                         "sender": sender,
@@ -510,6 +565,7 @@ def _dataset_spec(
     input_sha256: str,
     *,
     seed: int,
+    fixture_mode: str,
 ) -> dict[str, Any]:
     return {
         "dataset_id": dataset_id,
@@ -519,7 +575,11 @@ def _dataset_spec(
         "input_mode": "counts",
         "lr_resource": "brca_semisynthetic_hcommon",
         "target_prior": "nichenet_human",
-        "benchmark_scope": "paired_brca_shaped_2x2_semisynthetic_sample_unit",
+        "benchmark_scope": (
+            "paired_brca_shaped_2x2_semisynthetic_sample_unit"
+            if fixture_mode == "planted"
+            else "paired_brca_randomized_global_null_calibration"
+        ),
         "config": {
             "context_keys": ["timepoint", "expansion"],
             "counts_layer": "counts",
@@ -637,6 +697,7 @@ def generate(
     *,
     database_root: Path | None = None,
     seeds: Sequence[int],
+    fixture_mode: str = "planted",
     minimum_source_cells: int = 20,
     cap_per_sample_cell_type: int = 40,
     n_interactions: int = 30,
@@ -648,10 +709,12 @@ def generate(
     target_add: int = 3,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate checksum-bound planted 2x2 fixtures from a real BRCA background."""
+    """Generate checksum-bound planted or randomized-null BRCA fixtures."""
 
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError("seeds must be non-empty and unique")
+    if fixture_mode not in FIXTURE_MODES:
+        raise ValueError(f"fixture_mode must be one of {FIXTURE_MODES}")
     if minimum_source_cells < 10 or cap_per_sample_cell_type < minimum_source_cells:
         raise ValueError("cell cap must be at least the source-cell minimum >= 10")
     if n_interactions < events_per_class * len(EVENT_CLASSES):
@@ -784,7 +847,11 @@ def generate(
                 ],
             ),
             "construction": {
-                "rule": "disjoint high-observability BRCA subset with planted truth",
+                "rule": (
+                    "disjoint high-observability BRCA subset with planted truth"
+                    if fixture_mode == "planted"
+                    else "disjoint high-observability BRCA subset for randomized null"
+                ),
                 "source_rows": len(source_resource),
                 "retained_interactions": len(frozen_resource),
             },
@@ -812,8 +879,18 @@ def generate(
         records: list[dict[str, Any]] = []
         datasets: dict[str, Any] = {}
         source_counts = _counts_matrix(source)
+        fixture_schema = (
+            SCHEMA_VERSION
+            if fixture_mode == "planted"
+            else NULL_SCHEMA_VERSION
+        )
         for replicate, seed in enumerate(seeds, start=1):
-            dataset_id = f"brca_semisynthetic_r{replicate:02d}"
+            dataset_prefix = (
+                "brca_semisynthetic"
+                if fixture_mode == "planted"
+                else "brca_randomized_null"
+            )
+            dataset_id = f"{dataset_prefix}_r{replicate:02d}"
             cell_indices = _downsample_indices(
                 source.obs,
                 eligible_subjects,
@@ -821,6 +898,12 @@ def generate(
                 seed=int(seed),
             )
             obs = source.obs.iloc[cell_indices].copy()
+            expansion_assignment_digest: str | None = None
+            if fixture_mode == "randomized_global_null":
+                obs, expansion_assignment_digest = _randomize_expansion_labels(
+                    obs,
+                    seed=int(seed),
+                )
             obs["analysis_subject_id"] = obs["sample_id"].astype(str)
             counts = source_counts[cell_indices][:, gene_positions].tocsr()
             plan = _event_plan(
@@ -828,16 +911,22 @@ def generate(
                 seed=int(seed),
                 events_per_class=events_per_class,
             )
-            injected = _injected_counts(
-                counts,
-                obs,
-                selected_genes,
-                plan,
-                target_map,
-                ligand_add=ligand_add,
-                receptor_add=receptor_add,
-                target_add=target_add,
-            )
+            if fixture_mode == "randomized_global_null":
+                plan["event_class"] = "no_effect"
+                plan["truth_label"] = 0
+                plan["truth_direction"] = 0
+                injected = counts.copy()
+            else:
+                injected = _injected_counts(
+                    counts,
+                    obs,
+                    selected_genes,
+                    plan,
+                    target_map,
+                    ligand_add=ligand_add,
+                    receptor_add=receptor_add,
+                    target_add=target_add,
+                )
             fixture = ad.AnnData(
                 X=_normalized(injected),
                 obs=_portable_string_frame(obs),
@@ -845,12 +934,19 @@ def generate(
             )
             fixture.layers["counts"] = injected
             fixture.uns["semisynthetic_contract"] = {
-                "schema_version": SCHEMA_VERSION,
+                "schema_version": fixture_schema,
+                "fixture_mode": fixture_mode,
                 "source_dataset": "brca_anti_pd1",
                 "true_pairing_key": "subject_id",
                 "fit_unit_key": "analysis_subject_id",
                 "primary_estimand": "(On-Pre in E) - (On-Pre in NE)",
                 "structural_absence_is_missing": True,
+                "expansion_assignment": (
+                    "source_observed"
+                    if fixture_mode == "planted"
+                    else "randomized_across_subjects_preserve_group_sizes_v1"
+                ),
+                "count_injection_enabled": fixture_mode == "planted",
             }
             dataset_dir = inputs_dir / dataset_id
             dataset_dir.mkdir()
@@ -876,6 +972,7 @@ def generate(
                     cell_types,
                     dataset_id=dataset_id,
                     seed=int(seed),
+                    schema_version=fixture_schema,
                 )
             )
             design = obs[
@@ -895,6 +992,7 @@ def generate(
                         ["subject_id", "expansion"]
                     ].drop_duplicates()["expansion"].value_counts().items()
                 },
+                "expansion_assignment_digest": expansion_assignment_digest,
                 "pairwise_inputs": pairwise_inputs,
             }
             _write_json(dataset_dir / "manifest.json", record)
@@ -904,6 +1002,7 @@ def generate(
                 output_dir / h5ad_path.relative_to(staged),
                 h5ad_sha,
                 seed=int(seed),
+                fixture_mode=fixture_mode,
             )
 
         truth = pd.concat(truth_parts, ignore_index=True)
@@ -946,8 +1045,9 @@ def generate(
             ["subject_id", "expansion"],
         ].drop_duplicates()
         manifest = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": fixture_schema,
             "status": "complete",
+            "fixture_mode": fixture_mode,
             "code": git_metadata(Path(__file__).resolve().parents[2]),
             "source": {
                 "filename": input_h5ad.name,
@@ -966,8 +1066,14 @@ def generate(
                 "cell_types": list(cell_types),
                 "minimum_source_cells": minimum_source_cells,
                 "cap_per_sample_cell_type": cap_per_sample_cell_type,
+                "expansion_assignment": (
+                    "source_observed"
+                    if fixture_mode == "planted"
+                    else "randomized_across_subjects_preserve_group_sizes_v1"
+                ),
             },
             "injection": {
+                "enabled": fixture_mode == "planted",
                 "events_per_class": events_per_class,
                 "classes": list(EVENT_CLASSES),
                 "ligand_add": ligand_add,
@@ -1032,6 +1138,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--database-root", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--seeds", type=_parse_seeds, default=(20260723,))
+    parser.add_argument("--fixture-mode", choices=FIXTURE_MODES, default="planted")
     parser.add_argument("--minimum-source-cells", type=int, default=20)
     parser.add_argument("--cap-per-sample-cell-type", type=int, default=40)
     parser.add_argument("--n-interactions", type=int, default=30)
@@ -1054,6 +1161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output_dir,
         database_root=args.database_root,
         seeds=args.seeds,
+        fixture_mode=args.fixture_mode,
         minimum_source_cells=args.minimum_source_cells,
         cap_per_sample_cell_type=args.cap_per_sample_cell_type,
         n_interactions=args.n_interactions,
