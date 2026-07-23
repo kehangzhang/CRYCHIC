@@ -29,6 +29,7 @@ from benchmarks.adapters.common import (
 from crychic import CrychicResult
 from crychic.core import stable_id
 from crychic.resources import ResourceBundle
+from crychic.scoring import DownstreamEvidencePolicy
 
 from .resource import (
     bundle_resource_table,
@@ -40,6 +41,9 @@ INFERENTIAL_REASON = "v0_1_inferential_disabled"
 METHOD_ID = "crychic"
 ANALYSIS_TRACK = "lr_stlr"
 SCORE_NAME = "comm_strength"
+MECHANISTIC_SCORE_NAME = "mechanistic_sender_lr_score"
+MECHANISTIC_SCORE_LAYER_VERSION = "mechanistic_sender_lr_v1"
+REQUIRED_SCORE_LAYER_VERSION = "downstream_confirmed_geometric_v1"
 SCORE_DIRECTION = "higher"
 RECEIVER_ROW_UNION_BRIDGE_VERSION = "receiver_row_union_bridge_v1"
 
@@ -200,6 +204,95 @@ def _numeric_equal(left: pd.Series, right: pd.Series) -> pd.Series:
         np.isclose(first, second, rtol=1e-10, atol=1e-12, equal_nan=True),
         index=left.index,
     )
+
+
+def _unit_component(values: pd.Series, *, field: str) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce").astype(float)
+    invalid = values.notna() & numeric.isna()
+    finite = numeric.dropna()
+    if invalid.any() or (
+        not finite.empty
+        and ((finite < 0.0).any() or (finite > 1.0).any() or np.isinf(finite).any())
+    ):
+        raise ValueError(f"{field} must contain values in [0, 1] or missing")
+    return numeric
+
+
+def _context_invariant_mechanistic_rows(
+    selected: pd.DataFrame,
+    edge_map: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Collapse contrast-trained copies after proving mechanism invariance."""
+
+    keys = [
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "context_json",
+        "edge_id",
+        "repeat_id",
+        "fold_id",
+        "mode",
+    ]
+    components = ["availability", "sender_component", "prior_quality"]
+    ordered = selected.sort_values(
+        [*keys, "scoring_functional_id"], kind="stable", ignore_index=True
+    )
+    grouped = ordered.groupby(keys, observed=True, sort=False, dropna=False)
+    functionals_per_row = grouped["scoring_functional_id"].nunique()
+    if functionals_per_row.empty:
+        raise ValueError("mechanistic score collapse has no sample-edge rows")
+    for component in components:
+        distinct = grouped[component].nunique(dropna=False)
+        changed = distinct.gt(1)
+        if changed.any():
+            examples = [tuple(map(str, item)) for item in changed.index[changed][:5]]
+            raise ValueError(
+                "mechanistic component differs across contrast-trained copies: "
+                f"field={component}, sample_edges={examples}; use the required "
+                "downstream policy for contrast-specific diagnostics"
+            )
+    raw = ordered.drop_duplicates(keys, keep="first", ignore_index=True).copy()
+    availability = _unit_component(raw["availability"], field="availability")
+    prior = _unit_component(raw["prior_quality"], field="prior_quality")
+    sender = _unit_component(raw["sender_component"], field="sender_component")
+    component_frame = pd.DataFrame(
+        {
+            "availability": availability,
+            "prior_quality": prior,
+            "sender_component": sender,
+        },
+        index=raw.index,
+    )
+    structural_zero = component_frame.eq(0.0).any(axis=1)
+    missing = component_frame.isna().any(axis=1) & ~structural_zero
+    raw["score"] = availability * prior * sender
+    raw.loc[structural_zero, "score"] = 0.0
+    raw.loc[missing, "score"] = np.nan
+    raw["status"] = np.where(missing, "missing", "ok")
+    raw["reason_code"] = np.where(
+        missing,
+        "mechanistic_core_component_missing",
+        np.where(structural_zero, "mechanistic_structural_zero", ""),
+    )
+    raw = raw.merge(edge_map, on="edge_id", how="left", validate="many_to_one")
+    if raw[["sender", "receiver", "interaction_id"]].isna().any().any():
+        raise ValueError("mechanistic rows contain an unmapped communication edge")
+    duplicate_key = ["sample_id", "sender", "receiver", "interaction_id"]
+    if raw.duplicated(duplicate_key).any():
+        raise ValueError("mechanistic collapse contains duplicate sample-event rows")
+    raw["target"] = pd.NA
+    return raw, {
+        "source_rows": len(selected),
+        "collapsed_rows": len(raw),
+        "source_scoring_functional_count": int(
+            selected["scoring_functional_id"].nunique()
+        ),
+        "copies_per_sample_edge_min": int(functionals_per_row.min()),
+        "copies_per_sample_edge_max": int(functionals_per_row.max()),
+        "invariant_components": components,
+        "exact_invariance_verified": True,
+    }
 
 
 def _contrast_candidates(
@@ -567,14 +660,16 @@ def convert_result_to_long(
     resource_mode: str,
     communication_mode: str = "state",
     scoring_functional_ids: Sequence[str] | None = None,
+    downstream_evidence_policy: DownstreamEvidencePolicy | str = (
+        DownstreamEvidencePolicy.REQUIRED
+    ),
     min_cells: int | None = None,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     """Convert one persisted result into fixed-universe benchmark runs.
 
-    Default readback combines mutually exclusive receiver-specific child
-    functionals into one complete contrast-level view. Explicit functional IDs
-    retain one-child diagnostic views. A historical single common functional
-    remains a single view.
+    ``required`` preserves the historical contrast-specific geometric score.
+    ``annotate`` or ``disabled`` emits one context-invariant mechanistic score
+    after proving that its components are identical across trained copies.
     """
 
     if resource_mode not in {"H-common", "native"}:
@@ -583,6 +678,13 @@ def convert_result_to_long(
         raise ValueError("communication_mode must be 'state' or 'ecosystem'")
     if not dataset_id.strip():
         raise ValueError("dataset_id must be non-empty")
+    policy = DownstreamEvidencePolicy(downstream_evidence_policy)
+    if policy is DownstreamEvidencePolicy.MODULATE:
+        raise ValueError(
+            "baseline readback has no signed held-out downstream support; use "
+            "annotate/disabled for canonical mechanism scores or required for "
+            "the historical downstream-confirmed diagnostic"
+        )
     _verify_resource(result, bundle)
 
     score_columns = [
@@ -646,6 +748,87 @@ def convert_result_to_long(
         raise ValueError(f"unknown scoring functional IDs: {sorted(missing_ids)}")
     if not requested_ids:
         raise ValueError("no CRYCHIC scoring functionals selected")
+    effective_min_cells = _min_cells(result) if min_cells is None else min_cells
+    if effective_min_cells < 1:
+        raise ValueError("min_cells must be positive")
+    method_version = _method_version(result)
+    source_run_id = str(result.manifest["run_id"])
+    source_table_digests = _source_table_digests(result)
+
+    if policy is not DownstreamEvidencePolicy.REQUIRED:
+        if scoring_functional_ids is not None:
+            raise ValueError(
+                "context-invariant mechanistic readback forbids selecting "
+                "individual scoring functionals"
+            )
+        raw, invariance = _context_invariant_mechanistic_rows(selected, edges)
+        observed = raw.loc[raw["status"].eq("ok")].copy()
+        run_identity = {
+            "source_run_id": source_run_id,
+            "communication_mode": communication_mode,
+            "resource_mode": resource_mode,
+            "dataset_id": dataset_id,
+            "score_layer": MECHANISTIC_SCORE_LAYER_VERSION,
+            "downstream_evidence_policy": policy.value,
+            "source_result_table_digests": source_table_digests,
+        }
+        run_id = canonical_digest(run_identity, prefix="crychic_benchmark_run")
+        table = materialize_fixed_universe(
+            observed.loc[
+                :,
+                [
+                    "sample_id",
+                    "sender",
+                    "receiver",
+                    "interaction_id",
+                    "target",
+                    "score",
+                ],
+            ],
+            sample_metadata=sample_metadata,
+            support=support,
+            resource=resource,
+            dataset_id=dataset_id,
+            run_id=run_id,
+            method_id=METHOD_ID,
+            method_version=method_version,
+            analysis_track=ANALYSIS_TRACK,
+            resource_mode=resource_mode,
+            resource_id=bundle.resource_id,
+            resource_version=bundle.version,
+            score_name=MECHANISTIC_SCORE_NAME,
+            score_direction=SCORE_DIRECTION,
+            specificity_score_name=None,
+            min_cells=effective_min_cells,
+            validate=False,
+        )
+        table = validate_long_table(
+            _apply_crychic_statuses(table, raw, validate=False)
+        )
+        view = {
+            "run_id": run_id,
+            "source_run_id": source_run_id,
+            "view_label": MECHANISTIC_SCORE_NAME,
+            "contrast_candidates": [],
+            "communication_mode": communication_mode,
+            "rows": len(table),
+            "view_scope": "context_invariant_mechanistic_sample_score",
+            "score_layer": MECHANISTIC_SCORE_LAYER_VERSION,
+            "score_name": MECHANISTIC_SCORE_NAME,
+            "score_formula": "availability * prior_quality * sender_component",
+            "downstream_evidence_policy": policy.value,
+            "downstream_evidence_role": (
+                "independent_annotation_not_required_for_canonical_score"
+                if policy is DownstreamEvidencePolicy.ANNOTATE
+                else "disabled"
+            ),
+            "downstream_evidence_location": "result/sample_scores.parquet:downstream",
+            "primary_score": True,
+            "component_invariance": invariance,
+            "source_result_table_digests": source_table_digests,
+        }
+        return cast(pd.DataFrame, table.loc[:, LONG_TABLE_COLUMNS]), [view]
+
     candidates = _contrast_candidates(
         sample_scores,
         interactions,
@@ -664,13 +847,6 @@ def convert_result_to_long(
         if scoring_functional_ids is None
         else _explicit_score_views(requested_ids, candidates)
     )
-    effective_min_cells = _min_cells(result) if min_cells is None else min_cells
-    if effective_min_cells < 1:
-        raise ValueError("min_cells must be positive")
-    method_version = _method_version(result)
-    source_run_id = str(result.manifest["run_id"])
-    source_table_digests = _source_table_digests(result)
-
     tables: list[pd.DataFrame] = []
     views: list[dict[str, Any]] = []
     emitted_run_ids: set[str] = set()
@@ -757,6 +933,11 @@ def convert_result_to_long(
             "contrast_candidates": list(view.contrast_candidates),
             "communication_mode": communication_mode,
             "rows": len(table),
+            "score_layer": REQUIRED_SCORE_LAYER_VERSION,
+            "score_name": SCORE_NAME,
+            "downstream_evidence_policy": DownstreamEvidencePolicy.REQUIRED.value,
+            "downstream_evidence_role": "required_historical_diagnostic",
+            "primary_score": True,
         }
         if view.grouped:
             view_manifest.update(
@@ -802,12 +983,16 @@ def export_result(
     resource_mode: str,
     communication_mode: str = "state",
     scoring_functional_ids: Sequence[str] | None = None,
+    downstream_evidence_policy: DownstreamEvidencePolicy | str = (
+        DownstreamEvidencePolicy.REQUIRED
+    ),
     min_cells: int | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Load, normalize, and write a CRYCHIC benchmark adapter artifact."""
 
     started = time.perf_counter()
+    policy = DownstreamEvidencePolicy(downstream_evidence_policy)
     result_path = Path(result_dir)
     input_path = Path(input_h5ad)
     output_path = Path(output_dir)
@@ -856,13 +1041,23 @@ def export_result(
                     if scoring_functional_ids is None
                     else list(scoring_functional_ids)
                 ),
+                "downstream_evidence_policy": policy.value,
                 "min_cells": min_cells,
                 "source_result_run_id": result.manifest["run_id"],
             },
             score_semantics={
-                "name": SCORE_NAME,
+                "name": (
+                    SCORE_NAME
+                    if policy is DownstreamEvidencePolicy.REQUIRED
+                    else MECHANISTIC_SCORE_NAME
+                ),
                 "direction": SCORE_DIRECTION,
-                "interpretation": "exploratory_strength_not_probability",
+                "interpretation": (
+                    "exploratory_downstream_confirmed_strength_not_probability"
+                    if policy is DownstreamEvidencePolicy.REQUIRED
+                    else "exploratory_mechanistic_lr_strength_not_probability"
+                ),
+                "downstream_evidence_policy": policy.value,
                 "probability": None,
                 "p_value": None,
                 "q_value": None,
@@ -877,6 +1072,7 @@ def export_result(
             resource_mode=resource_mode,
             communication_mode=communication_mode,
             scoring_functional_ids=scoring_functional_ids,
+            downstream_evidence_policy=policy,
             min_cells=min_cells,
         )
     finally:
@@ -908,6 +1104,15 @@ def _parser() -> argparse.ArgumentParser:
         "--communication-mode", choices=("state", "ecosystem"), default="state"
     )
     parser.add_argument("--scoring-functional-id", action="append")
+    parser.add_argument(
+        "--downstream-evidence-policy",
+        choices=(
+            DownstreamEvidencePolicy.DISABLED.value,
+            DownstreamEvidencePolicy.ANNOTATE.value,
+            DownstreamEvidencePolicy.REQUIRED.value,
+        ),
+        default=DownstreamEvidencePolicy.REQUIRED.value,
+    )
     parser.add_argument("--min-cells", type=int)
     parser.add_argument("--harmonized-resource", type=Path)
     parser.add_argument("--harmonized-manifest", type=Path)
@@ -954,6 +1159,7 @@ def main() -> None:
         resource_mode=args.resource_mode,
         communication_mode=args.communication_mode,
         scoring_functional_ids=args.scoring_functional_id,
+        downstream_evidence_policy=args.downstream_evidence_policy,
         min_cells=args.min_cells,
         overwrite=args.overwrite,
     )

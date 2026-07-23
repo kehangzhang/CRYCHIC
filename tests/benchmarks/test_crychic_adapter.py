@@ -10,6 +10,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import pytest
+
 from benchmarks.adapters.common import (
     LONG_TABLE_COLUMNS,
     materialize_fixed_universe,
@@ -19,7 +20,6 @@ from benchmarks.adapters.crychic import readback
 from benchmarks.adapters.crychic.readback import convert_result_to_long
 from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
 from benchmarks.adapters.crychic.run_hcommon import validate_hcommon_workflow
-
 from crychic.core import stable_id
 from crychic.resources import (
     GeneNamespace,
@@ -403,6 +403,70 @@ def test_readback_materializes_fixed_universe_and_statuses() -> None:
     assert views[0]["contrast_candidates"] == ["global:A"]
 
 
+def test_mechanistic_readback_collapses_only_context_invariant_components() -> None:
+    bundle = _bundle()
+    scores = _sample_scores(("functional_1", "functional_2"))
+    scores.loc[
+        scores["scoring_functional_id"].eq("functional_2"), "comm_strength"
+    ] = 0.1
+    result = FakeResult(
+        bundle=bundle,
+        sample_scores=scores,
+        interactions=_interactions(("global:A", "global:B")),
+    )
+
+    table, views = convert_result_to_long(
+        result,
+        _adata(),
+        bundle,
+        dataset_id="toy_dataset",
+        resource_mode="H-common",
+        downstream_evidence_policy="annotate",
+    )
+
+    assert table["run_id"].nunique() == 1
+    assert table["score_name"].unique().tolist() == [
+        "mechanistic_sender_lr_score"
+    ]
+    observed = table.loc[
+        table[["sample_id", "sender", "receiver", "interaction_id"]]
+        .eq(["s1", "A", "B", "i1"])
+        .all(axis=1)
+    ].iloc[0]
+    assert observed["status"] == "ok"
+    assert observed["score"] == pytest.approx(0.6 * 1.0 * 0.7)
+    assert len(views) == 1
+    assert views[0]["primary_score"] is True
+    assert views[0]["contrast_candidates"] == []
+    assert views[0]["component_invariance"]["source_rows"] == 4
+    assert views[0]["component_invariance"]["collapsed_rows"] == 2
+    assert views[0]["component_invariance"]["copies_per_sample_edge_min"] == 2
+    assert views[0]["component_invariance"]["copies_per_sample_edge_max"] == 2
+
+
+def test_mechanistic_readback_rejects_context_dependent_components() -> None:
+    bundle = _bundle()
+    scores = _sample_scores(("functional_1", "functional_2"))
+    changed = scores["scoring_functional_id"].eq("functional_2") & scores[
+        "sample_id"
+    ].eq("s1")
+    scores.loc[changed, "availability"] = 0.61
+
+    with pytest.raises(ValueError, match="component differs.*availability"):
+        convert_result_to_long(
+            FakeResult(
+                bundle=bundle,
+                sample_scores=scores,
+                interactions=_interactions(("global:A", "global:B")),
+            ),
+            _adata(),
+            bundle,
+            dataset_id="toy_dataset",
+            resource_mode="H-common",
+            downstream_evidence_policy="annotate",
+        )
+
+
 def test_explicit_readback_uses_one_run_per_scoring_functional() -> None:
     bundle = _bundle()
     functionals = ("functional_1", "functional_2")
@@ -725,6 +789,11 @@ def test_explicit_receiver_child_remains_a_diagnostic_view() -> None:
             "contrast_candidates": ["global:'Normal'"],
             "communication_mode": "state",
             "rows": 36,
+            "score_layer": "downstream_confirmed_geometric_v1",
+            "score_name": "comm_strength",
+            "downstream_evidence_policy": "required",
+            "downstream_evidence_role": "required_historical_diagnostic",
+            "primary_score": True,
             "scoring_functional_id": "normal_B",
             "view_scope": "single_scoring_functional",
         }

@@ -134,6 +134,10 @@ def _view_labels(manifest_path: Path | None) -> dict[str, str]:
     for index, item in enumerate(views, start=1):
         if not isinstance(item, dict) or not isinstance(item.get("run_id"), str):
             continue
+        explicit_label = item.get("view_label")
+        if isinstance(explicit_label, str) and explicit_label:
+            labels[str(item["run_id"])] = explicit_label
+            continue
         candidates = item.get("contrast_candidates")
         labels[str(item["run_id"])] = (
             ";".join(map(str, candidates))

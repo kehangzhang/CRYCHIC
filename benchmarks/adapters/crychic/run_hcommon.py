@@ -27,8 +27,10 @@ from benchmarks.adapters.common import (
 from benchmarks.run_canonical_v01 import load_benchmark_config, resolve_path
 from crychic import Crychic, CrychicConfig, CrychicResult
 from crychic.resources import load_nichenet_target_prior
+from crychic.scoring import DownstreamEvidencePolicy
 
 from .readback import (
+    MECHANISTIC_SCORE_NAME,
     METHOD_ID,
     SCORE_DIRECTION,
     SCORE_NAME,
@@ -119,6 +121,9 @@ def run_hcommon_from_benchmark(
     database_root: str | Path | None = None,
     communication_mode: str = "state",
     scoring_functional_ids: Sequence[str] | None = None,
+    downstream_evidence_policy: DownstreamEvidencePolicy | str = (
+        DownstreamEvidencePolicy.ANNOTATE
+    ),
     blas_threads: int = 8,
     overwrite: bool = False,
     repo_root: str | Path = REPO_ROOT,
@@ -127,6 +132,11 @@ def run_hcommon_from_benchmark(
 
     if communication_mode not in {"state", "ecosystem"}:
         raise ValueError("communication_mode must be 'state' or 'ecosystem'")
+    score_policy = DownstreamEvidencePolicy(downstream_evidence_policy)
+    if score_policy is DownstreamEvidencePolicy.MODULATE:
+        raise ValueError(
+            "run_hcommon cannot modulate without signed held-out downstream support"
+        )
     root = Path(repo_root).resolve()
     config_path = Path(benchmark_config).resolve()
     benchmark = load_benchmark_config(config_path)
@@ -249,11 +259,30 @@ def run_hcommon_from_benchmark(
                     if scoring_functional_ids is None
                     else list(scoring_functional_ids)
                 ),
+                "downstream_evidence_policy": score_policy.value,
             },
             score_semantics={
-                "name": SCORE_NAME,
+                "name": (
+                    SCORE_NAME
+                    if score_policy is DownstreamEvidencePolicy.REQUIRED
+                    else MECHANISTIC_SCORE_NAME
+                ),
                 "direction": SCORE_DIRECTION,
-                "interpretation": "exploratory_strength_not_probability",
+                "interpretation": (
+                    "exploratory_downstream_confirmed_strength_not_probability"
+                    if score_policy is DownstreamEvidencePolicy.REQUIRED
+                    else "exploratory_mechanistic_lr_strength_not_probability"
+                ),
+                "downstream_evidence_policy": score_policy.value,
+                "downstream_evidence_role": (
+                    "required_historical_diagnostic"
+                    if score_policy is DownstreamEvidencePolicy.REQUIRED
+                    else (
+                        "independent_annotation_not_required_for_canonical_score"
+                        if score_policy is DownstreamEvidencePolicy.ANNOTATE
+                        else "disabled"
+                    )
+                ),
                 "probability": None,
                 "p_value": None,
                 "q_value": None,
@@ -306,9 +335,16 @@ def run_hcommon_from_benchmark(
             resource_mode="H-common",
             communication_mode=communication_mode,
             scoring_functional_ids=scoring_functional_ids,
+            downstream_evidence_policy=score_policy,
         )
         score_head_versions = tuple(
-            sorted(table["method_version"].astype(str).unique())
+            sorted(
+                {
+                    str(view["score_layer"])
+                    for view in views
+                    if isinstance(view.get("score_layer"), str)
+                }
+            )
         )
         if len(score_head_versions) != 1:
             raise ValueError("CRYCHIC long table must have one score-head version")
@@ -351,6 +387,15 @@ def _parser() -> argparse.ArgumentParser:
         default="state",
     )
     parser.add_argument("--scoring-functional-id", action="append")
+    parser.add_argument(
+        "--downstream-evidence-policy",
+        choices=(
+            DownstreamEvidencePolicy.DISABLED.value,
+            DownstreamEvidencePolicy.ANNOTATE.value,
+            DownstreamEvidencePolicy.REQUIRED.value,
+        ),
+        default=DownstreamEvidencePolicy.ANNOTATE.value,
+    )
     parser.add_argument("--blas-threads", type=int, default=8)
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -367,6 +412,7 @@ def main() -> None:
         database_root=args.database_root,
         communication_mode=args.communication_mode,
         scoring_functional_ids=args.scoring_functional_id,
+        downstream_evidence_policy=args.downstream_evidence_policy,
         blas_threads=args.blas_threads,
         overwrite=args.overwrite,
     )
