@@ -327,7 +327,7 @@ def _solve_nonnegative_elastic_net(
         rows = design.indices[start:stop]
         values = design.data[start:stop]
         weighted_values = precision[rows] * values
-        weighted_norm = float(np.dot(weighted_values, values))
+        weighted_norm = float(np.dot(precision[rows], values * values))
         if weighted_norm <= 0.0:
             continue
         active_coordinates.append(
