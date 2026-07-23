@@ -113,17 +113,24 @@ def load_nichenet_target_prior(
     driver_ids = tuple(sorted(map(str, ordered["ligand"].unique())))
     target_ids = tuple(sorted(map(str, ordered["target"].unique())))
     target_index = {target: index for index, target in enumerate(target_ids)}
-    target_indices: list[int] = []
-    prior_weights: list[float] = []
-    ranks: list[int] = []
+    grouped_sizes = ordered.groupby(
+        "ligand", sort=False, observed=True, dropna=False
+    ).size()
+    grouped_driver_ids = tuple(map(str, grouped_sizes.index))
+    if grouped_driver_ids != driver_ids:
+        raise ContractError(
+            "NicheNet ligand identifiers are not canonically sortable strings",
+            code="invalid_target_prior_table",
+            field="ligand",
+            remediation="Store canonical HGNC ligand symbols as strings",
+        )
+
+    target_indices = [target_index[str(target)] for target in ordered["target"]]
+    prior_weights = [float(weight) for weight in ordered["weight"]]
+    ranks = [int(rank) for rank in ordered["rank"]] if has_rank else []
     indptr = [0]
-    for driver in driver_ids:
-        group = ordered.loc[ordered["ligand"] == driver]
-        target_indices.extend(target_index[str(target)] for target in group["target"])
-        prior_weights.extend(float(weight) for weight in group["weight"])
-        if has_rank:
-            ranks.extend(int(rank) for rank in group["rank"])
-        indptr.append(len(target_indices))
+    for size in grouped_sizes:
+        indptr.append(indptr[-1] + int(size))
     report = MappingReport(
         source_rows=len(table),
         loaded_rows=len(table),
