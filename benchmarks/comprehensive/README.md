@@ -201,6 +201,13 @@ selected on the original five simulation seeds. Its weights must not be changed
 after inspecting the separate 20-seed validation campaign; the validation seeds
 are an accept/reject gate, not another tuning set.
 
+That unguarded blend is retained as a diagnostic because it does not enforce an
+exact receptor-knockout structural zero. The release candidate is instead
+`mechanism_guarded_blend_90_10 = availability * prior_quality * (0.9 *
+sender_component + 0.1 * downstream)`, frozen on the original five seeds and
+validated on a second, disjoint 20-seed campaign. Its release gate additionally
+requires exact zeros for receptor-knockout, target-only, and zero-prior fixtures.
+
 `evaluate_three_group.py` publishes both its legacy per-contrast table and the
 decomposed multi-group tables. Native-scale RMSE is diagnostic only because
 method score scales differ; it is never used for a cross-method rank. The

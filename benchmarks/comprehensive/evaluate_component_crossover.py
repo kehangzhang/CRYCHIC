@@ -34,6 +34,7 @@ SOURCE_EVALUATION_SCHEMAS = frozenset(
 SCORE_LAYERS = (
     "strict_geometric",
     "sender_downstream_blend_90_10",
+    "mechanism_guarded_blend_90_10",
     "availability_only",
     "mechanistic_geometric",
     "availability_downstream_geometric",
@@ -41,7 +42,7 @@ SCORE_LAYERS = (
     "sender_only",
 )
 ENGINES = ("within_sample_rank_mean", "native_raw_mean")
-FROZEN_CANDIDATE_ARM = "sender_downstream_blend_90_10__native_raw_mean"
+FROZEN_CANDIDATE_ARM = "mechanism_guarded_blend_90_10__native_raw_mean"
 REFERENCE_ARMS = (
     "strict_geometric__within_sample_rank_mean",
     "strict_geometric__native_raw_mean",
@@ -292,6 +293,14 @@ def score_layers(table: pd.DataFrame) -> dict[str, pd.Series]:
         "sender_downstream_blend_90_10": (
             0.90 * table["sender_component"].astype(float)
             + 0.10 * table["downstream"].astype(float)
+        ),
+        "mechanism_guarded_blend_90_10": (
+            table["availability"].astype(float)
+            * table["prior_quality"].astype(float)
+            * (
+                0.90 * table["sender_component"].astype(float)
+                + 0.10 * table["downstream"].astype(float)
+            )
         ),
         "availability_only": table["availability"].astype(float),
         "mechanistic_geometric": _geometric_product(
@@ -559,6 +568,25 @@ def _candidate_validation(
     null_pass = bool(
         complete and float(null_sd["oriented_mean_improvement"].iloc[0]) >= 0.0
     )
+    mechanism_fixture = pd.DataFrame(
+        {
+            "availability": [0.8, 0.0, 0.0, 0.8],
+            "downstream": [0.7, 0.7, 1.0, 0.7],
+            "sender_component": [0.5, 0.5, 0.5, 0.5],
+            "prior_quality": [1.0, 1.0, 1.0, 0.0],
+            "comm_strength": [0.5, 0.0, 0.0, 0.0],
+        },
+        index=("active", "receptor_knockout", "target_only", "prior_zero"),
+    )
+    mechanism_scores = score_layers(mechanism_fixture)[
+        FROZEN_CANDIDATE_ARM.removesuffix("__native_raw_mean")
+    ]
+    mechanism_pass = bool(
+        mechanism_scores.loc["active"] > 0.0
+        and mechanism_scores.loc[
+            ["receptor_knockout", "target_only", "prior_zero"]
+        ].eq(0.0).all()
+    )
     gate = {
         "candidate_arm": FROZEN_CANDIDATE_ARM,
         "primary_reference_arm": REFERENCE_ARMS[0],
@@ -570,8 +598,14 @@ def _candidate_validation(
         "coverage_pass": coverage_pass,
         "null_rule": "mean_null_effect_SD_not_greater_than_reference",
         "null_pass": null_pass,
+        "mechanism_rule": (
+            "active_positive_and_receptor_knockout_target_only_prior_zero_exact_zero"
+        ),
+        "mechanism_pass": mechanism_pass,
         "status": (
-            "ACCEPT" if primary_pass and coverage_pass and null_pass else "REJECT"
+            "ACCEPT"
+            if primary_pass and coverage_pass and null_pass and mechanism_pass
+            else "REJECT"
         ),
     }
     return paired, summary, gate
@@ -768,6 +802,10 @@ def evaluate_crossover(
                 "sender_downstream_blend_90_10": (
                     "frozen development candidate: 0.90*sender_component + "
                     "0.10*downstream"
+                ),
+                "mechanism_guarded_blend_90_10": (
+                    "frozen mechanism-preserving candidate: availability * "
+                    "prior_quality * (0.90*sender_component + 0.10*downstream)"
                 ),
                 "availability_only": "sample LR availability",
                 "mechanistic_geometric": (
