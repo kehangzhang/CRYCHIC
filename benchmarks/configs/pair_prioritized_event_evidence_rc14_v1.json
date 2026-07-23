@@ -1,0 +1,77 @@
+{
+  "schema_version": "crychic-bounded-event-evidence-config-v1",
+  "method": "CRYCHIC_RC14_pair_prioritized_event_evidence",
+  "method_version": "pair-prioritized-event-evidence-rc14-v1",
+  "event_budgets": [
+    100,
+    250,
+    500,
+    1000
+  ],
+  "policy": {
+    "pair_gate_floor": 0.0,
+    "pair_gate_source": "CRYCHIC_RC11_bounded_core_evidence",
+    "original_count_rule": "one_standard_error_stable",
+    "top_k_candidate_pool": "all_observed_nonzero_events",
+    "top_k_evidence": "abs_effect_signal_to_noise_times_pair_percentile",
+    "top_k_budget_scope": "per_condition",
+    "continuous_weight": "abs_effect_target_minus_reference_times_pair_percentile",
+    "mechanism_weight": "continuous_weight",
+    "tie_break": [
+      "evidence_desc",
+      "abs_effect_desc",
+      "condition_asc",
+      "sender_asc",
+      "receiver_asc",
+      "interaction_id_asc"
+    ]
+  },
+  "scseqcommdiff_comparator": {
+    "method_version": "2.0.0",
+    "original_count_rule": "native_raw_p_lt_0.05_and_intracellular_gate",
+    "top_k_candidate_pool": "native_intracellular_gate_eligible_finite_p_nonzero_events",
+    "top_k_evidence": "negative_log10_native_p",
+    "top_k_budget_scope": "per_condition",
+    "continuous_weight": "abs_native_intercellular_score_difference"
+  },
+  "selection": {
+    "development_dataset": "kuppe",
+    "candidate_pair_gate_floors": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "selection_endpoint": "mean_DES_averaged_across_K_100_250_500_1000",
+    "selection_bias": "pair gate floor and per-condition scope selected after Kuppe development inspection",
+    "ms_policy": "single_frozen_evaluation_then_no_retuning"
+  },
+  "mechanism_contract": {
+    "contact": [
+      "plasma membrane"
+    ],
+    "ecm_receptor": [
+      "ECM"
+    ],
+    "secreted": [
+      "secreted"
+    ],
+    "ambiguous_excluded": [
+      "plasma membrane; secreted"
+    ],
+    "diffusible_long_range": "not_estimable_without_range_annotation"
+  },
+  "release": {
+    "algorithm_backbone_modified": false,
+    "canonical_score_replaced": false,
+    "formal_inference_allowed": false,
+    "ranking_head_only": true,
+    "fit_status": "benchmark_candidate_unreleased"
+  },
+  "data_role": {
+    "kuppe": "development_and_candidate_selection",
+    "ms": "reused_external_cohort_not_fresh_independent_validation"
+  },
+  "claim_limit": "event-level spatial sensitivity; spatial co-localization is an indirect unordered pair endpoint"
+}

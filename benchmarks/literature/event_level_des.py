@@ -291,6 +291,51 @@ def select_top_k_events(
     return selected
 
 
+def select_top_k_events_by_scope(
+    ledger: pd.DataFrame,
+    *,
+    budget: int,
+    evidence_column: str,
+    eligible: pd.Series,
+    scope: str,
+) -> pd.Series:
+    """Apply an exact event budget globally or independently per condition."""
+
+    if scope == "global_across_both_effect_directions":
+        return select_top_k_events(
+            ledger,
+            budget=budget,
+            evidence_column=evidence_column,
+            eligible=eligible,
+        )
+    if scope != "per_condition":
+        raise ValueError(
+            "top-K budget scope must be global_across_both_effect_directions "
+            "or per_condition"
+        )
+    eligible = eligible.reindex(ledger.index, fill_value=False).astype(bool)
+    conditions = sorted(
+        ledger.loc[
+            eligible & ledger["condition"].astype(str).ne("tied"), "condition"
+        ]
+        .astype(str)
+        .unique()
+    )
+    if len(conditions) != 2:
+        raise ValueError("per-condition top-K requires exactly two event directions")
+    selected = pd.Series(False, index=ledger.index, dtype=bool)
+    for condition in conditions:
+        selected |= select_top_k_events(
+            ledger,
+            budget=budget,
+            evidence_column=evidence_column,
+            eligible=eligible & ledger["condition"].astype(str).eq(condition),
+        )
+    if int(selected.sum()) != budget * len(conditions):
+        raise AssertionError("per-condition top-K did not retain its exact budget")
+    return selected
+
+
 def pair_rankings_from_events(
     ledger: pd.DataFrame,
     pair_axes: pd.DataFrame,
@@ -502,5 +547,6 @@ __all__: Sequence[str] = (
     "prepare_crychic_event_ledger",
     "prepare_scseqcommdiff_event_ledger",
     "select_top_k_events",
+    "select_top_k_events_by_scope",
     "selected_event_diagnostics",
 )

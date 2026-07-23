@@ -13,6 +13,7 @@ from benchmarks.literature.event_level_des import (
     prepare_crychic_event_ledger,
     prepare_scseqcommdiff_event_ledger,
     select_top_k_events,
+    select_top_k_events_by_scope,
 )
 
 
@@ -130,6 +131,30 @@ def test_top_k_is_global_exact_and_deterministic() -> None:
     assert first.equals(second)
     selected_ids = set(ledger.loc[first, "interaction_id"])
     assert selected_ids == {"e2", "e3"}
+
+
+def test_top_k_per_condition_keeps_an_exact_budget_in_each_direction() -> None:
+    ledger = prepare_crychic_event_ledger(
+        _crychic_events(),
+        _pair_axes(),
+        mechanism_annotations(_resource()),
+        pair_gate_floor=0.0,
+    )
+    eligible = ledger["status"].eq("observed") & ledger["abs_effect"].gt(0.0)
+
+    selected = select_top_k_events_by_scope(
+        ledger,
+        budget=1,
+        evidence_column="bounded_event_evidence",
+        eligible=eligible,
+        scope="per_condition",
+    )
+
+    assert int(selected.sum()) == 2
+    assert ledger.loc[selected].groupby("condition").size().to_dict() == {
+        "A": 1,
+        "B": 1,
+    }
 
 
 def test_pair_collapse_sums_both_sender_directions() -> None:

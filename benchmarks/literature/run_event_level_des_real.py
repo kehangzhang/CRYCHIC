@@ -32,7 +32,7 @@ from benchmarks.literature.event_level_des import (
     pair_rankings_from_events,
     prepare_crychic_event_ledger,
     prepare_scseqcommdiff_event_ledger,
-    select_top_k_events,
+    select_top_k_events_by_scope,
     selected_event_diagnostics,
 )
 
@@ -160,6 +160,15 @@ def _load_config(path: Path) -> dict[str, Any]:
         raise ValueError("event-level DES config pair_gate_floor must be numeric")
     if not 0.0 <= float(floor) <= 1.0:
         raise ValueError("event-level DES pair_gate_floor must lie in [0, 1]")
+    scope = policy.get("top_k_budget_scope")
+    if scope not in {"global_across_both_effect_directions", "per_condition"}:
+        raise ValueError("event-level DES config has an unsupported Top-K scope")
+    comparator = config.get("scseqcommdiff_comparator")
+    if (
+        not isinstance(comparator, Mapping)
+        or comparator.get("top_k_budget_scope") != scope
+    ):
+        raise ValueError("CRYCHIC and scSeqCommDiff Top-K scopes must match")
     return config
 
 
@@ -700,18 +709,24 @@ def run(
             & cry_ledger["abs_effect"].gt(0.0)
         )
         scseq_top_eligible = scseq_ledger["top_k_eligible"].astype(bool)
+        top_k_scope = str(policy["top_k_budget_scope"])
+        top_k_semantics = (
+            "per_condition" if top_k_scope == "per_condition" else "global"
+        )
         for budget in EVENT_BUDGETS:
-            cry_selected = select_top_k_events(
+            cry_selected = select_top_k_events_by_scope(
                 cry_ledger,
                 budget=budget,
                 evidence_column="bounded_event_evidence",
                 eligible=cry_top_eligible,
+                scope=top_k_scope,
             )
-            scseq_selected = select_top_k_events(
+            scseq_selected = select_top_k_events_by_scope(
                 scseq_ledger,
                 budget=budget,
                 evidence_column="event_evidence",
                 eligible=scseq_top_eligible,
+                scope=top_k_scope,
             )
             key = f"top_k_count_matched_des_k{budget}"
             cry_selections[key] = cry_selected
@@ -728,7 +743,7 @@ def run(
                         method_version=str(config["method_version"]),
                         resource=resource_id,
                         semantics=(
-                            f"global_top_{budget}_bounded_pair_gate_times_abs_hc2_z"
+                            f"{top_k_semantics}_top_{budget}_pair_gate_times_abs_hc2_z"
                         ),
                     ),
                 ),
@@ -742,7 +757,9 @@ def run(
                         method="scseqcommdiff",
                         method_version="2.0.0",
                         resource=resource_id,
-                        semantics=f"global_top_{budget}_negative_log10_native_p",
+                        semantics=(
+                            f"{top_k_semantics}_top_{budget}_negative_log10_native_p"
+                        ),
                     ),
                 ),
                 variant="top_k_count_matched_des",
@@ -896,7 +913,7 @@ def run(
             "ranking_head_modified": True,
             "protocol": {
                 "event_budgets": list(EVENT_BUDGETS),
-                "top_k_budget_scope": "global_across_both_effect_directions",
+                "top_k_budget_scope": str(policy["top_k_budget_scope"]),
                 "cell_pair_direction": "unordered_canonical",
                 "missing_policy": "typed_not_estimable_never_zero_imputed",
                 "pair_gate_floor": float(policy["pair_gate_floor"]),
