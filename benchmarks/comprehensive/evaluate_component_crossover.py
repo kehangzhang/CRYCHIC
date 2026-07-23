@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -40,6 +41,27 @@ SCORE_LAYERS = (
     "sender_only",
 )
 ENGINES = ("within_sample_rank_mean", "native_raw_mean")
+FROZEN_CANDIDATE_ARM = "sender_downstream_blend_90_10__native_raw_mean"
+REFERENCE_ARMS = (
+    "strict_geometric__within_sample_rank_mean",
+    "strict_geometric__native_raw_mean",
+)
+VALIDATION_METRICS = {
+    "active": {
+        "omnibus_auprc": "higher",
+        "omnibus_auroc": "higher",
+        "localization_macro_auprc": "higher",
+        "direction_accuracy_all_active": "higher",
+        "positive_direction_ap": "higher",
+        "negative_direction_ap": "higher",
+        "effect_all_zero_fraction": "lower",
+    },
+    "global_null": {
+        "effect_standard_deviation": "lower",
+        "effect_dynamic_range": "lower",
+        "effect_all_zero_fraction": "lower",
+    },
+}
 COMPONENT_COLUMNS = (
     "availability",
     "downstream",
@@ -414,7 +436,153 @@ def _arm_summary(metrics: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _report(summary: pd.DataFrame) -> str:
+def _candidate_validation(
+    metrics: pd.DataFrame,
+    *,
+    bootstrap_replicates: int = 20_000,
+    bootstrap_seed: int = 20260723,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if bootstrap_replicates < 1:
+        raise ValueError("bootstrap_replicates must be positive")
+    methods = set(metrics["method"].astype(str))
+    required = {FROZEN_CANDIDATE_ARM, *REFERENCE_ARMS}
+    missing = required.difference(methods)
+    if missing:
+        raise ValueError(f"candidate validation arms are absent: {sorted(missing)}")
+    rng = np.random.default_rng(bootstrap_seed)
+    paired_records: list[dict[str, Any]] = []
+    summary_records: list[dict[str, Any]] = []
+    for scenario, metric_directions in VALIDATION_METRICS.items():
+        selected = metrics.loc[metrics["scenario"].astype(str).eq(scenario)]
+        for metric, direction in metric_directions.items():
+            pivot = selected.pivot(index="seed", columns="method", values=metric)
+            for reference in REFERENCE_ARMS:
+                pair = pivot.loc[:, [FROZEN_CANDIDATE_ARM, reference]].dropna()
+                candidate = pair[FROZEN_CANDIDATE_ARM].to_numpy(dtype=float)
+                baseline = pair[reference].to_numpy(dtype=float)
+                raw_difference = candidate - baseline
+                improvement = (
+                    raw_difference if direction == "higher" else -raw_difference
+                )
+                if len(improvement):
+                    sampled = rng.choice(
+                        improvement,
+                        size=(bootstrap_replicates, len(improvement)),
+                        replace=True,
+                    ).mean(axis=1)
+                    lower, upper = np.quantile(sampled, (0.025, 0.975))
+                else:
+                    lower = upper = math.nan
+                summary_records.append(
+                    {
+                        "schema_version": SCHEMA_VERSION,
+                        "scenario": scenario,
+                        "metric": metric,
+                        "direction": direction,
+                        "candidate_arm": FROZEN_CANDIDATE_ARM,
+                        "reference_arm": reference,
+                        "n_paired_seeds": len(improvement),
+                        "candidate_mean": (
+                            float(candidate.mean()) if len(candidate) else math.nan
+                        ),
+                        "reference_mean": (
+                            float(baseline.mean()) if len(baseline) else math.nan
+                        ),
+                        "raw_candidate_minus_reference": (
+                            float(raw_difference.mean())
+                            if len(raw_difference)
+                            else math.nan
+                        ),
+                        "oriented_mean_improvement": (
+                            float(improvement.mean())
+                            if len(improvement)
+                            else math.nan
+                        ),
+                        "oriented_improvement_ci_lower": float(lower),
+                        "oriented_improvement_ci_upper": float(upper),
+                        "candidate_wins": int((improvement > 0.0).sum()),
+                        "ties": int((improvement == 0.0).sum()),
+                        "candidate_losses": int((improvement < 0.0).sum()),
+                        "bootstrap_replicates": bootstrap_replicates,
+                        "bootstrap_seed": bootstrap_seed,
+                    }
+                )
+                for seed, candidate_value, reference_value, raw, oriented in zip(
+                    pair.index,
+                    candidate,
+                    baseline,
+                    raw_difference,
+                    improvement,
+                    strict=True,
+                ):
+                    paired_records.append(
+                        {
+                            "schema_version": SCHEMA_VERSION,
+                            "scenario": scenario,
+                            "seed": int(seed),
+                            "metric": metric,
+                            "direction": direction,
+                            "candidate_arm": FROZEN_CANDIDATE_ARM,
+                            "reference_arm": reference,
+                            "candidate_value": float(candidate_value),
+                            "reference_value": float(reference_value),
+                            "raw_candidate_minus_reference": float(raw),
+                            "oriented_improvement": float(oriented),
+                        }
+                    )
+    summary = pd.DataFrame.from_records(summary_records)
+    paired = pd.DataFrame.from_records(paired_records)
+    primary = summary.loc[
+        summary["scenario"].eq("active")
+        & summary["metric"].eq("omnibus_auprc")
+        & summary["reference_arm"].eq(REFERENCE_ARMS[0])
+    ]
+    null_sd = summary.loc[
+        summary["scenario"].eq("global_null")
+        & summary["metric"].eq("effect_standard_deviation")
+        & summary["reference_arm"].eq(REFERENCE_ARMS[0])
+    ]
+    candidate_active = metrics.loc[
+        metrics["scenario"].eq("active")
+        & metrics["method"].eq(FROZEN_CANDIDATE_ARM)
+    ]
+    complete = len(primary) == 1 and len(null_sd) == 1
+    primary_pass = bool(
+        complete
+        and int(primary["n_paired_seeds"].iloc[0]) >= 20
+        and float(primary["oriented_improvement_ci_lower"].iloc[0]) > 0.0
+    )
+    coverage_pass = bool(
+        not candidate_active.empty
+        and candidate_active["event_coverage"].ge(0.80).all()
+    )
+    null_pass = bool(
+        complete and float(null_sd["oriented_mean_improvement"].iloc[0]) >= 0.0
+    )
+    gate = {
+        "candidate_arm": FROZEN_CANDIDATE_ARM,
+        "primary_reference_arm": REFERENCE_ARMS[0],
+        "minimum_paired_validation_seeds": 20,
+        "primary_metric": "active.omnibus_auprc",
+        "primary_rule": "paired_seed_bootstrap_95pct_CI_lower_gt_0",
+        "primary_pass": primary_pass,
+        "coverage_rule": "every_active_seed_event_coverage_ge_0.80",
+        "coverage_pass": coverage_pass,
+        "null_rule": "mean_null_effect_SD_not_greater_than_reference",
+        "null_pass": null_pass,
+        "status": (
+            "ACCEPT" if primary_pass and coverage_pass and null_pass else "REJECT"
+        ),
+    }
+    return paired, summary, gate
+
+
+def _report(
+    summary: pd.DataFrame,
+    *,
+    validation: pd.DataFrame,
+    gate: Mapping[str, Any],
+) -> str:
     lines = [
         "# Three-group score generator x differential engine crossover",
         "",
@@ -444,6 +612,30 @@ def _report(summary: pd.DataFrame) -> str:
             f"{row.mean_effect_all_zero_fraction:.4f}",
         )
         lines.append("| " + " | ".join(values) + " |")
+    primary = validation.loc[
+        validation["scenario"].eq("active")
+        & validation["metric"].eq("omnibus_auprc")
+        & validation["reference_arm"].eq(REFERENCE_ARMS[0])
+    ].iloc[0]
+    lines.extend(
+        (
+            "",
+            "## Frozen candidate validation",
+            "",
+            f"Gate status: **{gate['status']}**",
+            "",
+            (
+                f"Against `{REFERENCE_ARMS[0]}`, paired omnibus AUPRC "
+                f"improvement was {primary.oriented_mean_improvement:.4f} "
+                f"(95% bootstrap CI "
+                f"[{primary.oriented_improvement_ci_lower:.4f}, "
+                f"{primary.oriented_improvement_ci_upper:.4f}]); "
+                f"wins/ties/losses = {primary.candidate_wins}/"
+                f"{primary.ties}/{primary.candidate_losses}."
+            ),
+            "",
+        )
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -521,6 +713,9 @@ def evaluate_crossover(
     stage_start = time.perf_counter()
     metrics, confusion = _multigroup_metrics(effects)
     summary = _arm_summary(metrics)
+    paired_validation, validation_summary, validation_gate = (
+        _candidate_validation(metrics)
+    )
     diagnostics = pd.DataFrame.from_records(diagnostic_records)
     stage_seconds["metrics"] = time.perf_counter() - stage_start
 
@@ -537,6 +732,8 @@ def evaluate_crossover(
             "contrast_confusion.tsv": confusion,
             "arm_summary.tsv": summary,
             "component_diagnostics.tsv": diagnostics,
+            "candidate_seed_pairs.tsv": paired_validation,
+            "candidate_validation.tsv": validation_summary,
         }
         for name, table in paths.items():
             table.to_csv(
@@ -545,7 +742,14 @@ def evaluate_crossover(
                 index=False,
                 compression="gzip" if name.endswith(".gz") else None,
             )
-        (staged / "REPORT.md").write_text(_report(summary), encoding="utf-8")
+        (staged / "REPORT.md").write_text(
+            _report(
+                summary,
+                validation=validation_summary,
+                gate=validation_gate,
+            ),
+            encoding="utf-8",
+        )
         stage_seconds["export"] = time.perf_counter() - stage_start
         manifest: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
@@ -558,6 +762,7 @@ def evaluate_crossover(
             "source_runs": sorted(provenance, key=lambda item: item["run_directory"]),
             "score_layers": list(SCORE_LAYERS),
             "differential_engines": list(ENGINES),
+            "frozen_candidate_validation": validation_gate,
             "score_layer_contract": {
                 "strict_geometric": "persisted four-component geometric score",
                 "sender_downstream_blend_90_10": (
