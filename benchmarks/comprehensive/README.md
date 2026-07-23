@@ -178,6 +178,29 @@ multigroup baseline`; it cannot be presented as an RC9 result.
 3. Run external simulations and generate the hidden local G1 suite.
 4. Run MIS-C methods without opening Olink, then freeze output checksums.
 5. Evaluate Olink and produce per-track metrics.
+
+## Signed-estimand and component diagnostics
+
+The v5 optimization campaign adds two fail-closed diagnostic entrypoints:
+
+- `python -m benchmarks.comprehensive.signed_estimand_contract` exercises
+  hand-computable two-group, three-group, factorial DID, omnibus, and context
+  graph estimands through the public OOF inference API. It also checks reverse
+  contrast, relabeling, row order, positive scaling, sender/receiver label order,
+  and missing-context invariants. Formal P values remain unavailable without
+  full-pipeline resampling.
+- `python -m benchmarks.comprehensive.evaluate_component_crossover` reuses a
+  checksum-bound CRYCHIC sample-score ledger to cross six score layers with
+  within-sample-rank and native-raw subject-mean differential engines. It does
+  not refit the algorithm and reports all-zero rates and dynamic range alongside
+  decomposed omnibus, contrast-localization, signed-direction, and effect
+  endpoints.
+
+`evaluate_three_group.py` publishes both its legacy per-contrast table and the
+decomposed multi-group tables. Native-scale RMSE is diagnostic only because
+method score scales differ; it is never used for a cross-method rank. The
+truth-cardinality, tie-inclusive top-k threshold is a benchmark localization
+diagnostic and is recorded explicitly in the manifest.
 6. Run legacy and static appendix panels without feeding them back into tuning.
 7. Run scaling profiles with a 70% no-new-job threshold and a 78% hard memory
    guard, and log wall time, threads, environment, exit status, and peak

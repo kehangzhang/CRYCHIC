@@ -5,10 +5,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from benchmarks.comprehensive.evaluate_three_group import (
     RunRecord,
     _active_metrics,
+    _active_multigroup_metrics,
     _method_summary,
+    _multigroup_method_summary,
+    _multigroup_metrics,
     _tie_inclusive_top_k,
     _validate_run_binding,
 )
@@ -40,6 +44,112 @@ def test_active_metrics_score_detection_direction_and_ties() -> None:
     assert metrics["prevalence_adjusted_ap"] == pytest.approx(1.0)
     assert metrics["top_k_recall"] == pytest.approx(1.0)
     assert metrics["direction_accuracy"] == pytest.approx(1.0)
+
+
+def _decomposed_event_effects(
+    *,
+    dataset_id: str = "active-seed-1",
+    scenario: str = "active",
+    include_missing_null_event: bool = False,
+) -> pd.DataFrame:
+    truth = {
+        "E1": {"A_vs_B": 1.0, "A_vs_C": 2.0, "B_vs_C": 0.0},
+        "E2": {"A_vs_B": 0.0, "A_vs_C": -1.0, "B_vs_C": 1.0},
+        "E3": {"A_vs_B": 0.0, "A_vs_C": 0.0, "B_vs_C": 0.0},
+        "E4": {"A_vs_B": 0.0, "A_vs_C": 0.0, "B_vs_C": 0.0},
+    }
+    if include_missing_null_event:
+        truth["E5"] = {"A_vs_B": 0.0, "A_vs_C": 0.0, "B_vs_C": 0.0}
+    rows: list[dict[str, object]] = []
+    for event, contrast_effects in truth.items():
+        for contrast, truth_effect in contrast_effects.items():
+            missing = include_missing_null_event and event == "E5"
+            planted = 0.0 if scenario == "global_null" else truth_effect
+            rows.append(
+                {
+                    "dataset_id": dataset_id,
+                    "scenario": scenario,
+                    "seed": 1,
+                    "method": "crychic",
+                    "method_label": "CRYCHIC generic baseline",
+                    "run_directory": "fixture-run",
+                    "sender": "Sender",
+                    "receiver": "Receiver",
+                    "ligand": event,
+                    "receptor": f"R{event}",
+                    "contrast": contrast,
+                    "truth_label": int(planted != 0.0),
+                    "truth_effect": planted,
+                    "truth_direction": int(np.sign(planted)),
+                    "effect": np.nan if missing else planted,
+                    "status": "not_estimable" if missing else "observed",
+                }
+            )
+    return pd.DataFrame.from_records(rows)
+
+
+def test_decomposed_metrics_separate_detection_localization_direction() -> None:
+    metrics, confusion = _active_multigroup_metrics(_decomposed_event_effects())
+
+    assert metrics["omnibus_status"] == "observed"
+    assert metrics["omnibus_auprc"] == pytest.approx(1.0)
+    assert metrics["omnibus_auroc"] == pytest.approx(1.0)
+    assert metrics["omnibus_mcc_at_truth_k"] == pytest.approx(1.0)
+    assert metrics["omnibus_precision_at_k"] == pytest.approx(1.0)
+    assert metrics["omnibus_recall_at_k"] == pytest.approx(1.0)
+    assert metrics["localization_macro_auprc"] == pytest.approx(1.0)
+    assert metrics["localization_micro_auprc"] == pytest.approx(1.0)
+    assert metrics["localization_hamming_loss"] == pytest.approx(0.0)
+    assert metrics["localization_exact_set_accuracy"] == pytest.approx(1.0)
+    assert metrics["positive_direction_ap"] == pytest.approx(1.0)
+    assert metrics["negative_direction_ap"] == pytest.approx(1.0)
+    assert metrics["direction_accuracy_all_active"] == pytest.approx(1.0)
+    assert metrics["direction_accuracy_detected_active"] == pytest.approx(1.0)
+    assert metrics["effect_rmse_native_scale"] == pytest.approx(0.0)
+    assert metrics["effect_mae_native_scale"] == pytest.approx(0.0)
+    assert metrics["effect_pearson"] == pytest.approx(1.0)
+    assert metrics["effect_spearman"] == pytest.approx(1.0)
+    assert metrics["top_effect_recovery"] == pytest.approx(1.0)
+    assert metrics["ci_coverage_status"] == (
+        "NE_no_comparable_confidence_intervals"
+    )
+    assert len(confusion) == 3
+    assert all(record["false_positive"] == 0 for record in confusion)
+    assert all(record["false_negative"] == 0 for record in confusion)
+
+
+def test_decomposed_metrics_preserve_missing_events_and_report_coverage() -> None:
+    metrics, _ = _active_multigroup_metrics(
+        _decomposed_event_effects(include_missing_null_event=True)
+    )
+
+    assert metrics["event_coverage"] == pytest.approx(0.8)
+    assert metrics["contrast_cell_coverage"] == pytest.approx(0.8)
+    assert metrics["n_complete_events"] == 4
+    assert metrics["n_observed_event_contrast_cells"] == 12
+    assert metrics["omnibus_status"] == "observed"
+    assert metrics["omnibus_auprc"] == pytest.approx(1.0)
+
+
+def test_multigroup_tables_keep_null_diagnostics_and_rank_complete_methods() -> None:
+    active = _decomposed_event_effects()
+    null = _decomposed_event_effects(
+        dataset_id="null-seed-1", scenario="global_null"
+    )
+    metrics, confusion = _multigroup_metrics(
+        pd.concat((active, null), ignore_index=True)
+    )
+    summary = _multigroup_method_summary(metrics).set_index("method")
+
+    assert len(metrics) == 2
+    assert len(confusion) == 3
+    null_row = metrics.loc[metrics["scenario"].eq("global_null")].iloc[0]
+    assert null_row["effect_status"] == "observed_null_diagnostics"
+    assert null_row["effect_all_zero_fraction"] == pytest.approx(1.0)
+    assert null_row["omnibus_status"] == "NE"
+    assert summary.loc["crychic", "primary_rank"] == 1
+    assert bool(summary.loc["crychic", "rank_eligible"])
+    assert pd.isna(summary.loc["cellchat", "primary_rank"])
 
 
 def test_method_summary_ranks_only_complete_methods() -> None:

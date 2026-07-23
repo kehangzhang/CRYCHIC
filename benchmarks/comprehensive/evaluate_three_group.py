@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import pearsonr, spearmanr
 
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 from benchmarks.comprehensive.evaluate_g1 import (
@@ -48,6 +48,7 @@ MINIMUM_COVERAGE = 0.80
 TARGET_PREVALENCE = 0.10
 METRIC_EFFECT_DECIMALS = 12
 CRYCHIC_SCORE_HEAD_VERSION = "0.1.0-exploratory"
+MULTIGROUP_METRIC_SCHEMA = "crychic-three-group-decomposed-metrics-v1"
 
 
 @dataclass(frozen=True)
@@ -417,6 +418,48 @@ def _tie_inclusive_top_k(score: pd.Series, k: int) -> pd.Series:
     return score.ge(cutoff)
 
 
+def _mcc_from_selection(labels: pd.Series, selected: pd.Series) -> float:
+    truth = labels.astype(bool)
+    predicted = selected.astype(bool)
+    if not truth.index.equals(predicted.index):
+        predicted = predicted.reindex(truth.index)
+    if predicted.isna().any():
+        raise ValueError("MCC selection does not cover the declared truth axis")
+    true_positive = int((truth & predicted).sum())
+    false_positive = int((~truth & predicted).sum())
+    true_negative = int((~truth & ~predicted).sum())
+    false_negative = int((truth & ~predicted).sum())
+    denominator = math.sqrt(
+        (true_positive + false_positive)
+        * (true_positive + false_negative)
+        * (true_negative + false_positive)
+        * (true_negative + false_negative)
+    )
+    if denominator == 0.0:
+        return 0.0
+    return float(
+        (true_positive * true_negative - false_positive * false_negative)
+        / denominator
+    )
+
+
+def _top_effect_recovery(
+    truth_effect: pd.Series,
+    predicted_effect: pd.Series,
+) -> tuple[int, int, int, float]:
+    if not truth_effect.index.equals(predicted_effect.index):
+        predicted_effect = predicted_effect.reindex(truth_effect.index)
+    active = truth_effect.ne(0.0)
+    if not active.any():
+        return 0, 0, 0, math.nan
+    requested = max(1, int(math.ceil(0.10 * int(active.sum()))))
+    truth_top = _tie_inclusive_top_k(truth_effect.abs(), requested)
+    predicted_top = _tie_inclusive_top_k(predicted_effect.abs(), requested)
+    recovered = int((truth_top & predicted_top).sum())
+    realized = int(truth_top.sum())
+    return requested, realized, int(predicted_top.sum()), float(recovered / realized)
+
+
 def _active_metrics(table: pd.DataFrame) -> dict[str, Any]:
     observed = (
         table["status"].isin({"exploratory", "observed"}) & table["effect"].notna()
@@ -445,7 +488,19 @@ def _active_metrics(table: pd.DataFrame) -> dict[str, Any]:
         "top_k_precision": math.nan,
         "top_k_recall": math.nan,
         "direction_accuracy": math.nan,
+        "conditional_direction_accuracy": math.nan,
+        "positive_direction_ap": math.nan,
+        "negative_direction_ap": math.nan,
+        "effect_rmse_native_scale": math.nan,
+        "effect_mae_native_scale": math.nan,
+        "effect_pearson": math.nan,
         "effect_spearman": math.nan,
+        "top_effect_k_requested": 0,
+        "top_effect_k_truth_realized": 0,
+        "top_effect_k_prediction_realized": 0,
+        "top_effect_recovery": math.nan,
+        "ci_coverage": math.nan,
+        "ci_coverage_status": "NE_no_comparable_confidence_intervals",
     }
     if not eligible:
         return result
@@ -477,9 +532,49 @@ def _active_metrics(table: pd.DataFrame) -> dict[str, Any]:
             == truth_positive["truth_direction"].to_numpy(dtype=int)
         )
     )
+    detected_active = available.loc[selected & available["truth_label"].eq(1)]
+    if not detected_active.empty:
+        result["conditional_direction_accuracy"] = float(
+            np.mean(
+                np.sign(detected_active["effect"].to_numpy(dtype=float))
+                == detected_active["truth_direction"].to_numpy(dtype=int)
+            )
+        )
+    for direction, metric_name, oriented_score in (
+        (1, "positive_direction_ap", available["effect"]),
+        (-1, "negative_direction_ap", -available["effect"]),
+    ):
+        directional_labels = available["truth_direction"].eq(direction).astype(int)
+        if directional_labels.nunique() == 2:
+            result[metric_name] = average_precision(
+                directional_labels.to_numpy(dtype=int),
+                oriented_score.to_numpy(dtype=float),
+            )
+    residual = (
+        available["effect"].to_numpy(dtype=float)
+        - available["truth_effect"].to_numpy(dtype=float)
+    )
+    result["effect_rmse_native_scale"] = float(np.sqrt(np.mean(residual**2)))
+    result["effect_mae_native_scale"] = float(np.mean(np.abs(residual)))
+    if available["truth_effect"].nunique() > 1 and available["effect"].nunique() > 1:
+        correlation = pearsonr(
+            available["truth_effect"], available["effect"]
+        ).statistic
+        result["effect_pearson"] = (
+            float(correlation) if np.isfinite(correlation) else math.nan
+        )
     if available["truth_effect"].nunique() > 1 and available["effect"].nunique() > 1:
         rho = spearmanr(available["truth_effect"], available["effect"]).statistic
         result["effect_spearman"] = float(rho) if np.isfinite(rho) else math.nan
+    truth_effect = available["truth_effect"].astype(float)
+    predicted_effect = available["effect"].astype(float)
+    requested, truth_realized, prediction_realized, recovery = (
+        _top_effect_recovery(truth_effect, predicted_effect)
+    )
+    result["top_effect_k_requested"] = requested
+    result["top_effect_k_truth_realized"] = truth_realized
+    result["top_effect_k_prediction_realized"] = prediction_realized
+    result["top_effect_recovery"] = recovery
     return result
 
 
@@ -509,6 +604,436 @@ def _null_metrics(table: pd.DataFrame) -> dict[str, Any]:
         "metric_status": "observed" if len(magnitude) else "NE",
         "reason_code": None if len(magnitude) else "no_estimable_null_effects",
     }
+
+
+def _multigroup_defaults() -> dict[str, Any]:
+    return {
+        "metric_schema": MULTIGROUP_METRIC_SCHEMA,
+        "n_contrasts": 0,
+        "n_events": 0,
+        "n_event_contrast_cells": 0,
+        "n_complete_events": 0,
+        "n_observed_event_contrast_cells": 0,
+        "event_coverage": math.nan,
+        "contrast_cell_coverage": math.nan,
+        "omnibus_score_semantics": "max_absolute_pairwise_effect",
+        "omnibus_status": "NE",
+        "omnibus_reason_code": "not_evaluated",
+        "omnibus_auprc": math.nan,
+        "omnibus_prevalence_adjusted_ap": math.nan,
+        "omnibus_auroc": math.nan,
+        "omnibus_mcc_at_truth_k": math.nan,
+        "omnibus_k_requested": 0,
+        "omnibus_k_realized": 0,
+        "omnibus_precision_at_k": math.nan,
+        "omnibus_recall_at_k": math.nan,
+        "localization_status": "NE",
+        "localization_reason_code": "not_evaluated",
+        "localization_macro_auprc": math.nan,
+        "localization_micro_auprc": math.nan,
+        "localization_hamming_loss": math.nan,
+        "localization_exact_set_accuracy": math.nan,
+        "direction_status": "NE",
+        "direction_reason_code": "not_evaluated",
+        "positive_direction_ap": math.nan,
+        "negative_direction_ap": math.nan,
+        "direction_accuracy_all_active": math.nan,
+        "direction_accuracy_detected_active": math.nan,
+        "effect_status": "NE",
+        "effect_reason_code": "not_evaluated",
+        "effect_rmse_native_scale": math.nan,
+        "effect_mae_native_scale": math.nan,
+        "effect_pearson": math.nan,
+        "effect_spearman": math.nan,
+        "effect_sign_concordance": math.nan,
+        "top_effect_k_requested": 0,
+        "top_effect_k_truth_realized": 0,
+        "top_effect_k_prediction_realized": 0,
+        "top_effect_recovery": math.nan,
+        "ci_coverage": math.nan,
+        "ci_coverage_status": "NE_no_comparable_confidence_intervals",
+        "formal_calibration_status": "NE_no_common_full_pipeline_resampling",
+        "effect_all_zero_fraction": math.nan,
+        "effect_unique_values": 0,
+        "effect_standard_deviation": math.nan,
+        "effect_iqr": math.nan,
+        "effect_dynamic_range": math.nan,
+    }
+
+
+def _event_matrices(
+    table: pd.DataFrame,
+) -> tuple[
+    tuple[str, ...],
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+]:
+    required = {
+        *EVENT_KEYS,
+        "contrast",
+        "truth_label",
+        "truth_effect",
+        "truth_direction",
+        "effect",
+        "status",
+    }
+    missing = required.difference(table.columns)
+    if missing:
+        raise ValueError(f"multigroup event table is missing: {sorted(missing)}")
+    if table.duplicated([*EVENT_KEYS, "contrast"]).any():
+        raise ValueError("multigroup event table contains duplicate event contrasts")
+    contexts = tuple(sorted(table["contrast"].astype(str).unique()))
+    if len(contexts) < 2:
+        raise ValueError("multigroup metrics require at least two contrasts")
+    prepared = table.copy()
+    prepared["contrast"] = prepared["contrast"].astype(str)
+    prepared["effect"] = pd.to_numeric(
+        prepared["effect"], errors="coerce"
+    ).round(METRIC_EFFECT_DECIMALS)
+    for column in ("truth_label", "truth_effect", "truth_direction"):
+        prepared[column] = pd.to_numeric(prepared[column], errors="raise")
+
+    def pivot(column: str) -> pd.DataFrame:
+        return (
+            prepared.pivot(
+                index=list(EVENT_KEYS), columns="contrast", values=column
+            )
+            .reindex(columns=contexts)
+            .sort_index()
+        )
+
+    truth_label = pivot("truth_label")
+    truth_effect = pivot("truth_effect")
+    truth_direction = pivot("truth_direction")
+    effect = pivot("effect")
+    status = pivot("status")
+    if (
+        truth_label.isna().any().any()
+        or truth_effect.isna().any().any()
+        or truth_direction.isna().any().any()
+    ):
+        raise ValueError("truth must cover every event by contrast cell")
+    observed = status.isin({"exploratory", "observed"}) & effect.notna()
+    return contexts, truth_label, truth_effect, truth_direction, effect, observed
+
+
+def _dynamic_range_metrics(
+    effect: pd.DataFrame, observed: pd.DataFrame
+) -> dict[str, Any]:
+    values = effect.where(observed).stack().astype(float)
+    if values.empty:
+        return {
+            "effect_all_zero_fraction": math.nan,
+            "effect_unique_values": 0,
+            "effect_standard_deviation": math.nan,
+            "effect_iqr": math.nan,
+            "effect_dynamic_range": math.nan,
+        }
+    return {
+        "effect_all_zero_fraction": float(values.eq(0.0).mean()),
+        "effect_unique_values": int(values.nunique()),
+        "effect_standard_deviation": float(values.std(ddof=0)),
+        "effect_iqr": float(values.quantile(0.75) - values.quantile(0.25)),
+        "effect_dynamic_range": float(values.max() - values.min()),
+    }
+
+
+def _active_multigroup_metrics(
+    table: pd.DataFrame,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    (
+        contrasts,
+        truth_label,
+        truth_effect,
+        truth_direction,
+        effect,
+        observed,
+    ) = _event_matrices(table)
+    complete = observed.all(axis=1)
+    event_truth = truth_label.max(axis=1).astype(int)
+    event_coverage = float(complete.mean())
+    contrast_coverage = float(observed.to_numpy().mean())
+    eligible = bool(
+        event_coverage >= MINIMUM_COVERAGE
+        and complete.loc[event_truth.eq(1)].all()
+        and event_truth.loc[complete].nunique() == 2
+    )
+    values = _multigroup_defaults()
+    values.update(
+        {
+            "n_contrasts": len(contrasts),
+            "n_events": len(event_truth),
+            "n_event_contrast_cells": int(truth_label.size),
+            "n_complete_events": int(complete.sum()),
+            "n_observed_event_contrast_cells": int(observed.to_numpy().sum()),
+            "event_coverage": event_coverage,
+            "contrast_cell_coverage": contrast_coverage,
+            **_dynamic_range_metrics(effect, observed),
+        }
+    )
+    if not eligible:
+        reason = "insufficient_complete_event_coverage_or_truth_support"
+        for prefix in ("omnibus", "localization", "direction", "effect"):
+            values[f"{prefix}_status"] = "NE"
+            values[f"{prefix}_reason_code"] = reason
+        return values, []
+
+    available_truth = truth_label.loc[complete].astype(int)
+    available_effect = effect.loc[complete].astype(float)
+    available_direction = truth_direction.loc[complete].astype(int)
+    available_truth_effect = truth_effect.loc[complete].astype(float)
+    event_scores = available_effect.abs().max(axis=1)
+    available_event_truth = event_truth.loc[complete]
+    k = int(event_truth.sum())
+    selected_events = _tie_inclusive_top_k(event_scores, k)
+    true_positive = int(available_event_truth.loc[selected_events].sum())
+    values.update(
+        {
+            "omnibus_status": "observed",
+            "omnibus_reason_code": None,
+            "omnibus_auprc": average_precision(
+                available_event_truth.to_numpy(dtype=int),
+                event_scores.to_numpy(dtype=float),
+            ),
+            "omnibus_prevalence_adjusted_ap": (
+                prevalence_adjusted_average_precision(
+                    available_event_truth.to_numpy(dtype=int),
+                    event_scores.to_numpy(dtype=float),
+                    target_prevalence=TARGET_PREVALENCE,
+                )
+            ),
+            "omnibus_auroc": tie_aware_auroc(
+                available_event_truth.to_numpy(dtype=int),
+                event_scores.to_numpy(dtype=float),
+            ),
+            "omnibus_mcc_at_truth_k": _mcc_from_selection(
+                available_event_truth, selected_events
+            ),
+            "omnibus_k_requested": k,
+            "omnibus_k_realized": int(selected_events.sum()),
+            "omnibus_precision_at_k": float(
+                true_positive / int(selected_events.sum())
+            ),
+            "omnibus_recall_at_k": float(true_positive / k),
+        }
+    )
+
+    selected_contrasts = pd.DataFrame(
+        False, index=available_truth.index, columns=available_truth.columns
+    )
+    macro_ap: list[float] = []
+    confusion: list[dict[str, Any]] = []
+    for contrast in contrasts:
+        labels = available_truth[contrast]
+        scores = available_effect[contrast].abs()
+        requested = int(truth_label[contrast].sum())
+        if labels.nunique() == 2:
+            macro_ap.append(
+                average_precision(
+                    labels.to_numpy(dtype=int), scores.to_numpy(dtype=float)
+                )
+            )
+        selected = (
+            _tie_inclusive_top_k(scores, requested)
+            if requested > 0
+            else pd.Series(False, index=scores.index)
+        )
+        selected_contrasts.loc[:, contrast] = selected
+        truth_boolean = labels.astype(bool)
+        predicted_boolean = selected.astype(bool)
+        confusion.append(
+            {
+                "metric_schema": MULTIGROUP_METRIC_SCHEMA,
+                "contrast": contrast,
+                "k_requested": requested,
+                "k_realized": int(predicted_boolean.sum()),
+                "true_positive": int((truth_boolean & predicted_boolean).sum()),
+                "false_positive": int((~truth_boolean & predicted_boolean).sum()),
+                "true_negative": int((~truth_boolean & ~predicted_boolean).sum()),
+                "false_negative": int((truth_boolean & ~predicted_boolean).sum()),
+                "n_complete_events": len(labels),
+                "event_coverage": event_coverage,
+                "status": "observed",
+                "reason_code": None,
+            }
+        )
+    flat_labels = available_truth.to_numpy(dtype=int).ravel()
+    flat_magnitude = available_effect.abs().to_numpy(dtype=float).ravel()
+    values.update(
+        {
+            "localization_status": "observed",
+            "localization_reason_code": None,
+            "localization_macro_auprc": (
+                float(np.mean(macro_ap))
+                if len(macro_ap) == len(contrasts)
+                else math.nan
+            ),
+            "localization_micro_auprc": average_precision(
+                flat_labels, flat_magnitude
+            ),
+            "localization_hamming_loss": float(
+                np.mean(
+                    selected_contrasts.to_numpy(dtype=bool)
+                    != available_truth.to_numpy(dtype=bool)
+                )
+            ),
+            "localization_exact_set_accuracy": float(
+                np.mean(
+                    np.all(
+                        selected_contrasts.to_numpy(dtype=bool)
+                        == available_truth.to_numpy(dtype=bool),
+                        axis=1,
+                    )
+                )
+            ),
+        }
+    )
+
+    flat_direction = available_direction.to_numpy(dtype=int).ravel()
+    flat_effect = available_effect.to_numpy(dtype=float).ravel()
+    active = flat_direction != 0
+    detected_active = active & selected_contrasts.to_numpy(dtype=bool).ravel()
+    positive_labels = (flat_direction == 1).astype(int)
+    negative_labels = (flat_direction == -1).astype(int)
+    positive_ap = (
+        average_precision(positive_labels, flat_effect)
+        if np.unique(positive_labels).size == 2
+        else math.nan
+    )
+    negative_ap = (
+        average_precision(negative_labels, -flat_effect)
+        if np.unique(negative_labels).size == 2
+        else math.nan
+    )
+    values.update(
+        {
+            "direction_status": "observed",
+            "direction_reason_code": None,
+            "positive_direction_ap": positive_ap,
+            "negative_direction_ap": negative_ap,
+            "direction_accuracy_all_active": float(
+                np.mean(np.sign(flat_effect[active]) == flat_direction[active])
+            ),
+            "direction_accuracy_detected_active": (
+                float(
+                    np.mean(
+                        np.sign(flat_effect[detected_active])
+                        == flat_direction[detected_active]
+                    )
+                )
+                if detected_active.any()
+                else math.nan
+            ),
+        }
+    )
+
+    truth_series = available_truth_effect.stack().astype(float)
+    predicted_series = available_effect.stack().astype(float)
+    residual = predicted_series.to_numpy() - truth_series.to_numpy()
+    pearson = (
+        pearsonr(truth_series, predicted_series).statistic
+        if truth_series.nunique() > 1 and predicted_series.nunique() > 1
+        else math.nan
+    )
+    spearman = (
+        spearmanr(truth_series, predicted_series).statistic
+        if truth_series.nunique() > 1 and predicted_series.nunique() > 1
+        else math.nan
+    )
+    requested, truth_realized, prediction_realized, recovery = (
+        _top_effect_recovery(truth_series, predicted_series)
+    )
+    values.update(
+        {
+            "effect_status": "observed_native_scale_diagnostic",
+            "effect_reason_code": None,
+            "effect_rmse_native_scale": float(np.sqrt(np.mean(residual**2))),
+            "effect_mae_native_scale": float(np.mean(np.abs(residual))),
+            "effect_pearson": float(pearson) if np.isfinite(pearson) else math.nan,
+            "effect_spearman": (
+                float(spearman) if np.isfinite(spearman) else math.nan
+            ),
+            "effect_sign_concordance": values["direction_accuracy_all_active"],
+            "top_effect_k_requested": requested,
+            "top_effect_k_truth_realized": truth_realized,
+            "top_effect_k_prediction_realized": prediction_realized,
+            "top_effect_recovery": recovery,
+        }
+    )
+    return values, confusion
+
+
+def _null_multigroup_metrics(table: pd.DataFrame) -> dict[str, Any]:
+    contrasts, truth_label, _, _, effect, observed = _event_matrices(table)
+    if truth_label.to_numpy(dtype=int).any():
+        raise ValueError("global-null multigroup table contains active truth")
+    complete = observed.all(axis=1)
+    values = _multigroup_defaults()
+    values.update(
+        {
+            "n_contrasts": len(contrasts),
+            "n_events": len(truth_label),
+            "n_event_contrast_cells": int(truth_label.size),
+            "n_complete_events": int(complete.sum()),
+            "n_observed_event_contrast_cells": int(observed.to_numpy().sum()),
+            "event_coverage": float(complete.mean()),
+            "contrast_cell_coverage": float(observed.to_numpy().mean()),
+            "omnibus_reason_code": "global_null_has_no_detection_truth_class",
+            "localization_reason_code": "global_null_has_no_active_contrasts",
+            "direction_reason_code": "global_null_has_no_direction_truth",
+            "effect_status": "observed_null_diagnostics"
+            if observed.to_numpy().any()
+            else "NE",
+            "effect_reason_code": None
+            if observed.to_numpy().any()
+            else "no_estimable_null_effects",
+            **_dynamic_range_metrics(effect, observed),
+        }
+    )
+    return values
+
+
+def _multigroup_metrics(
+    effects: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    required = {"dataset_id", "scenario", "seed", "method"}
+    missing = required.difference(effects.columns)
+    if missing:
+        raise ValueError(f"event effects are missing identities: {sorted(missing)}")
+    metric_rows: list[dict[str, Any]] = []
+    confusion_rows: list[dict[str, Any]] = []
+    groups = effects.groupby(
+        ["dataset_id", "scenario", "seed", "method"],
+        observed=True,
+        sort=True,
+    )
+    for (dataset_id, scenario, seed, method), selected in groups:
+        if str(scenario) == "active":
+            values, confusion = _active_multigroup_metrics(selected)
+        elif str(scenario) == "global_null":
+            values = _null_multigroup_metrics(selected)
+            confusion = []
+        else:
+            raise ValueError(f"unknown three-group scenario: {scenario}")
+        identity = {
+            "dataset_id": str(dataset_id),
+            "scenario": str(scenario),
+            "seed": int(seed),
+            "method": str(method),
+            "method_label": METHOD_LABELS.get(str(method), str(method)),
+            "run_directories": ";".join(
+                sorted(selected.get("run_directory", pd.Series(dtype=str)).unique())
+            ),
+        }
+        metric_rows.append({**identity, **values})
+        confusion_rows.extend({**identity, **record} for record in confusion)
+    return (
+        pd.DataFrame.from_records(metric_rows),
+        pd.DataFrame.from_records(confusion_rows),
+    )
 
 
 def _method_summary(
@@ -574,6 +1099,72 @@ def _method_summary(
     )
 
 
+def _multigroup_method_summary(metrics: pd.DataFrame) -> pd.DataFrame:
+    active_all = metrics.loc[metrics["scenario"].eq("active")]
+    expected = active_all["dataset_id"].nunique()
+    active = active_all.loc[active_all["omnibus_status"].eq("observed")]
+    observed = active.groupby("method", observed=True).size()
+    summary = (
+        active.groupby("method", observed=True)
+        .agg(
+            mean_omnibus_prevalence_adjusted_ap=(
+                "omnibus_prevalence_adjusted_ap",
+                "mean",
+            ),
+            mean_omnibus_auprc=("omnibus_auprc", "mean"),
+            mean_omnibus_auroc=("omnibus_auroc", "mean"),
+            mean_localization_macro_auprc=("localization_macro_auprc", "mean"),
+            mean_localization_micro_auprc=("localization_micro_auprc", "mean"),
+            mean_positive_direction_ap=("positive_direction_ap", "mean"),
+            mean_negative_direction_ap=("negative_direction_ap", "mean"),
+            mean_direction_accuracy_all_active=(
+                "direction_accuracy_all_active",
+                "mean",
+            ),
+            mean_effect_rmse_native_scale=("effect_rmse_native_scale", "mean"),
+            mean_effect_spearman=("effect_spearman", "mean"),
+            mean_event_coverage=("event_coverage", "mean"),
+            active_datasets_scored=("dataset_id", "size"),
+        )
+        .reindex(METHODS)
+        .reset_index()
+    )
+    summary["active_datasets_expected"] = expected
+    summary["active_datasets_scored"] = (
+        summary["method"].map(observed).fillna(0).astype(int)
+    )
+    summary["rank_eligible"] = (
+        summary["active_datasets_expected"].gt(0)
+        & summary["active_datasets_scored"].eq(summary["active_datasets_expected"])
+        & summary["mean_event_coverage"].ge(MINIMUM_COVERAGE)
+    )
+    rank_metrics = (
+        "mean_omnibus_prevalence_adjusted_ap",
+        "mean_omnibus_auprc",
+        "mean_omnibus_auroc",
+        "mean_localization_macro_auprc",
+        "mean_localization_micro_auprc",
+        "mean_positive_direction_ap",
+        "mean_negative_direction_ap",
+        "mean_direction_accuracy_all_active",
+        "mean_effect_spearman",
+    )
+    for metric in rank_metrics:
+        summary[f"{metric}_rank"] = (
+            summary[metric]
+            .where(summary["rank_eligible"])
+            .rank(ascending=False, method="average")
+            .astype("Float64")
+        )
+    summary["primary_rank"] = summary[
+        "mean_omnibus_prevalence_adjusted_ap_rank"
+    ]
+    summary.insert(1, "method_label", summary["method"].map(METHOD_LABELS))
+    return summary.sort_values(
+        ["primary_rank", "method_label"], na_position="last", ignore_index=True
+    )
+
+
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(
         json.dumps(json_safe(dict(payload)), indent=2, sort_keys=True, allow_nan=False)
@@ -582,7 +1173,12 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     )
 
 
-def _report(summary: pd.DataFrame, metrics: pd.DataFrame) -> str:
+def _report(
+    summary: pd.DataFrame,
+    metrics: pd.DataFrame,
+    *,
+    multigroup_summary: pd.DataFrame | None = None,
+) -> str:
     active = metrics.loc[metrics["scenario"].eq("active")]
     n_seeds = int(active["seed"].nunique())
     lines = [
@@ -632,6 +1228,49 @@ def _report(summary: pd.DataFrame, metrics: pd.DataFrame) -> str:
             f"{row.mean_coverage:.3f}" if pd.notna(row.mean_coverage) else "NE",
         ]
         lines.append("| " + " | ".join(values) + " |")
+    if multigroup_summary is not None:
+        lines.extend(
+            [
+                "",
+                "## Decomposed multi-group endpoints",
+                "",
+                (
+                    "The event-level omnibus score is the maximum absolute "
+                    "pairwise effect. Localization, signed direction, and effect "
+                    "estimation are evaluated separately. Native-scale RMSE is "
+                    "diagnostic only because method score scales are not common."
+                ),
+                "",
+                (
+                    "| Rank | Method | Omnibus adj. AP | Omnibus AUPRC | "
+                    "Localization macro AP | AP+ | AP- | Direction | Coverage |"
+                ),
+                "|---:|---|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for row in multigroup_summary.itertuples(index=False):
+            rank = "NE" if pd.isna(row.primary_rank) else f"{float(row.primary_rank):g}"
+
+            def display(value: object) -> str:
+                return f"{float(value):.4f}" if pd.notna(value) else "NE"
+
+            lines.append(
+                "| "
+                + " | ".join(
+                    (
+                        rank,
+                        str(row.method_label),
+                        display(row.mean_omnibus_prevalence_adjusted_ap),
+                        display(row.mean_omnibus_auprc),
+                        display(row.mean_localization_macro_auprc),
+                        display(row.mean_positive_direction_ap),
+                        display(row.mean_negative_direction_ap),
+                        display(row.mean_direction_accuracy_all_active),
+                        display(row.mean_event_coverage),
+                    )
+                )
+                + " |"
+            )
     lines.extend(
         [
             "",
@@ -817,6 +1456,8 @@ def evaluate(
         metrics,
         expected_active_contrasts=expected_active_contrasts,
     )
+    multigroup_metrics, contrast_confusion = _multigroup_metrics(effects)
+    multigroup_summary = _multigroup_method_summary(multigroup_metrics)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     staged = Path(
         tempfile.mkdtemp(prefix=f".{output_dir.name}.staging-", dir=output_dir.parent)
@@ -826,18 +1467,40 @@ def evaluate(
         effects_path = staged / "event_effects.tsv.gz"
         metrics_path = staged / "per_contrast_metrics.tsv"
         summary_path = staged / "method_summary.tsv"
+        multigroup_metrics_path = staged / "multigroup_metrics.tsv"
+        multigroup_summary_path = staged / "multigroup_method_summary.tsv"
+        confusion_path = staged / "contrast_confusion.tsv"
         effects.to_csv(effects_path, sep="\t", index=False)
         metrics.to_csv(metrics_path, sep="\t", index=False)
         summary.to_csv(summary_path, sep="\t", index=False)
-        (staged / "REPORT.md").write_text(_report(summary, metrics), encoding="utf-8")
+        multigroup_metrics.to_csv(multigroup_metrics_path, sep="\t", index=False)
+        multigroup_summary.to_csv(multigroup_summary_path, sep="\t", index=False)
+        contrast_confusion.to_csv(confusion_path, sep="\t", index=False)
+        (staged / "REPORT.md").write_text(
+            _report(
+                summary,
+                metrics,
+                multigroup_summary=multigroup_summary,
+            ),
+            encoding="utf-8",
+        )
         manifest = {
-            "schema_version": "crychic-three-group-evaluation-v1",
+            "schema_version": "crychic-three-group-evaluation-v2",
             "status": "complete",
             "fixture_manifest_sha256": sha256_file(fixture_dir / "manifest.json"),
             "truth_sha256": sha256_file(truth_path),
             "minimum_rank_coverage": MINIMUM_COVERAGE,
             "prevalence_adjusted_ap_target_prevalence": TARGET_PREVALENCE,
             "metric_effect_decimal_places": METRIC_EFFECT_DECIMALS,
+            "multigroup_metric_schema": MULTIGROUP_METRIC_SCHEMA,
+            "omnibus_score_semantics": "max_absolute_pairwise_effect",
+            "localization_threshold": "truth_cardinality_tie_inclusive_top_k",
+            "effect_rmse_ranking_policy": (
+                "native_scale_diagnostic_only_not_cross_method_ranked"
+            ),
+            "confidence_interval_policy": (
+                "NE_without_common_full_pipeline_resampling_intervals"
+            ),
             "design": "independent_subject_groups",
             "resource_mode": "H-common",
             "frozen_code_commit": expected_code_commit,
@@ -854,6 +1517,9 @@ def evaluate(
                     effects_path,
                     metrics_path,
                     summary_path,
+                    multigroup_metrics_path,
+                    multigroup_summary_path,
+                    confusion_path,
                     staged / "REPORT.md",
                 )
             },
