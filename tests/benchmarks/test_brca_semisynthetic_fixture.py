@@ -63,13 +63,18 @@ def _write_source(path: Path) -> tuple[str, ...]:
     library = np.asarray(counts.sum(axis=1)).ravel()
     normalized = counts.astype(float).multiply((1.0e4 / library)[:, None]).tocsr()
     normalized.data = np.log1p(normalized.data)
+    obs = pd.concat(observations)
+    obs.index = pd.Index(obs.index, dtype="string")
+    for column in obs:
+        obs[column] = obs[column].astype("string")
     source = ad.AnnData(
         X=normalized,
-        obs=pd.concat(observations),
-        var=pd.DataFrame(index=pd.Index(genes, name="gene")),
+        obs=obs,
+        var=pd.DataFrame(index=pd.Index(genes, name="gene", dtype="string")),
     )
     source.layers["counts"] = counts
-    source.write_h5ad(path)
+    with ad.settings.override(allow_write_nullable_strings=True):
+        source.write_h5ad(path)
     return genes
 
 

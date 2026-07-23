@@ -43,6 +43,18 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     )
 
 
+def _portable_string_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    result.index = pd.Index(
+        result.index.astype(str).to_numpy(dtype=object),
+        name=result.index.name,
+    )
+    for column in result.columns:
+        if isinstance(result[column].dtype, pd.StringDtype | pd.CategoricalDtype):
+            result[column] = result[column].astype(str).to_numpy(dtype=object)
+    return result
+
+
 def _publish(staged: Path, output: Path, *, overwrite: bool) -> None:
     if output.exists() and not overwrite:
         raise FileExistsError(f"output exists: {output}; pass --overwrite")
@@ -734,8 +746,8 @@ def generate(
             )
             fixture = ad.AnnData(
                 X=_normalized(injected),
-                obs=obs,
-                var=source.var.iloc[gene_positions].copy(),
+                obs=_portable_string_frame(obs),
+                var=_portable_string_frame(source.var.iloc[gene_positions]),
             )
             fixture.layers["counts"] = injected
             fixture.uns["semisynthetic_contract"] = {
