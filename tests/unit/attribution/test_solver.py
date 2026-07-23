@@ -72,6 +72,47 @@ def test_solver_is_bitwise_deterministic() -> None:
     assert first.diagnostics.objective_history == second.diagnostics.objective_history
 
 
+def test_zero_columns_match_the_exact_reduced_problem() -> None:
+    active = sparse.csc_matrix(
+        [[1.0, 0.8], [0.2, 1.0], [0.5, 0.5]],
+    )
+    active_coo = active.tocoo()
+    expanded = sparse.csc_matrix(
+        (
+            active_coo.data,
+            (
+                active_coo.row,
+                np.where(active_coo.col == 0, 17, 481),
+            ),
+        ),
+        shape=(3, 502),
+    )
+    response = np.asarray([1.0, 2.0, 0.5])
+    kwargs = {
+        "precision_weights": np.asarray([1.0, 2.0, 0.5]),
+        "lambda1": 0.1,
+        "lambda2": 0.2,
+        "tolerance": 1e-10,
+        "kkt_tolerance": 1e-9,
+    }
+
+    reduced = solve_nonnegative_elastic_net(active, response, **kwargs)
+    observed = solve_nonnegative_elastic_net(expanded, response, **kwargs)
+
+    np.testing.assert_array_equal(
+        observed.coefficients[[17, 481]], reduced.coefficients
+    )
+    assert np.count_nonzero(observed.coefficients) == np.count_nonzero(
+        reduced.coefficients
+    )
+    np.testing.assert_array_equal(observed.predicted, reduced.predicted)
+    assert observed.diagnostics.iterations == reduced.diagnostics.iterations
+    assert (
+        observed.diagnostics.objective_history
+        == reduced.diagnostics.objective_history
+    )
+
+
 def test_iteration_limit_is_explicit_failure_not_success() -> None:
     solution = solve_nonnegative_elastic_net(
         sparse.csc_matrix([[1.0]]),

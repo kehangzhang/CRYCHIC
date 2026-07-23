@@ -319,20 +319,27 @@ def _solve_nonnegative_elastic_net(
     max_change = math.inf
     kkt = math.inf
     completed_iterations = 0
+    active_coordinates: list[
+        tuple[int, np.ndarray, np.ndarray, np.ndarray, float]
+    ] = []
+    for column in range(design.shape[1]):
+        start, stop = design.indptr[column : column + 2]
+        rows = design.indices[start:stop]
+        values = design.data[start:stop]
+        weighted_values = precision[rows] * values
+        weighted_norm = float(np.dot(weighted_values, values))
+        if weighted_norm <= 0.0:
+            continue
+        active_coordinates.append(
+            (column, rows, values, weighted_values, weighted_norm + lambda2)
+        )
     for iteration in range(1, max_iterations + 1):
         max_change = 0.0
-        for column in range(design.shape[1]):
-            start, stop = design.indptr[column : column + 2]
-            rows = design.indices[start:stop]
-            values = design.data[start:stop]
+        for column, rows, values, weighted_values, denominator in active_coordinates:
             old = coefficients[column]
-            denominator = float(np.dot(precision[rows], values * values)) + lambda2
-            if denominator <= 0:
-                new = 0.0
-            else:
-                partial_residual = residual[rows] + values * old
-                correlation = float(np.dot(precision[rows] * values, partial_residual))
-                new = max(0.0, (correlation - 0.5 * lambda1) / denominator)
+            partial_residual = residual[rows] + values * old
+            correlation = float(np.dot(weighted_values, partial_residual))
+            new = max(0.0, (correlation - 0.5 * lambda1) / denominator)
             if not math.isfinite(new):
                 status = SolverStatus.NUMERICAL_FAILURE
                 failure_reason = f"non_finite_coordinate:{column}"
