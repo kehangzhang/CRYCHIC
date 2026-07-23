@@ -148,6 +148,7 @@ def _method_summary(primary: pd.DataFrame) -> pd.DataFrame:
         for metric in SUMMARY_METRICS:
             values = pd.to_numeric(group[metric], errors="coerce").to_numpy(float)
             interval = _mean_ci(values)
+            record[f"{metric}_n_estimable"] = interval["n"]
             record[f"{metric}_mean"] = interval["mean"]
             record[f"{metric}_ci_low"] = interval["ci_low"]
             record[f"{metric}_ci_high"] = interval["ci_high"]
@@ -156,11 +157,22 @@ def _method_summary(primary: pd.DataFrame) -> pd.DataFrame:
             record[f"{metric}_max"] = float(finite.max()) if len(finite) else math.nan
         records.append(record)
     result = pd.DataFrame.from_records(records)
+    result["primary_panel_eligible"] = result["omnibus_auprc_n_estimable"].eq(
+        result["n_replicates"]
+    )
     result["omnibus_auprc_rank"] = result["omnibus_auprc_mean"].rank(
         method="min", ascending=False
     )
+    result["primary_panel_rank"] = np.nan
+    eligible = result["primary_panel_eligible"]
+    result.loc[eligible, "primary_panel_rank"] = result.loc[
+        eligible, "omnibus_auprc_mean"
+    ].rank(method="min", ascending=False)
     return result.sort_values(
-        ["omnibus_auprc_rank", "base_method_id"], kind="stable", ignore_index=True
+        ["primary_panel_eligible", "primary_panel_rank", "omnibus_auprc_rank"],
+        ascending=[False, True, True],
+        kind="stable",
+        ignore_index=True,
     )
 
 
@@ -224,10 +236,39 @@ def _paired_differences(
         "name": "canonical_event_auprc_noninferiority",
         "status": "PASS" if bool(gate_row["noninferior"]) else "REJECT",
         "strongest_baseline": strongest,
+        "strongest_baseline_complete_replicates": bool(
+            summary.loc[
+                summary["base_method_id"].astype(str).eq(strongest),
+                "primary_panel_eligible",
+            ].iloc[0]
+        ),
+        "n_paired_replicates": int(gate_row["n_replicates"]),
         "noninferiority_margin": noninferiority_margin,
         "mean_paired_difference": float(gate_row["mean_auprc_difference"]),
         "ci_low": float(gate_row["ci_low"]),
         "ci_high": float(gate_row["ci_high"]),
+    }
+    complete_baselines = baseline_summary.loc[
+        baseline_summary["primary_panel_eligible"].astype(bool)
+    ]
+    if complete_baselines.empty:
+        raise ValueError("no baseline has finite AUPRC in every replicate")
+    complete_strongest = str(
+        complete_baselines.sort_values(
+            "omnibus_auprc_mean", ascending=False, kind="stable"
+        ).iloc[0]["base_method_id"]
+    )
+    complete_row = differences.loc[
+        differences["baseline_method_id"].eq(complete_strongest)
+    ].iloc[0]
+    gate["complete_replicate_panel"] = {
+        "status": "PASS" if bool(complete_row["noninferior"]) else "REJECT",
+        "strongest_baseline": complete_strongest,
+        "n_paired_replicates": int(complete_row["n_replicates"]),
+        "noninferiority_margin": noninferiority_margin,
+        "mean_paired_difference": float(complete_row["mean_auprc_difference"]),
+        "ci_low": float(complete_row["ci_low"]),
+        "ci_high": float(complete_row["ci_high"]),
     }
     return differences, gate
 
@@ -347,12 +388,20 @@ def summarize(
             "Primary score and engine choices are frozen by method; sensitivity "
             "views are excluded from ranking.",
             "",
-            "| Rank | Method | AUPRC mean (95% CI) | AUROC | Direction | Wall s |",
-            "|---:|---|---:|---:|---:|---:|",
+            "| Rank | Eligible | Method | AUPRC n/N | AUPRC mean (95% CI) | "
+            "AUROC | Direction | Wall s |",
+            "|---:|---|---|---:|---:|---:|---:|---:|",
         ]
         for row in summary.itertuples(index=False):
+            rank = (
+                f"{row.primary_panel_rank:.0f}"
+                if bool(row.primary_panel_eligible)
+                else "NE"
+            )
             lines.append(
-                f"| {row.omnibus_auprc_rank:.0f} | {row.base_method_id} | "
+                f"| {rank} | {'yes' if row.primary_panel_eligible else 'no'} | "
+                f"{row.base_method_id} | {row.omnibus_auprc_n_estimable}/"
+                f"{row.n_replicates} | "
                 f"{row.omnibus_auprc_mean:.4f} "
                 f"[{row.omnibus_auprc_ci_low:.4f}, "
                 f"{row.omnibus_auprc_ci_high:.4f}] | "
@@ -365,12 +414,19 @@ def summarize(
                 "",
                 "## Gate C",
                 "",
-                f"Status: **{gate['status']}** against {gate['strongest_baseline']} "
-                f"with margin {noninferiority_margin:.3f}.",
+                "Conservative all-baseline status: "
+                f"**{gate['status']}** against {gate['strongest_baseline']} "
+                f"using {gate['n_paired_replicates']} paired replicates and margin "
+                f"{noninferiority_margin:.3f}.",
                 "",
                 "Paired AUPRC difference (CRYCHIC - baseline): "
                 f"{gate['mean_paired_difference']:.4f} "
                 f"[{gate['ci_low']:.4f}, {gate['ci_high']:.4f}].",
+                "",
+                "Complete-replicate eligibility panel: "
+                f"**{gate['complete_replicate_panel']['status']}** against "
+                f"{gate['complete_replicate_panel']['strongest_baseline']} "
+                f"({gate['complete_replicate_panel']['n_paired_replicates']} pairs).",
             ]
         )
         report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

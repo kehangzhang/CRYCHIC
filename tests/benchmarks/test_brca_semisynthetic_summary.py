@@ -78,3 +78,31 @@ def test_primary_summary_never_selects_sensitivity_view() -> None:
     assert gate["status"] == "PASS"
     comparison = paired.loc[paired["baseline_method_id"].eq("cellchat")].iloc[0]
     assert np.isclose(comparison["mean_auprc_difference"], -0.04)
+
+
+def test_incomplete_baseline_is_reported_but_excluded_from_complete_panel() -> None:
+    records: list[dict[str, object]] = []
+    values = {
+        "crychic": (0.90, 0.92),
+        "cellchat": (np.nan, 0.96),
+        "liana_rank_aggregate": (0.60, 0.70),
+        "scseqcommdiff": (0.85, 0.87),
+    }
+    for dataset_index, dataset in enumerate(("r1", "r2")):
+        for method, method_values in values.items():
+            records.append(_record(dataset, method, method_values[dataset_index]))
+    primary = _primary_rows(pd.DataFrame.from_records(records))
+    summary = _method_summary(primary)
+    _, gate = _paired_differences(
+        primary,
+        summary,
+        noninferiority_margin=0.05,
+    )
+
+    cellchat = summary.loc[summary["base_method_id"].eq("cellchat")].iloc[0]
+    assert cellchat["omnibus_auprc_n_estimable"] == 1
+    assert not bool(cellchat["primary_panel_eligible"])
+    assert gate["strongest_baseline"] == "cellchat"
+    assert gate["complete_replicate_panel"]["strongest_baseline"] == (
+        "scseqcommdiff"
+    )
