@@ -950,12 +950,12 @@ def run(
             },
             "limitations": [
                 "kuppe_is_a_development_dataset",
-                "ms_was_previously_inspected_for_rc11_and_is_not_fresh_for_rc13",
+                "ms_was_previously_inspected_for_rc11_and_is_not_fresh_for_this_event_head",
                 "spatial_colocalization_is_an_indirect_unordered_pair_proxy",
-                "rc13_is_an_unreleased_benchmark_only_ranking_head",
+                "event_head_is_an_unreleased_benchmark_only_ranking_head",
                 "direction_preserving_des_is_not_estimable_from_the_spatial_truth",
                 "diffusible_long_range_des_is_not_estimable_from_connectomedb2020",
-                "no_formal_p_or_q_values_are_claimed_for_rc13",
+                "no_formal_p_or_q_values_are_claimed_for_the_event_head",
             ],
             "outputs": output_records,
         }

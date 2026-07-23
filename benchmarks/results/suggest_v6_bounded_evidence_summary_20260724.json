@@ -1,8 +1,9 @@
 {
-  "schema_version": "crychic-suggest-v6-bounded-evidence-summary-v1",
+  "schema_version": "crychic-suggest-v6-bounded-evidence-summary-v2",
   "status": "partial_not_release_complete",
   "branch": "optimize/suggest-v6-bounded-evidence-20260724",
   "benchmark_evaluator_commit": "8ac34d389ac41160d32fa962ce168b73d4cb6e2b",
+  "event_level_evaluator_commit": "55074fae594f2327d1a0648c47288e664fdcdc64",
   "release_boundary": {
     "candidate_status": "benchmark_only_unreleased",
     "formal_inference_allowed": false,
@@ -100,12 +101,60 @@
       "endpoint_permutation_strata_p_lt_0_05": 3
     },
     "strict_suggestion_v6_event_level_endpoints": {
-      "original_count_des": "not_estimable",
-      "top_k_count_matched_des": "not_estimable",
-      "continuous_weighted_des": "not_estimable",
-      "direction_preserving_des": "not_estimable",
-      "mechanism_stratified_des": "not_estimable",
-      "reason": "RC11 exports only condition by unordered cell-pair rankings, not the required event-level selection/effect/direction/mechanism ledger"
+      "source": "latest core directed LR ledger plus frozen RC14 pair-prioritized event head",
+      "selection_bias": "pair gate floor and per-condition Top-K scope selected on Kuppe",
+      "ms_role": "reused external cohort, not fresh independent validation for RC14",
+      "original_count_des": {
+        "kuppe": {
+          "crychic_median": 0.3869072603682069,
+          "crychic_mean": 0.43778410638741583,
+          "scseqcommdiff_median": 0.7007672634271098,
+          "scseqcommdiff_mean": 0.691284052661179,
+          "median_delta": -0.31386000305890294,
+          "mean_delta": -0.25349994627376315
+        },
+        "ms": {
+          "crychic_median": 0.3,
+          "crychic_mean": 0.260137011105746,
+          "scseqcommdiff_median": 0.825,
+          "scseqcommdiff_mean": 0.6725877192982457,
+          "median_delta": -0.5249999999999999,
+          "mean_delta": -0.4124507081924997
+        }
+      },
+      "top_k_count_matched_des": {
+        "budget_scope": "per_condition",
+        "budgets": [100, 250, 500, 1000],
+        "kuppe": [
+          {"k": 100, "crychic_median": 0.7446455505279034, "crychic_mean": 0.7455508511509952, "scseqcommdiff_median": 0.4955982392957182, "scseqcommdiff_mean": 0.48847779815070297},
+          {"k": 250, "crychic_median": 0.774547554871005, "crychic_mean": 0.7543351231397252, "scseqcommdiff_median": 0.8399359743897559, "scseqcommdiff_mean": 0.8378185596109095},
+          {"k": 500, "crychic_median": 0.7724828493901505, "crychic_mean": 0.7712626768082298, "scseqcommdiff_median": 0.8023940345368916, "scseqcommdiff_mean": 0.80939007948117},
+          {"k": 1000, "crychic_median": 0.7625550220088035, "crychic_mean": 0.7389224556514603, "scseqcommdiff_median": 0.7427431059506532, "scseqcommdiff_mean": 0.7476239360896596}
+        ],
+        "ms": [
+          {"k": 100, "crychic_median": 0.8005291005291005, "crychic_mean": 0.6728913787737317, "scseqcommdiff_median": 0.8, "scseqcommdiff_mean": 0.6472587719298246},
+          {"k": 250, "crychic_median": 0.8325396825396826, "crychic_mean": 0.684129955012308, "scseqcommdiff_median": 0.88125, "scseqcommdiff_mean": 0.7140625},
+          {"k": 500, "crychic_median": 0.8014840624596722, "crychic_mean": 0.6531427895129474, "scseqcommdiff_median": 0.825, "scseqcommdiff_mean": 0.6725877192982457},
+          {"k": 1000, "crychic_median": 0.8460644738995254, "crychic_mean": 0.6761737359736146, "scseqcommdiff_median": 0.825, "scseqcommdiff_mean": 0.6725877192982457}
+        ],
+        "average_across_k": {
+          "kuppe_crychic_mean": 0.7525177766876026,
+          "kuppe_scseqcommdiff_mean": 0.7208275933331105,
+          "kuppe_mean_delta": 0.03169018335449215,
+          "ms_crychic_mean": 0.6715844648181504,
+          "ms_scseqcommdiff_mean": 0.6766241776315791,
+          "ms_mean_delta": -0.0050397128134285745
+        }
+      },
+      "continuous_weighted_des": {
+        "kuppe_crychic_median_mean": [0.506867489148377, 0.5132318551773776],
+        "kuppe_scseqcommdiff_median_mean": [0.7246503496503496, 0.7290061916303204],
+        "ms_crychic_median_mean": [0.5962962962962963, 0.47473361061596353],
+        "ms_scseqcommdiff_median_mean": [0.8, 0.6637883771929824]
+      },
+      "mechanism_stratified_des": "contact, ECM/receptor, and secreted computed; ECM has one LR and is not informative",
+      "direction_preserving_des": "not_estimable_spatial_truth_is_unordered",
+      "diffusible_long_range_des": "not_estimable_resource_has_no_range_annotation"
     }
   },
   "suggestion_v6_completion": {
@@ -124,7 +173,7 @@
       "BRCA semisynthetic scenarios",
       "native hypergraph truth",
       "runtime stage profiling",
-      "Kuppe/MS strict DES family: availability is audited, but all five event-level endpoints are not estimable from RC11 exports"
+      "Kuppe/MS strict DES family: original, Top-K, weighted, contact, ECM/receptor, and secreted are computed; directed and diffusible-long-range endpoints remain not estimable"
     ],
     "missing": [
       "common GLM, CR2, STACCato, and common-functional OOF engine matrix",
@@ -149,6 +198,14 @@
     "ms_des_extension_manifest": {
       "path": "benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/ms/manifest.json",
       "sha256": "f9c0a06f2193be4f37e716cb45f720cf201cfe1d7ed6f5ed7cfbf7b8c2e60d0b"
+    },
+    "kuppe_rc14_event_des_manifest": {
+      "path": "benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/kuppe/manifest.json",
+      "sha256": "6a408bc9629870d3cc1771c6a1ef00359dff6d03aebd1e8cd4356fbfed49f2bc"
+    },
+    "ms_rc14_event_des_manifest": {
+      "path": "benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/ms/manifest.json",
+      "sha256": "b0d2eed7c47679735ce2dbd2c3e6a90b3c053cab81c7dd9486885b53de10d839"
     }
   }
 }

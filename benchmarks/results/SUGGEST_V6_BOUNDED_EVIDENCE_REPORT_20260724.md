@@ -13,15 +13,21 @@ Status: **partial, not release complete**
    scSeqCommDiff in 5 of 8 strata.
 3. On Kuppe, which was used for development, RC11 remains below scSeqCommDiff
    in all 8 strata. Median DES is 0.6287 versus 0.7008.
-4. `suggestion_v6.md` is not fully implemented. In particular, the current
-   RC11 export cannot support the five requested event-level DES variants.
+4. The latest core event ledger now supports original-count, count-matched,
+   continuous-weighted, and three mechanism-stratified DES variants. The
+   frozen RC14 Top-K head is competitive with scSeqCommDiff, but native
+   original-count and continuous-weighted DES remain lower. Direction-
+   preserving and diffusible-long-range DES are still not estimable.
+5. `suggestion_v6.md` remains only partially implemented; the expanded
+   external-method simulation panel and several calibration tracks are absent.
 
 ## Version boundary
 
 | Item | Frozen value |
 |---|---|
 | Branch | `optimize/suggest-v6-bounded-evidence-20260724` |
-| Benchmark evaluator | `8ac34d389ac41160d32fa962ce168b73d4cb6e2b` |
+| Pair-rank robustness evaluator | `8ac34d389ac41160d32fa962ce168b73d4cb6e2b` |
+| Event-level DES evaluator | `55074fae594f2327d1a0648c47288e664fdcdc64` |
 | RC12 preregistration | `e9fbc6796fba35325382f25558df63e7085a4a38` |
 | RC12 validation evaluator | `240dc30053e487f5f2dda7dbb58cd04f2ed99aff` |
 | Candidate status | benchmark-only, unreleased |
@@ -79,19 +85,59 @@ The CRYCHIC ranking was fixed throughout.
 The permutation p values are diagnostics for the spatial endpoint only. They
 are not formal CRYCHIC inference because the algorithm was not refit.
 
-## Strict DES availability
+## Strict event-level DES
 
-| Requested v6 endpoint | Status | Blocking input |
-|---|---|---|
-| Original count DES | not estimable | selected directed LR event ledger |
-| Top-K count-matched DES | not estimable | ranked directed LR events |
-| Continuous weighted DES | not estimable | event effects or signed p evidence |
-| Direction-preserving DES | not estimable | ordered sender-receiver event axis |
-| Mechanism-stratified DES | not estimable | event-level mechanism annotation |
+The event-level evaluator consumes the latest core's checksum-bound directed
+LR effects. It exactly reconstructs the persisted scSeqCommDiff native count
+ranking. RC14 is a benchmark-only head selected on Kuppe: within each
+condition, events are ranked by `abs(HC2 z) * RC11 pair percentile`, and the
+same K is retained for both methods. MS was evaluated once after freezing this
+rule, but it had already been inspected during RC11 work and is not a fresh
+independent cohort for RC14.
 
-RC11 currently exports `condition x unordered cell-pair` rankings. Converting
-those pair scores into any of the above event-level endpoints would change the
-estimand and was therefore rejected.
+### Native original-count DES
+
+| Dataset | CRYCHIC median / mean | Historical CRYCHIC Arm A | scSeq median / mean | Result |
+|---|---:|---:|---:|---|
+| Kuppe | 0.3869 / 0.4378 | 0.4284 / 0.4369 | 0.7008 / 0.6913 | lower |
+| MS | 0.3000 / 0.2601 | 0.0500 / 0.0689 | 0.8250 / 0.6726 | improved versus old CRYCHIC, still lower |
+
+Thus the latest native event count does **not** exceed scSeqCommDiff. The
+Kuppe current-versus-historical pair-count Spearman is 0.971; on MS it is
+0.653, reflecting a material version change rather than a parity replay.
+
+### Per-condition Top-K count-matched DES
+
+| Dataset | K | CRYCHIC median / mean | scSeq median / mean | Mean delta |
+|---|---:|---:|---:|---:|
+| Kuppe | 100 | 0.7446 / 0.7456 | 0.4956 / 0.4885 | +0.2571 |
+| Kuppe | 250 | 0.7745 / 0.7543 | 0.8399 / 0.8378 | -0.0835 |
+| Kuppe | 500 | 0.7725 / 0.7713 | 0.8024 / 0.8094 | -0.0381 |
+| Kuppe | 1000 | 0.7626 / 0.7389 | 0.7427 / 0.7476 | -0.0087 |
+| MS | 100 | 0.8005 / 0.6729 | 0.8000 / 0.6473 | +0.0256 |
+| MS | 250 | 0.8325 / 0.6841 | 0.8812 / 0.7141 | -0.0299 |
+| MS | 500 | 0.8015 / 0.6531 | 0.8250 / 0.6726 | -0.0194 |
+| MS | 1000 | 0.8461 / 0.6762 | 0.8250 / 0.6726 | +0.0036 |
+
+Across the four K values, mean DES averages 0.7525 versus 0.7208 on Kuppe and
+0.6716 versus 0.6766 on MS. RC14 therefore leads at the sparse K=100 endpoint
+in both datasets and at K=1000 on MS, but it does not dominate every K.
+
+### Weighted and mechanism endpoints
+
+| Dataset | Endpoint | CRYCHIC median / mean | scSeq median / mean |
+|---|---|---:|---:|
+| Kuppe | continuous weighted | 0.5069 / 0.5132 | 0.7247 / 0.7290 |
+| MS | continuous weighted | 0.5963 / 0.4747 | 0.8000 / 0.6638 |
+| Kuppe | contact | 0.4713 / 0.4599 | 0.7120 / 0.7253 |
+| MS | contact | 0.5778 / 0.4651 | 0.8063 / 0.6690 |
+| Kuppe | secreted | 0.5152 / 0.5243 | 0.7347 / 0.7417 |
+| MS | secreted | 0.5963 / 0.4747 | 0.8000 / 0.6638 |
+
+ECM/receptor contains only one resource LR and is not informative. The spatial
+truth collapses sender/receiver direction, so direction-preserving DES remains
+not estimable. ConnectomeDB2020 lacks diffusion-range annotation, so a strict
+diffusible/long-range stratum also remains not estimable.
 
 ## Suggestion v6 audit
 
@@ -106,7 +152,7 @@ estimand and was therefore rejected.
 | Null calibration | partial | 50 historical repeats, not 1,000 full-pipeline repeats |
 | BRCA semisynthetic | partial | several scenarios and the full grid remain missing |
 | Native hypergraph truth | partial | narrow synthetic track only |
-| Kuppe/MS robustness | partial | pair-rank resampling complete; five strict endpoints NE |
+| Kuppe/MS robustness | partial | pair-rank resampling plus original/Top-K/weighted/mechanism DES complete; directed and long-range endpoints NE |
 | MIS-C coverage curves | missing | native/common/all-axis and risk-coverage curves absent |
 | Differential spatial simulation | missing | no implanted differential spatial truth track |
 | DCST full grid | missing | full subject-by-cell grid absent |
@@ -117,14 +163,15 @@ estimand and was therefore rejected.
 
 ## Next optimization direction
 
-1. Export a checksum-bound directed event ledger containing event rank,
-   selected status, signed effect, direction, and mechanism. This is required
-   before the five strict DES endpoints can be computed.
-2. Keep RC12 as a separate detection head and retain canonical signed effects.
+1. Keep RC12 as a separate detection head and retain canonical signed effects.
    Do not optimize direction through an unsigned score.
-3. Do not tune further on Kuppe. It is already a development cohort. Validate
+2. Do not tune further on Kuppe/MS. Kuppe selected RC14 and MS has already
+   informed earlier RC11 work. Validate
    any real-cohort ranking change on a newly preregistered cohort or implanted
    spatial truth.
+3. Native count and continuous DES remain the main weaknesses. Address them
+   through calibrated event selection and opportunity-aware effect estimation
+   on simulations with event truth, not by optimizing against spatial DES.
 4. Complete the common score-generator by differential-engine matrix before
    changing the algorithm backbone.
 
@@ -139,3 +186,9 @@ estimand and was therefore rejected.
 - MS robustness manifest:
   `benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/ms/manifest.json`
   (`f9c0a06f2193be4f37e716cb45f720cf201cfe1d7ed6f5ed7cfbf7b8c2e60d0b`)
+- RC14 Kuppe event-level DES manifest:
+  `benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/kuppe/manifest.json`
+  (`6a408bc9629870d3cc1771c6a1ef00359dff6d03aebd1e8cd4356fbfed49f2bc`)
+- RC14 MS event-level DES manifest:
+  `benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/ms/manifest.json`
+  (`b0d2eed7c47679735ce2dbd2c3e6a90b3c053cab81c7dd9486885b53de10d839`)
