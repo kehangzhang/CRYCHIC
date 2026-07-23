@@ -155,12 +155,18 @@ def _edge_map(long_table: pd.DataFrame) -> pd.DataFrame:
     return edges
 
 
-def _view_map(adapter_manifest: Mapping[str, Any]) -> pd.DataFrame:
+def _view_map(
+    adapter_manifest: Mapping[str, Any],
+    *,
+    result_dir: Path | None = None,
+    result_manifest: Mapping[str, Any] | None = None,
+) -> pd.DataFrame:
     source = adapter_manifest.get("source_result")
     views = source.get("score_views") if isinstance(source, Mapping) else None
     if not isinstance(views, list) or not views:
         raise ValueError("CRYCHIC source score-view provenance is absent")
     records: list[dict[str, str]] = []
+    legacy = True
     for view in views:
         if not isinstance(view, Mapping):
             raise ValueError("CRYCHIC score-view record is invalid")
@@ -172,19 +178,198 @@ def _view_map(adapter_manifest: Mapping[str, Any]) -> pd.DataFrame:
             or not isinstance(children, list)
             or not children
         ):
-            raise ValueError("CRYCHIC score view lacks one contrast and children")
+            legacy = False
+            break
         for functional_id in children:
             records.append(
                 {
                     "scoring_functional_id": str(functional_id),
                     "run_id": str(view["run_id"]),
                     "contrast_view": str(candidates[0]),
+                    "_context_invariant": "false",
                 }
             )
+    if not legacy:
+        invariant = [
+            view
+            for view in views
+            if isinstance(view, Mapping)
+            and view.get("view_scope")
+            == "context_invariant_mechanistic_sample_score"
+            and view.get("primary_score") is True
+            and view.get("contrast_candidates") == []
+        ]
+        if len(views) != 1 or len(invariant) != 1:
+            raise ValueError(
+                "CRYCHIC score views are neither legacy contrast views nor one "
+                "context-invariant primary view"
+            )
+        if result_dir is None or result_manifest is None:
+            raise ValueError(
+                "context-invariant component mapping requires result provenance"
+            )
+        extensions = result_manifest.get("extensions")
+        extension = (
+            extensions.get("scoring_collections")
+            if isinstance(extensions, Mapping)
+            else None
+        )
+        if not isinstance(extension, Mapping):
+            raise ValueError("scoring-collection provenance is absent")
+        collection_path = result_dir / str(extension.get("filename"))
+        if (
+            not collection_path.is_file()
+            or sha256_file(collection_path) != extension.get("sha256")
+        ):
+            raise ValueError("scoring-collection checksum mismatch")
+        tables = result_manifest.get("tables")
+        linked = extension.get("linked_tables")
+        if not isinstance(tables, Mapping) or not isinstance(linked, Mapping):
+            raise ValueError("scoring-collection linked-table provenance is absent")
+        for table_name in ("interactions", "sample_scores"):
+            table_record = tables.get(table_name)
+            if (
+                not isinstance(table_record, Mapping)
+                or linked.get(table_name) != table_record.get("sha256")
+            ):
+                raise ValueError(
+                    f"scoring-collection {table_name} checksum binding differs"
+                )
+        payload = _read_json(collection_path)
+        collections = payload.get("collections")
+        if (
+            payload.get("collection_kind") != "receiver_partition"
+            or not isinstance(collections, list)
+            or not collections
+        ):
+            raise ValueError("receiver-partition scoring collections are required")
+        invariant_run_id = str(invariant[0]["run_id"])
+        records = []
+        for collection in collections:
+            if not isinstance(collection, Mapping):
+                raise ValueError("scoring-collection record is invalid")
+            contrast = collection.get("contrast")
+            children = collection.get("children")
+            if not isinstance(contrast, str) or not contrast.strip():
+                raise ValueError("scoring collection has no contrast")
+            if not isinstance(children, list) or not children:
+                raise ValueError("scoring collection has no receiver children")
+            for child in children:
+                functional_id = (
+                    child.get("scoring_functional_id")
+                    if isinstance(child, Mapping)
+                    else None
+                )
+                if not isinstance(functional_id, str) or not functional_id.strip():
+                    raise ValueError("scoring-collection child has no functional ID")
+                records.append(
+                    {
+                        "scoring_functional_id": functional_id,
+                        "run_id": invariant_run_id,
+                        "contrast_view": contrast,
+                        "_context_invariant": "true",
+                    }
+                )
     result = pd.DataFrame.from_records(records)
+    if result.empty:
+        raise ValueError("CRYCHIC component view map is empty")
     if result["scoring_functional_id"].duplicated().any():
         raise ValueError("one scoring functional maps to multiple score views")
+    if not legacy:
+        result.attrs["scoring_collections_sha256"] = str(extension["sha256"])
     return result
+
+
+def _merge_component_ledger(
+    long_table: pd.DataFrame,
+    sample_scores: pd.DataFrame,
+    view_map: pd.DataFrame,
+) -> pd.DataFrame:
+    scores = sample_scores.merge(
+        _edge_map(long_table), on="edge_id", how="left", validate="many_to_one"
+    ).merge(
+        view_map,
+        on="scoring_functional_id",
+        how="left",
+        validate="many_to_one",
+    )
+    required = [
+        "sender",
+        "receiver",
+        "interaction_id",
+        "run_id",
+        "contrast_view",
+        "_context_invariant",
+    ]
+    if scores[required].isna().any().any():
+        raise ValueError("component ledger does not map to every external score row")
+    modes = set(scores["_context_invariant"].astype(str))
+    if len(modes) != 1:
+        raise ValueError("component view map mixes legacy and invariant modes")
+    context_invariant = modes == {"true"}
+    base_keys = [
+        "sample_id",
+        "subject_id",
+        "context_json",
+        "sender",
+        "receiver",
+        "interaction_id",
+    ]
+    if context_invariant:
+        if long_table.duplicated(base_keys).any():
+            raise ValueError("context-invariant external score keys are not unique")
+        component_keys = ["contrast_view", *base_keys]
+        if scores.duplicated(component_keys).any():
+            raise ValueError("context-invariant component keys are not unique")
+        contrasts = int(scores["contrast_view"].nunique())
+        copies = scores.groupby(base_keys, observed=True, dropna=False).size()
+        if contrasts < 1 or copies.empty or not copies.eq(contrasts).all():
+            raise ValueError(
+                "context-invariant component ledger lacks one copy per contrast"
+            )
+        component_long = long_table.merge(
+            scores.loc[:, [*base_keys, "contrast_view", *COMPONENT_COLUMNS]],
+            on=base_keys,
+            how="left",
+            validate="one_to_many",
+            suffixes=("", "_ledger"),
+        )
+        expected = (
+            component_long["availability"].astype(float)
+            * component_long["prior_quality"].astype(float)
+            * component_long["sender_component"].astype(float)
+        )
+        if not np.allclose(
+            component_long["score"].to_numpy(dtype=float),
+            expected.to_numpy(dtype=float),
+            rtol=0.0,
+            atol=0.0,
+            equal_nan=True,
+        ):
+            raise ValueError(
+                "persisted mechanistic score disagrees with the component ledger"
+            )
+        return component_long
+
+    join_keys = ["run_id", *base_keys]
+    if scores.duplicated(join_keys).any() or long_table.duplicated(join_keys).any():
+        raise ValueError("component-to-external score join keys are not unique")
+    component_long = long_table.merge(
+        scores.loc[:, [*join_keys, "contrast_view", *COMPONENT_COLUMNS]],
+        on=join_keys,
+        how="left",
+        validate="one_to_one",
+        suffixes=("", "_ledger"),
+    )
+    if not np.allclose(
+        component_long["score"].to_numpy(dtype=float),
+        component_long["comm_strength"].to_numpy(dtype=float),
+        rtol=0.0,
+        atol=0.0,
+        equal_nan=True,
+    ):
+        raise ValueError("persisted strict score disagrees with the component ledger")
+    return component_long
 
 
 def _read_component_long(run_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -222,36 +407,12 @@ def _read_component_long(run_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
     if set(sample_scores["mode"].astype(str)) != {"state"}:
         raise ValueError("component crossover currently requires state scores")
 
-    scores = sample_scores.merge(
-        _edge_map(long_table), on="edge_id", how="left", validate="many_to_one"
-    ).merge(
-        _view_map(adapter_manifest),
-        on="scoring_functional_id",
-        how="left",
-        validate="many_to_one",
+    view_map = _view_map(
+        adapter_manifest,
+        result_dir=result_dir,
+        result_manifest=result_manifest,
     )
-    if scores[["sender", "receiver", "interaction_id", "run_id"]].isna().any().any():
-        raise ValueError("component ledger does not map to every external score row")
-    join_keys = [
-        "run_id",
-        "sample_id",
-        "subject_id",
-        "context_json",
-        "sender",
-        "receiver",
-        "interaction_id",
-    ]
-    if scores.duplicated(join_keys).any() or long_table.duplicated(join_keys).any():
-        raise ValueError("component-to-external score join keys are not unique")
-    component_long = long_table.merge(
-        scores.loc[:, [*join_keys, "contrast_view", *COMPONENT_COLUMNS]],
-        on=join_keys,
-        how="left",
-        validate="one_to_one",
-        suffixes=("", "_ledger"),
-    )
-    if len(component_long) != len(long_table):
-        raise RuntimeError("component join changed the external score row count")
+    component_long = _merge_component_ledger(long_table, sample_scores, view_map)
     numeric = component_long.loc[:, list(COMPONENT_COLUMNS)].apply(
         pd.to_numeric, errors="coerce"
     )
@@ -260,13 +421,6 @@ def _read_component_long(run_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
     if ((numeric < 0.0) | (numeric > 1.0)).any().any():
         raise ValueError("source score components must lie in [0, 1]")
     component_long.loc[:, list(COMPONENT_COLUMNS)] = numeric
-    if not np.allclose(
-        component_long["score"].to_numpy(dtype=float),
-        component_long["comm_strength"].to_numpy(dtype=float),
-        rtol=0.0,
-        atol=0.0,
-    ):
-        raise ValueError("persisted strict score disagrees with the component ledger")
     provenance = {
         "run_directory": run_dir.name,
         "adapter_manifest_sha256": sha256_file(run_dir / "manifest.json"),
@@ -274,6 +428,10 @@ def _read_component_long(run_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
         "result_manifest_sha256": sha256_file(result_manifest_path),
         "sample_scores_sha256": sha256_file(sample_path),
     }
+    if "scoring_collections_sha256" in view_map.attrs:
+        provenance["scoring_collections_sha256"] = view_map.attrs[
+            "scoring_collections_sha256"
+        ]
     return component_long, provenance
 
 
