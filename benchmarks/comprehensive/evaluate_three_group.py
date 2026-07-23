@@ -194,9 +194,20 @@ def _target_crychic_view(
         if isinstance(view, Mapping)
         and candidate in view.get("contrast_candidates", [])
     ]
+    if not selected:
+        selected = [
+            str(view["run_id"])
+            for view in views
+            if isinstance(view, Mapping)
+            and view.get("view_scope")
+            == "context_invariant_mechanistic_sample_score"
+            and view.get("primary_score") is True
+            and view.get("contrast_candidates") == []
+        ]
     if len(selected) != 1:
         raise ValueError(
-            f"expected one CRYCHIC target view for {candidate}: {selected}"
+            "expected one CRYCHIC target or context-invariant primary view for "
+            f"{candidate}: {selected}"
         )
     result = table.loc[table["run_id"].astype(str).eq(selected[0])].copy()
     if result.empty:

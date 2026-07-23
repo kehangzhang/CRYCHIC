@@ -13,9 +13,61 @@ from benchmarks.comprehensive.evaluate_three_group import (
     _method_summary,
     _multigroup_method_summary,
     _multigroup_metrics,
+    _target_crychic_view,
     _tie_inclusive_top_k,
     _validate_run_binding,
 )
+
+
+def test_context_invariant_crychic_view_serves_every_registered_contrast() -> None:
+    table = pd.DataFrame(
+        {
+            "run_id": ["mechanistic", "other"],
+            "score": [0.7, 0.2],
+        }
+    )
+    manifest = {
+        "source_result": {
+            "score_views": [
+                {
+                    "run_id": "mechanistic",
+                    "view_scope": "context_invariant_mechanistic_sample_score",
+                    "primary_score": True,
+                    "contrast_candidates": [],
+                },
+                {
+                    "run_id": "other",
+                    "view_scope": "single_scoring_functional",
+                    "primary_score": False,
+                    "contrast_candidates": [],
+                },
+            ]
+        }
+    }
+
+    selected = _target_crychic_view(table, manifest, target="B")
+
+    assert selected["run_id"].tolist() == ["mechanistic"]
+
+
+def test_crychic_view_selection_rejects_ambiguous_invariant_primaries() -> None:
+    table = pd.DataFrame({"run_id": ["first", "second"], "score": [0.7, 0.2]})
+    manifest = {
+        "source_result": {
+            "score_views": [
+                {
+                    "run_id": run_id,
+                    "view_scope": "context_invariant_mechanistic_sample_score",
+                    "primary_score": True,
+                    "contrast_candidates": [],
+                }
+                for run_id in ("first", "second")
+            ]
+        }
+    }
+
+    with pytest.raises(ValueError, match="context-invariant primary view"):
+        _target_crychic_view(table, manifest, target="B")
 
 
 def test_tie_inclusive_top_k_expands_boundary() -> None:
