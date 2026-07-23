@@ -751,7 +751,6 @@ def convert_result_to_long(
     effective_min_cells = _min_cells(result) if min_cells is None else min_cells
     if effective_min_cells < 1:
         raise ValueError("min_cells must be positive")
-    method_version = _method_version(result)
     source_run_id = str(result.manifest["run_id"])
     source_table_digests = _source_table_digests(result)
 
@@ -791,7 +790,7 @@ def convert_result_to_long(
             dataset_id=dataset_id,
             run_id=run_id,
             method_id=METHOD_ID,
-            method_version=method_version,
+            method_version=MECHANISTIC_SCORE_LAYER_VERSION,
             analysis_track=ANALYSIS_TRACK,
             resource_mode=resource_mode,
             resource_id=bundle.resource_id,
@@ -909,7 +908,7 @@ def convert_result_to_long(
             dataset_id=dataset_id,
             run_id=run_id,
             method_id=METHOD_ID,
-            method_version=method_version,
+            method_version=REQUIRED_SCORE_LAYER_VERSION,
             analysis_track=ANALYSIS_TRACK,
             resource_mode=resource_mode,
             resource_id=bundle.resource_id,
@@ -1078,6 +1077,22 @@ def export_result(
     finally:
         if adata.isbacked:
             adata.file.close()
+    score_head_versions = tuple(
+        sorted(
+            {
+                str(view["score_layer"])
+                for view in views
+                if isinstance(view.get("score_layer"), str)
+            }
+        )
+    )
+    if len(score_head_versions) != 1:
+        raise ValueError("CRYCHIC long table must have one score-head version")
+    if set(table["method_version"].astype(str)) != {score_head_versions[0]}:
+        raise ValueError("CRYCHIC long table score-head version is inconsistent")
+    cast(dict[str, Any], manifest["method"])["score_head_version"] = (
+        score_head_versions[0]
+    )
     manifest["source_result"] = {
         "run_id": result.manifest["run_id"],
         "result_schema_version": result.manifest["result_schema_version"],

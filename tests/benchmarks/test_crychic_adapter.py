@@ -425,6 +425,9 @@ def test_mechanistic_readback_collapses_only_context_invariant_components() -> N
     )
 
     assert table["run_id"].nunique() == 1
+    assert table["method_version"].unique().tolist() == [
+        "mechanistic_sender_lr_v1"
+    ]
     assert table["score_name"].unique().tolist() == [
         "mechanistic_sender_lr_score"
     ]
@@ -483,6 +486,8 @@ def test_explicit_readback_uses_one_run_per_scoring_functional() -> None:
         resource_mode="native",
         scoring_functional_ids=functionals,
     )
+
+    assert set(table["method_version"]) == {"downstream_confirmed_geometric_v1"}
 
     assert table["run_id"].nunique() == 2
     assert table.groupby("run_id").size().unique().tolist() == [16]
