@@ -100,6 +100,16 @@ def _counts_matrix(adata: ad.AnnData) -> sparse.csr_matrix:
     return counts
 
 
+def _default_database_root() -> Path:
+    """Locate the workspace database root from main or linked worktrees."""
+
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "databases"
+        if candidate.is_dir():
+            return candidate
+    return (Path(__file__).resolve().parents[2] / "../databases").resolve()
+
+
 def _validate_source(source: ad.AnnData) -> tuple[str, ...]:
     required = {
         "sample_id",
@@ -736,7 +746,7 @@ def generate(
         if not path.is_file():
             raise FileNotFoundError(path)
     database_root = (
-        (Path(__file__).resolve().parents[2] / "../databases").resolve()
+        _default_database_root()
         if database_root is None
         else database_root.expanduser().resolve()
     )

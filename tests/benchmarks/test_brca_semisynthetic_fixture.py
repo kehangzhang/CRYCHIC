@@ -10,7 +10,10 @@ import pandas as pd
 from scipy import sparse
 
 from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
-from benchmarks.comprehensive.generate_brca_semisynthetic import generate
+from benchmarks.comprehensive.generate_brca_semisynthetic import (
+    _default_database_root,
+    generate,
+)
 
 
 def _write_source(path: Path) -> tuple[str, ...]:
@@ -232,3 +235,8 @@ def test_brca_semisynthetic_fixture_is_truth_and_checksum_bound(
         + null_fixture.obs["expansion"].astype(str)
         == null_fixture.obs["condition"].astype(str)
     ).all()
+
+
+def test_default_database_root_is_available_from_linked_worktrees() -> None:
+    assert _default_database_root().is_dir()
+    assert (_default_database_root() / "nichenet").is_dir()
