@@ -137,11 +137,12 @@ def _primary_rows(metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def _method_summary(primary: pd.DataFrame) -> pd.DataFrame:
+    replicate_key = "replicate_id" if "replicate_id" in primary else "dataset_id"
     records: list[dict[str, Any]] = []
     for method, group in primary.groupby("base_method_id", observed=True, sort=True):
         record: dict[str, Any] = {
             "base_method_id": str(method),
-            "n_replicates": int(group["dataset_id"].nunique()),
+            "n_replicates": int(group[replicate_key].nunique()),
             "formal_did_p_value": bool(group["formal_did_p_value"].all()),
         }
         for metric in SUMMARY_METRICS:
@@ -169,18 +170,19 @@ def _paired_differences(
     *,
     noninferiority_margin: float,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    replicate_key = "replicate_id" if "replicate_id" in primary else "dataset_id"
     crychic = primary.loc[
         primary["base_method_id"].astype(str).eq("crychic"),
-        ["dataset_id", "omnibus_auprc"],
+        [replicate_key, "omnibus_auprc"],
     ].rename(columns={"omnibus_auprc": "crychic_auprc"})
     records: list[dict[str, Any]] = []
     for baseline in sorted(set(PRIMARY_POLICY).difference({"crychic"})):
         comparator = primary.loc[
             primary["base_method_id"].astype(str).eq(baseline),
-            ["dataset_id", "omnibus_auprc"],
+            [replicate_key, "omnibus_auprc"],
         ].rename(columns={"omnibus_auprc": "baseline_auprc"})
         paired = crychic.merge(
-            comparator, on="dataset_id", how="inner", validate="one_to_one"
+            comparator, on=replicate_key, how="inner", validate="one_to_one"
         )
         differences = (
             pd.to_numeric(paired["crychic_auprc"], errors="raise")
@@ -236,37 +238,86 @@ def summarize(
     fixture_manifest_path: Path,
     output_dir: Path,
     *,
+    additional_campaigns: Sequence[tuple[Path, Path, Path]] = (),
     noninferiority_margin: float = 0.05,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if not 0.0 < noninferiority_margin < 1.0:
         raise ValueError("noninferiority margin must lie in (0, 1)")
-    paths = [metrics_path, evaluation_manifest_path, fixture_manifest_path]
-    paths = [path.expanduser().resolve() for path in paths]
-    for path in paths:
-        if not path.is_file():
-            raise FileNotFoundError(path)
-    metrics_path, evaluation_manifest_path, fixture_manifest_path = paths
-    evaluation = json.loads(evaluation_manifest_path.read_text(encoding="utf-8"))
-    fixture = json.loads(fixture_manifest_path.read_text(encoding="utf-8"))
-    if evaluation.get("status") != "complete" or fixture.get("status") != "complete":
-        raise ValueError("evaluation and fixture manifests must be complete")
-    output_record = evaluation.get("outputs", {}).get(metrics_path.name, {})
-    if output_record.get("sha256") != sha256_file(metrics_path):
-        raise ValueError("metrics checksum is not bound by the evaluation manifest")
-    seed_map = {
-        str(record["dataset_id"]): int(record["seed"])
-        for record in fixture.get("records", [])
-    }
-    metrics = pd.read_csv(metrics_path, sep="\t")
-    primary = _primary_rows(metrics)
-    if set(primary["dataset_id"].astype(str)) != set(seed_map):
-        raise ValueError("fixture seeds do not match evaluated datasets")
-    primary.insert(
-        1,
-        "seed",
-        primary["dataset_id"].astype(str).map(seed_map).astype(int),
-    )
+    campaign_inputs = [
+        (metrics_path, evaluation_manifest_path, fixture_manifest_path),
+        *additional_campaigns,
+    ]
+    primary_parts: list[pd.DataFrame] = []
+    campaign_records: list[dict[str, Any]] = []
+    observed_seeds: set[int] = set()
+    for campaign_index, raw_paths in enumerate(campaign_inputs, start=1):
+        paths = [path.expanduser().resolve() for path in raw_paths]
+        for path in paths:
+            if not path.is_file():
+                raise FileNotFoundError(path)
+        metrics_path, evaluation_manifest_path, fixture_manifest_path = paths
+        evaluation = json.loads(
+            evaluation_manifest_path.read_text(encoding="utf-8")
+        )
+        fixture = json.loads(fixture_manifest_path.read_text(encoding="utf-8"))
+        if (
+            evaluation.get("status") != "complete"
+            or fixture.get("status") != "complete"
+        ):
+            raise ValueError("evaluation and fixture manifests must be complete")
+        output_record = evaluation.get("outputs", {}).get(metrics_path.name, {})
+        if output_record.get("sha256") != sha256_file(metrics_path):
+            raise ValueError(
+                "metrics checksum is not bound by the evaluation manifest"
+            )
+        seed_map = {
+            str(record["dataset_id"]): int(record["seed"])
+            for record in fixture.get("records", [])
+        }
+        metrics = pd.read_csv(metrics_path, sep="\t")
+        campaign_primary = _primary_rows(metrics)
+        if set(campaign_primary["dataset_id"].astype(str)) != set(seed_map):
+            raise ValueError("fixture seeds do not match evaluated datasets")
+        duplicate_seeds = set(seed_map.values()).intersection(observed_seeds)
+        if duplicate_seeds:
+            raise ValueError(
+                f"campaigns contain repeated fixture seeds: {sorted(duplicate_seeds)}"
+            )
+        observed_seeds.update(seed_map.values())
+        campaign_id = f"campaign_{campaign_index:02d}"
+        campaign_primary.insert(0, "campaign_id", campaign_id)
+        campaign_primary.insert(
+            1,
+            "replicate_id",
+            campaign_id + ":" + campaign_primary["dataset_id"].astype(str),
+        )
+        campaign_primary.insert(
+            3,
+            "seed",
+            campaign_primary["dataset_id"].astype(str).map(seed_map).astype(int),
+        )
+        primary_parts.append(campaign_primary)
+        campaign_records.append(
+            {
+                "campaign_id": campaign_id,
+                "replicates": len(seed_map),
+                "seeds": sorted(seed_map.values()),
+                "metrics": {
+                    "path": str(metrics_path),
+                    "sha256": sha256_file(metrics_path),
+                },
+                "evaluation_manifest": {
+                    "path": str(evaluation_manifest_path),
+                    "sha256": sha256_file(evaluation_manifest_path),
+                },
+                "fixture_manifest": {
+                    "path": str(fixture_manifest_path),
+                    "sha256": sha256_file(fixture_manifest_path),
+                },
+            }
+        )
+    primary = pd.concat(primary_parts, ignore_index=True, sort=False)
     summary = _method_summary(primary)
     paired, gate = _paired_differences(
         primary,
@@ -345,20 +396,7 @@ def summarize(
             "paired_unit": "semi-synthetic replicate seed",
             "noninferiority_margin": noninferiority_margin,
             "gate": gate,
-            "inputs": {
-                "metrics": {
-                    "path": str(metrics_path),
-                    "sha256": sha256_file(metrics_path),
-                },
-                "evaluation_manifest": {
-                    "path": str(evaluation_manifest_path),
-                    "sha256": sha256_file(evaluation_manifest_path),
-                },
-                "fixture_manifest": {
-                    "path": str(fixture_manifest_path),
-                    "sha256": sha256_file(fixture_manifest_path),
-                },
-            },
+            "campaigns": campaign_records,
             "outputs": outputs,
             "code": git_metadata(Path(__file__).resolve().parents[2]),
         }
@@ -371,11 +409,21 @@ def summarize(
             shutil.rmtree(staged)
 
 
+def _campaign_spec(value: str) -> tuple[Path, Path, Path]:
+    parts = value.split("::")
+    if len(parts) != 3 or any(not item for item in parts):
+        raise argparse.ArgumentTypeError(
+            "--campaign expects METRICS::EVALUATION_MANIFEST::FIXTURE_MANIFEST"
+        )
+    return Path(parts[0]), Path(parts[1]), Path(parts[2])
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metrics", required=True, type=Path)
     parser.add_argument("--evaluation-manifest", required=True, type=Path)
     parser.add_argument("--fixture-manifest", required=True, type=Path)
+    parser.add_argument("--campaign", action="append", type=_campaign_spec, default=[])
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--noninferiority-margin", type=float, default=0.05)
     parser.add_argument("--overwrite", action="store_true")
@@ -389,6 +437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.evaluation_manifest,
         args.fixture_manifest,
         args.output_dir,
+        additional_campaigns=args.campaign,
         noninferiority_margin=args.noninferiority_margin,
         overwrite=args.overwrite,
     )
