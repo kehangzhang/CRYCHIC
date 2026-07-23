@@ -32,6 +32,7 @@ SOURCE_EVALUATION_SCHEMAS = frozenset(
 )
 SCORE_LAYERS = (
     "strict_geometric",
+    "sender_downstream_blend_90_10",
     "availability_only",
     "mechanistic_geometric",
     "availability_downstream_geometric",
@@ -266,6 +267,10 @@ def score_layers(table: pd.DataFrame) -> dict[str, pd.Series]:
         raise ValueError(f"component score table is missing: {sorted(missing)}")
     return {
         "strict_geometric": table["comm_strength"].astype(float),
+        "sender_downstream_blend_90_10": (
+            0.90 * table["sender_component"].astype(float)
+            + 0.10 * table["downstream"].astype(float)
+        ),
         "availability_only": table["availability"].astype(float),
         "mechanistic_geometric": _geometric_product(
             table, ("availability", "sender_component", "prior_quality")
@@ -555,6 +560,10 @@ def evaluate_crossover(
             "differential_engines": list(ENGINES),
             "score_layer_contract": {
                 "strict_geometric": "persisted four-component geometric score",
+                "sender_downstream_blend_90_10": (
+                    "frozen development candidate: 0.90*sender_component + "
+                    "0.10*downstream"
+                ),
                 "availability_only": "sample LR availability",
                 "mechanistic_geometric": (
                     "geometric(availability,sender_component,prior_quality)"

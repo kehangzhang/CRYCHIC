@@ -196,6 +196,11 @@ The v5 optimization campaign adds two fail-closed diagnostic entrypoints:
   decomposed omnibus, contrast-localization, signed-direction, and effect
   endpoints.
 
+The `sender_downstream_blend_90_10` layer is a frozen development candidate
+selected on the original five simulation seeds. Its weights must not be changed
+after inspecting the separate 20-seed validation campaign; the validation seeds
+are an accept/reject gate, not another tuning set.
+
 `evaluate_three_group.py` publishes both its legacy per-contrast table and the
 decomposed multi-group tables. Native-scale RMSE is diagnostic only because
 method score scales differ; it is never used for a cross-method rank. The

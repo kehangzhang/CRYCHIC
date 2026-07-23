@@ -25,6 +25,7 @@ def test_score_layers_reconstruct_strict_and_isolate_hard_zero() -> None:
 
     assert tuple(layers) == (
         "strict_geometric",
+        "sender_downstream_blend_90_10",
         "availability_only",
         "mechanistic_geometric",
         "availability_downstream_geometric",
@@ -38,6 +39,9 @@ def test_score_layers_reconstruct_strict_and_isolate_hard_zero() -> None:
         (0.8 * 0.25 * 1.0) ** (1.0 / 3.0)
     )
     assert layers["mechanistic_geometric"].iloc[0] > 0.0
+    assert layers["sender_downstream_blend_90_10"].tolist() == pytest.approx(
+        [0.90 * 0.25, 0.90 * 0.5 + 0.10 * 0.5]
+    )
     assert layers["availability_downstream_geometric"].iloc[0] == 0.0
     assert layers["downstream_only"].iloc[0] == 0.0
 
