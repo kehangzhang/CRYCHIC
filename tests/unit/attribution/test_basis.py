@@ -175,6 +175,47 @@ def test_cosine_family_is_stable_for_scaled_collinear_profiles(
     assert collinear.assignment_uncertainty == pytest.approx(1.0, abs=1e-12)
 
 
+def test_cosine_family_cache_reuses_pre_gate_profiles(
+    prior_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from crychic.attribution import families as families_module
+
+    prior = prior_factory(
+        {
+            "A": {"G1": 1.0, "G2": 2.0},
+            "B": {"G1": 3.0, "G2": 6.0},
+            "C": {"G3": 1.0},
+        },
+        resource_id="family-cache-pre-gate-test",
+    )
+    first_basis = build_gated_target_basis(
+        prior,
+        ("G1", "G2", "G3"),
+        {"A": 1.0, "B": 0.0, "C": 1.0},
+    )
+    second_basis = build_gated_target_basis(
+        prior,
+        ("G1", "G2", "G3"),
+        {"A": 0.1, "B": 1.0, "C": 0.0},
+    )
+    original = families_module._complete_link_split
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(families_module, "_complete_link_split", counted)
+    first = cluster_driver_families(first_basis, cosine_threshold=0.999)
+    calls_after_first = calls
+    second = cluster_driver_families(second_basis, cosine_threshold=0.999)
+
+    assert calls_after_first > 0
+    assert calls == calls_after_first
+    assert second is first
+
+
 def test_complete_link_family_prevents_single_linkage_chain(prior_factory) -> None:
     root_three = float(np.sqrt(3.0))
     threshold = 0.85

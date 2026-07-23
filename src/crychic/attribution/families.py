@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import math
+from collections import OrderedDict
 from collections.abc import Mapping
+from threading import RLock
+from typing import Any
 
 import numpy as np
 from scipy import sparse
@@ -14,6 +18,62 @@ from crychic.core import ContractError, stable_id
 from .contracts import DriverFamilyDefinition, GatedTargetBasis
 
 _COSINE_TOLERANCE = 1e-12
+_FAMILY_CACHE_MAXSIZE = 16
+_FAMILY_CACHE: OrderedDict[
+    bytes, tuple[DriverFamilyDefinition, ...]
+] = OrderedDict()
+_FAMILY_CACHE_LOCK = RLock()
+
+
+def _update_text_digest(digest: Any, value: str) -> None:
+    encoded = value.encode("utf-8")
+    digest.update(len(encoded).to_bytes(8, byteorder="little", signed=False))
+    digest.update(encoded)
+
+
+def _family_cache_key(
+    basis: GatedTargetBasis,
+    *,
+    cosine_threshold: float,
+) -> bytes:
+    profiles = basis.normalized_profiles
+    digest = hashlib.sha256()
+    _update_text_digest(digest, "crychic-driver-family-cache-v1")
+    _update_text_digest(digest, basis.prior_resource_id)
+    _update_text_digest(digest, basis.prior_version)
+    for driver in basis.driver_ids:
+        _update_text_digest(digest, driver)
+    digest.update(np.asarray([cosine_threshold], dtype="<f8").tobytes())
+    digest.update(np.asarray(profiles.shape, dtype="<i8").tobytes())
+    digest.update(np.asarray(profiles.data, dtype="<f8").tobytes())
+    digest.update(np.asarray(profiles.indices, dtype="<i8").tobytes())
+    digest.update(np.asarray(profiles.indptr, dtype="<i8").tobytes())
+    return digest.digest()
+
+
+def _cached_families(
+    key: bytes,
+) -> tuple[DriverFamilyDefinition, ...] | None:
+    with _FAMILY_CACHE_LOCK:
+        cached = _FAMILY_CACHE.pop(key, None)
+        if cached is not None:
+            _FAMILY_CACHE[key] = cached
+        return cached
+
+
+def _cache_families(
+    key: bytes,
+    families: tuple[DriverFamilyDefinition, ...],
+) -> tuple[DriverFamilyDefinition, ...]:
+    with _FAMILY_CACHE_LOCK:
+        existing = _FAMILY_CACHE.pop(key, None)
+        if existing is not None:
+            _FAMILY_CACHE[key] = existing
+            return existing
+        _FAMILY_CACHE[key] = families
+        while len(_FAMILY_CACHE) > _FAMILY_CACHE_MAXSIZE:
+            _FAMILY_CACHE.popitem(last=False)
+        return families
 
 
 class _DisjointSet:
@@ -156,6 +216,14 @@ def cluster_driver_families(
             field="cosine_threshold",
             remediation="Choose a pre-registered target-profile cosine threshold",
         )
+    cache_key = _family_cache_key(
+        basis,
+        cosine_threshold=cosine_threshold,
+    )
+    cached = _cached_families(cache_key)
+    if cached is not None:
+        return cached
+
     n_drivers = len(basis.driver_ids)
     disjoint = _DisjointSet(n_drivers)
     cosine = sparse.coo_matrix(basis.normalized_profiles.T @ basis.normalized_profiles)
@@ -215,4 +283,5 @@ def cluster_driver_families(
                 assignment_uncertainty=mean_cosine,
             )
         )
-    return tuple(sorted(families, key=lambda family: family.family_id))
+    result = tuple(sorted(families, key=lambda family: family.family_id))
+    return _cache_families(cache_key, result)
