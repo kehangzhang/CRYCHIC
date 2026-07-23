@@ -18,8 +18,12 @@ from scipy import sparse
 
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 
-SCHEMA_VERSION = "crychic-brca-semisynthetic-fixture-v1"
+SCHEMA_VERSION = "crychic-brca-semisynthetic-fixture-v2"
 CONDITIONS = ("PreE", "OnE", "PreNE", "OnNE")
+PAIRWISE_CONTRASTS = {
+    "E": {"target": "OnE", "reference": "PreE"},
+    "NE": {"target": "OnNE", "reference": "PreNE"},
+}
 EVENT_CLASSES = (
     "positive_did",
     "negative_did",
@@ -543,6 +547,88 @@ def _dataset_spec(
     }
 
 
+def _write_pairwise_inputs(
+    fixture: ad.AnnData,
+    dataset_dir: Path,
+    staged_root: Path,
+    *,
+    dataset_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Write the two native pairwise inputs required by scSeqCommDiff."""
+
+    pairwise_dir = dataset_dir / "pairwise"
+    pairwise_dir.mkdir()
+    records: dict[str, dict[str, Any]] = {}
+    for expansion, contrast in PAIRWISE_CONTRASTS.items():
+        mask = fixture.obs["expansion"].astype(str).eq(expansion).to_numpy()
+        subset = fixture[mask].copy()
+        observed = set(subset.obs["condition"].astype(str))
+        expected = {contrast["target"], contrast["reference"]}
+        if observed != expected:
+            raise RuntimeError(
+                f"{expansion} pairwise input has conditions {sorted(observed)}"
+            )
+        subset.uns["semisynthetic_contract"] = {
+            **dict(subset.uns["semisynthetic_contract"]),
+            "native_pairwise_expansion": expansion,
+            "native_pairwise_target": contrast["target"],
+            "native_pairwise_reference": contrast["reference"],
+            "native_pairwise_methods_pairing_support": False,
+        }
+        filename = f"{dataset_id}.{expansion}_On_vs_Pre.h5ad"
+        output_path = pairwise_dir / filename
+        subset.write_h5ad(output_path, compression="gzip")
+        design = subset.obs[
+            ["sample_id", "subject_id", "condition", "cell_type"]
+        ].astype(str).drop_duplicates()
+        sample_design = design[
+            ["sample_id", "subject_id", "condition"]
+        ].drop_duplicates()
+        if sample_design.duplicated("sample_id", keep=False).any():
+            raise RuntimeError("one pairwise sample maps to multiple design rows")
+        units = sample_design.groupby("condition", observed=True).size().to_dict()
+        record = {
+            "schema_version": "crychic-brca-semisynthetic-pairwise-input-v1",
+            "dataset_id": f"{dataset_id}__{expansion}_On_vs_Pre",
+            "parent_dataset_id": dataset_id,
+            "contrast": {
+                "expansion": expansion,
+                "target": contrast["target"],
+                "reference": contrast["reference"],
+                "sample_unit_key": "sample_id",
+                "pairing": "subject_id",
+                "native_pairwise_methods_pairing_support": False,
+            },
+            "dimensions": {
+                "n_cells": int(subset.n_obs),
+                "n_genes": int(subset.n_vars),
+                "n_samples": int(sample_design["sample_id"].nunique()),
+                "n_subjects": int(sample_design["subject_id"].nunique()),
+                "n_cell_types": int(design["cell_type"].nunique()),
+                "units_by_condition": {
+                    str(key): int(value) for key, value in units.items()
+                },
+            },
+            "output": {
+                "filename": filename,
+                "path": str(output_path.relative_to(staged_root)),
+                "bytes": output_path.stat().st_size,
+                "sha256": sha256_file(output_path),
+            },
+        }
+        manifest_path = (
+            pairwise_dir
+            / f"{dataset_id}.{expansion}_On_vs_Pre.manifest.json"
+        )
+        _write_json(manifest_path, record)
+        record["manifest"] = {
+            "path": str(manifest_path.relative_to(staged_root)),
+            "sha256": sha256_file(manifest_path),
+        }
+        records[expansion] = record
+    return records
+
+
 def generate(
     input_h5ad: Path,
     resource_path: Path,
@@ -763,6 +849,12 @@ def generate(
             h5ad_path = dataset_dir / f"{dataset_id}.h5ad"
             fixture.write_h5ad(h5ad_path, compression="gzip")
             h5ad_sha = sha256_file(h5ad_path)
+            pairwise_inputs = _write_pairwise_inputs(
+                fixture,
+                dataset_dir,
+                staged,
+                dataset_id=dataset_id,
+            )
             plan_output = plan.rename(
                 columns={"harmonized_interaction_id": "interaction_id"}
             ).copy()
@@ -795,6 +887,7 @@ def generate(
                         ["subject_id", "expansion"]
                     ].drop_duplicates()["expansion"].value_counts().items()
                 },
+                "pairwise_inputs": pairwise_inputs,
             }
             _write_json(dataset_dir / "manifest.json", record)
             records.append(record)

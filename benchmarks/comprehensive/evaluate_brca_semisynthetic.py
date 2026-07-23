@@ -21,8 +21,9 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 
-SCHEMA_VERSION = "crychic-brca-semisynthetic-evaluation-v1"
+SCHEMA_VERSION = "crychic-brca-semisynthetic-evaluation-v2"
 EVENT_KEYS = ("sender", "receiver", "interaction_id", "ligand", "receptor")
+SCSEQ_EVENT_KEYS = ("ligand", "receptor", "cluster_L", "cluster_R")
 REQUIRED_SCORE_COLUMNS = {
     "run_id",
     "dataset_id",
@@ -35,6 +36,7 @@ REQUIRED_SCORE_COLUMNS = {
     *EVENT_KEYS,
 }
 ENGINES = ("native_raw_mean", "within_sample_rank_mean")
+SCSEQ_NATIVE_ENGINE = "native_pairwise_difference_in_differences"
 _DIRECTION_MULTIPLIER = {
     "higher": 1.0,
     "higher_is_stronger": 1.0,
@@ -175,6 +177,197 @@ def _runtime_metadata(
     if rss_match:
         result["peak_rss_kib"] = float(rss_match.group(1))
     return result
+
+
+def _scseq_manifest_metadata(
+    manifest_path: Path,
+    score_path: Path,
+    *,
+    expected_target: str,
+    expected_reference: str,
+) -> dict[str, Any]:
+    value: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"scSeqCommDiff manifest must be an object: {manifest_path}")
+    protocol = value.get("protocol")
+    outputs = value.get("outputs")
+    if value.get("status") != "complete" or not isinstance(protocol, dict):
+        raise ValueError(f"scSeqCommDiff run is not complete: {manifest_path}")
+    if protocol.get("scenario") != "multi-sample":
+        raise ValueError("scSeqCommDiff DID requires the native multi-sample scenario")
+    if protocol.get("resource_mode") != "H-common":
+        raise ValueError("scSeqCommDiff DID requires the frozen H-common resource")
+    if protocol.get("contrast_order") != [expected_target, expected_reference]:
+        raise ValueError("scSeqCommDiff manifest contrast order is inconsistent")
+    if not isinstance(outputs, dict):
+        raise ValueError("scSeqCommDiff manifest outputs are missing")
+    score_record = outputs.get(score_path.name)
+    if not isinstance(score_record, dict) or score_record.get("sha256") != sha256_file(
+        score_path
+    ):
+        raise ValueError("scSeqCommDiff score checksum is not bound by its manifest")
+    return {
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": sha256_file(manifest_path),
+        "score_path": str(score_path.resolve()),
+        "score_sha256": sha256_file(score_path),
+        "dataset_id": value.get("dataset_id"),
+        "elapsed_seconds": value.get("elapsed_seconds"),
+    }
+
+
+def _scseq_arm_scores(
+    score_path: Path,
+    truth: pd.DataFrame,
+    *,
+    expected_target: str,
+    expected_reference: str,
+) -> pd.DataFrame:
+    table = pd.read_csv(score_path, sep="\t", keep_default_na=False)
+    required = {
+        *SCSEQ_EVENT_KEYS,
+        "effect",
+        "status",
+        "reason_code",
+        "target",
+        "reference",
+    }
+    missing = required.difference(table.columns)
+    if table.empty or missing:
+        raise ValueError(
+            f"invalid scSeqCommDiff event scores: missing={sorted(missing)}"
+        )
+    if table.duplicated(list(SCSEQ_EVENT_KEYS)).any():
+        raise ValueError("scSeqCommDiff event scores contain duplicate event keys")
+    if set(table["target"].astype(str)) != {expected_target} or set(
+        table["reference"].astype(str)
+    ) != {expected_reference}:
+        raise ValueError("scSeqCommDiff score contrast labels are inconsistent")
+    numeric = pd.to_numeric(table["effect"], errors="coerce")
+    observed = table["status"].astype(str).eq("observed")
+    if not np.isfinite(numeric.loc[observed]).all():
+        raise ValueError("observed scSeqCommDiff effects must be finite")
+    lr_map = truth[["interaction_id", "ligand", "receptor"]].drop_duplicates()
+    if lr_map.duplicated(["ligand", "receptor"]).any():
+        raise ValueError("truth interaction identifiers are not unique by LR pair")
+    selected = table.loc[
+        :,
+        [*SCSEQ_EVENT_KEYS, "effect", "status", "reason_code"],
+    ].rename(columns={"cluster_L": "sender", "cluster_R": "receiver"})
+    selected["effect"] = pd.to_numeric(selected["effect"], errors="coerce")
+    selected = selected.merge(
+        lr_map,
+        on=["ligand", "receptor"],
+        how="inner",
+        validate="many_to_one",
+    )
+    return selected.loc[:, [*EVENT_KEYS, "effect", "status", "reason_code"]]
+
+
+def _scseq_native_did_effects(
+    expansion_score_path: Path,
+    nonexpansion_score_path: Path,
+    truth: pd.DataFrame,
+) -> pd.DataFrame:
+    expansion = _scseq_arm_scores(
+        expansion_score_path,
+        truth,
+        expected_target="OnE",
+        expected_reference="PreE",
+    ).rename(
+        columns={
+            "effect": "effect_E",
+            "status": "status_E",
+            "reason_code": "reason_code_E",
+        }
+    )
+    nonexpansion = _scseq_arm_scores(
+        nonexpansion_score_path,
+        truth,
+        expected_target="OnNE",
+        expected_reference="PreNE",
+    ).rename(
+        columns={
+            "effect": "effect_NE",
+            "status": "status_NE",
+            "reason_code": "reason_code_NE",
+        }
+    )
+    result = expansion.merge(
+        nonexpansion,
+        on=list(EVENT_KEYS),
+        how="outer",
+        validate="one_to_one",
+    )
+    observed = (
+        result["status_E"].eq("observed")
+        & result["status_NE"].eq("observed")
+        & np.isfinite(result["effect_E"])
+        & np.isfinite(result["effect_NE"])
+    )
+    result["difference_in_differences"] = np.where(
+        observed,
+        result["effect_E"] - result["effect_NE"],
+        np.nan,
+    )
+    result["mean_delta_E"] = result["effect_E"]
+    result["mean_delta_NE"] = result["effect_NE"]
+    result["n_subjects_E"] = np.nan
+    result["n_subjects_NE"] = np.nan
+    result["p_value"] = np.nan
+    result["q_value"] = np.nan
+    result["status"] = np.where(observed, "observed", "not_estimable")
+    result["reason_code"] = np.where(
+        observed,
+        "",
+        "one_or_both_native_pairwise_effects_not_estimable",
+    )
+    return result.loc[
+        :,
+        [
+            *EVENT_KEYS,
+            "n_subjects_E",
+            "n_subjects_NE",
+            "mean_delta_E",
+            "mean_delta_NE",
+            "difference_in_differences",
+            "p_value",
+            "q_value",
+            "status",
+            "reason_code",
+        ],
+    ]
+
+
+def _combined_native_runtime(
+    expansion_manifest: Path,
+    nonexpansion_manifest: Path,
+    expansion_time: Path | None,
+    nonexpansion_time: Path | None,
+) -> dict[str, Any]:
+    arms = (
+        _runtime_metadata(expansion_manifest, expansion_time),
+        _runtime_metadata(nonexpansion_manifest, nonexpansion_time),
+    )
+
+    def finite_values(key: str) -> list[float]:
+        return [
+            float(arm[key])
+            for arm in arms
+            if np.isfinite(float(arm[key]))
+        ]
+
+    adapter = finite_values("adapter_elapsed_seconds")
+    wall = finite_values("process_wall_seconds")
+    rss = finite_values("peak_rss_kib")
+    return {
+        "adapter_elapsed_seconds": sum(adapter) if len(adapter) == 2 else math.nan,
+        "process_wall_seconds": sum(wall) if len(wall) == 2 else math.nan,
+        "peak_rss_kib": max(rss) if len(rss) == 2 else math.nan,
+        "native_arm_parallel_wall_lower_bound_seconds": (
+            max(wall) if len(wall) == 2 else math.nan
+        ),
+    }
 
 
 def _score_variants(
@@ -348,7 +541,11 @@ def _safe_auc(labels: np.ndarray, scores: np.ndarray) -> float:
     return float(roc_auc_score(labels, scores))
 
 
-def _metrics(effects: pd.DataFrame) -> dict[str, Any]:
+def _metrics(
+    effects: pd.DataFrame,
+    *,
+    formal_did_p_value: bool = True,
+) -> dict[str, Any]:
     observed = effects["status"].eq("observed") & np.isfinite(
         pd.to_numeric(effects["difference_in_differences"], errors="coerce")
     )
@@ -403,14 +600,30 @@ def _metrics(effects: pd.DataFrame) -> dict[str, Any]:
             if np.sum(no_effect) > 1
             else math.nan
         ),
-        "discoveries_q_lt_005": int(discovered.sum()),
-        "true_positive_discoveries": true_positives,
-        "false_positive_discoveries": false_positives,
-        "empirical_fdr": (
-            false_positives / int(discovered.sum()) if discovered.any() else 0.0
+        "discoveries_q_lt_005": (
+            int(discovered.sum()) if formal_did_p_value else math.nan
         ),
-        "power": true_positives / int(np.sum(active)) if active.any() else math.nan,
-        "main_only_false_discoveries": int(np.sum(discovered & main_control)),
+        "true_positive_discoveries": (
+            true_positives if formal_did_p_value else math.nan
+        ),
+        "false_positive_discoveries": (
+            false_positives if formal_did_p_value else math.nan
+        ),
+        "empirical_fdr": (
+            false_positives / int(discovered.sum())
+            if formal_did_p_value and discovered.any()
+            else (0.0 if formal_did_p_value else math.nan)
+        ),
+        "power": (
+            true_positives / int(np.sum(active))
+            if formal_did_p_value and active.any()
+            else math.nan
+        ),
+        "main_only_false_discoveries": (
+            int(np.sum(discovered & main_control))
+            if formal_did_p_value
+            else math.nan
+        ),
     }
 
 
@@ -439,6 +652,18 @@ def evaluate(
     method_specs: Sequence[tuple[Path, Path | None, Path | None]],
     output_dir: Path,
     *,
+    native_did_specs: Sequence[
+        tuple[
+            str,
+            str,
+            Path,
+            Path,
+            Path,
+            Path,
+            Path | None,
+            Path | None,
+        ]
+    ] = (),
     min_subjects_per_group: int = 4,
     overwrite: bool = False,
 ) -> dict[str, Any]:
@@ -504,6 +729,7 @@ def evaluate(
                     merged.insert(2, "run_id", metadata["run_id"])
                     merged.insert(3, "view_label", metadata["view_label"])
                     merged.insert(4, "differential_engine", engine)
+                    merged.insert(5, "formal_did_p_value", True)
                     effects_parts.append(merged)
                     metric_records.append(
                         {
@@ -513,6 +739,7 @@ def evaluate(
                             "run_id": metadata["run_id"],
                             "view_label": metadata["view_label"],
                             "differential_engine": engine,
+                            "formal_did_p_value": True,
                             **_metrics(merged),
                             **runtime,
                         }
@@ -525,6 +752,119 @@ def evaluate(
                         ),
                     }
                 )
+
+        for (
+            method_id,
+            dataset_id,
+            expansion_score,
+            nonexpansion_score,
+            expansion_manifest,
+            nonexpansion_manifest,
+            expansion_time,
+            nonexpansion_time,
+        ) in native_did_specs:
+            if dataset_id not in designs:
+                raise ValueError(f"native DID dataset is not registered: {dataset_id}")
+            truth_dataset = _truth_for_dataset(truth, dataset_id)
+            paths = [
+                expansion_score,
+                nonexpansion_score,
+                expansion_manifest,
+                nonexpansion_manifest,
+            ]
+            if expansion_time is not None:
+                paths.append(expansion_time)
+            if nonexpansion_time is not None:
+                paths.append(nonexpansion_time)
+            resolved = [path.expanduser().resolve() for path in paths]
+            missing = [path for path in resolved if not path.is_file()]
+            if missing:
+                raise FileNotFoundError(missing[0])
+            expansion_score = expansion_score.expanduser().resolve()
+            nonexpansion_score = nonexpansion_score.expanduser().resolve()
+            expansion_manifest = expansion_manifest.expanduser().resolve()
+            nonexpansion_manifest = nonexpansion_manifest.expanduser().resolve()
+            expansion_metadata = _scseq_manifest_metadata(
+                expansion_manifest,
+                expansion_score,
+                expected_target="OnE",
+                expected_reference="PreE",
+            )
+            nonexpansion_metadata = _scseq_manifest_metadata(
+                nonexpansion_manifest,
+                nonexpansion_score,
+                expected_target="OnNE",
+                expected_reference="PreNE",
+            )
+            estimated = _scseq_native_did_effects(
+                expansion_score,
+                nonexpansion_score,
+                truth_dataset,
+            )
+            merged = truth_dataset.merge(
+                estimated,
+                on=list(EVENT_KEYS),
+                how="left",
+                validate="one_to_one",
+            )
+            merged["status"] = merged["status"].fillna("not_estimable")
+            merged["reason_code"] = merged["reason_code"].fillna(
+                "event_not_emitted_by_one_or_both_native_pairwise_runs"
+            )
+            variant_id = f"{method_id}::{SCSEQ_NATIVE_ENGINE}"
+            view_label = "native (OnE-PreE) - (OnNE-PreNE)"
+            merged.insert(0, "method_variant_id", variant_id)
+            merged.insert(1, "base_method_id", method_id)
+            merged.insert(2, "run_id", SCSEQ_NATIVE_ENGINE)
+            merged.insert(3, "view_label", view_label)
+            merged.insert(4, "differential_engine", SCSEQ_NATIVE_ENGINE)
+            merged.insert(5, "formal_did_p_value", False)
+            runtime = _combined_native_runtime(
+                expansion_manifest,
+                nonexpansion_manifest,
+                None if expansion_time is None else expansion_time.resolve(),
+                None if nonexpansion_time is None else nonexpansion_time.resolve(),
+            )
+            effects_parts.append(merged)
+            metric_records.append(
+                {
+                    "method_variant_id": variant_id,
+                    "dataset_id": dataset_id,
+                    "base_method_id": method_id,
+                    "run_id": SCSEQ_NATIVE_ENGINE,
+                    "view_label": view_label,
+                    "differential_engine": SCSEQ_NATIVE_ENGINE,
+                    "formal_did_p_value": False,
+                    **_metrics(merged, formal_did_p_value=False),
+                    **runtime,
+                }
+            )
+            variants.append(
+                {
+                    "dataset_id": dataset_id,
+                    "base_method_id": method_id,
+                    "run_id": SCSEQ_NATIVE_ENGINE,
+                    "view_label": view_label,
+                    "formal_did_p_value": False,
+                    "expansion_arm": expansion_metadata,
+                    "nonexpansion_arm": nonexpansion_metadata,
+                    "expansion_time_path": (
+                        None
+                        if expansion_time is None
+                        else str(expansion_time.resolve())
+                    ),
+                    "nonexpansion_time_path": (
+                        None
+                        if nonexpansion_time is None
+                        else str(nonexpansion_time.resolve())
+                    ),
+                }
+            )
+
+        if not effects_parts:
+            raise ValueError(
+                "at least one sample-score or native DID method is required"
+            )
 
         all_effects = pd.concat(effects_parts, ignore_index=True, sort=False)
         metrics = pd.DataFrame.from_records(metric_records).sort_values(
@@ -546,19 +886,20 @@ def evaluate(
             "Known interaction truth is evaluated with missing events left missing.",
             "No best CRYCHIC context-trained view is selected post hoc.",
             "",
-            "| Rank | Method | View | Engine | AUPRC | AUROC | Direction | "
-            "Main/active leakage | Power | FDR |",
-            "|---:|---|---|---|---:|---:|---:|---:|---:|---:|",
+            "| Rank | Method | View | Engine | DID p? | AUPRC | AUROC | "
+            "Direction | Main/active leakage | Power | FDR |",
+            "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|",
         ]
         for row in metrics.itertuples(index=False):
             report_lines.append(
-                "| {rank:.0f} | {method} | {view} | {engine} | {ap:.4f} | "
-                "{auc:.4f} | {direction:.4f} | {leakage:.4f} | {power:.4f} | "
-                "{fdr:.4f} |".format(
+                "| {rank:.0f} | {method} | {view} | {engine} | {formal} | "
+                "{ap:.4f} | {auc:.4f} | {direction:.4f} | {leakage:.4f} | "
+                "{power:.4f} | {fdr:.4f} |".format(
                     rank=row.omnibus_auprc_rank,
                     method=row.base_method_id,
                     view=str(row.view_label).replace("|", "/"),
                     engine=row.differential_engine,
+                    formal="yes" if row.formal_did_p_value else "no",
                     ap=row.omnibus_auprc,
                     auc=row.omnibus_auroc,
                     direction=row.direction_accuracy_active,
@@ -574,8 +915,15 @@ def evaluate(
             "status": "complete",
             "estimand": "(On-Pre in E) - (On-Pre in NE)",
             "engines": list(ENGINES),
+            "native_did_engine": SCSEQ_NATIVE_ENGINE,
             "minimum_subjects_per_expansion": min_subjects_per_group,
             "missing_policy": "complete_paired_subjects_per_event;never_zero_imputed",
+            "native_did_inference_policy": (
+                "subtract_native_pairwise_effects;do_not_reuse_arm_p_values_for_DID"
+            ),
+            "native_did_runtime_policy": (
+                "sum_arm_wall_and_adapter_time;max_arm_rss;parallel_wall_is_lower_bound"
+            ),
             "truth": {
                 "filename": truth_path.name,
                 "sha256": sha256_file(truth_path),
@@ -621,6 +969,38 @@ def _method_spec(value: str) -> tuple[Path, Path | None, Path | None]:
     )  # type: ignore[return-value]
 
 
+def _native_did_spec(
+    value: str,
+) -> tuple[
+    str,
+    str,
+    Path,
+    Path,
+    Path,
+    Path,
+    Path | None,
+    Path | None,
+]:
+    parts = value.split("::")
+    if len(parts) not in {6, 8} or any(not item for item in parts[:6]):
+        raise argparse.ArgumentTypeError(
+            "--native-did expects METHOD::DATASET::E_SCORE::NE_SCORE::"
+            "E_MANIFEST::NE_MANIFEST[::E_TIME::NE_TIME]"
+        )
+    if len(parts) == 8 and any(not item for item in parts[6:]):
+        raise argparse.ArgumentTypeError("both native DID time files are required")
+    return (
+        parts[0],
+        parts[1],
+        Path(parts[2]),
+        Path(parts[3]),
+        Path(parts[4]),
+        Path(parts[5]),
+        Path(parts[6]) if len(parts) == 8 else None,
+        Path(parts[7]) if len(parts) == 8 else None,
+    )
+
+
 def _dataset_spec(value: str) -> tuple[str, Path]:
     dataset, separator, path = value.partition("=")
     if not separator or not dataset or not path:
@@ -632,7 +1012,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--truth", required=True, type=Path)
     parser.add_argument("--dataset", required=True, action="append", type=_dataset_spec)
-    parser.add_argument("--method", required=True, action="append", type=_method_spec)
+    parser.add_argument("--method", action="append", type=_method_spec, default=[])
+    parser.add_argument(
+        "--native-did", action="append", type=_native_did_spec, default=[]
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--min-subjects-per-group", type=int, default=4)
     parser.add_argument("--overwrite", action="store_true")
@@ -649,6 +1032,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         datasets,
         args.method,
         args.output_dir,
+        native_did_specs=args.native_did,
         min_subjects_per_group=args.min_subjects_per_group,
         overwrite=args.overwrite,
     )

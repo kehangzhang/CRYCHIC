@@ -168,3 +168,25 @@ def test_brca_semisynthetic_fixture_is_truth_and_checksum_bound(
     assert float(counts[on_e.to_numpy(), gene].mean()) > float(
         counts[pre_e.to_numpy(), gene].mean()
     )
+
+    expected_conditions = {"E": {"PreE", "OnE"}, "NE": {"PreNE", "OnNE"}}
+    for expansion, pair_record in dataset["pairwise_inputs"].items():
+        pair_path = output / pair_record["output"]["path"]
+        pair_manifest_path = output / pair_record["manifest"]["path"]
+        assert hashlib.sha256(pair_path.read_bytes()).hexdigest() == pair_record[
+            "output"
+        ]["sha256"]
+        assert hashlib.sha256(pair_manifest_path.read_bytes()).hexdigest() == (
+            pair_record["manifest"]["sha256"]
+        )
+        pair_manifest = json.loads(pair_manifest_path.read_text(encoding="utf-8"))
+        assert pair_manifest["output"]["filename"] == pair_path.name
+        assert pair_manifest["output"]["sha256"] == pair_record["output"]["sha256"]
+        pair = ad.read_h5ad(pair_path)
+        assert pair.shape == (160, 26)
+        assert set(pair.obs["condition"].astype(str)) == expected_conditions[expansion]
+        pair_design = pair.obs[["sample_id", "condition"]].astype(str).drop_duplicates()
+        assert not pair_design.duplicated("sample_id", keep=False).any()
+        assert pair_record["dimensions"]["units_by_condition"] == {
+            condition: 4 for condition in expected_conditions[expansion]
+        }
