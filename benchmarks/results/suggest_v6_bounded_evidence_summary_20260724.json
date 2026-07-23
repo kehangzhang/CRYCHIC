@@ -1,10 +1,12 @@
 {
-  "schema_version": "crychic-suggest-v6-bounded-evidence-summary-v2",
+  "schema_version": "crychic-suggest-v6-bounded-evidence-summary-v3",
   "status": "partial_not_release_complete",
   "branch": "optimize/suggest-v6-bounded-evidence-20260724",
   "benchmark_evaluator_commit": "8ac34d389ac41160d32fa962ce168b73d4cb6e2b",
   "event_head_freeze_commit": "55074fae594f2327d1a0648c47288e664fdcdc64",
   "event_level_evaluator_commit": "0bc2703340794a88ad2ac088c1ab9ae14b6c2162",
+  "external_panel_runner_commit": "5c06bf808fa4ca7c17494883fb978466aa1e57ba",
+  "external_comparison_commit": "9155f5af99338898f5beafdfb6899202cfd1c3a4",
   "release_boundary": {
     "candidate_status": "benchmark_only_unreleased",
     "formal_inference_allowed": false,
@@ -57,7 +59,85 @@
         0.0042387633182429
       ]
     },
-    "comparison_scope": "CRYCHIC internal score heads only; external methods were not rerun on these new seeds"
+    "same_seed_external_panel": {
+      "resource_mode": "H-common",
+      "active_seeds": 20,
+      "matched_global_null_seeds": 20,
+      "external_tasks_complete": 200,
+      "external_tasks_failed": 0,
+      "external_runtime_seconds": 451.54673347529024,
+      "ranking": [
+        {
+          "rank": 1,
+          "method": "scSeqCommDiff",
+          "omnibus_prevalence_adjusted_ap": 0.207842254486288,
+          "omnibus_auprc": 0.14510347697538095,
+          "omnibus_auroc": 0.7115079365079364,
+          "localization_macro_auprc": 0.1328720731531626,
+          "global_null_effect_sd": 0.00003363109732531503
+        },
+        {
+          "rank": 2,
+          "method": "CRYCHIC RC12 detection head",
+          "omnibus_prevalence_adjusted_ap": 0.19121798632369427,
+          "omnibus_auprc": 0.13917334380789184,
+          "omnibus_auroc": 0.5480158730158731,
+          "localization_macro_auprc": 0.12144156634137888,
+          "global_null_effect_sd": 0.003388874921760595
+        },
+        {
+          "rank": 3,
+          "method": "CellChat",
+          "omnibus_prevalence_adjusted_ap": 0.1301416037364265,
+          "omnibus_auprc": 0.08836398464659329,
+          "omnibus_auroc": 0.49563492063492065,
+          "localization_macro_auprc": 0.07720157949679078,
+          "global_null_effect_sd": 0.11304687102801761
+        },
+        {
+          "rank": 4,
+          "method": "CRYCHIC generic baseline",
+          "omnibus_prevalence_adjusted_ap": 0.0767394541628563,
+          "omnibus_auprc": 0.05088487072034283,
+          "omnibus_auroc": 0.13174603174603172,
+          "localization_macro_auprc": 0.05023405955055602,
+          "global_null_effect_sd": 0.05130930617284003
+        },
+        {
+          "rank": 5,
+          "method": "LIANA",
+          "omnibus_prevalence_adjusted_ap": 0.07571635375765376,
+          "omnibus_auprc": 0.050212097796844136,
+          "omnibus_auroc": 0.09722222222222218,
+          "localization_macro_auprc": 0.04587080019500543,
+          "global_null_effect_sd": 0.09111350801287416
+        }
+      ],
+      "candidate_vs_scseqcommdiff": {
+        "omnibus_prevalence_adjusted_ap_delta": -0.016624268162593738,
+        "omnibus_prevalence_adjusted_ap_delta_ci95": [
+          -0.050080618642198295,
+          0.02521504078121198
+        ],
+        "omnibus_auprc_delta": -0.005930133167489115,
+        "omnibus_auprc_delta_ci95": [
+          -0.03564408860253342,
+          0.03457611705225895
+        ],
+        "omnibus_auroc_delta": -0.16349206349206352,
+        "omnibus_auroc_delta_ci95": [
+          -0.21845238095238098,
+          -0.10912698412698414
+        ],
+        "localization_macro_auprc_delta": -0.011430506811783717,
+        "localization_macro_auprc_delta_ci95": [
+          -0.033081627838785835,
+          0.013532314122800334
+        ]
+      },
+      "claim": "RC12 exceeds CellChat, LIANA, and the generic CRYCHIC baseline for detection; its AUPRC difference from scSeqCommDiff is unresolved, while its AUROC is lower"
+    },
+    "comparison_scope": "RC12 and all external methods evaluated on the same checksum-bound 20 active plus 20 matched-null seeds"
   },
   "real_cohort_legacy_pair_rank_des": {
     "claim_limit": "existing pair-rank spatial sensitivity endpoint, not literal event-count DES",
@@ -164,11 +244,11 @@
       "signed estimand invariance checks: 11 of 11",
       "separation of unsigned event detection from signed direction",
       "RC12 fresh 20-seed internal-head validation",
+      "four-method same-seed three-group panel: 200 of 200 external tasks complete",
       "Kuppe/MS legacy pair-rank DES checksum parity",
       "Kuppe/MS endpoint-only bootstrap, LOSO, permutation, rank stability, and pair coverage"
     ],
     "partial": [
-      "three-group decomposed metrics: external four-method complete panel is missing on the new seeds",
       "score-generator by differential-engine crossover: only CRYCHIC layers and two simple engines",
       "global-null calibration: 50 historical repeats, not the required 1000 full-pipeline repeats",
       "BRCA semisynthetic scenarios",
@@ -191,6 +271,18 @@
     "rc12_validation_manifest": {
       "path": "benchmark_work/suggest_v6_iterations/sender_response_detection_rc12_240dc30_20260724/validation/manifest.json",
       "sha256": "6863b20f53e3b02fc7228139547eab4afbf5dd7b742bd81c2a9d3a2d99381fb7"
+    },
+    "three_group_external_panel_manifest": {
+      "path": "benchmark_work/suggest_v6_iterations/three_group_external_20seed_5f3ced8_20260724/runs/panel_manifest.json",
+      "sha256": "2711eccd3686cd1b95932adc478a50726a2adac79f16b14fb01b0da2aca3b1e1"
+    },
+    "three_group_external_evaluation_manifest": {
+      "path": "benchmark_work/suggest_v6_iterations/three_group_external_20seed_5f3ced8_20260724/evaluation/manifest.json",
+      "sha256": "9eb57c3b352ea8a98cb320b8c9fb38d3986bfec5635f64ad2cdd22396e620e07"
+    },
+    "rc12_external_comparison_manifest": {
+      "path": "benchmark_work/suggest_v6_iterations/rc12_external_comparison_9155f5a_20260724/manifest.json",
+      "sha256": "c62bc35ba5c43442629e3424500e5b3c635ac84a73e281e73e4cd8b9112e5f65"
     },
     "kuppe_des_extension_manifest": {
       "path": "benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/kuppe/manifest.json",

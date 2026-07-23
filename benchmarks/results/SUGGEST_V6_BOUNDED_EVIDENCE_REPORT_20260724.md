@@ -8,18 +8,24 @@ Status: **partial, not release complete**
    Relative to the canonical mechanistic head, mean omnibus AUPRC increased
    from 0.0786 to 0.1392 and AUROC from 0.4123 to 0.5480. The canonical signed
    head remains responsible for direction.
-2. On the independent MS cohort, RC11 legacy pair-rank DES has median 0.8330
+2. On the same fresh seeds, RC12 ranks second of five heads/methods for
+   prevalence-adjusted AP, native AUPRC, AUROC, and localization AP. Its AUPRC
+   is close to scSeqCommDiff (0.1392 versus 0.1451; paired delta 95% interval
+   crosses zero), but its AUROC remains materially lower (0.5480 versus
+   0.7115; paired delta 95% interval entirely below zero).
+3. On the independent MS cohort, RC11 legacy pair-rank DES has median 0.8330
    and mean 0.7931. It ranks first among complete-coverage methods and exceeds
    scSeqCommDiff in 5 of 8 strata.
-3. On Kuppe, which was used for development, RC11 remains below scSeqCommDiff
+4. On Kuppe, which was used for development, RC11 remains below scSeqCommDiff
    in all 8 strata. Median DES is 0.6287 versus 0.7008.
-4. The latest core event ledger now supports original-count, count-matched,
+5. The latest core event ledger now supports original-count, count-matched,
    continuous-weighted, and three mechanism-stratified DES variants. The
    frozen RC14 Top-K head is competitive with scSeqCommDiff, but native
    original-count and continuous-weighted DES remain lower. Direction-
    preserving and diffusible-long-range DES are still not estimable.
-5. `suggestion_v6.md` remains only partially implemented; the expanded
-   external-method simulation panel and several calibration tracks are absent.
+6. `suggestion_v6.md` remains only partially implemented. The expanded
+   external-method simulation panel is now complete on the fresh seeds, but
+   several calibration, semisynthetic, coverage, and scaling tracks remain.
 
 ## Version boundary
 
@@ -31,6 +37,8 @@ Status: **partial, not release complete**
 | Final event-level DES evaluator | `0bc2703340794a88ad2ac088c1ab9ae14b6c2162` |
 | RC12 preregistration | `e9fbc6796fba35325382f25558df63e7085a4a38` |
 | RC12 validation evaluator | `240dc30053e487f5f2dda7dbb58cd04f2ed99aff` |
+| External panel runner | `5c06bf808fa4ca7c17494883fb978466aa1e57ba` |
+| Same-seed comparison evaluator | `9155f5af99338898f5beafdfb6899202cfd1c3a4` |
 | Candidate status | benchmark-only, unreleased |
 | Formal p/q values | disabled |
 | Canonical communication strength | not replaced |
@@ -61,8 +69,33 @@ RC12 versus canonical mechanistic:
 - Global-null SD: 53.5% lower; improvement CI [0.00357, 0.00424].
 
 The lower direction diagnostic is not used for direction. The retained signed
-canonical head has direction accuracy 0.6857. External methods were not rerun
-on these new seeds, so this validation compares CRYCHIC score heads only.
+canonical head has direction accuracy 0.6857.
+
+### Same-seed external comparison
+
+CellChat, LIANA, and scSeqCommDiff were subsequently run on the exact same 20
+active and 20 matched-null seeds, using the same H-common interaction resource.
+The frozen RC12 head was not retuned after seeing these external results.
+
+| Rank | Method/head | Adj. AP | AUPRC | AUROC | Localization AP | Null SD |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | scSeqCommDiff | 0.2078 | 0.1451 | 0.7115 | 0.1329 | 0.00003 |
+| 2 | CRYCHIC RC12 detection | 0.1912 | 0.1392 | 0.5480 | 0.1214 | 0.00339 |
+| 3 | CellChat | 0.1301 | 0.0884 | 0.4956 | 0.0772 | 0.11305 |
+| 4 | CRYCHIC generic baseline | 0.0767 | 0.0509 | 0.1317 | 0.0502 | 0.05131 |
+| 5 | LIANA | 0.0757 | 0.0502 | 0.0972 | 0.0459 | 0.09111 |
+
+RC12 versus scSeqCommDiff on paired seeds:
+
+- AUPRC delta: -0.0059, 95% bootstrap interval [-0.0356, 0.0346], 7/20 seed wins.
+- AUROC delta: -0.1635, 95% bootstrap interval [-0.2185, -0.1091], 2/20 wins.
+- Localization AP delta: -0.0114, interval [-0.0331, 0.0135], 5/20 wins.
+
+Thus RC12 exceeds CellChat, LIANA, and the generic CRYCHIC output for event
+detection, and is statistically unresolved against scSeqCommDiff for AUPRC in
+this finite panel. It does not exceed scSeqCommDiff for AUROC. Null SD is much
+lower than CellChat, LIANA, and the generic CRYCHIC output, but higher than the
+near-invariant scSeqCommDiff null effects.
 
 ## Kuppe and MS
 
@@ -148,7 +181,7 @@ diffusible/long-range stratum also remains not estimable.
 | Invariance fixtures | complete behaviorally | 11/11 pass; historical run was dirty |
 | Detection versus direction split | complete | separate RC12 unsigned and canonical signed heads |
 | Fresh internal-head validation | complete | 20 active plus 20 matched-null seeds |
-| Four-method expanded three-group panel | partial | not rerun on the new seeds |
+| Four-method expanded three-group panel | complete | 20 active plus 20 matched-null seeds; all 200 external tasks complete |
 | Score generator x engine | partial | CRYCHIC layers and two simple engines only |
 | Null calibration | partial | 50 historical repeats, not 1,000 full-pipeline repeats |
 | BRCA semisynthetic | partial | several scenarios and the full grid remain missing |
@@ -166,14 +199,18 @@ diffusible/long-range stratum also remains not estimable.
 
 1. Keep RC12 as a separate detection head and retain canonical signed effects.
    Do not optimize direction through an unsigned score.
-2. Do not tune further on Kuppe/MS. Kuppe selected RC14 and MS has already
+2. The remaining simulation weakness is broad ranking separation: AUPRC is
+   close to scSeqCommDiff, while AUROC is still 0.1635 lower. Develop the next
+   candidate on a new development seed block and reserve another untouched
+   validation block; do not tune against these 20 validation seeds.
+3. Do not tune further on Kuppe/MS. Kuppe selected RC14 and MS has already
    informed earlier RC11 work. Validate
    any real-cohort ranking change on a newly preregistered cohort or implanted
    spatial truth.
-3. Native count and continuous DES remain the main weaknesses. Address them
+4. Native count and continuous DES remain the main weaknesses. Address them
    through calibrated event selection and opportunity-aware effect estimation
    on simulations with event truth, not by optimizing against spatial DES.
-4. Complete the common score-generator by differential-engine matrix before
+5. Complete the common score-generator by differential-engine matrix before
    changing the algorithm backbone.
 
 ## Checksum-bound artifacts
@@ -181,6 +218,15 @@ diffusible/long-range stratum also remains not estimable.
 - RC12 validation manifest:
   `benchmark_work/suggest_v6_iterations/sender_response_detection_rc12_240dc30_20260724/validation/manifest.json`
   (`6863b20f53e3b02fc7228139547eab4afbf5dd7b742bd81c2a9d3a2d99381fb7`)
+- External execution panel manifest:
+  `benchmark_work/suggest_v6_iterations/three_group_external_20seed_5f3ced8_20260724/runs/panel_manifest.json`
+  (`2711eccd3686cd1b95932adc478a50726a2adac79f16b14fb01b0da2aca3b1e1`)
+- External evaluation manifest:
+  `benchmark_work/suggest_v6_iterations/three_group_external_20seed_5f3ced8_20260724/evaluation/manifest.json`
+  (`9eb57c3b352ea8a98cb320b8c9fb38d3986bfec5635f64ad2cdd22396e620e07`)
+- RC12 same-seed external comparison manifest:
+  `benchmark_work/suggest_v6_iterations/rc12_external_comparison_9155f5a_20260724/manifest.json`
+  (`c62bc35ba5c43442629e3424500e5b3c635ac84a73e281e73e4cd8b9112e5f65`)
 - Kuppe robustness manifest:
   `benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/kuppe/manifest.json`
   (`e2c84b7c7fa4e749856b2550aafb411167dd57dc03ddbb2ab19b6fcf0beb1517`)
