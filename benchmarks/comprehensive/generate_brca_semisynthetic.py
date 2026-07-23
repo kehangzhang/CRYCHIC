@@ -953,11 +953,15 @@ def generate(
             h5ad_path = dataset_dir / f"{dataset_id}.h5ad"
             fixture.write_h5ad(h5ad_path, compression="gzip")
             h5ad_sha = sha256_file(h5ad_path)
-            pairwise_inputs = _write_pairwise_inputs(
-                fixture,
-                dataset_dir,
-                staged,
-                dataset_id=dataset_id,
+            pairwise_inputs = (
+                _write_pairwise_inputs(
+                    fixture,
+                    dataset_dir,
+                    staged,
+                    dataset_id=dataset_id,
+                )
+                if fixture_mode == "planted"
+                else {}
             )
             plan_output = plan.rename(
                 columns={"harmonized_interaction_id": "interaction_id"}
@@ -994,6 +998,11 @@ def generate(
                 },
                 "expansion_assignment_digest": expansion_assignment_digest,
                 "pairwise_inputs": pairwise_inputs,
+                "pairwise_inputs_status": (
+                    "written"
+                    if fixture_mode == "planted"
+                    else "not_required_for_crychic_native_null_calibration"
+                ),
             }
             _write_json(dataset_dir / "manifest.json", record)
             records.append(record)
@@ -1082,6 +1091,11 @@ def generate(
                 "targets_per_ligand": targets_per_ligand,
                 "background_genes": background_genes,
             },
+            "pairwise_inputs": (
+                "written_for_native_pairwise_methods"
+                if fixture_mode == "planted"
+                else "not_generated_for_crychic_native_null_calibration"
+            ),
             "seeds": list(map(int, seeds)),
             "records": records,
             "resource": {
