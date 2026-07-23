@@ -164,6 +164,18 @@ class MSCrossFitResult(Protocol):
         status: str | None = None,
     ) -> pd.DataFrame: ...
 
+    def query_family_scores(
+        self,
+        *,
+        contrast: str | None = None,
+        context_id: str | None = None,
+        receiver: str | None = None,
+        family_id: str | None = None,
+        mode: str | None = None,
+        status: str | None = None,
+        component: str = "integrated_lr_score",
+    ) -> pd.DataFrame: ...
+
     def read_state_semantic_availability(self) -> pd.DataFrame: ...
 
 
@@ -683,6 +695,7 @@ def multigroup_score_layers(
     *,
     sender_components: pd.DataFrame | None = None,
     lr_components: pd.DataFrame | None = None,
+    receiver_program_components: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build the preregistered mechanism/annotation/strict MS score layers."""
 
@@ -698,6 +711,15 @@ def multigroup_score_layers(
             mode="state",
             status=None,
         )
+    if receiver_program_components is None:
+        query_family_scores = getattr(result, "query_family_scores", None)
+        if callable(query_family_scores):
+            receiver_program_components = query_family_scores(
+                contrast=CONTRAST,
+                mode="state",
+                status=None,
+                component="receiver_program_score",
+            )
     downstream_path = result.path / "descriptive_differential.parquet"
     if not downstream_path.is_file():
         raise FileNotFoundError(
@@ -709,6 +731,7 @@ def multigroup_score_layers(
         sender_components,
         lr_components,
         downstream,
+        receiver_program_components=receiver_program_components,
         policy="annotate",
     )
     if tuple(layers.columns) != SCORE_LAYER_COLUMNS:
@@ -915,6 +938,13 @@ def run_ms_ctrl_ca(
                 "heldout_availability_x_prior_quality_x_frozen_sender_assignment"
             ),
             "downstream_support": "signed_receiver_family_loss_ratio_annotation",
+            "bounded_detection_evidence": (
+                "detection_only_soft_mechanism_guard_0.75_plus_0.25_x_"
+                "availability_prior_with_0.95_sender_plus_0.05_receiver_program"
+            ),
+            "bounded_detection_evidence_role": (
+                "unsigned_event_detection_ranking_not_communication_strength"
+            ),
             "directed_effect": (
                 "CA_minus_Ctrl_subject_level_batch_adjusted_hc2_direct_sender_lr"
             ),
@@ -1165,6 +1195,11 @@ def run_ms_ctrl_ca(
                         score_layers,
                         score_column="downstream_confirmed_sender_lr_score",
                         status_column="downstream_confirmed_status",
+                    ),
+                    "bounded_detection_evidence_score": summarize_score_layer(
+                        score_layers,
+                        score_column="bounded_detection_evidence_score",
+                        status_column="bounded_detection_evidence_status",
                     ),
                     "selected_score": summarize_score_layer(
                         score_layers,

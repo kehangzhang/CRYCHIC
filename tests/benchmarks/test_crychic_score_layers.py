@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+
 from benchmarks.adapters.crychic.score_layers import (
     SCORE_LAYER_SCHEMA_VERSION,
     build_multigroup_score_layers,
@@ -101,6 +102,72 @@ def test_annotate_policy_preserves_mechanism_when_strict_score_is_zero() -> None
         "receiver_contrast_below_information_floor"
     }
     assert set(result["score_layer_schema_version"]) == {SCORE_LAYER_SCHEMA_VERSION}
+    assert result["bounded_detection_evidence_score"].tolist() == pytest.approx(
+        [0.2125, 0.6375]
+    )
+    assert set(result["bounded_detection_evidence_reason_code"]) == {
+        "receiver_program_not_estimable_used_sender_only_evidence"
+    }
+
+
+def test_bounded_detection_evidence_uses_receiver_program_without_replacing_score() -> (
+    None
+):
+    compact, sender, lr, downstream = _frames()
+    program_keys = [
+        "crossfit_id",
+        "spec_id",
+        "repeat_id",
+        "fold_id",
+        "contrast_id",
+        "contrast",
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "receiver",
+        "family_id",
+        "driver_id",
+        "mode",
+    ]
+    receiver_program = compact.loc[[0], program_keys].copy()
+    receiver_program["component_scope"] = "family"
+    receiver_program["component"] = "receiver_program_score"
+    receiver_program["component_value"] = 0.6
+    receiver_program["status"] = "observed"
+    receiver_program["reason_code"] = None
+
+    result = build_multigroup_score_layers(
+        compact,
+        sender,
+        lr,
+        downstream,
+        receiver_program_components=receiver_program,
+        policy="annotate",
+    )
+
+    assert result["bounded_detection_evidence_score"].tolist() == pytest.approx(
+        [0.227375, 0.631125]
+    )
+    assert result["bounded_detection_evidence_status"].eq("observed").all()
+    assert result["bounded_detection_evidence_reason_code"].isna().all()
+    assert result["selected_score"].tolist() == pytest.approx([0.1, 0.3])
+
+
+def test_detection_evidence_soft_penalty_does_not_change_structural_strength() -> None:
+    compact, sender, lr, downstream = _frames()
+    lr["availability"] = 0.0
+    result = build_multigroup_score_layers(
+        compact, sender, lr, downstream, policy="annotate"
+    )
+
+    assert result["mechanistic_sender_lr_score"].eq(0.0).all()
+    assert result["selected_score"].eq(0.0).all()
+    assert result["bounded_detection_evidence_score"].tolist() == pytest.approx(
+        [0.1875, 0.5625]
+    )
+    assert set(result["bounded_detection_evidence_reason_code"]) == {
+        "mechanism_structural_zero_soft_penalty_detection_only"
+    }
 
 
 def test_required_policy_selects_strict_without_automatic_fallback() -> None:

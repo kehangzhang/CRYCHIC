@@ -10,7 +10,10 @@ import pandas as pd
 
 from crychic.scoring import DownstreamEvidencePolicy
 
-SCORE_LAYER_SCHEMA_VERSION = "crychic-multigroup-score-layers-v1"
+SCORE_LAYER_SCHEMA_VERSION = "crychic-multigroup-score-layers-v2"
+BOUNDED_DETECTION_EVIDENCE_VERSION = "bounded-detection-evidence-v1"
+BOUNDED_DETECTION_MECHANISM_FLOOR = 0.75
+BOUNDED_DETECTION_DOWNSTREAM_WEIGHT = 0.05
 
 _BASE_KEYS = (
     "crossfit_id",
@@ -40,6 +43,21 @@ _DOWNSTREAM_KEYS = (
     "subject_id",
     "family_id",
 )
+_RECEIVER_PROGRAM_KEYS = (
+    "crossfit_id",
+    "spec_id",
+    "repeat_id",
+    "fold_id",
+    "contrast_id",
+    "contrast",
+    "sample_id",
+    "subject_id",
+    "context_id",
+    "receiver",
+    "family_id",
+    "driver_id",
+    "mode",
+)
 
 SCORE_LAYER_VALUE_COLUMNS = (
     "mechanistic_lr_score",
@@ -56,6 +74,14 @@ SCORE_LAYER_VALUE_COLUMNS = (
     "downstream_confirmed_sender_lr_score",
     "downstream_confirmed_status",
     "downstream_confirmed_reason_code",
+    "receiver_program_score",
+    "receiver_program_status",
+    "receiver_program_reason_code",
+    "bounded_detection_evidence_score",
+    "bounded_detection_evidence_status",
+    "bounded_detection_evidence_reason_code",
+    "bounded_detection_evidence_version",
+    "bounded_detection_evidence_formal_inference_allowed",
     "selected_score",
     "selected_score_policy",
     "selected_score_status",
@@ -116,12 +142,47 @@ def _modulate_vectorized(
     return result
 
 
+def bounded_detection_evidence_score(
+    mechanistic_lr: pd.Series,
+    sender_assignment: pd.Series,
+    receiver_program: pd.Series,
+    *,
+    mechanism_floor: float = BOUNDED_DETECTION_MECHANISM_FLOOR,
+    downstream_weight: float = BOUNDED_DETECTION_DOWNSTREAM_WEIGHT,
+) -> pd.Series:
+    """Return an unsigned detection score with a soft mechanism penalty.
+
+    Missing optional receiver-program evidence falls back to sender evidence.
+    Missing mechanism or sender evidence remains missing. This quantity is a
+    ranking diagnostic, not communication strength or probability.
+    """
+
+    floor = float(mechanism_floor)
+    weight = float(downstream_weight)
+    if not math.isfinite(floor) or not 0.0 <= floor <= 1.0:
+        raise ValueError("mechanism_floor must lie in [0, 1]")
+    if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+        raise ValueError("downstream_weight must lie in [0, 1]")
+    mechanism = _unit_series(mechanistic_lr, field="mechanistic_lr")
+    sender = _unit_series(sender_assignment, field="sender_assignment")
+    program = _unit_series(receiver_program, field="receiver_program")
+    component = sender.copy()
+    available = program.notna()
+    component.loc[available] = (1.0 - weight) * sender.loc[
+        available
+    ] + weight * program.loc[available]
+    result = (floor + (1.0 - floor) * mechanism) * component
+    result.loc[mechanism.isna() | sender.isna()] = np.nan
+    return result
+
+
 def build_multigroup_score_layers(
     compact_scores: pd.DataFrame,
     sender_components: pd.DataFrame,
     lr_components: pd.DataFrame,
     downstream_effects: pd.DataFrame,
     *,
+    receiver_program_components: pd.DataFrame | None = None,
     policy: DownstreamEvidencePolicy | str = DownstreamEvidencePolicy.ANNOTATE,
     modulation_strength: float = 1.0,
 ) -> pd.DataFrame:
@@ -161,6 +222,20 @@ def build_multigroup_score_layers(
     if compact_scores.duplicated(list(_SENDER_KEYS)).any():
         raise ValueError("compact_scores keys must be unique")
 
+    if receiver_program_components is not None:
+        _require_columns(
+            receiver_program_components,
+            (
+                *_RECEIVER_PROGRAM_KEYS,
+                "component_scope",
+                "component",
+                "component_value",
+                "status",
+                "reason_code",
+            ),
+            name="receiver_program_components",
+        )
+
     senders = sender_components.loc[
         sender_components["mode"].astype(str).eq("state"),
         [*_SENDER_KEYS, "assignment_weight"],
@@ -190,6 +265,41 @@ def build_multigroup_score_layers(
     if downstream.duplicated(list(_DOWNSTREAM_KEYS)).any():
         raise ValueError("downstream effect keys must be unique")
 
+    if receiver_program_components is None:
+        receiver_program = compact_scores.loc[:, list(_RECEIVER_PROGRAM_KEYS)].copy()
+        receiver_program = receiver_program.drop_duplicates(
+            list(_RECEIVER_PROGRAM_KEYS), ignore_index=True
+        )
+        receiver_program["component_value"] = np.nan
+        receiver_program["_receiver_program_source_status"] = "not_estimable"
+        receiver_program["_receiver_program_source_reason"] = (
+            "receiver_program_component_not_supplied"
+        )
+    else:
+        receiver_program = receiver_program_components.loc[
+            receiver_program_components["component_scope"].astype(str).eq("family")
+            & receiver_program_components["component"]
+            .astype(str)
+            .eq("receiver_program_score"),
+            [
+                *_RECEIVER_PROGRAM_KEYS,
+                "component_value",
+                "status",
+                "reason_code",
+            ],
+        ].rename(
+            columns={
+                "status": "_receiver_program_source_status",
+                "reason_code": "_receiver_program_source_reason",
+            }
+        )
+        if receiver_program.empty:
+            raise ValueError(
+                "receiver_program_components has no family receiver_program_score rows"
+            )
+        if receiver_program.duplicated(list(_RECEIVER_PROGRAM_KEYS)).any():
+            raise ValueError("receiver program component keys must be unique")
+
     sender_values = compact_scores.loc[:, list(_SENDER_KEYS)].merge(
         senders,
         on=list(_SENDER_KEYS),
@@ -211,10 +321,18 @@ def build_multigroup_score_layers(
         validate="many_to_one",
         sort=False,
     )
+    receiver_program_values = compact_scores.loc[:, list(_RECEIVER_PROGRAM_KEYS)].merge(
+        receiver_program,
+        on=list(_RECEIVER_PROGRAM_KEYS),
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
     if not (
         len(sender_values)
         == len(parent_values)
         == len(downstream_values)
+        == len(receiver_program_values)
         == len(compact_scores)
     ):
         raise RuntimeError("score-layer joins changed sender row coverage")
@@ -298,6 +416,53 @@ def build_multigroup_score_layers(
     strict_status = compact_scores["status"].astype(str)
     strict_reason = compact_scores["reason_code"].copy()
 
+    program_score = _unit_series(
+        receiver_program_values["component_value"], field="receiver_program_score"
+    )
+    program_source_status = receiver_program_values[
+        "_receiver_program_source_status"
+    ].astype("string")
+    program_source_reason = receiver_program_values[
+        "_receiver_program_source_reason"
+    ].astype("string")
+    program_available = (
+        program_source_status.isin(("observed", "structural_zero"))
+        & program_score.notna()
+    )
+    program_status = pd.Series("observed", index=work_index, dtype=object)
+    program_reason = pd.Series(None, index=work_index, dtype=object)
+    program_status.loc[~program_available] = "not_estimable"
+    program_reason.loc[~program_available] = program_source_reason.loc[
+        ~program_available
+    ].where(
+        program_source_reason.loc[~program_available].notna(),
+        "receiver_program_not_estimable",
+    )
+
+    detection_evidence = bounded_detection_evidence_score(
+        mechanistic_lr,
+        assignment,
+        program_score.where(program_available),
+    )
+    detection_missing = mechanistic_lr.isna() | assignment.isna()
+    detection_evidence.loc[detection_missing] = np.nan
+    detection_status = pd.Series("observed", index=work_index, dtype=object)
+    detection_reason = pd.Series(None, index=work_index, dtype=object)
+    detection_status.loc[detection_missing] = "not_estimable"
+    detection_reason.loc[detection_missing] = np.where(
+        mechanistic_lr.loc[detection_missing].isna(),
+        "mechanistic_guard_not_estimable",
+        "sender_assignment_not_estimable",
+    )
+    program_fallback = ~detection_missing & ~program_available
+    detection_reason.loc[program_fallback] = (
+        "receiver_program_not_estimable_used_sender_only_evidence"
+    )
+    mechanism_zero = ~detection_missing & mechanistic_lr.eq(0.0)
+    detection_reason.loc[mechanism_zero] = (
+        "mechanism_structural_zero_soft_penalty_detection_only"
+    )
+
     if resolved_policy in {
         DownstreamEvidencePolicy.DISABLED,
         DownstreamEvidencePolicy.ANNOTATE,
@@ -329,6 +494,16 @@ def build_multigroup_score_layers(
     result["downstream_confirmed_sender_lr_score"] = strict_score.to_numpy(copy=False)
     result["downstream_confirmed_status"] = strict_status.to_numpy(copy=False)
     result["downstream_confirmed_reason_code"] = strict_reason.to_numpy(copy=False)
+    result["receiver_program_score"] = program_score.to_numpy(copy=False)
+    result["receiver_program_status"] = program_status.to_numpy(copy=False)
+    result["receiver_program_reason_code"] = program_reason.to_numpy(copy=False)
+    result["bounded_detection_evidence_score"] = detection_evidence.to_numpy(copy=False)
+    result["bounded_detection_evidence_status"] = detection_status.to_numpy(copy=False)
+    result["bounded_detection_evidence_reason_code"] = detection_reason.to_numpy(
+        copy=False
+    )
+    result["bounded_detection_evidence_version"] = BOUNDED_DETECTION_EVIDENCE_VERSION
+    result["bounded_detection_evidence_formal_inference_allowed"] = False
     result["selected_score"] = selected.to_numpy(copy=False)
     result["selected_score_policy"] = resolved_policy.value
     result["selected_score_status"] = selected_status.to_numpy(copy=False)
@@ -378,8 +553,12 @@ def summarize_score_layer(
 
 
 __all__ = [
+    "BOUNDED_DETECTION_DOWNSTREAM_WEIGHT",
+    "BOUNDED_DETECTION_EVIDENCE_VERSION",
+    "BOUNDED_DETECTION_MECHANISM_FLOOR",
     "SCORE_LAYER_SCHEMA_VERSION",
     "SCORE_LAYER_VALUE_COLUMNS",
+    "bounded_detection_evidence_score",
     "build_multigroup_score_layers",
     "summarize_score_layer",
 ]

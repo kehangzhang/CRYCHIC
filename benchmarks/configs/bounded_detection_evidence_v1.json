@@ -1,0 +1,34 @@
+{
+  "schema_version": "crychic-bounded-detection-evidence-config-v1",
+  "candidate_status": "benchmark_only_unreleased",
+  "candidate": {
+    "name": "bounded_detection_evidence_f075_w005",
+    "mechanism_floor": 0.75,
+    "downstream_weight": 0.05,
+    "signed_effect_source": "canonical_mechanistic",
+    "formal_inference_allowed": false
+  },
+  "selection": {
+    "development_role": "development",
+    "development_source_manifest_sha256": "ce5140f55759b9175fdec8773c2f00be78ba4faded91d948b85efa806d1d6bcf",
+    "grid_mechanism_floor": [0.0, 0.25, 0.5, 0.75],
+    "grid_downstream_weight": [0.05, 0.1, 0.15, 0.2],
+    "primary_metric": "omnibus_auprc",
+    "secondary_metrics": ["omnibus_auroc", "global_null_effect_sd"]
+  },
+  "validation": {
+    "validation_role": "validation",
+    "validation_source_manifest_sha256": "d7b3ebe3f261cb068f6bafaa0f7671a642d773aa91e3f7459e00290e280d6d72",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260724,
+    "required_event_coverage": 0.8,
+    "required_oriented_ci_lower": 0.0
+  },
+  "claim_boundary": {
+    "detection_evidence_is_unsigned": true,
+    "canonical_signed_effect_is_retained": true,
+    "communication_strength_is_not_replaced": true,
+    "p_and_q_values_are_not_emitted": true
+  }
+}
