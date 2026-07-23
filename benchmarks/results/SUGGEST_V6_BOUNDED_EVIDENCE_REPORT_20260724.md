@@ -27,7 +27,8 @@ Status: **partial, not release complete**
 |---|---|
 | Branch | `optimize/suggest-v6-bounded-evidence-20260724` |
 | Pair-rank robustness evaluator | `8ac34d389ac41160d32fa962ce168b73d4cb6e2b` |
-| Event-level DES evaluator | `55074fae594f2327d1a0648c47288e664fdcdc64` |
+| RC14 head freeze | `55074fae594f2327d1a0648c47288e664fdcdc64` |
+| Final event-level DES evaluator | `0bc2703340794a88ad2ac088c1ab9ae14b6c2162` |
 | RC12 preregistration | `e9fbc6796fba35325382f25558df63e7085a4a38` |
 | RC12 validation evaluator | `240dc30053e487f5f2dda7dbb58cd04f2ed99aff` |
 | Candidate status | benchmark-only, unreleased |
@@ -187,8 +188,8 @@ diffusible/long-range stratum also remains not estimable.
   `benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/ms/manifest.json`
   (`f9c0a06f2193be4f37e716cb45f720cf201cfe1d7ed6f5ed7cfbf7b8c2e60d0b`)
 - RC14 Kuppe event-level DES manifest:
-  `benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/kuppe/manifest.json`
-  (`6a408bc9629870d3cc1771c6a1ef00359dff6d03aebd1e8cd4356fbfed49f2bc`)
+  `benchmark_work/multi-group/event_level_des_rc14_0bc2703_20260724/kuppe/manifest.json`
+  (`e3b51b8dea5d1a3b8dfe128dbd6a0b7faf1843df8aaf00da6bda760ba6b9c3cb`)
 - RC14 MS event-level DES manifest:
-  `benchmark_work/multi-group/event_level_des_rc14_55074fa_20260724/ms/manifest.json`
-  (`b0d2eed7c47679735ce2dbd2c3e6a90b3c053cab81c7dd9486885b53de10d839`)
+  `benchmark_work/multi-group/event_level_des_rc14_0bc2703_20260724/ms/manifest.json`
+  (`61a9d1fa051aac12595eb29a659c822c543bb82f8c6ab2e20061ceaad7039510`)
