@@ -1,0 +1,154 @@
+{
+  "schema_version": "crychic-suggest-v6-bounded-evidence-summary-v1",
+  "status": "partial_not_release_complete",
+  "branch": "optimize/suggest-v6-bounded-evidence-20260724",
+  "benchmark_evaluator_commit": "8ac34d389ac41160d32fa962ce168b73d4cb6e2b",
+  "release_boundary": {
+    "candidate_status": "benchmark_only_unreleased",
+    "formal_inference_allowed": false,
+    "canonical_strength_replaced": false,
+    "public_default_replaced": false,
+    "signed_effect_head": "canonical_mechanistic__native_raw_mean",
+    "unsigned_detection_head": "sender_downstream_w010__native_raw_mean"
+  },
+  "three_group_independent_validation": {
+    "seeds": 20,
+    "candidate": {
+      "omnibus_auprc": 0.1391733438078918,
+      "omnibus_auroc": 0.5480158730158731,
+      "localization_macro_auprc": 0.1214415663413789,
+      "global_null_effect_sd": 0.0033888749217606,
+      "direction_accuracy_diagnostic_only": 0.55
+    },
+    "bounded_rc11_detection_head": {
+      "omnibus_auprc": 0.111160851402641,
+      "omnibus_auroc": 0.5099206349206349,
+      "localization_macro_auprc": 0.1029390141007473,
+      "global_null_effect_sd": 0.0038316361702078,
+      "direction_accuracy_diagnostic_only": 0.5857142857142856
+    },
+    "canonical_mechanistic_head": {
+      "omnibus_auprc": 0.0785656459657351,
+      "omnibus_auroc": 0.4123015873015873,
+      "localization_macro_auprc": 0.0768720911029325,
+      "global_null_effect_sd": 0.007284522526955,
+      "direction_accuracy": 0.6857142857142857
+    },
+    "candidate_delta_vs_bounded": {
+      "omnibus_auprc": 0.02801249240525079,
+      "omnibus_auprc_relative": 0.25199962083580507,
+      "omnibus_auroc": 0.03809523809523818,
+      "global_null_sd_relative_reduction": 0.11555409459014154
+    },
+    "candidate_delta_vs_canonical": {
+      "omnibus_auprc": 0.06060769784215668,
+      "omnibus_auprc_relative": 0.7714274744026106,
+      "omnibus_auroc": 0.1357142857142858,
+      "global_null_sd_relative_reduction": 0.5347842073079315
+    },
+    "paired_gate": {
+      "status": "ACCEPT",
+      "auprc_delta_ci95": [0.0314290577238617, 0.095608762897005],
+      "auroc_delta_ci95": [0.0577380952380952, 0.2156746031746031],
+      "lower_null_sd_improvement_ci95": [
+        0.0035710886719375,
+        0.0042387633182429
+      ]
+    },
+    "comparison_scope": "CRYCHIC internal score heads only; external methods were not rerun on these new seeds"
+  },
+  "real_cohort_legacy_pair_rank_des": {
+    "claim_limit": "existing pair-rank spatial sensitivity endpoint, not literal event-count DES",
+    "kuppe": {
+      "role": "development_non_independent",
+      "rc11_median": 0.6287163082369723,
+      "rc11_mean": 0.5999755367211981,
+      "rank_by_median_among_complete_methods": 2,
+      "rank_by_mean_among_complete_methods": 2,
+      "complete_methods": 15,
+      "rc9_median": 0.6130159169998453,
+      "rc9_mean": 0.5832996286664187,
+      "scseqcommdiff_median": 0.7007672634271098,
+      "scseqcommdiff_mean": 0.691284052661179,
+      "median_delta_vs_scseqcommdiff": -0.07205095519013749,
+      "mean_delta_vs_scseqcommdiff": -0.0913085159399809,
+      "strata_wins_vs_scseqcommdiff": 0,
+      "strata_losses_vs_scseqcommdiff": 8,
+      "pair_coverage": 1.0,
+      "loso_spatial_rank_spearman_median": 0.935656108597285,
+      "bootstrap_spatial_rank_spearman_median": 0.5776923076923077,
+      "endpoint_permutation_strata_p_lt_0_05": 2
+    },
+    "ms": {
+      "role": "independent_validation",
+      "rc11_median": 0.8330043867715995,
+      "rc11_mean": 0.7930516918054517,
+      "rank_by_median_among_complete_methods": 1,
+      "rank_by_mean_among_complete_methods": 1,
+      "complete_methods": 9,
+      "rc9_median": 0.7960526315789473,
+      "rc9_mean": 0.7538295377867746,
+      "scseqcommdiff_median": 0.825,
+      "scseqcommdiff_mean": 0.6725877192982457,
+      "median_delta_vs_scseqcommdiff": 0.008004386771599536,
+      "mean_delta_vs_scseqcommdiff": 0.12046397250720597,
+      "strata_wins_vs_scseqcommdiff": 5,
+      "strata_losses_vs_scseqcommdiff": 3,
+      "pair_coverage": 1.0,
+      "loso_spatial_rank_spearman_median": 0.9474903474903474,
+      "bootstrap_spatial_rank_spearman_median": 0.7051480051480051,
+      "endpoint_permutation_strata_p_lt_0_05": 3
+    },
+    "strict_suggestion_v6_event_level_endpoints": {
+      "original_count_des": "not_estimable",
+      "top_k_count_matched_des": "not_estimable",
+      "continuous_weighted_des": "not_estimable",
+      "direction_preserving_des": "not_estimable",
+      "mechanism_stratified_des": "not_estimable",
+      "reason": "RC11 exports only condition by unordered cell-pair rankings, not the required event-level selection/effect/direction/mechanism ledger"
+    }
+  },
+  "suggestion_v6_completion": {
+    "complete": [
+      "signed estimand hand fixtures: 15 of 15",
+      "signed estimand invariance checks: 11 of 11",
+      "separation of unsigned event detection from signed direction",
+      "RC12 fresh 20-seed internal-head validation",
+      "Kuppe/MS legacy pair-rank DES checksum parity",
+      "Kuppe/MS endpoint-only bootstrap, LOSO, permutation, rank stability, and pair coverage"
+    ],
+    "partial": [
+      "three-group decomposed metrics: external four-method complete panel is missing on the new seeds",
+      "score-generator by differential-engine crossover: only CRYCHIC layers and two simple engines",
+      "global-null calibration: 50 historical repeats, not the required 1000 full-pipeline repeats",
+      "BRCA semisynthetic scenarios",
+      "native hypergraph truth",
+      "runtime stage profiling",
+      "Kuppe/MS strict DES family: availability is audited, but all five event-level endpoints are not estimable from RC11 exports"
+    ],
+    "missing": [
+      "common GLM, CR2, STACCato, and common-functional OOF engine matrix",
+      "complete BRCA effect grid, scDesign3 arm, and hurdle benchmark",
+      "MIS-C AP-coverage and risk-coverage curves",
+      "differential spatial simulation",
+      "DCST full subjects by cells grid",
+      "scACCorDiON, SLE reduced, and Tensor-cell2cell context tracks",
+      "full runtime scaling exponents and harmonized 1-thread/8-thread RSS panel",
+      "formal canonical release tag and container digest"
+    ]
+  },
+  "artifacts": {
+    "rc12_validation_manifest": {
+      "path": "benchmark_work/suggest_v6_iterations/sender_response_detection_rc12_240dc30_20260724/validation/manifest.json",
+      "sha256": "6863b20f53e3b02fc7228139547eab4afbf5dd7b742bd81c2a9d3a2d99381fb7"
+    },
+    "kuppe_des_extension_manifest": {
+      "path": "benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/kuppe/manifest.json",
+      "sha256": "e2c84b7c7fa4e749856b2550aafb411167dd57dc03ddbb2ab19b6fcf0beb1517"
+    },
+    "ms_des_extension_manifest": {
+      "path": "benchmark_work/multi-group/bounded_des_extensions_8ac34d3_20260724/ms/manifest.json",
+      "sha256": "f9c0a06f2193be4f37e716cb45f720cf201cfe1d7ed6f5ed7cfbf7b8c2e60d0b"
+    }
+  }
+}
