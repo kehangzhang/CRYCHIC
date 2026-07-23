@@ -14,6 +14,10 @@ SCORE_LAYER_SCHEMA_VERSION = "crychic-multigroup-score-layers-v2"
 BOUNDED_DETECTION_EVIDENCE_VERSION = "bounded-detection-evidence-v1"
 BOUNDED_DETECTION_MECHANISM_FLOOR = 0.75
 BOUNDED_DETECTION_DOWNSTREAM_WEIGHT = 0.05
+SENDER_RESPONSE_DETECTION_EVIDENCE_VERSION = (
+    "sender-response-detection-evidence-rc12-v1"
+)
+SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT = 0.10
 
 _BASE_KEYS = (
     "crossfit_id",
@@ -173,6 +177,30 @@ def bounded_detection_evidence_score(
     ] + weight * program.loc[available]
     result = (floor + (1.0 - floor) * mechanism) * component
     result.loc[mechanism.isna() | sender.isna()] = np.nan
+    return result
+
+
+def sender_response_detection_evidence_score(
+    sender_assignment: pd.Series,
+    receiver_program: pd.Series,
+    *,
+    downstream_weight: float = SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT,
+) -> pd.Series:
+    """Return unsigned sender/receiver-response evidence for event detection.
+
+    This benchmark-only head deliberately omits the mechanistic magnitude
+    guard that reduced event-detection dynamic range in development data. It
+    does not replace communication strength, signed effects, or inference.
+    Missing sender or receiver-program evidence remains not estimable.
+    """
+
+    weight = float(downstream_weight)
+    if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+        raise ValueError("downstream_weight must lie in [0, 1]")
+    sender = _unit_series(sender_assignment, field="sender_assignment")
+    program = _unit_series(receiver_program, field="receiver_program")
+    result = (1.0 - weight) * sender + weight * program
+    result.loc[sender.isna() | program.isna()] = np.nan
     return result
 
 
@@ -558,7 +586,10 @@ __all__ = [
     "BOUNDED_DETECTION_MECHANISM_FLOOR",
     "SCORE_LAYER_SCHEMA_VERSION",
     "SCORE_LAYER_VALUE_COLUMNS",
+    "SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT",
+    "SENDER_RESPONSE_DETECTION_EVIDENCE_VERSION",
     "bounded_detection_evidence_score",
     "build_multigroup_score_layers",
+    "sender_response_detection_evidence_score",
     "summarize_score_layer",
 ]

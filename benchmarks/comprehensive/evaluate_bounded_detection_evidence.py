@@ -18,7 +18,11 @@ import pandas as pd
 
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 from benchmarks.adapters.crychic.score_layers import (
+    BOUNDED_DETECTION_DOWNSTREAM_WEIGHT,
+    BOUNDED_DETECTION_MECHANISM_FLOOR,
+    SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT,
     bounded_detection_evidence_score,
+    sender_response_detection_evidence_score,
 )
 from benchmarks.comprehensive.evaluate_component_crossover import (
     _effect_arm,
@@ -32,6 +36,7 @@ CONFIG_SCHEMA_VERSION = "crychic-bounded-detection-evidence-config-v1"
 BASE_LAYER = "canonical_mechanistic"
 CANDIDATE_LAYER = "bounded_detection_evidence_f075_w005"
 UPPER_DIAGNOSTIC_LAYER = "sender_downstream_w010"
+SUPPORTED_CANDIDATE_LAYERS = frozenset((CANDIDATE_LAYER, UPPER_DIAGNOSTIC_LAYER))
 ENGINE = "native_raw_mean"
 BASE_ARM = f"{BASE_LAYER}__{ENGINE}"
 CANDIDATE_ARM = f"{CANDIDATE_LAYER}__{ENGINE}"
@@ -58,7 +63,10 @@ def _load_config(path: Path, *, role: str, source_manifest: Path) -> dict[str, A
         raise ValueError("bounded detection configuration schema is unsupported")
     candidate = config.get("candidate")
     boundary = config.get("claim_boundary")
-    if not isinstance(candidate, Mapping) or candidate.get("name") != CANDIDATE_LAYER:
+    if (
+        not isinstance(candidate, Mapping)
+        or candidate.get("name") not in SUPPORTED_CANDIDATE_LAYERS
+    ):
         raise ValueError("bounded detection candidate identity was altered")
     if candidate.get("formal_inference_allowed") is not False:
         raise ValueError("bounded detection candidate cannot emit formal inference")
@@ -87,8 +95,11 @@ def _load_config(path: Path, *, role: str, source_manifest: Path) -> dict[str, A
 def _score_layers(
     table: pd.DataFrame,
     *,
-    mechanism_floor: float,
-    downstream_weight: float,
+    mechanism_floor: float = BOUNDED_DETECTION_MECHANISM_FLOOR,
+    downstream_weight: float = BOUNDED_DETECTION_DOWNSTREAM_WEIGHT,
+    sender_response_downstream_weight: float = (
+        SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT
+    ),
 ) -> dict[str, pd.Series]:
     required = {
         "availability",
@@ -118,7 +129,11 @@ def _score_layers(
             mechanism_floor=mechanism_floor,
             downstream_weight=downstream_weight,
         ),
-        UPPER_DIAGNOSTIC_LAYER: 0.90 * sender + 0.10 * downstream,
+        UPPER_DIAGNOSTIC_LAYER: sender_response_detection_evidence_score(
+            sender,
+            downstream,
+            downstream_weight=sender_response_downstream_weight,
+        ),
     }
 
 
@@ -166,15 +181,17 @@ def _paired_metric(
     direction: str,
     replicates: int,
     seed: int,
+    baseline_arm: str = BASE_ARM,
+    candidate_arm: str = CANDIDATE_ARM,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
     selected = metrics.loc[metrics["scenario"].astype(str).eq(scenario)]
     pivot = selected.pivot(index="seed", columns="method", values=metric)
-    required = {BASE_ARM, CANDIDATE_ARM}
+    required = {baseline_arm, candidate_arm}
     missing = required.difference(pivot.columns)
     if missing:
         raise ValueError(f"paired validation arms are absent: {sorted(missing)}")
-    pair = pivot.loc[:, [BASE_ARM, CANDIDATE_ARM]].dropna()
-    raw = pair[CANDIDATE_ARM].to_numpy(dtype=float) - pair[BASE_ARM].to_numpy(
+    pair = pivot.loc[:, [baseline_arm, candidate_arm]].dropna()
+    raw = pair[candidate_arm].to_numpy(dtype=float) - pair[baseline_arm].to_numpy(
         dtype=float
     )
     if direction == "higher":
@@ -197,8 +214,8 @@ def _paired_metric(
             "metric": metric,
             "direction": direction,
             "seed": pair.index.astype(int),
-            "baseline": pair[BASE_ARM].to_numpy(dtype=float),
-            "candidate": pair[CANDIDATE_ARM].to_numpy(dtype=float),
+            "baseline": pair[baseline_arm].to_numpy(dtype=float),
+            "candidate": pair[candidate_arm].to_numpy(dtype=float),
             "raw_candidate_minus_baseline": raw,
             "oriented_improvement": oriented,
         }
@@ -209,8 +226,8 @@ def _paired_metric(
             "metric": metric,
             "direction": direction,
             "paired_seeds": len(oriented),
-            "baseline_mean": float(pair[BASE_ARM].mean()),
-            "candidate_mean": float(pair[CANDIDATE_ARM].mean()),
+            "baseline_mean": float(pair[baseline_arm].mean()),
+            "candidate_mean": float(pair[candidate_arm].mean()),
             "raw_candidate_minus_baseline": float(raw.mean()),
             "oriented_mean_improvement": float(oriented.mean()),
             "oriented_ci_low": float(low),
@@ -231,6 +248,7 @@ def _validation(
     *,
     config: Mapping[str, Any],
     role: str,
+    candidate_arm: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     policy = cast(Mapping[str, Any], config["validation"])
     replicates = int(policy["bootstrap_replicates"])
@@ -250,12 +268,13 @@ def _validation(
             direction=direction,
             replicates=replicates,
             seed=bootstrap_seed + index,
+            candidate_arm=candidate_arm,
         )
         records.append(record)
         details.append(detail)
     validation = pd.DataFrame.from_records(records)
     paired = pd.concat(details, ignore_index=True)
-    candidate = summary.loc[summary["method"].astype(str).eq(CANDIDATE_ARM)]
+    candidate = summary.loc[summary["method"].astype(str).eq(candidate_arm)]
     if len(candidate) != 1:
         raise ValueError("candidate summary is absent or duplicated")
     enough_seeds = (
@@ -271,7 +290,7 @@ def _validation(
     )
     gate = {
         "role": role,
-        "primary_detection_head": CANDIDATE_ARM,
+        "primary_detection_head": candidate_arm,
         "signed_effect_head_retained": BASE_ARM,
         "enough_paired_seeds": bool(enough_seeds),
         "all_oriented_95pct_ci_lower_gt_zero": bool(ci_pass),
@@ -371,8 +390,21 @@ def evaluate(
             raise ValueError(f"score view is absent: {run_name}/{target}")
         layers = _score_layers(
             view,
-            mechanism_floor=float(candidate["mechanism_floor"]),
-            downstream_weight=float(candidate["downstream_weight"]),
+            mechanism_floor=float(
+                candidate.get("mechanism_floor", BOUNDED_DETECTION_MECHANISM_FLOOR)
+            ),
+            downstream_weight=float(
+                candidate.get(
+                    "bounded_downstream_weight", BOUNDED_DETECTION_DOWNSTREAM_WEIGHT
+                )
+                if candidate.get("name") == UPPER_DIAGNOSTIC_LAYER
+                else candidate["downstream_weight"]
+            ),
+            sender_response_downstream_weight=float(
+                candidate["downstream_weight"]
+                if candidate.get("name") == UPPER_DIAGNOSTIC_LAYER
+                else SENDER_RESPONSE_DETECTION_DOWNSTREAM_WEIGHT
+            ),
         )
         truth_table = selected_truth.drop(columns="run_directory")
         for layer, score in layers.items():
@@ -396,7 +428,14 @@ def evaluate(
     effect_table = pd.concat(effects, ignore_index=True)
     metrics, confusion = _multigroup_metrics(effect_table)
     summary = _method_summary(metrics)
-    validation, paired, gate = _validation(metrics, summary, config=config, role=role)
+    candidate_arm = f"{candidate['name']}__{ENGINE}"
+    validation, paired, gate = _validation(
+        metrics,
+        summary,
+        config=config,
+        role=role,
+        candidate_arm=candidate_arm,
+    )
 
     output_dir = output_dir.resolve()
     if output_dir.exists():

@@ -1,0 +1,66 @@
+{
+  "schema_version": "crychic-bounded-detection-evidence-config-v1",
+  "candidate_status": "preregistered_benchmark_only_unreleased",
+  "candidate": {
+    "name": "sender_downstream_w010",
+    "sender_weight": 0.9,
+    "downstream_weight": 0.1,
+    "signed_effect_source": "canonical_mechanistic",
+    "formal_inference_allowed": false
+  },
+  "selection": {
+    "development_role": "development",
+    "development_source_manifest_sha256": "ce5140f55759b9175fdec8773c2f00be78ba4faded91d948b85efa806d1d6bcf",
+    "selection_rule": "candidate_pareto_dominates_bounded_rc11_detection_head_on_development_omnibus_auprc_omnibus_auroc_and_global_null_effect_sd",
+    "primary_metric": "omnibus_auprc",
+    "secondary_metrics": [
+      "omnibus_auroc",
+      "global_null_effect_sd"
+    ]
+  },
+  "validation": {
+    "validation_role": "validation",
+    "validation_source_manifest_sha256": "PENDING_FROZEN_SOURCE_EVALUATION",
+    "fixture_generator": "benchmarks.comprehensive.generate_three_group_fixture",
+    "fixture_seeds": [
+      20261001,
+      20261002,
+      20261003,
+      20261004,
+      20261005,
+      20261006,
+      20261007,
+      20261008,
+      20261009,
+      20261010,
+      20261011,
+      20261012,
+      20261013,
+      20261014,
+      20261015,
+      20261016,
+      20261017,
+      20261018,
+      20261019,
+      20261020
+    ],
+    "group_subjects": {
+      "A": 8,
+      "B": 10,
+      "C": 12
+    },
+    "mean_cells_per_sample": 180,
+    "resource_sha256": "f287df9492e98909e29a21e228af54a210324cfb3fd8cb1e69bea3b44ae65ace",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260724,
+    "required_event_coverage": 0.8,
+    "required_oriented_ci_lower": 0.0
+  },
+  "claim_boundary": {
+    "detection_evidence_is_unsigned": true,
+    "canonical_signed_effect_is_retained": true,
+    "communication_strength_is_not_replaced": true,
+    "p_and_q_values_are_not_emitted": true
+  }
+}

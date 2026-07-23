@@ -74,3 +74,35 @@ def test_paired_metric_orients_lower_is_better() -> None:
     assert record["raw_candidate_minus_baseline"] == pytest.approx(-0.15)
     assert record["oriented_mean_improvement"] == pytest.approx(0.15)
     assert detail["oriented_improvement"].tolist() == pytest.approx([0.2, 0.1])
+
+
+def test_paired_metric_accepts_a_frozen_alternative_candidate() -> None:
+    alternative = f"{UPPER_DIAGNOSTIC_LAYER}__native_raw_mean"
+    metrics = pd.DataFrame(
+        [
+            {
+                "scenario": "active",
+                "seed": 1,
+                "method": BASE_ARM,
+                "omnibus_auprc": 0.1,
+            },
+            {
+                "scenario": "active",
+                "seed": 1,
+                "method": alternative,
+                "omnibus_auprc": 0.2,
+            },
+        ]
+    )
+
+    record, _ = _paired_metric(
+        metrics,
+        scenario="active",
+        metric="omnibus_auprc",
+        direction="higher",
+        replicates=100,
+        seed=18,
+        candidate_arm=alternative,
+    )
+
+    assert record["oriented_mean_improvement"] == pytest.approx(0.1)

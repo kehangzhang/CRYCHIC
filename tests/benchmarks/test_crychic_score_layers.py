@@ -6,6 +6,7 @@ import pytest
 from benchmarks.adapters.crychic.score_layers import (
     SCORE_LAYER_SCHEMA_VERSION,
     build_multigroup_score_layers,
+    sender_response_detection_evidence_score,
     summarize_score_layer,
 )
 
@@ -168,6 +169,23 @@ def test_detection_evidence_soft_penalty_does_not_change_structural_strength() -
     assert set(result["bounded_detection_evidence_reason_code"]) == {
         "mechanism_structural_zero_soft_penalty_detection_only"
     }
+
+
+def test_sender_response_detection_evidence_is_separate_and_preserves_missingness() -> (
+    None
+):
+    score = sender_response_detection_evidence_score(
+        pd.Series([0.2, 0.8, None]),
+        pd.Series([0.6, None, 0.5]),
+    )
+
+    assert score.iloc[0] == pytest.approx(0.24)
+    assert score.iloc[1:].isna().all()
+
+    with pytest.raises(ValueError, match="downstream_weight"):
+        sender_response_detection_evidence_score(
+            pd.Series([0.2]), pd.Series([0.6]), downstream_weight=1.1
+        )
 
 
 def test_required_policy_selects_strict_without_automatic_fallback() -> None:
