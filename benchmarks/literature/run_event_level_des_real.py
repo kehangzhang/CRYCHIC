@@ -40,7 +40,12 @@ SCHEMA_VERSION = "crychic-event-level-des-real-v1"
 CONFIG_SCHEMA_VERSION = "crychic-bounded-event-evidence-config-v1"
 RC11_SCHEMA_VERSION = "crychic-bounded-core-evidence-real-v1"
 COMPONENT_SCHEMA_VERSION = "crychic-component-swap-rc0-v1"
-SCSEQ_SCHEMA_VERSION = "crychic-scseqcommdiff-paper-benchmark-v1"
+SCSEQ_SCHEMA_VERSIONS = frozenset(
+    {
+        "crychic-scseqcommdiff-paper-benchmark-v1",
+        "crychic-scseqcommdiff-paper-benchmark-v2",
+    }
+)
 RESOURCE_SCHEMA_VERSION = "crychic-connectomedb2020-resource-v1"
 CORE_EVENT_FILENAME = "sender_specific_directed_lr_effects.parquet"
 
@@ -182,7 +187,7 @@ def _load_component_sources(
     )
     scseq_manifest = _read_json(scseq_manifest_path)
     if (
-        scseq_manifest.get("schema_version") != SCSEQ_SCHEMA_VERSION
+        scseq_manifest.get("schema_version") not in SCSEQ_SCHEMA_VERSIONS
         or scseq_manifest.get("status") != "complete"
     ):
         raise ValueError("scSeqCommDiff source is not a completed paper run")
