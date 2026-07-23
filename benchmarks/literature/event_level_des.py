@@ -394,6 +394,76 @@ def assert_original_count_parity(
         raise ValueError("rebuilt and native original-count values disagree")
 
 
+def original_count_version_audit(
+    current: pd.DataFrame, historical: pd.DataFrame
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Compare current and historical native count rankings without requiring parity."""
+
+    _validate_pair_axes(current, label="current original count")
+    _validate_pair_axes(historical, label="historical original count")
+    columns = [*PAIR_KEYS, "ranked_strength", "status"]
+    left = current.loc[:, columns].rename(
+        columns={
+            "ranked_strength": "current_ranked_strength",
+            "status": "current_status",
+        }
+    )
+    right = historical.loc[:, columns].rename(
+        columns={
+            "ranked_strength": "historical_ranked_strength",
+            "status": "historical_status",
+        }
+    )
+    audit = left.merge(
+        right,
+        on=list(PAIR_KEYS),
+        how="outer",
+        validate="one_to_one",
+        indicator=True,
+        sort=True,
+    )
+    current_score = pd.to_numeric(audit["current_ranked_strength"], errors="coerce")
+    historical_score = pd.to_numeric(
+        audit["historical_ranked_strength"], errors="coerce"
+    )
+    common = (
+        audit["_merge"].eq("both")
+        & audit["current_status"].astype(str).eq("observed")
+        & audit["historical_status"].astype(str).eq("observed")
+        & current_score.notna()
+        & historical_score.notna()
+    )
+    audit["count_delta_current_minus_historical"] = (
+        current_score - historical_score
+    ).where(common)
+    correlation = (
+        current_score.loc[common].corr(historical_score.loc[common], method="spearman")
+        if int(common.sum()) >= 2
+        else np.nan
+    )
+    delta = audit.loc[common, "count_delta_current_minus_historical"]
+    summary = {
+        "axes_current": len(current),
+        "axes_historical": len(historical),
+        "common_observed_axes": int(common.sum()),
+        "exact_count_axes": int(delta.eq(0.0).sum()),
+        "changed_count_axes": int(delta.ne(0.0).sum()),
+        "current_selected_events": float(current_score.loc[common].sum()),
+        "historical_selected_events": float(historical_score.loc[common].sum()),
+        "max_abs_count_delta": float(delta.abs().max()) if len(delta) else np.nan,
+        "pair_count_spearman": float(correlation) if pd.notna(correlation) else np.nan,
+        "exact_parity": bool(
+            len(current) == len(historical)
+            and int(common.sum()) == len(current)
+            and delta.eq(0.0).all()
+        ),
+    }
+    return (
+        audit.sort_values(list(PAIR_KEYS), kind="stable", ignore_index=True),
+        summary,
+    )
+
+
 def selected_event_diagnostics(
     ledger: pd.DataFrame,
     selections: Mapping[str, pd.Series],
@@ -427,6 +497,7 @@ __all__: Sequence[str] = (
     "assert_original_count_parity",
     "bounded_pair_gate",
     "mechanism_annotations",
+    "original_count_version_audit",
     "pair_rankings_from_events",
     "prepare_crychic_event_ledger",
     "prepare_scseqcommdiff_event_ledger",

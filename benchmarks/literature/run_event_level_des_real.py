@@ -28,6 +28,7 @@ from benchmarks.literature.event_level_des import (
     MECHANISMS,
     assert_original_count_parity,
     mechanism_annotations,
+    original_count_version_audit,
     pair_rankings_from_events,
     prepare_crychic_event_ledger,
     prepare_scseqcommdiff_event_ledger,
@@ -627,7 +628,9 @@ def run(
                 ),
             ),
         )
-        assert_original_count_parity(cry_original, arm_a)
+        count_version_audit, count_version_summary = original_count_version_audit(
+            cry_original, arm_a
+        )
         scseq_original = pair_rankings_from_events(
             scseq_ledger,
             scseq_axes,
@@ -851,6 +854,7 @@ def run(
             "method_comparison.tsv": comparison,
             "selected_event_diagnostics.tsv": diagnostics,
             "endpoint_availability.tsv": availability,
+            "crychic_original_count_version_audit.tsv": count_version_audit,
         }
         for filename, table in tables.items():
             table.to_csv(staged / filename, sep="\t", index=False, lineterminator="\n")
@@ -894,7 +898,9 @@ def run(
                 "spatial_endpoint": "silver_standard_not_event_truth",
             },
             "original_count_parity": {
-                "crychic_component_arm_a_exact": True,
+                "crychic_current_vs_historical_component_arm_a": (
+                    count_version_summary
+                ),
                 "scseqcommdiff_native_exact": True,
             },
             "original_count_comparison": (

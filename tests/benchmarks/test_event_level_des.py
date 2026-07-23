@@ -8,6 +8,7 @@ from benchmarks.literature.event_level_des import (
     assert_original_count_parity,
     bounded_pair_gate,
     mechanism_annotations,
+    original_count_version_audit,
     pair_rankings_from_events,
     prepare_crychic_event_ledger,
     prepare_scseqcommdiff_event_ledger,
@@ -239,6 +240,22 @@ def test_scseq_infinite_logfc_is_countable_but_not_continuously_weighted() -> No
     assert bool(ledger.loc[0, "native_selected"])
     assert bool(ledger.loc[0, "top_k_eligible"])
     assert pd.isna(ledger.loc[0, "continuous_weight"])
+
+
+def test_original_count_version_audit_reports_but_does_not_reject_change() -> None:
+    current = _pair_axes()
+    historical = _pair_axes()
+    current.loc[0, "ranked_strength"] = 7.0
+
+    audit, summary = original_count_version_audit(current, historical)
+
+    assert not summary["exact_parity"]
+    assert summary["changed_count_axes"] == 1
+    assert summary["exact_count_axes"] == 3
+    changed = audit.loc[
+        audit["count_delta_current_minus_historical"].ne(0.0)
+    ].iloc[0]
+    assert changed["count_delta_current_minus_historical"] == 6.0
 
 
 def test_top_k_rejects_an_unavailable_budget() -> None:
