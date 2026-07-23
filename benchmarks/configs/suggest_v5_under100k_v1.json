@@ -1,0 +1,357 @@
+{
+  "schema_version": "crychic-suggest-v5-under100k-contract-v1",
+  "frozen_at": "2026-07-24",
+  "eligibility": {
+    "rule": "observed single-cell count must be strictly less than 100000",
+    "strict_upper_bound": 100000,
+    "synthetic_score_or_tensor_benchmarks_have_cell_count": 0,
+    "downsampling_large_cohorts_does_not_make_them_eligible": true
+  },
+  "benchmarks": [
+    {
+      "benchmark_id": "tensor_cell2cell_planted_12context",
+      "section": "primary_II_1",
+      "kind": "known_truth_tensor_simulation",
+      "observed_single_cells": 0,
+      "eligible": true,
+      "fidelity": "paper_protocol_reconstruction_with_journal_source_data",
+      "design": {
+        "contexts": 12,
+        "ligand_receptor_pairs": 300,
+        "sender_cell_types": 3,
+        "receiver_cell_types": 3,
+        "programs": [
+          "oscillatory",
+          "pulsatile",
+          "exponential_decay",
+          "linear_decrease"
+        ],
+        "noise_levels": [0.0, 0.01, 0.1, 0.25, 0.5, 1.0],
+        "replicates_per_noise_level": 25,
+        "rank": 4
+      },
+      "methods": [
+        "Tensor-cell2cell 0.5.1",
+        "nonnegative CP rank 4"
+      ],
+      "metrics": [
+        "matched context Pearson",
+        "matched context Spearman",
+        "LR Jaccard",
+        "LR AUPRC",
+        "sender top-1 accuracy",
+        "receiver top-1 accuracy",
+        "event AUPRC",
+        "normalized reconstruction error"
+      ],
+      "source": {
+        "paper": "Armingol et al. Nature Communications 2022;13:3665",
+        "doi": "10.1038/s41467-022-31369-2",
+        "pmcid": "PMC9237099",
+        "supplement": "41467_2022_31369_MOESM1_ESM.pdf",
+        "source_data": "41467_2022_31369_MOESM4_ESM.xlsx"
+      }
+    },
+    {
+      "benchmark_id": "staccato_condition_batch_simulation",
+      "section": "primary_II_2",
+      "kind": "known_truth_effect_simulation",
+      "observed_single_cells": 0,
+      "eligible": true,
+      "fidelity": "paper_design_with_public_low_rank_generator",
+      "design": {
+        "samples": 60,
+        "disease_samples": 30,
+        "control_samples": 30,
+        "replicates": 100,
+        "designs": {
+          "balanced": [[15, 15], [15, 15]],
+          "moderate": [[20, 10], [10, 20]],
+          "extreme": [[30, 5], [0, 25]]
+        },
+        "design_cell_order": "rows=batch; columns=control,disease"
+      },
+      "methods": [
+        "STACCato batch-adjusted",
+        "STACCato disease-only",
+        "eventwise OLS batch-adjusted",
+        "eventwise OLS disease-only",
+        "CRYCHIC common-functional contrast"
+      ],
+      "metrics": [
+        "disease-effect MSE",
+        "disease-effect RMSE",
+        "nonzero-effect sign accuracy",
+        "opposite-direction rate",
+        "top-k recovery",
+        "fit failure rate",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Dai et al. STACCato",
+        "preprint_doi": "10.1101/2023.12.15.571918",
+        "pmcid": "PMC10760171",
+        "source_commit": "cb76f2107ca417ceac5f95b584a49b1f90222567"
+      }
+    },
+    {
+      "benchmark_id": "dcst_subject_count_sweep",
+      "section": "primary_II_3",
+      "kind": "known_truth_single_cell_simulation",
+      "observed_single_cells": 90000,
+      "eligible": true,
+      "fidelity": "paper_native_independent_sweep",
+      "design": {
+        "subjects_per_condition": [5, 10, 15, 20, 25, 30, 35, 40, 45],
+        "excluded_subjects_per_condition": [50, 55],
+        "cells_per_cell_type_per_subject": 500,
+        "replicates": 25,
+        "source_bootstrap_R": "subjects_per_condition * 25"
+      },
+      "methods": [
+        "DCST Fisher binary link",
+        "CRYCHIC native continuous score",
+        "CRYCHIC fixed-threshold binary projection"
+      ],
+      "metrics": [
+        "sensitivity",
+        "specificity",
+        "AUPRC",
+        "AUROC",
+        "direction accuracy",
+        "empirical FDR",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Mitchell et al. Bioinformatics 2026;42:btag089",
+        "doi": "10.1093/bioinformatics/btag089",
+        "source_script": "scripts/simulation/simulation_A-B_C1-C2.Rmd",
+        "source_commit": "e37265adcb467244ccf31cbfa05007a512f6e519"
+      }
+    },
+    {
+      "benchmark_id": "dcst_receiver_cell_count_sweep",
+      "section": "primary_II_3",
+      "kind": "known_truth_single_cell_simulation",
+      "observed_single_cells": 40000,
+      "eligible": true,
+      "fidelity": "paper_native_independent_sweep",
+      "design": {
+        "subjects_per_condition": 20,
+        "receiver_cells_in_condition_2": [50, 100, 150, 200, 250, 300, 350, 400, 450, 500],
+        "other_cells_per_cell_type_per_subject": 500,
+        "replicates": 25,
+        "source_bootstrap_R": 500
+      },
+      "methods": [
+        "DCST Fisher binary link",
+        "CRYCHIC native continuous score",
+        "CRYCHIC fixed-threshold binary projection"
+      ],
+      "metrics": [
+        "sensitivity",
+        "specificity",
+        "AUPRC",
+        "AUROC",
+        "direction accuracy",
+        "empirical FDR",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Mitchell et al. Bioinformatics 2026;42:btag089",
+        "doi": "10.1093/bioinformatics/btag089",
+        "source_script": "scripts/simulation/simulation_A-B_C1-C2.Rmd",
+        "source_commit": "e37265adcb467244ccf31cbfa05007a512f6e519"
+      }
+    },
+    {
+      "benchmark_id": "scaccordion_pdac",
+      "section": "primary_III_4",
+      "kind": "patient_graph_phenotype_recovery",
+      "observed_single_cells": 57530,
+      "eligible": true,
+      "fidelity": "paper_processed_patient_graphs",
+      "design": {
+        "samples": 35,
+        "labels": 2,
+        "cell_types": 10,
+        "mean_directed_communications": 75,
+        "cluster_counts": [2, 3, 4, 5, 6, 7],
+        "pdac_retained_fractions": [1.0, 0.75, 0.5, 0.375, 0.25],
+        "downsampling_replicates": 5
+      },
+      "methods": [
+        "scACCorDiON DW-OT",
+        "CORR-OT",
+        "GOT",
+        "tabular PCA",
+        "CRYCHIC canonical event correlation"
+      ],
+      "metrics": [
+        "ARI at true k",
+        "Rand at true k",
+        "maximum ARI over k",
+        "distance-label silhouette",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Nagai et al. Bioinformatics 2025;41:btaf288",
+        "doi": "10.1093/bioinformatics/btaf288",
+        "pmcid": "PMC12122081",
+        "processed_graph_asset": "docs/source/notebooks/PDAC_Data/LR_data",
+        "source_commit": "6f5c1b612b52867743ed5165c347b5714e710d75"
+      }
+    },
+    {
+      "benchmark_id": "scaccordion_kidney_aki",
+      "section": "primary_III_4",
+      "kind": "patient_graph_phenotype_recovery",
+      "observed_single_cells": 76020,
+      "eligible": true,
+      "fidelity": "public_raw_data_reconstruction_required",
+      "design": {
+        "samples": 36,
+        "labels": 3,
+        "cell_types": 13,
+        "mean_directed_communications": 142,
+        "cluster_counts": [2, 3, 4, 5, 6, 7]
+      },
+      "methods": [
+        "scACCorDiON DW-OT",
+        "CORR-OT",
+        "GOT",
+        "tabular PCA",
+        "CRYCHIC canonical event correlation"
+      ],
+      "metrics": [
+        "ARI at true k",
+        "Rand at true k",
+        "maximum ARI over k",
+        "distance-label silhouette",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Lake et al. Nature 2023;619:585-594",
+        "doi": "10.1038/s41586-023-05769-3",
+        "pmcid": "PMC10356613",
+        "cellxgene_collection": "bcb61471-2a44-4d00-a0af-ff085512674c",
+        "paper_processed_graph_record": "restricted Zenodo 10.5281/zenodo.10808382"
+      }
+    },
+    {
+      "benchmark_id": "scaccordion_rcc",
+      "section": "primary_III_4",
+      "kind": "patient_graph_phenotype_recovery",
+      "observed_single_cells": 50236,
+      "eligible": true,
+      "fidelity": "public_raw_data_reconstruction_required",
+      "design": {
+        "samples": 17,
+        "labels": 2,
+        "cell_types": 40,
+        "mean_directed_communications": 1280,
+        "cluster_counts": [2, 3, 4, 5, 6, 7],
+        "annotation_resolutions": ["coarse", "fine"]
+      },
+      "methods": [
+        "scACCorDiON DW-OT",
+        "CORR-OT",
+        "GOT",
+        "tabular PCA",
+        "CRYCHIC canonical event correlation"
+      ],
+      "metrics": [
+        "ARI at true k",
+        "Rand at true k",
+        "maximum ARI over k",
+        "coarse-fine distance correlation",
+        "runtime",
+        "peak memory"
+      ],
+      "source": {
+        "paper": "Zvirblyte et al. Communications Biology 2024;7:780",
+        "doi": "10.1038/s42003-024-06478-x",
+        "pmcid": "PMC11213875",
+        "geo": "GSE242299",
+        "paper_processed_graph_record": "restricted Zenodo 10.5281/zenodo.10808382"
+      }
+    },
+    {
+      "benchmark_id": "signed_estimand_contract",
+      "section": "later_II",
+      "kind": "deterministic_contract",
+      "observed_single_cells": 0,
+      "eligible": true,
+      "fidelity": "native_clean_source_rerun",
+      "design": {
+        "hand_calculated_cases": 15,
+        "invariance_checks": 11
+      },
+      "methods": ["CRYCHIC public design and OOF inference APIs"],
+      "metrics": [
+        "case pass rate",
+        "invariance pass rate",
+        "maximum absolute error",
+        "clean Git provenance"
+      ],
+      "source": {
+        "benchmark_module": "benchmarks/comprehensive/signed_estimand_contract.py"
+      }
+    },
+    {
+      "benchmark_id": "score_generator_engine_crossover",
+      "section": "later_III",
+      "kind": "known_truth_component_crossover",
+      "observed_single_cells": 0,
+      "eligible": true,
+      "fidelity": "same_seed_common_universe",
+      "design": {
+        "replicates": 20,
+        "score_generators": [
+          "CRYCHIC native",
+          "CRYCHIC availability",
+          "CRYCHIC availability plus prior",
+          "CRYCHIC sender-response",
+          "CRYCHIC downstream-support",
+          "LIANA magnitude",
+          "CellChat probability",
+          "CellPhoneDB mean",
+          "simple ligand-receptor mean",
+          "simple ligand-receptor product"
+        ],
+        "differential_engines": [
+          "common sample-level GLM",
+          "common clustered CR2",
+          "STACCato",
+          "CRYCHIC common-functional OOF",
+          "scSeqCommDiff multi-sample"
+        ]
+      },
+      "methods": ["all estimable generator by engine combinations"],
+      "metrics": [
+        "AUPRC",
+        "AUROC",
+        "effect RMSE",
+        "direction accuracy",
+        "empirical FDR",
+        "coverage",
+        "failure rate",
+        "runtime"
+      ],
+      "source": {
+        "benchmark_module": "benchmarks/comprehensive/evaluate_component_crossover.py"
+      }
+    }
+  ],
+  "excluded_scaccordion_cohorts": [
+    {"dataset": "COVID-19", "observed_single_cells": 647366},
+    {"dataset": "myocardial_infarction", "observed_single_cells": 132888},
+    {"dataset": "breast_cancer", "observed_single_cells": 714331},
+    {"dataset": "lung_atlas", "observed_single_cells": 941504}
+  ]
+}
