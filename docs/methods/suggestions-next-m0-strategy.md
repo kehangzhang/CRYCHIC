@@ -1,8 +1,9 @@
 # CRYCHIC suggestions-next M0 optimization strategy
 
-Status: accepted on the locked expression-driven validation fixture, but still
-experimental and benchmark-only. This document does not change the public
-default score or enable formal inference.
+Status: the bounded M0--M5 experimental cycle is accepted on its locked
+fixtures. It remains benchmark-only, does not change the public default, and
+does not enable formal inference. The final evidence matrix is in
+`benchmarks/results/SUGGESTIONS_NEXT_M0_M5_COMPLETION_AUDIT_20260724.md`.
 
 ## Objective
 
@@ -11,10 +12,11 @@ The first optimization cycle addresses the failure mode identified in
 absolute cross-sample LR intensity and global negative-event ordering. RC12 and
 RC14 remain frozen diagnostic baselines.
 
-The cycle changes one statistical mechanism only: it introduces a bounded,
+M0 changes one statistical mechanism only: it introduces a bounded,
 log-additive absolute ligand/receptor activity head and separates sender
-detection from conditional sender attribution. Downstream programs, inference,
-and hypergraph regularization remain unchanged.
+detection from conditional sender attribution. The later sections record the
+separately frozen M1, M2, M4, and M5 cycles; none was back-propagated into an
+earlier locked candidate.
 
 ## Root-cause evidence
 
