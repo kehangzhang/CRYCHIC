@@ -1,0 +1,102 @@
+{
+  "schema_version": "crychic-suggestions-next-m5-rewiring-config-v1",
+  "candidate": {
+    "name": "crychic_m5_rewiring_robustness",
+    "base_method": "crychic_m5_full_hypergraph_prior",
+    "score_version": "additive_incidence_ridge_m5_v1",
+    "node_ridge_penalty": 1.0,
+    "edge_residual_penalty": 1.0,
+    "view_columns": [
+      "sender",
+      "ligand",
+      "receptor",
+      "receiver",
+      "pathway"
+    ],
+    "rewire_fractions": [
+      0.1,
+      0.25,
+      0.5
+    ],
+    "gated_rewire_fractions": [
+      0.1,
+      0.25
+    ],
+    "rewire_seed_base": 20260740,
+    "full_permutation_seed": 8675309,
+    "rewire_policy": "shared_edge_subset_independent_view_derangement_exact_degree_match",
+    "tuned_parameters": 0,
+    "formal_inference_allowed": false
+  },
+  "claim_boundary": {
+    "base_m5_formula_is_unchanged": true,
+    "rewiring_is_outcome_blind": true,
+    "every_view_degree_profile_is_preserved": true,
+    "fifty_percent_rewiring_is_diagnostic_only": true,
+    "no_p_q_or_probability_is_emitted": true,
+    "synthetic_robustness_is_not_real_data_evidence": true
+  },
+  "development": {
+    "seeds": [
+      20290101,
+      20290102,
+      20290103,
+      20290104,
+      20290105,
+      20290106,
+      20290107,
+      20290108,
+      20290109,
+      20290110,
+      20290111,
+      20290112,
+      20290113,
+      20290114,
+      20290115,
+      20290116,
+      20290117,
+      20290118,
+      20290119,
+      20290120
+    ],
+    "fixture_manifest_sha256": "b6bbd440b8ef933481cfdc92f13b708e485a05e35bf2616cb68db3daa1b1d4d0",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260732
+  },
+  "validation": {
+    "seeds": [
+      20290901,
+      20290902,
+      20290903,
+      20290904,
+      20290905,
+      20290906,
+      20290907,
+      20290908,
+      20290909,
+      20290910,
+      20290911,
+      20290912,
+      20290913,
+      20290914,
+      20290915,
+      20290916,
+      20290917,
+      20290918,
+      20290919,
+      20290920
+    ],
+    "fixture_manifest_sha256": "PENDING_VALIDATION_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260733
+  },
+  "gates": {
+    "maximum_edge_fraction_absolute_error": 0.001,
+    "minimum_gain_retention": {
+      "degree_matched_partial_rewire_10pct": 0.7,
+      "degree_matched_partial_rewire_25pct": 0.5
+    }
+  }
+}
