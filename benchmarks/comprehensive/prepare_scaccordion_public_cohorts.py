@@ -190,16 +190,22 @@ def _write_sample_h5ads(
     for sample_id in sorted(selected_obs[sample_column].astype(str).unique()):
         local_mask = selected_obs[sample_column].astype(str).eq(sample_id).to_numpy()
         local_positions = positions[local_mask]
-        memory = adata[local_positions, :].copy()
-        frame = pd.DataFrame(index=memory.obs_names.copy())
+        local_obs = adata.obs.iloc[local_positions]
+        frame = pd.DataFrame(index=adata.obs_names[local_positions].copy())
         frame["sample_id"] = sample_id
-        labels = memory.obs[label_column].astype(str).unique()
+        labels = local_obs[label_column].astype(str).unique()
         if len(labels) != 1:
             raise ValueError(f"sample {sample_id} has multiple labels")
         frame["label"] = labels[0]
         for output_column, source_column in annotation_columns.items():
-            frame[output_column] = memory.obs[source_column].astype(str).to_numpy()
-        prepared = ad.AnnData(X=memory.X.copy(), obs=frame, var=memory.var.copy())
+            frame[output_column] = local_obs[source_column].astype(str).to_numpy()
+        # Slice only the inferential matrix.  A full AnnData copy also deep-copies
+        # unrelated ``uns`` payloads, which can exceed the expression matrix.
+        prepared = ad.AnnData(
+            X=adata.X[local_positions, :].copy(),
+            obs=frame,
+            var=adata.var.copy(),
+        )
         prepared.var_names = names.copy()
         prepared.var_names_make_unique()
         prepared.var.index.name = None
@@ -363,7 +369,7 @@ def run(args: argparse.Namespace) -> int:
         ),
         "dimensions": {
             "cells": total_cells,
-            "samples": int(len(metadata)),
+            "samples": len(metadata),
             "labels": metadata["label"].value_counts().sort_index().to_dict(),
             "features": int(metadata["feature_count"].iloc[0]),
         },
