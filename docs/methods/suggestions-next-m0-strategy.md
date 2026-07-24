@@ -1,7 +1,8 @@
 # CRYCHIC suggestions-next M0 optimization strategy
 
-Status: experimental, benchmark-only candidate. This document does not change
-the public default score or enable formal inference.
+Status: accepted on the locked expression-driven validation fixture, but still
+experimental and benchmark-only. This document does not change the public
+default score or enable formal inference.
 
 ## Objective
 
@@ -107,3 +108,32 @@ All intervals use paired bootstrap over simulation seed, never over event rows.
 
 After this gate, the next single-mechanism cycles are signed downstream M1,
 residualized coupling M2, occurrence M4, and frozen hypergraph shrinkage M5.
+
+## Locked validation result
+
+The preregistered validation fixture used fresh seeds 20261201--20261220,
+8/10/12 independent subjects per condition, and a mean of 180 cells per
+sample. The fixture manifest SHA256 is
+`afbf43f29ed2e9214ef0e920efb4751dc05f97bc3eaff506be0efea48e28ac6c`.
+All 40 legacy CRYCHIC runs were generated from clean implementation commit
+`209e6a3`; the source-evaluation manifest SHA256 is
+`a725ef7a854dfda7a201d24b7c2139bad87670a0fd6e7cc4e4024f2b0669efd6`.
+
+M0 passed every preregistered gate (`ACCEPT`): AUPRC 0.6112, AUROC 0.9472,
+localization AP 0.6578, direction accuracy 1.0000, zero fraction 0, and tie
+fraction 0.0074. Relative to RC12, the paired seed AUPRC delta was +0.4452
+(95% CI [0.3927, 0.4912]) and AUROC delta was +0.3980 (95% CI
+[0.3188, 0.4752]); both won all 20 seeds. The validation manifest SHA256 is
+`b0378ed07dab013991b5c613473fa5344f66bcfb7f1d6239992d69a63bd90c31`.
+
+On the same fixture and H-common resource, an external panel of CellChat,
+LIANA, and scSeqCommDiff also completed. M0 ranked 1/5 on prevalence-adjusted
+AP (0.6859), AUPRC (0.6112), AUROC (0.9472), localization AP (0.6578),
+direction accuracy (1.0000), and effect Spearman (0.3614). The external-panel
+evaluation manifest SHA256 is
+`85e0de732dd1c147b9137685187d5c29481c150381cd9f3c66e0ab78b39f3db8`.
+
+This is evidence for the score geometry on an expression-driven mechanism
+family only. It is not a general SOTA claim and does not establish behavior on
+ligand-only, receptor-only, generic-downstream, inhibitory, occurrence,
+decoy-sender, complex-AND, confounding, or hypergraph-prior mechanisms.
