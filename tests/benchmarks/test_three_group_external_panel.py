@@ -101,6 +101,17 @@ def test_build_tasks_rejects_unknown_method(tmp_path: Path) -> None:
         build_tasks(fixture, tmp_path / "runs", methods=("unknown",))
 
 
+def test_build_tasks_supports_optional_cellphonedb(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    tasks, _ = build_tasks(
+        fixture, tmp_path / "runs", methods=("cellphonedb",)
+    )
+
+    assert len(tasks) == 1
+    assert tasks[0].method == "cellphonedb"
+    assert tasks[0].contrast is None
+
+
 def test_completed_task_requires_clean_code_and_input_binding(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     tasks, _ = build_tasks(fixture, tmp_path / "runs", methods=("cellchat",))

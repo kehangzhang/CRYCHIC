@@ -20,6 +20,8 @@ from benchmarks.adapters.common import json_safe, sha256_file
 SCHEMA_VERSION = "crychic-three-group-external-panel-v1"
 FIXTURE_SCHEMA_VERSION = "crychic-three-group-fixture-v2"
 METHODS = ("cellchat", "liana", "scseqcommdiff")
+OPTIONAL_METHODS = ("cellphonedb",)
+SUPPORTED_METHODS = (*METHODS, *OPTIONAL_METHODS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +35,7 @@ class PanelSettings:
     max_workers: int = 16
     memory_limit_percent: float = 70.0
     task_threads: int = 8
+    cellphonedb_python: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +137,7 @@ def build_tasks(
 ) -> tuple[list[PanelTask], dict[str, Any]]:
     """Build and validate the immutable external-method execution matrix."""
 
-    invalid = set(methods).difference(METHODS)
+    invalid = set(methods).difference(SUPPORTED_METHODS)
     if invalid or not methods:
         raise ValueError(f"unsupported or empty method set: {sorted(invalid)}")
     fixture_dir = fixture_dir.resolve()
@@ -302,6 +305,24 @@ def _build_command(
             str(settings.task_threads),
             "--min-cells",
             "10",
+        ]
+    if task.method == "cellphonedb":
+        if settings.cellphonedb_python is None:
+            raise ValueError("cellphonedb tasks require cellphonedb_python")
+        return [
+            str(settings.cellphonedb_python),
+            "-m",
+            "benchmarks.adapters.cellphonedb.run_by_sample",
+            *common,
+            "--database-root",
+            str(settings.database_root),
+            *harmonized,
+            "--min-cells",
+            "10",
+            "--iterations",
+            "100",
+            "--threads",
+            str(settings.task_threads),
         ]
     if task.target is None or task.reference is None:
         raise ValueError(f"scSeqCommDiff task lacks a contrast: {task.task_id}")
@@ -492,6 +513,16 @@ def run_panel(
     ):
         if not executable.is_file() or not os.access(executable, os.X_OK):
             raise FileNotFoundError(f"required executable is unavailable: {executable}")
+    if "cellphonedb" in methods:
+        executable = settings.cellphonedb_python
+        if (
+            executable is None
+            or not executable.is_file()
+            or not os.access(executable, os.X_OK)
+        ):
+            raise FileNotFoundError(
+                f"required CellPhoneDB executable is unavailable: {executable}"
+            )
     if not settings.database_root.is_dir():
         raise FileNotFoundError(settings.database_root)
 
@@ -565,6 +596,11 @@ def run_panel(
             "python": str(settings.python.resolve()),
             "liana_python": str(settings.liana_python.resolve()),
             "scseq_rscript": str(settings.scseq_rscript.resolve()),
+            "cellphonedb_python": (
+                str(settings.cellphonedb_python.resolve())
+                if settings.cellphonedb_python is not None
+                else None
+            ),
         },
         "methods": list(methods),
         "task_count": len(tasks),
@@ -578,7 +614,7 @@ def run_panel(
 
 def _parse_methods(value: str) -> tuple[str, ...]:
     methods = tuple(item.strip() for item in value.split(",") if item.strip())
-    invalid = set(methods).difference(METHODS)
+    invalid = set(methods).difference(SUPPORTED_METHODS)
     if invalid or not methods:
         raise argparse.ArgumentTypeError(f"invalid methods: {sorted(invalid)}")
     return methods
@@ -595,6 +631,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--liana-python", type=Path, required=True)
     parser.add_argument("--cellchat-environment", required=True)
     parser.add_argument("--scseq-rscript", type=Path, required=True)
+    parser.add_argument("--cellphonedb-python", type=Path)
     parser.add_argument("--methods", type=_parse_methods, default=METHODS)
     parser.add_argument("--max-workers", type=int, default=16)
     parser.add_argument("--memory-limit-percent", type=float, default=70.0)
@@ -614,6 +651,7 @@ def main() -> int:
         max_workers=args.max_workers,
         memory_limit_percent=args.memory_limit_percent,
         task_threads=args.task_threads,
+        cellphonedb_python=args.cellphonedb_python,
     )
     manifest = run_panel(
         args.fixture_dir,
