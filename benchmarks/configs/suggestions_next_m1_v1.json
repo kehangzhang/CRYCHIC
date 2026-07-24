@@ -1,0 +1,86 @@
+{
+  "schema_version": "crychic-suggestions-next-m1-config-v1",
+  "candidate": {
+    "name": "crychic_m1_signed_program_concordance",
+    "score_version": "signed_geometric_program_concordance_m1_v1",
+    "absolute_expression_reference": 1000000.0,
+    "program_transform": "weighted_mean_clip_log1p_cpm_over_log1p_1000000",
+    "concordance_formula": "sign(lr_effect)*sqrt(abs(lr_effect)*abs(aligned_program_effect))_when_same_direction_else_zero",
+    "tuned_parameters": 0,
+    "m0_activity_is_retained_separately": true,
+    "mechanism_support_is_contrast_diagnostic": true,
+    "formal_inference_allowed": false
+  },
+  "claim_boundary": {
+    "experimental_head_only": true,
+    "m0_parent_activity_is_not_replaced": true,
+    "active_inhibition_is_not_claimed": true,
+    "probability_is_not_emitted": true,
+    "p_and_q_values_are_not_emitted": true,
+    "mechanism_family_fixture_is_not_general_sota_evidence": true
+  },
+  "development": {
+    "seeds": [
+      20270101,
+      20270102,
+      20270103,
+      20270104,
+      20270105,
+      20270106,
+      20270107,
+      20270108,
+      20270109,
+      20270110,
+      20270111,
+      20270112,
+      20270113,
+      20270114,
+      20270115,
+      20270116,
+      20270117,
+      20270118,
+      20270119,
+      20270120
+    ],
+    "fixture_manifest_sha256": "d2f0fbd3f5632757b52592c67b9c48e772cde31b92a78e8988b6e2d6303b3bab",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260724
+  },
+  "validation": {
+    "seeds": [
+      20270501,
+      20270502,
+      20270503,
+      20270504,
+      20270505,
+      20270506,
+      20270507,
+      20270508,
+      20270509,
+      20270510,
+      20270511,
+      20270512,
+      20270513,
+      20270514,
+      20270515,
+      20270516,
+      20270517,
+      20270518,
+      20270519,
+      20270520
+    ],
+    "fixture_manifest_sha256": "PENDING_FRESH_VALIDATION_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260725
+  },
+  "gates": {
+    "average_precision_delta_ci_lower_minimum_exclusive": 0.0,
+    "auroc_delta_ci_lower_minimum_exclusive": 0.0,
+    "minimum_active_retention_fraction": 0.95,
+    "maximum_median_active_rank": 1.0,
+    "maximum_partial_to_active_ratio": 0.25,
+    "minimum_event_coverage": 1.0
+  }
+}
