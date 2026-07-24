@@ -95,6 +95,7 @@ packages = ["src/crychic"]
 "schemas/differential.schema.json" = "crychic/schemas/differential.schema.json"
 "schemas/responses.schema.json" = "crychic/schemas/responses.schema.json"
 "schemas/sample_scores.schema.json" = "crychic/schemas/sample_scores.schema.json"
+"schemas/sample_edge_scores_v2.schema.json" = "crychic/schemas/sample_edge_scores_v2.schema.json"
 "schemas/signatures.schema.json" = "crychic/schemas/signatures.schema.json"
 "schemas/specificity_support.schema.json" = "crychic/schemas/specificity_support.schema.json"
 "schemas/active_probability_result.schema.json" = "crychic/schemas/active_probability_result.schema.json"

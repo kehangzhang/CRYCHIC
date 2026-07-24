@@ -131,6 +131,15 @@ from .receiver_program import (
     mark_receiver_program_application_not_estimable,
     mark_receiver_program_training_not_estimable,
 )
+from .sample_edge_v2 import (
+    SAMPLE_EDGE_SCORE_V2_COLUMNS,
+    SAMPLE_EDGE_SCORE_V2_SCHEMA_VERSION,
+    SampleEdgeCoverageStatus,
+    SampleEdgeHeadStatus,
+    SampleEdgeScoreV2,
+    SampleEdgeScoreV2Provenance,
+    SampleEdgeValueStatus,
+)
 
 __all__ = [
     "ABSOLUTE_ACTIVITY_HEAD_COLUMNS",
@@ -151,6 +160,8 @@ __all__ = [
     "INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT",
     "LEGACY_UNTRACKED_SCORE_VERSION",
     "RECEIVER_PROGRAM_SCORE_COLUMNS",
+    "SAMPLE_EDGE_SCORE_V2_COLUMNS",
+    "SAMPLE_EDGE_SCORE_V2_SCHEMA_VERSION",
     "SCORING_COLLECTION_AUTHORITATIVE_PLAN_STATUS",
     "SCORING_COLLECTION_DERIVED_PLAN_STATUS",
     "SCORING_COLLECTION_DERIVED_REGISTRY_VERSION",
@@ -193,6 +204,11 @@ __all__ = [
     "ReceiverProgramApplication",
     "ReceiverProgramTrainingArtifact",
     "ReceiverScoringFunctionalManifest",
+    "SampleEdgeCoverageStatus",
+    "SampleEdgeHeadStatus",
+    "SampleEdgeScoreV2",
+    "SampleEdgeScoreV2Provenance",
+    "SampleEdgeValueStatus",
     "ScoringCollectionDocument",
     "ScoringCollectionManifest",
     "ScoringFunctional",

@@ -70,6 +70,13 @@ from .g3p_calibration import (
     write_g3p_calibration_result,
 )
 from .persistence import write_result
+from .sample_edge_v2 import (
+    SAMPLE_EDGE_SCORE_V2_ARTIFACT_KIND,
+    SAMPLE_EDGE_SCORE_V2_FILENAME,
+    SAMPLE_EDGE_SCORE_V2_MANIFEST_FILENAME,
+    SampleEdgeScoreV2Artifact,
+    write_sample_edge_score_v2,
+)
 
 __all__ = [
     "ACTIVE_PROBABILITY_ARTIFACT_KIND",
@@ -96,6 +103,9 @@ __all__ = [
     "G3P_CALIBRATION_RESULT_SCHEMA_VERSION",
     "G3P_CALIBRATION_SCENARIO_TABLE",
     "RESULT_SCHEMA_VERSION",
+    "SAMPLE_EDGE_SCORE_V2_ARTIFACT_KIND",
+    "SAMPLE_EDGE_SCORE_V2_FILENAME",
+    "SAMPLE_EDGE_SCORE_V2_MANIFEST_FILENAME",
     "SCORING_COLLECTION_EXTENSION_NAME",
     "SCORING_COLLECTION_EXTENSION_VERSION",
     "SELECTION_FREQUENCY_TABLE",
@@ -111,6 +121,7 @@ __all__ = [
     "ResultError",
     "ResultValidationError",
     "ResultWriteError",
+    "SampleEdgeScoreV2Artifact",
     "bootstrap_support_contract",
     "edge_evidence_contract",
     "empty_table",
@@ -130,4 +141,5 @@ __all__ = [
     "write_g3f_calibration_result",
     "write_g3p_calibration_result",
     "write_result",
+    "write_sample_edge_score_v2",
 ]
