@@ -66,6 +66,7 @@ from crychic.response.repeated_fold import RepeatedMeasuresFoldResponseArtifact
 from crychic.results import ResultValidationError, ResultWriteError
 from crychic.scoring import (
     SCORING_COLLECTION_FOLD_LOCAL_AUTHORITATIVE_VERSION,
+    AbsoluteActivityV2Spec,
     FrozenLatentNuisanceSpec,
     PlannedScoringCollectionManifest,
     ReceiverScoringFunctionalManifest,
@@ -79,6 +80,7 @@ from crychic.sender import CommonSenderApplication, ContrastCommonSenderParamete
 from crychic.workflow import (
     CrossFitArtifacts,
     CrossFitResult,
+    CrossFitSampleEdgeV2Result,
     CrossFitSpec,
     FamilyEffectTarget,
     FoldTrainingSpec,
@@ -95,6 +97,7 @@ from crychic.workflow import (
     run_subject_crossfit,
     summarize_family_effect_full_pipeline,
     write_crossfit_result,
+    write_crossfit_sample_edge_v2_result,
 )
 from crychic.workflow.certification import (
     CROSSFIT_OOF_DESCRIPTIVE_SCOPE,
@@ -1137,6 +1140,59 @@ def _run(adata: AnnData):
         _bundle(),
         _prior(),
         spec=_spec(),
+    )
+
+
+def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
+    tmp_path: Path,
+) -> None:
+    legacy = _spec()
+    v7_spec = replace(
+        legacy,
+        absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
+    )
+
+    assert "absolute_activity_v2_spec" not in legacy.to_dict()
+    assert v7_spec.spec_id != legacy.spec_id
+    result = run_subject_crossfit(
+        _adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=v7_spec,
+    )
+
+    scores = result.oof_sample_edge_scores_v2
+    assert not scores.empty
+    assert set(scores["subject_id"]) == {"p1", "p2", "p3", "p4"}
+    assert scores["out_of_fold"].all()
+    assert scores["sender_detection_raw"].notna().any()
+    assert not scores["structural_impossibility"].any()
+    for fold in result.folds:
+        transform = fold.absolute_activity_v2_transform
+        fold_scores = fold.sample_edge_scores_v2
+        assert transform is not None
+        assert fold_scores is not None
+        assert transform.spec.spec_id == v7_spec.absolute_activity_v2_spec.spec_id
+        assert not set(transform.training_subject_ids).intersection(
+            fold_scores.provenance.application_subject_ids
+        )
+        availability = fold.application.availability.sample_interactions
+        assert len(fold_scores.table) == len(availability)
+        assert set(fold_scores.table["activity_functional_id"]) == {
+            fold_scores.provenance.provenance_id
+        }
+    manifest = result.to_manifest()
+    assert manifest["absolute_activity_v2_stage_connected"] is True
+    assert manifest["absolute_activity_v2_score_rows"] == len(scores)
+    assert manifest["absolute_activity_v2_formal_inference_eligible"] is False
+    persisted = write_crossfit_sample_edge_v2_result(
+        result, tmp_path / "sample-edge-v2"
+    )
+    loaded = CrossFitSampleEdgeV2Result.load(persisted.path)
+    assert loaded.manifest["crossfit_id"] == result.crossfit_id
+    assert sum(len(child.scores.table) for child in loaded.fold_artifacts) == len(
+        scores
     )
 
 

@@ -185,6 +185,12 @@ from .resampled_attribution import (
     ResampledFamilySelectionEvent,
     summarize_resampled_family_selection,
 )
+from .sample_edge_v2_persistence import (
+    CROSSFIT_SAMPLE_EDGE_V2_ARTIFACT_KIND,
+    CROSSFIT_SAMPLE_EDGE_V2_SCHEMA_VERSION,
+    CrossFitSampleEdgeV2Result,
+    write_crossfit_sample_edge_v2_result,
+)
 from .semantic_scores import (
     SemanticScoreCollection,
     build_crossfit_semantic_scores,
@@ -200,6 +206,8 @@ from .signature_export import (
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
 
 __all__ = [
+    "CROSSFIT_SAMPLE_EDGE_V2_ARTIFACT_KIND",
+    "CROSSFIT_SAMPLE_EDGE_V2_SCHEMA_VERSION",
     "ActiveNullPlanRequest",
     "ActiveNullRerunRecord",
     "ActiveNullRerunResult",
@@ -221,6 +229,7 @@ __all__ = [
     "CrossFitOOFCertificationAudit",
     "CrossFitOOFRequirementRecord",
     "CrossFitResult",
+    "CrossFitSampleEdgeV2Result",
     "CrossFitSpec",
     "DirectionalCrossFitBinding",
     "DirectionalIntegratedLRCollection",
@@ -341,5 +350,6 @@ __all__ = [
     "validate_recommended_crossfit_spec",
     "write_baseline_result",
     "write_crossfit_result",
+    "write_crossfit_sample_edge_v2_result",
     "write_directional_integrated_lr_result",
 ]

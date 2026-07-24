@@ -24,9 +24,10 @@ import traceback
 from collections.abc import Callable, Hashable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar, cast
 
 import numpy as np
 import pandas as pd
@@ -107,6 +108,9 @@ from crychic.response.repeated_fold import (
 )
 from crychic.scoring import (
     FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS,
+    SAMPLE_EDGE_SCORE_V2_COLUMNS,
+    AbsoluteActivityV2Spec,
+    AbsoluteActivityV2Transform,
     CrossReceiverCommonScoringApplication,
     CrossReceiverCommonScoringFunctional,
     FamilyCommonScoringApplication,
@@ -118,14 +122,17 @@ from crychic.scoring import (
     ReceiverProgramApplication,
     ReceiverProgramTrainingArtifact,
     ReceiverScoringFunctionalManifest,
+    SampleEdgeScoreV2,
     ScoringCollectionDocument,
     ScoringCollectionManifest,
+    apply_absolute_activity_v2_transform,
     apply_cross_receiver_common_scoring_functional,
     apply_family_common_scoring_functional,
     apply_receiver_family_scoring_artifact,
     apply_receiver_program_training_artifact,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
+    fit_absolute_activity_v2_transform,
     fit_cross_receiver_common_scoring_functional,
     fit_family_common_scoring_functional,
     fit_receiver_family_scoring_artifact,
@@ -541,6 +548,7 @@ class CrossFitSpec:
     )
     penalty_tuning_spec: PenaltyTuningSpec | None = None
     gain_calibration_spec: GainCalibrationSpec | None = None
+    absolute_activity_v2_spec: AbsoluteActivityV2Spec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -672,6 +680,7 @@ class CrossFitSpec:
         minimum_scale = float(self.downstream_minimum_scale)
         autonomous_resource = self.autonomous_program_resource
         latent_nuisance_spec = self.latent_nuisance_spec
+        absolute_activity_v2_spec = self.absolute_activity_v2_spec
         autonomous_use_scope = self.autonomous_program_use_scope
         if not isinstance(autonomous_use_scope, str) or autonomous_use_scope not in {
             "algorithm_diagnostic",
@@ -702,6 +711,12 @@ class CrossFitSpec:
                     "latent_nuisance_spec must be a FrozenLatentNuisanceSpec"
                 )
             latent_nuisance_spec._require_intact()
+        if absolute_activity_v2_spec is not None and not isinstance(
+            absolute_activity_v2_spec, AbsoluteActivityV2Spec
+        ):
+            raise TypeError(
+                "absolute_activity_v2_spec must be AbsoluteActivityV2Spec or None"
+            )
         tuning_spec = self.penalty_tuning_spec
         if tuning_spec is not None:
             if not isinstance(tuning_spec, PenaltyTuningSpec):
@@ -747,6 +762,8 @@ class CrossFitSpec:
             payload["autonomous_program_resource_id"] = autonomous_resource.artifact_id
         if latent_nuisance_spec is not None:
             payload["latent_nuisance_spec_id"] = latent_nuisance_spec.spec_id
+        if absolute_activity_v2_spec is not None:
+            payload["absolute_activity_v2_spec_id"] = absolute_activity_v2_spec.spec_id
         if autonomous_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
             payload["autonomous_program_use_scope"] = autonomous_use_scope
         if tuning_spec is not None:
@@ -769,6 +786,9 @@ class CrossFitSpec:
         object.__setattr__(self, "downstream_minimum_scale", minimum_scale)
         object.__setattr__(self, "autonomous_program_resource", autonomous_resource)
         object.__setattr__(self, "latent_nuisance_spec", latent_nuisance_spec)
+        object.__setattr__(
+            self, "absolute_activity_v2_spec", absolute_activity_v2_spec
+        )
         object.__setattr__(
             self,
             "autonomous_program_use_scope",
@@ -832,6 +852,10 @@ class CrossFitSpec:
             ]
         if self.predeclared_receiver_ids is not None:
             result["predeclared_receiver_ids"] = list(self.predeclared_receiver_ids)
+        if self.absolute_activity_v2_spec is not None:
+            result["absolute_activity_v2_spec"] = (
+                self.absolute_activity_v2_spec.to_dict()
+            )
         if self.outer_fold_partition_seed is not None:
             result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
         if self.autonomous_program_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
@@ -861,6 +885,7 @@ class CrossFitSpec:
                 autonomous_program_use_scope=self.autonomous_program_use_scope,
                 penalty_tuning_spec=self.penalty_tuning_spec,
                 gain_calibration_spec=self.gain_calibration_spec,
+                absolute_activity_v2_spec=self.absolute_activity_v2_spec,
                 schema_version=self.schema_version,
             )
             valid = (
@@ -879,6 +904,16 @@ class CrossFitSpec:
                 and self.allowed_n_splits == repeated.allowed_n_splits
                 and self.autonomous_program_use_scope
                 == repeated.autonomous_program_use_scope
+                and (
+                    None
+                    if self.absolute_activity_v2_spec is None
+                    else self.absolute_activity_v2_spec.spec_id
+                )
+                == (
+                    None
+                    if repeated.absolute_activity_v2_spec is None
+                    else repeated.absolute_activity_v2_spec.spec_id
+                )
                 and (
                     None
                     if self.latent_nuisance_spec is None
@@ -928,6 +963,31 @@ def _outer_fold_partition_lineage(
         "subject_crossfit_outer_partition_v1",
         f"repeat={spec.repeat_index}",
     )
+
+
+def _absolute_activity_seed_lineage_id(
+    spec: CrossFitSpec,
+    fold: FoldManifest,
+) -> str:
+    lineage = _outer_fold_partition_lineage(spec)
+    return stable_id(
+        "absolute_activity_v2_seed_lineage",
+        {
+            "fold_id": fold.fold_id,
+            "partition_seed_lineage": (
+                None if lineage is None else lineage.to_dict()
+            ),
+            "spec_id": spec.spec_id,
+        },
+        schema_version="1",
+    )
+
+
+def _package_version() -> str:
+    try:
+        return str(version("CRYCHIC"))
+    except PackageNotFoundError:
+        return "0.0.0"
 
 
 def _inner_tuning_partition_base_lineage(
@@ -1306,6 +1366,8 @@ class CrossFitFoldArtifacts:
     family_common_functionals: tuple[FamilyCommonScoringFunctional, ...]
     family_common_applications: tuple[FamilyCommonScoringApplication, ...]
     family_common_bindings: tuple[_FamilyCommonCrossFitBinding, ...]
+    absolute_activity_v2_transform: AbsoluteActivityV2Transform | None = None
+    sample_edge_scores_v2: SampleEdgeScoreV2 | None = None
     directional_response_bindings: tuple[DirectionalCrossFitBinding, ...] = ()
     cross_receiver_common_functionals: tuple[
         CrossReceiverCommonScoringFunctional, ...
@@ -1328,6 +1390,82 @@ class CrossFitFoldArtifacts:
         self.application._require_intact()
         if self.application.training_artifact_id != self.training.training_artifact_id:
             raise ValueError("fold application is not bound to its training artifacts")
+        activity_transform = self.absolute_activity_v2_transform
+        activity_scores = self.sample_edge_scores_v2
+        if (activity_transform is None) != (activity_scores is None):
+            raise ValueError(
+                "absolute-activity transform and sample-edge scores must coexist"
+            )
+        if activity_transform is not None and activity_scores is not None:
+            if not isinstance(activity_transform, AbsoluteActivityV2Transform):
+                raise TypeError(
+                    "absolute_activity_v2_transform must be AbsoluteActivityV2Transform"
+                )
+            if not isinstance(activity_scores, SampleEdgeScoreV2):
+                raise TypeError("sample_edge_scores_v2 must be SampleEdgeScoreV2")
+            provenance = activity_scores.provenance
+            if (
+                activity_transform.fold_id != self.fold_id
+                or activity_transform.training_subject_ids
+                != self.training.training_subject_ids
+                or activity_transform.training_input_digest
+                != self.training.training_input_digest
+                or activity_transform.interaction_universe_id
+                != self.training.frozen_interaction_universe.filter_universe_id
+                or activity_transform.resource_id
+                != self.training.resource_bundle.resource_id
+                or activity_transform.resource_version
+                != self.training.resource_bundle.version
+                or activity_transform.resource_manifest_digest
+                != self.training.resource_bundle.manifest_digest
+            ):
+                raise ValueError(
+                    "absolute-activity transform does not match fold training lineage"
+                )
+            if (
+                provenance.fold_id != self.fold_id
+                or provenance.training_subject_ids
+                != self.training.training_subject_ids
+                or provenance.application_subject_ids
+                != self.application.heldout_subject_ids
+                or provenance.training_input_digest
+                != self.training.training_input_digest
+                or provenance.application_input_digest
+                != self.application.heldout_input_digest
+                or provenance.config_digest != self.training.config.digest
+                or provenance.transform_manifest_id
+                != activity_transform.transform_manifest_id
+            ):
+                raise ValueError(
+                    "sample-edge scores do not match fold train/apply lineage"
+                )
+            candidate_columns = (
+                "sample_id",
+                "context_id",
+                "sender",
+                "receiver",
+                "interaction_id",
+            )
+            availability_candidates = {
+                tuple(str(value) for value in row)
+                for row in self.application.availability.sample_interactions.loc[
+                    :, list(candidate_columns)
+                ].itertuples(index=False, name=None)
+            }
+            score_candidates = {
+                tuple(str(value) for value in row)
+                for row in activity_scores.table.loc[
+                    :, list(candidate_columns)
+                ].itertuples(index=False, name=None)
+            }
+            if score_candidates != availability_candidates:
+                raise ValueError(
+                    "sample-edge scores do not exactly cover held-out candidates"
+                )
+        object.__setattr__(
+            self, "absolute_activity_v2_transform", activity_transform
+        )
+        object.__setattr__(self, "sample_edge_scores_v2", activity_scores)
         support_records = tuple(self.receiver_training_support)
         if not support_records or any(
             not isinstance(record, ReceiverTrainingSupportRecord)
@@ -2359,6 +2497,26 @@ class CrossFitArtifacts:
             raise TypeError("folds must contain CrossFitFoldArtifacts")
         for item in folds:
             item.__post_init__()
+            configured_activity = self.spec.absolute_activity_v2_spec
+            if configured_activity is None:
+                if (
+                    item.absolute_activity_v2_transform is not None
+                    or item.sample_edge_scores_v2 is not None
+                ):
+                    raise ValueError(
+                        "unconfigured cross-fit cannot contain M0 v2 artifacts"
+                    )
+            elif (
+                item.absolute_activity_v2_transform is None
+                or item.sample_edge_scores_v2 is None
+                or item.absolute_activity_v2_transform.spec.spec_id
+                != configured_activity.spec_id
+                or item.sample_edge_scores_v2.provenance.repeat_id
+                != self.spec.repeat_id
+            ):
+                raise ValueError(
+                    "configured cross-fit requires exact M0 v2 artifacts per fold"
+                )
         by_id = {fold.fold_id: fold for fold in self.fold_plan.folds}
         if len(folds) != len(by_id) or {item.fold_id for item in folds} != set(by_id):
             raise ValueError(
@@ -2911,6 +3069,19 @@ class CrossFitArtifacts:
                     ),
                     "training_application_id": item.application.application_id,
                     "training_artifact_id": item.training.training_artifact_id,
+                    **(
+                        {
+                            "absolute_activity_v2_transform_id": (
+                                item.absolute_activity_v2_transform.transform_manifest_id
+                            ),
+                            "sample_edge_score_v2_provenance_id": (
+                                item.sample_edge_scores_v2.provenance.provenance_id
+                            ),
+                        }
+                        if item.absolute_activity_v2_transform is not None
+                        and item.sample_edge_scores_v2 is not None
+                        else {}
+                    ),
                     "receiver_training_support_ids": [
                         record.support_record_id
                         for record in item.receiver_training_support
@@ -3048,6 +3219,31 @@ class CrossFitArtifacts:
         """Return a defensive copy of held-out common-sender assignments."""
 
         return self._oof_sender_assignments.copy(deep=True)
+
+    @property
+    def oof_sample_edge_scores_v2(self) -> pd.DataFrame:
+        """Return all held-out M0 v2 rows without legacy family normalization."""
+
+        tables = [
+            fold.sample_edge_scores_v2.table
+            for fold in self.folds
+            if fold.sample_edge_scores_v2 is not None
+        ]
+        if not tables:
+            return pd.DataFrame(columns=SAMPLE_EDGE_SCORE_V2_COLUMNS)
+        result = pd.concat(tables, ignore_index=True).sort_values(
+            [
+                "fold_id",
+                "sample_id",
+                "context_id",
+                "sender",
+                "receiver",
+                "interaction_id",
+            ],
+            kind="stable",
+            ignore_index=True,
+        )
+        return cast(pd.DataFrame, result)
 
     @property
     @validation_scope()
@@ -3273,6 +3469,27 @@ class CrossFitArtifacts:
             "family_common_candidate_stage_connected": (
                 self.spec.penalty_tuning_spec is not None
             ),
+            **(
+                {
+                    "absolute_activity_v2_stage_connected": True,
+                    "absolute_activity_v2_score_rows": len(
+                        self.oof_sample_edge_scores_v2
+                    ),
+                    "absolute_activity_v2_transform_ids": [
+                        fold.absolute_activity_v2_transform.transform_manifest_id
+                        for fold in self.folds
+                        if fold.absolute_activity_v2_transform is not None
+                    ],
+                    "absolute_activity_v2_provenance_ids": [
+                        fold.sample_edge_scores_v2.provenance.provenance_id
+                        for fold in self.folds
+                        if fold.sample_edge_scores_v2 is not None
+                    ],
+                    "absolute_activity_v2_formal_inference_eligible": False,
+                }
+                if self.spec.absolute_activity_v2_spec is not None
+                else {}
+            ),
             "family_common_functional_status_counts": {
                 status: functional_statuses.count(status)
                 for status in sorted(set(functional_statuses))
@@ -3439,6 +3656,22 @@ class CrossFitArtifacts:
                         else {}
                     ),
                     "heldout_input_digest": item.application.heldout_input_digest,
+                    **(
+                        {
+                            "absolute_activity_v2_transform": (
+                                item.absolute_activity_v2_transform.to_dict()
+                            ),
+                            "sample_edge_score_v2_provenance": (
+                                item.sample_edge_scores_v2.provenance.to_dict()
+                            ),
+                            "sample_edge_score_v2_rows": len(
+                                item.sample_edge_scores_v2.table
+                            ),
+                        }
+                        if item.absolute_activity_v2_transform is not None
+                        and item.sample_edge_scores_v2 is not None
+                        else {}
+                    ),
                     "heldout_excluded_cell_type_ids": list(
                         item.application.excluded_cell_type_ids
                     ),
@@ -5755,6 +5988,33 @@ def _run_crossfit_fold(
         raise RuntimeError(
             "raw-count cross-fitting requires inferential pseudobulk aggregates"
         )
+    if spec.absolute_activity_v2_spec is None:
+        absolute_activity_v2_transform = None
+        sample_edge_scores_v2 = None
+    else:
+        stage_started = _fold_stage_started(fold.fold_id, "absolute_activity_v2")
+        absolute_activity_v2_transform = fit_absolute_activity_v2_transform(
+            training_aggregate,
+            resource_bundle,
+            training.frozen_interaction_universe,
+            fold_id=fold.fold_id,
+            training_input_digest=training.training_input_digest,
+            spec=spec.absolute_activity_v2_spec,
+        )
+        sample_edge_scores_v2 = apply_absolute_activity_v2_transform(
+            absolute_activity_v2_transform,
+            heldout_aggregate,
+            application.availability,
+            condition_columns=tuple(config.context_keys),
+            repeat_id=spec.repeat_id,
+            application_input_digest=application.heldout_input_digest,
+            config_digest=config.digest,
+            seed_lineage_id=_absolute_activity_seed_lineage_id(spec, fold),
+            package_version=_package_version(),
+        )
+        _fold_stage_completed(
+            fold.fold_id, "absolute_activity_v2", stage_started
+        )
     stage_started = _fold_stage_started(fold.fold_id, "receiver_family")
     receiver_family_models = _training_receiver_families(
         prepared=prepared_training,
@@ -5914,6 +6174,8 @@ def _run_crossfit_fold(
         family_common_functionals=family_common_functionals,
         family_common_applications=family_common_applications,
         family_common_bindings=family_common_bindings,
+        absolute_activity_v2_transform=absolute_activity_v2_transform,
+        sample_edge_scores_v2=sample_edge_scores_v2,
         directional_response_bindings=directional_response_bindings,
         cross_receiver_common_functionals=cross_receiver_common_functionals,
         cross_receiver_common_applications=cross_receiver_common_applications,
