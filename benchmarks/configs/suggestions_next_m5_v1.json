@@ -1,0 +1,93 @@
+{
+  "schema_version": "crychic-suggestions-next-m5-config-v1",
+  "candidate": {
+    "name": "crychic_m5_full_hypergraph_prior",
+    "score_version": "additive_incidence_ridge_m5_v1",
+    "node_ridge_penalty": 1.0,
+    "edge_residual_penalty": 1.0,
+    "model": "beta_equals_incidence_theta_plus_edge_residual",
+    "view_columns": [
+      "sender",
+      "ligand",
+      "receptor",
+      "receiver",
+      "pathway"
+    ],
+    "permutation_policy": "independent_view_stub_permutation_exact_degree_match",
+    "permutation_seed": 8675309,
+    "tuned_parameters": 0,
+    "formal_inference_allowed": false
+  },
+  "claim_boundary": {
+    "hprior_is_frozen_before_outcomes": true,
+    "result_hypergraph_is_not_used_as_prior": true,
+    "degree_matched_permutation_is_mandatory": true,
+    "no_prior_and_partial_view_controls_are_mandatory": true,
+    "m5_emits_no_p_q_or_probability": true,
+    "effect_summary_fixture_is_not_general_sota_evidence": true
+  },
+  "development": {
+    "seeds": [
+      20290101,
+      20290102,
+      20290103,
+      20290104,
+      20290105,
+      20290106,
+      20290107,
+      20290108,
+      20290109,
+      20290110,
+      20290111,
+      20290112,
+      20290113,
+      20290114,
+      20290115,
+      20290116,
+      20290117,
+      20290118,
+      20290119,
+      20290120
+    ],
+    "fixture_manifest_sha256": "PENDING_DEVELOPMENT_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260730
+  },
+  "validation": {
+    "seeds": [
+      20290501,
+      20290502,
+      20290503,
+      20290504,
+      20290505,
+      20290506,
+      20290507,
+      20290508,
+      20290509,
+      20290510,
+      20290511,
+      20290512,
+      20290513,
+      20290514,
+      20290515,
+      20290516,
+      20290517,
+      20290518,
+      20290519,
+      20290520
+    ],
+    "fixture_manifest_sha256": "PENDING_VALIDATION_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260731
+  },
+  "gates": {
+    "mse_delta_vs_raw_ci_upper_exclusive": 0.0,
+    "mse_delta_vs_permuted_ci_upper_exclusive": 0.0,
+    "ap_delta_vs_raw_ci_lower_exclusive": 0.0,
+    "ap_delta_vs_permuted_ci_lower_exclusive": 0.0,
+    "mse_delta_vs_partial_ci_upper_exclusive": 0.0,
+    "direction_delta_vs_raw_ci_lower_minimum": -0.01
+  }
+}
