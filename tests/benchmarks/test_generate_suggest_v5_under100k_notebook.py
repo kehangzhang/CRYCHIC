@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import nbformat
@@ -16,6 +17,8 @@ def test_every_code_cell_records_wall_time_and_has_no_machine_path() -> None:
     assert len(code_cells) >= 10
     assert all(cell.source.startswith("%%time\n") for cell in code_cells)
     assert "/media/" not in "\n".join(cell.source for cell in notebook.cells)
+    for cell in code_cells:
+        ast.parse("\n".join(cell.source.splitlines()[1:]))
 
 
 def test_generate_writes_valid_unexecuted_notebook(tmp_path: Path) -> None:

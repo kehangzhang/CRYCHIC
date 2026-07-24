@@ -30,7 +30,9 @@ def build_notebook() -> Any:
             """
 # suggest_v5: under-100k multi-context communication benchmarks
 
-Frozen evidence report for all eligible section II and III benchmarks. The
+Frozen primary-task evidence report for the eligible section II and III
+benchmarks. Task-level completion does not imply that every optional metric,
+clustering backend, or robustness extension in `suggest_v5.md` was run. The
 notebook distinguishes exact reruns, paper-protocol reconstructions, public
 cohort reconstructions, and non-estimable cells.
 """
@@ -44,6 +46,7 @@ import os
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -375,12 +378,21 @@ engine_order = [
 heat = crossover.pivot(
     index="score_generator", columns="differential_engine", values="mean_auprc"
 ).reindex(index=generator_order, columns=engine_order)
+missing = heat.isna()
 fig, ax = plt.subplots(figsize=(6.7, 4.5), constrained_layout=True)
 sns.heatmap(
-    heat, cmap="viridis", vmin=0, vmax=max(0.5, np.nanmax(heat.to_numpy())),
+    heat, mask=missing, cmap="viridis", vmin=0,
+    vmax=max(0.5, np.nanmax(heat.to_numpy())),
     annot=True, fmt=".3f", linewidths=0.4, linecolor="white",
     cbar_kws={"label": "Mean contrast-event AUPRC"}, ax=ax
 )
+for row, column in zip(*np.where(missing.to_numpy()), strict=True):
+    ax.add_patch(Rectangle(
+        (column, row), 1, 1, facecolor="#E6E6E6",
+        edgecolor="white", linewidth=0.4
+    ))
+    ax.text(column + 0.5, row + 0.5, "NE", ha="center", va="center",
+            color="#555555", fontsize=6.5)
 ax.set(
     xlabel="Differential engine", ylabel="Score generator",
     title="20-seed component crossover"
@@ -425,6 +437,14 @@ conclusions = pd.DataFrame([
                   f"{matrix.status.eq('not_estimable').sum()} NE",
         "Interpretation": (
             "NE reflects design/API constraints, never numerical zero filling."
+        ),
+    },
+    {
+        "Endpoint": "Literal protocol coverage",
+        "Result": "Partial beyond the frozen primary tasks",
+        "Interpretation": (
+            "Optional metrics, alternate clustering backends, and robustness "
+            "extensions are audited separately in the companion Markdown report."
         ),
     },
     {
