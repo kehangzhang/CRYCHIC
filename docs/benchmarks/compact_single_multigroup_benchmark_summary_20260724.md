@@ -4,8 +4,8 @@
 
 版本边界：压缩包中的源码快照来自 `optimize/suggestions-next-m0-20260724`，精确 commit 记录在
 `BUNDLE_METADATA.json`。两个已执行 notebook 及其独立图表是此前冻结的正式 benchmark 结果；
-单组 notebook 最后更新于 `055c67d`。当前源码还包含已锁定验证的 M0、M1、M2、M4 实验输出头，
-以及仅完成 development gate、尚未锁定验证的 M5 H-prior shrinkage。它们均未替换 public default。
+单组 notebook 最后更新于 `055c67d`。当前源码还包含已锁定验证的 M0、M1、M2、M4、M5
+实验输出头。它们均未替换 public default。
 
 ## 1. 压缩包内容
 
@@ -16,7 +16,7 @@
 - `figures/single_group/` 与 `figures/multigroup/`：上述 notebook 对应的 16 张独立 PNG；为控制体积，不重复保存 PDF/SVG。
 - `source/src/crychic/`：当前分支完整核心源码，排除 `__pycache__` 和 `.pyc`。
 - `source/benchmarks/`：benchmark Python/R runner、adapter、metric、report builder 和冻结配置；不含大结果目录。
-- `reports/`：本汇总、最新版 bounded-evidence 报告、suggest_v5 缺口补齐报告、M0/M1/M2/M4 冻结验证报告及结构化 JSON 摘要。
+- `reports/`：本汇总、最新版 bounded-evidence 报告、suggest_v5 缺口补齐报告、M0/M1/M2/M4/M5 冻结验证报告及结构化 JSON 摘要。
 - `results_compact/`：单样本一致性、scACCorDiON 跨队列平均排名等小型结果表。
 - `BUNDLE_METADATA.json` 与 `BUNDLE_FILE_INDEX.tsv`：Git provenance、文件大小和 SHA256。
 
@@ -83,7 +83,7 @@ RC14 是在 Kuppe 上冻结的 benchmark-only Top-K head。它在 K=100 时于 K
 
 ### suggestions-next 后续模块
 
-M1 在 7 类合成机制判别中相对 M0 为 AP/AUROC 1.000/1.000；M2 在 4 个 sender 候选中为 1/4，20/20 次将真实 sender 排第一；M4 occurrence head 在 4 个内部基线中为 2/4，AP/AUROC 0.943/0.965。三者的比较对象不是 CellChat、LIANA 或 scSeqCommDiff，因此不计入跨算法名次。M5 目前只有 development 结果，不报告正式名次。
+M1 在 7 类合成机制判别中相对 M0 为 AP/AUROC 1.000/1.000；M2 在 4 个 sender 候选中为 1/4，20/20 次将真实 sender 排第一；M4 occurrence head 在 4 个内部基线中为 2/4，AP/AUROC 0.943/0.965。M5 在合成 additive H-prior shrinkage 中为 MSE/AP/AUROC 1/6，并胜过 exact-degree-matched permutation。M1/M2/M4/M5 的比较对象不是 CellChat、LIANA 或 scSeqCommDiff，因此不计入跨算法名次；M5 仍缺 prior rewiring 与真实 subject-level 验证。
 
 ## 5. 不能直接排名的赛道
 

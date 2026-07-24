@@ -229,3 +229,31 @@ The full result and limitations are in
 uses supplied binary calls and independent groups; it is not an actual DCST
 package run and does not validate paired occurrence inference. The next
 isolated cycle is M5 frozen hypergraph shrinkage.
+
+## Locked M5 frozen H-prior result
+
+M5 introduces a pre-fit, outcome-blind molecular hypergraph distinct from the
+post-fit result hypergraph. Each frozen edge carries sender, ligand, receptor,
+receiver, and pathway memberships. A fixed weighted additive-incidence ridge
+model estimates shared node effects plus an edge-specific residual. Its
+shrunk effect is descriptive and never produces probability, p, or q values.
+
+Development used 20 seeds from 20290101--20290120. Locked validation used 20
+fresh seeds from 20290501--20290520, one frozen 1,500-edge topology, and 30,000
+new edge truths. The validation fixture manifest SHA256 is
+`e63d689a59b5ed7e67c33db89583d180b9d11428e04ef40889254b55ae97eb1d`;
+the output manifest SHA256 is
+`e6fe1dad470be950aea45d2e2eb4f9ba31a9b34a77c7be446ae907356f2196d6`.
+
+M5 passed all nine locked gates. Full-topology MSE was 0.3156, AP 0.7425,
+AUROC 0.8437, and direction accuracy 0.8289, ranking 1/6 for MSE, AP, and
+AUROC. Against the exact-degree-matched permuted topology, paired MSE improved
+by -0.2758 (95% CI [-0.2813, -0.2701]) and AP by +0.2347
+(95% CI [+0.2269, +0.2432]). It also beat raw and ligand-only, receptor-only,
+and pathway-only controls in all 20 seeds.
+
+The full result, rejected exploratory smoother, and limitations are in
+`benchmarks/results/SUGGESTIONS_NEXT_M5_VALIDATION_20260724.md`. This is a
+synthetic additive effect-summary result aligned with the model, not real-data
+or general SOTA evidence. Prior-rewiring robustness and subject-level pipeline
+integration remain outstanding.
