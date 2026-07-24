@@ -29,19 +29,21 @@ from benchmarks.comprehensive.generate_m1_mechanism_fixture import (
 from crychic.availability import AvailabilityParameters
 from crychic.core import CrychicConfig
 from crychic.pseudobulk import PseudobulkDataset
-from crychic.scoring import build_absolute_activity_heads
+from crychic.scoring import (
+    SIGNED_PROGRAM_CONCORDANCE_FORMULA,
+    SIGNED_PROGRAM_CONCORDANCE_VERSION,
+    build_absolute_activity_heads,
+    signed_geometric_program_concordance,
+)
 from crychic.workflow import fit_baseline
 
 SCHEMA_VERSION = "crychic-m1-mechanism-concordance-evaluation-v1"
 CONFIG_SCHEMA_VERSION = "crychic-suggestions-next-m1-config-v1"
 M0_METHOD = "crychic_m0_absolute_activity_effect"
 M1_METHOD = "crychic_m1_signed_program_concordance"
-M1_SCORE_VERSION = "signed_geometric_program_concordance_m1_v1"
+M1_SCORE_VERSION = SIGNED_PROGRAM_CONCORDANCE_VERSION
 PROGRAM_TRANSFORM = "weighted_mean_clip_log1p_cpm_over_log1p_1000000"
-CONCORDANCE_FORMULA = (
-    "sign(lr_effect)*sqrt(abs(lr_effect)*abs(aligned_program_effect))_"
-    "when_same_direction_else_zero"
-)
+CONCORDANCE_FORMULA = SIGNED_PROGRAM_CONCORDANCE_FORMULA
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -57,30 +59,6 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         + "\n",
         encoding="utf-8",
     )
-
-
-def signed_geometric_program_concordance(
-    lr_effect: float,
-    program_effect: float,
-    *,
-    expected_program_direction: int,
-) -> float:
-    """Return a signed contrast diagnostic only when LR and program align."""
-
-    lr = float(lr_effect)
-    program = float(program_effect)
-    if not math.isfinite(lr) or not math.isfinite(program):
-        raise ValueError("M1 concordance inputs must be finite")
-    if expected_program_direction not in {-1, 1}:
-        raise ValueError("expected_program_direction must be -1 or 1")
-    aligned = expected_program_direction * program
-    if (
-        lr == 0.0
-        or aligned == 0.0
-        or math.copysign(1.0, lr) != math.copysign(1.0, aligned)
-    ):
-        return 0.0
-    return float(math.copysign(math.sqrt(abs(lr) * abs(aligned)), lr))
 
 
 def _validated_config(

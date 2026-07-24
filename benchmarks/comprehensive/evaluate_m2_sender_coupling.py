@@ -27,7 +27,6 @@ from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
 from benchmarks.comprehensive.evaluate_m1_mechanism_concordance import (
     _program_definition,
     _program_sample_table,
-    signed_geometric_program_concordance,
 )
 from benchmarks.comprehensive.generate_m2_sender_coupling_fixture import (
     CANDIDATE_ROLES,
@@ -37,7 +36,10 @@ from benchmarks.comprehensive.generate_m2_sender_coupling_fixture import (
 )
 from crychic.availability import AvailabilityParameters
 from crychic.core import CrychicConfig
-from crychic.scoring import build_absolute_activity_heads
+from crychic.scoring import (
+    build_absolute_activity_heads,
+    signed_geometric_program_concordance,
+)
 from crychic.sender import (
     RESIDUALIZED_COUPLING_VERSION,
     ResidualizedCouplingSpec,

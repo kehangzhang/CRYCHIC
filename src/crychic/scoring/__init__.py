@@ -109,6 +109,11 @@ from .latent_nuisance import (
     LatentNuisanceStatus,
     fit_fold_latent_nuisance,
 )
+from .mechanism import (
+    SIGNED_PROGRAM_CONCORDANCE_FORMULA,
+    SIGNED_PROGRAM_CONCORDANCE_VERSION,
+    signed_geometric_program_concordance,
+)
 from .receiver_family import (
     ReceiverFamilyScoringApplication,
     ReceiverFamilyScoringArtifact,
@@ -155,6 +160,8 @@ __all__ = [
     "SCORING_COLLECTION_LEGACY_EXTENSION_VERSION",
     "SCORING_COLLECTION_SUPPORTED_VERSIONS",
     "SCORING_SOURCE_KEY_COLUMNS",
+    "SIGNED_PROGRAM_CONCORDANCE_FORMULA",
+    "SIGNED_PROGRAM_CONCORDANCE_VERSION",
     "ActiveEdgeCandidate",
     "ActiveEdgePointStatus",
     "CommunicationScoreStatus",
@@ -229,6 +236,7 @@ __all__ = [
     "scoring_source_key_digest",
     "select_communication_score",
     "select_hypergraph_prior_views",
+    "signed_geometric_program_concordance",
     "summarize_subject_equal_active_edge_score",
     "validate_common_functional",
     "weighted_geometric_strength",
