@@ -1,0 +1,52 @@
+{
+  "schema_version": "crychic-suggest-v5-gap-completion-contract-v1",
+  "frozen_at": "2026-07-24T11:58:19+08:00",
+  "tensor": {
+    "factor_matching": "existing composite Hungarian assignment",
+    "context_rmse": "nonnegative least-squares scale-aligned RMSE",
+    "context_dtw": "absolute-cost DTW divided by warping-path length",
+    "lr_binary_projection": "stable top-100 loadings",
+    "event_binary_projection": "stable top-100 Kronecker loadings",
+    "corrindex_status": "NE",
+    "corrindex_reason": "only one upstream communication-score generator was factorized; CorrIndex is pairwise decomposition similarity"
+  },
+  "dcst": {
+    "binary_score_threshold": 0.25,
+    "threshold_origin": "paper simulation expression threshold; fixed without outcome optimization",
+    "presence_rule": "score > threshold",
+    "test": "two-sided Fisher exact test across biological subjects",
+    "multiplicity": "BH within realization"
+  },
+  "staccato": {
+    "bootstrap_replicates": 99,
+    "simulation_replicates": 25,
+    "alpha_levels": [0.01, 0.05, 0.1],
+    "power_subject_counts": [20, 40, 60],
+    "power_effect_multipliers": [0.0, 0.25, 0.5, 1.0],
+    "inference_scope": "model-stage residual bootstrap diagnostic; not full upstream-pipeline formal inference"
+  },
+  "scaccordion": {
+    "canonical_primary_distance": "spearman",
+    "canonical_sensitivity_distance": "pearson",
+    "kbarycenter_starts": 20,
+    "kbarycenter_max_iterations": 100,
+    "kbarycenter_regularization": 0.01,
+    "kbarycenter_cluster_count": "known phenotype class count, matching the paper table",
+    "leiden_resolutions": {
+      "start": 0.0,
+      "stop": 1.0,
+      "step": 0.01
+    },
+    "leiden_knn": 10,
+    "seed": 859,
+    "pdac_cell_downsampling_status": "NE",
+    "pdac_cell_downsampling_reason": "released asset contains patient graph tables and metadata but no cell-level expression matrix"
+  },
+  "single_sample": {
+    "applicable_head": "static availability_state",
+    "rc12_status": "NE",
+    "rc12_reason": "requires train-derived sender assignment and between-condition receiver-program evidence",
+    "rc14_status": "NE",
+    "rc14_reason": "requires multi-condition differential statistics and spatial pair prior"
+  }
+}
