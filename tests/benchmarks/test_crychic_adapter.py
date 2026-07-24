@@ -20,6 +20,7 @@ from benchmarks.adapters.crychic import readback
 from benchmarks.adapters.crychic.readback import convert_result_to_long
 from benchmarks.adapters.crychic.resource import harmonized_resource_bundle
 from benchmarks.adapters.crychic.run_hcommon import validate_hcommon_workflow
+from benchmarks.metrics.finalize_multicondition import resolve_benchmark_input_path
 from crychic.core import stable_id
 from crychic.resources import (
     GeneNamespace,
@@ -178,7 +179,11 @@ def test_multicondition_v02_finalize_uses_current_real_crychic_arms() -> None:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
 
     assert "performance_records" not in spec
-    iteration_path = (spec_path.parent / spec["iteration_comparison"]).resolve()
+    iteration_path = resolve_benchmark_input_path(
+        spec_path.parent,
+        spec["iteration_comparison"],
+        field="iteration_comparison",
+    )
     assert iteration_path.is_file()
     assert (
         hashlib.sha256(iteration_path.read_bytes()).hexdigest()

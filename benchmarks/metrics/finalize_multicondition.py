@@ -272,11 +272,27 @@ def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-def _resolve(root: Path, value: object, *, field: str) -> Path:
+def resolve_benchmark_input_path(root: Path, value: object, *, field: str) -> Path:
+    """Resolve frozen inputs from either the main or a linked Git worktree."""
+
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty path string")
     path = Path(value)
-    return path.resolve() if path.is_absolute() else (root / path).resolve()
+    resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+    if resolved.exists() or path.is_absolute() or "benchmark_work" not in path.parts:
+        return resolved
+    benchmark_index = path.parts.index("benchmark_work")
+    suffix = Path(*path.parts[benchmark_index + 1 :])
+    resolved_root = root.resolve()
+    for ancestor in (resolved_root, *resolved_root.parents):
+        candidate = (ancestor / "benchmark_work" / suffix).resolve()
+        if candidate.exists():
+            return candidate
+    return resolved
+
+
+def _resolve(root: Path, value: object, *, field: str) -> Path:
+    return resolve_benchmark_input_path(root, value, field=field)
 
 
 def _optional_path(root: Path, value: object, *, field: str) -> Path | None:
