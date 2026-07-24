@@ -91,6 +91,23 @@ def _git_state(root: Path) -> dict[str, object]:
     return {"commit": commit, "dirty": dirty}
 
 
+def _provenance_commits(
+    fixture: dict[str, Any], adapter_code: dict[str, object]
+) -> tuple[str, str]:
+    """Validate independent clean provenance for fixture and adapter code."""
+
+    fixture_code = fixture.get("code")
+    if not isinstance(fixture_code, dict) or fixture_code.get("dirty") is not False:
+        raise ValueError("fixture code provenance is not clean")
+    fixture_commit = str(fixture_code.get("commit", "")).strip()
+    adapter_commit = str(adapter_code.get("commit", "")).strip()
+    if not fixture_commit:
+        raise ValueError("fixture code provenance lacks a commit")
+    if adapter_code.get("dirty") is not False or not adapter_commit:
+        raise ValueError(f"adapter worktree must be clean: {adapter_code}")
+    return fixture_commit, adapter_commit
+
+
 def _bound_fixture_input(fixture_dir: Path, relative_manifest: str) -> tuple[Path, str]:
     manifest_path = (fixture_dir / relative_manifest).resolve()
     manifest = _read_json(manifest_path)
@@ -466,15 +483,8 @@ def run_panel(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     tasks, fixture = build_tasks(fixture_dir, output_dir, methods=methods)
-    code = fixture.get("code")
-    if not isinstance(code, dict) or code.get("dirty") is not False:
-        raise ValueError("fixture code provenance is not clean")
-    expected_commit = str(code.get("commit", ""))
     adapter_code = _git_state(settings.adapter_root.resolve())
-    if adapter_code != {"commit": expected_commit, "dirty": False}:
-        raise ValueError(
-            f"adapter worktree must be clean at {expected_commit}: {adapter_code}"
-        )
+    fixture_commit, adapter_commit = _provenance_commits(fixture, adapter_code)
     for executable in (
         settings.python,
         settings.liana_python,
@@ -522,7 +532,7 @@ def run_panel(
                     task,
                     fixture,
                     settings,
-                    expected_commit=expected_commit,
+                    expected_commit=adapter_commit,
                 )
             ] = task
         for future in as_completed(futures):
@@ -536,7 +546,7 @@ def run_panel(
     links = _link_crychic_runs(
         crychic_runs.resolve(),
         output_dir,
-        expected_commit=expected_commit,
+        expected_commit=fixture_commit,
         expected_datasets=expected_datasets,
     )
     manifest = {
@@ -547,6 +557,7 @@ def run_panel(
             "sha256": sha256_file(fixture_dir / "manifest.json"),
         },
         "adapter_code": adapter_code,
+        "fixture_code": {"commit": fixture_commit, "dirty": False},
         "settings": {
             **asdict(settings),
             "adapter_root": str(settings.adapter_root.resolve()),

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from benchmarks.comprehensive.run_three_group_external_panel import (
     _completed_task,
+    _provenance_commits,
     build_tasks,
 )
 
@@ -121,3 +121,17 @@ def test_completed_task_requires_clean_code_and_input_binding(tmp_path: Path) ->
     assert _completed_task(task, expected_commit="abc")
     assert not _completed_task(task, expected_commit="different")
 
+
+def test_fixture_and_adapter_may_have_distinct_clean_commits(tmp_path: Path) -> None:
+    fixture = json.loads((_fixture(tmp_path) / "manifest.json").read_text())
+
+    assert _provenance_commits(
+        fixture, {"commit": "new-adapter", "dirty": False}
+    ) == ("abc", "new-adapter")
+
+
+def test_provenance_rejects_dirty_adapter(tmp_path: Path) -> None:
+    fixture = json.loads((_fixture(tmp_path) / "manifest.json").read_text())
+
+    with pytest.raises(ValueError, match="adapter worktree must be clean"):
+        _provenance_commits(fixture, {"commit": "new-adapter", "dirty": True})
