@@ -35,6 +35,17 @@ from .calibration_attestation import (
     CalibrationReplayRegistry,
     CalibrationReplayRequest,
 )
+from .design_aware import (
+    DESIGN_AWARE_DIFFERENTIAL_VERSION,
+    DESIGN_AWARE_EFFECT_COLUMNS,
+    DESIGN_AWARE_OMNIBUS_COLUMNS,
+    DesignAwareDifferentialResult,
+    DifferentialContrastSpec,
+    DifferentialDesignKind,
+    DifferentialDesignSpec,
+    build_sample_edge_differential_input,
+    fit_design_aware_differential,
+)
 from .effects import (
     OOFContextEffectResult,
     OOFEffectFormalEligibility,
@@ -133,6 +144,9 @@ from .omnibus import (
 )
 
 __all__ = [
+    "DESIGN_AWARE_DIFFERENTIAL_VERSION",
+    "DESIGN_AWARE_EFFECT_COLUMNS",
+    "DESIGN_AWARE_OMNIBUS_COLUMNS",
     "OCCURRENCE_CONTRAST_COLUMNS",
     "OCCURRENCE_CONTRAST_VERSION",
     "ActiveEdgeScoreStatus",
@@ -147,6 +161,10 @@ __all__ = [
     "CalibrationReplayAttestation",
     "CalibrationReplayRegistry",
     "CalibrationReplayRequest",
+    "DesignAwareDifferentialResult",
+    "DifferentialContrastSpec",
+    "DifferentialDesignKind",
+    "DifferentialDesignSpec",
     "FrozenHierarchicalFDRCollection",
     "FrozenHierarchicalFDRSpec",
     "FrozenHypothesisCoverage",
@@ -219,10 +237,12 @@ __all__ = [
     "build_g3_frequency_calibration_gate",
     "build_g3p_calibration_gate",
     "build_g3p_replicate_from_pipeline",
+    "build_sample_edge_differential_input",
     "canonical_helmert_basis",
     "estimate_active_probabilities",
     "evaluate_hierarchical_fdr",
     "fit_beta_uniform_mixture",
+    "fit_design_aware_differential",
     "fit_oof_context_effect",
     "fit_oof_context_omnibus",
     "fit_subject_occurrence_contrasts",

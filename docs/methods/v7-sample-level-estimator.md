@@ -55,3 +55,18 @@ q-values, and confidence intervals require the declared design to be estimable
 and require full-pipeline subject-level resampling while nuisance learning is
 in scope. Penalized coefficients and post-hoc ranking heads never feed ordinary
 Wald inference.
+
+The v7 design contract supports independent two-group and multi-group models,
+paired subject differences, repeated measurements with subject-cluster CR2,
+multi-cohort fixed effects, and continuous exposures. Categorical analyses use
+pre-registered contrasts; independent multi-group analyses also emit an
+omnibus diagnostic. Samples are collapsed to one equally represented row per
+subject and context before fitting. Cell-count and coverage reliability enter
+only as precision weights. A repeated design with too few subject clusters does
+not silently fall back to an independence covariance model.
+
+Fields named `diagnostic_p_value`, `diagnostic_ci_lower`, and
+`diagnostic_ci_upper` describe only the analytic regression diagnostic. The
+formal `p_value`, `q_value`, `ci_lower`, and `ci_upper` fields remain NA and
+`formal_inference_allowed=false` until the PR10 full-pipeline resampling release
+gate is satisfied.
