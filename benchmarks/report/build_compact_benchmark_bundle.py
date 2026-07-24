@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-BUNDLE_DIR = "CRYCHIC_benchmark_bundle_20260724"
+BUNDLE_DIR = "CRYCHIC_benchmark_bundle_20260724_v2"
 FIXED_ZIP_TIME = (2026, 7, 24, 0, 0, 0)
 
 NOTEBOOKS = {
@@ -69,6 +69,18 @@ REPORTS = {
     ),
     "benchmarks/results/suggest_v5_final_summary_20260723.json": (
         "reports/suggest_v5_final_summary.json"
+    ),
+    "benchmarks/results/SUGGESTIONS_NEXT_M0_VALIDATION_20260724.md": (
+        "reports/SUGGESTIONS_NEXT_M0_VALIDATION.md"
+    ),
+    "benchmarks/results/SUGGESTIONS_NEXT_M1_VALIDATION_20260724.md": (
+        "reports/SUGGESTIONS_NEXT_M1_VALIDATION.md"
+    ),
+    "benchmarks/results/SUGGESTIONS_NEXT_M2_VALIDATION_20260724.md": (
+        "reports/SUGGESTIONS_NEXT_M2_VALIDATION.md"
+    ),
+    "benchmarks/results/SUGGESTIONS_NEXT_M4_VALIDATION_20260724.md": (
+        "reports/SUGGESTIONS_NEXT_M4_VALIDATION.md"
     ),
 }
 
@@ -241,7 +253,7 @@ def build_bundle(
 
     records.sort(key=lambda row: str(row["path"]))
     metadata = {
-        "schema_version": "crychic-compact-benchmark-bundle-v1",
+        "schema_version": "crychic-compact-benchmark-bundle-v2",
         "generated_on": "2026-07-24",
         "git": {
             "branch": _git(repo_root, "branch", "--show-current"),

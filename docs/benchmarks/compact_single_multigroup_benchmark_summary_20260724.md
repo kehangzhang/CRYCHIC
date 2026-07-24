@@ -3,9 +3,9 @@
 更新日期：2026-07-24
 
 版本边界：压缩包中的源码快照来自 `optimize/suggestions-next-m0-20260724`，精确 commit 记录在
-`BUNDLE_METADATA.json`；最新核心算法变更为 `209e6a3`。两个已执行 notebook 及其独立图表是此前
-冻结的正式 benchmark 结果；单组 notebook 最后更新于 `055c67d`。当前源码新增的 M0
-absolute-activity 输出头仅通过开发集门禁，尚未进入跨算法冻结验证，因此不纳入下述正式名次。
+`BUNDLE_METADATA.json`。两个已执行 notebook 及其独立图表是此前冻结的正式 benchmark 结果；
+单组 notebook 最后更新于 `055c67d`。当前源码还包含已锁定验证的 M0、M1、M2、M4 实验输出头，
+以及仅完成 development gate、尚未锁定验证的 M5 H-prior shrinkage。它们均未替换 public default。
 
 ## 1. 压缩包内容
 
@@ -16,7 +16,7 @@ absolute-activity 输出头仅通过开发集门禁，尚未进入跨算法冻�
 - `figures/single_group/` 与 `figures/multigroup/`：上述 notebook 对应的 16 张独立 PNG；为控制体积，不重复保存 PDF/SVG。
 - `source/src/crychic/`：当前分支完整核心源码，排除 `__pycache__` 和 `.pyc`。
 - `source/benchmarks/`：benchmark Python/R runner、adapter、metric、report builder 和冻结配置；不含大结果目录。
-- `reports/`：本汇总、最新版 bounded-evidence 报告、suggest_v5 缺口补齐报告及结构化 JSON 摘要。
+- `reports/`：本汇总、最新版 bounded-evidence 报告、suggest_v5 缺口补齐报告、M0/M1/M2/M4 冻结验证报告及结构化 JSON 摘要。
 - `results_compact/`：单样本一致性、scACCorDiON 跨队列平均排名等小型结果表。
 - `BUNDLE_METADATA.json` 与 `BUNDLE_FILE_INDEX.tsv`：Git provenance、文件大小和 SHA256。
 
@@ -53,6 +53,7 @@ absolute-activity 输出头仅通过开发集门禁，尚未进入跨算法冻�
 
 | benchmark 赛道 | CRYCHIC 版本 / 输出头 | 主指标 | CRYCHIC 名次 | 主要结论 |
 |---|---|---|---:|---|
+| expression-driven synthetic 多组机制 | M0 absolute activity | adjusted AP / AUPRC / AUROC | **1/5** | 0.6859 / 0.6112 / 0.9472；超过 scSeqCommDiff、CellChat、LIANA，但只覆盖表达驱动机制族 |
 | 最新三组同 seed implanted truth | RC12 unsigned detection | prevalence-adjusted AP / AUPRC | **2/5** | scSeqCommDiff 1，RC12 2，CellChat 3，generic CRYCHIC 4，LIANA 5 |
 | Kuppe pair-rank spatial DES | RC11 | median DES | **2/15** | 0.6287，低于 scSeqCommDiff 0.7008；Kuppe 是开发集 |
 | MS pair-rank spatial DES | RC11 | median DES | **1/9** | 0.8330，高于 scSeqCommDiff 0.8250，8 strata 中胜 5 个；该 endpoint 不是原论文 event-count DES |
@@ -80,6 +81,10 @@ RC12 相对 scSeqCommDiff 的 AUPRC 差为 -0.0059，配对 bootstrap 95% 区间
 
 RC14 是在 Kuppe 上冻结的 benchmark-only Top-K head。它在 K=100 时于 Kuppe 和 MS 均高于 scSeqCommDiff；按 K=100/250/500/1000 的 mean DES 平均，Kuppe 为 0.7525 对 0.7208，MS 为 0.6716 对 0.6766。它没有在所有 K 上占优，native original-count 和 continuous-weighted DES 仍低于 scSeqCommDiff，且 MS 已在早期 RC11 工作中被查看过，不能作为 RC14 的全新独立验证。
 
+### suggestions-next 后续模块
+
+M1 在 7 类合成机制判别中相对 M0 为 AP/AUROC 1.000/1.000；M2 在 4 个 sender 候选中为 1/4，20/20 次将真实 sender 排第一；M4 occurrence head 在 4 个内部基线中为 2/4，AP/AUROC 0.943/0.965。三者的比较对象不是 CellChat、LIANA 或 scSeqCommDiff，因此不计入跨算法名次。M5 目前只有 development 结果，不报告正式名次。
+
 ## 5. 不能直接排名的赛道
 
 - Tensor-cell2cell 扩展只有一个原生 factorization 方法，没有合法算法间排名。
@@ -92,8 +97,9 @@ RC14 是在 Kuppe 上冻结的 benchmark-only Top-K head。它在 K=100 时于 K
 
 目前最强、证据边界清晰的结论是：
 
-1. RC12 在同 seed 三组检测面板中为 2/5，超过 CellChat、LIANA 和旧 generic CRYCHIC；AUPRC 与 scSeqCommDiff 尚未分出差异，但 AUROC 明显较低。
-2. RC11 在独立 MS pair-rank spatial endpoint 为 1/9，但在开发集 Kuppe 为 2/15；这不是对所有多组任务的普遍胜出。
-3. strict native event-count 与 continuous-weighted DES 仍落后于 scSeqCommDiff；RC14 只在部分 Top-K 预算上领先。
-4. CRYCHIC 在 synthetic exact hypergraph truth 为 1/4，说明高阶表示有明确模拟优势，但尚不能替代真实数据验证。
-5. 当前 RC12/RC14 均是 benchmark-only 输出头，未替换 public default；formal p/q 仍禁用。整体状态是“若干赛道竞争力明显提高，但尚未形成跨 estimand 的全面第一”。
+1. M0 在 expression-driven synthetic 面板为 1/5，但机制范围窄，不能据此主张通用 SOTA。
+2. RC12 在更广的同 seed 三组检测面板中为 2/5，超过 CellChat、LIANA 和旧 generic CRYCHIC；AUPRC 与 scSeqCommDiff 尚未分出差异，但 AUROC 明显较低。
+3. RC11 在独立 MS pair-rank spatial endpoint 为 1/9，但在开发集 Kuppe 为 2/15；这不是对所有多组任务的普遍胜出。
+4. strict native event-count 与 continuous-weighted DES 仍落后于 scSeqCommDiff；RC14 只在部分 Top-K 预算上领先。
+5. CRYCHIC 在 synthetic exact hypergraph truth 为 1/4，说明高阶表示有明确模拟优势，但尚不能替代真实数据验证。
+6. 当前这些新增 head 均为 experimental/benchmark-only，未替换 public default；formal p/q 仍禁用。整体状态是“若干赛道竞争力明显提高，但尚未形成跨 estimand 的全面第一”。
