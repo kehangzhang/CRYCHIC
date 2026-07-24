@@ -200,3 +200,32 @@ M2 evidence is limited to a synthetic paired estimand with recorded nuisance
 covariates. It does not establish behavior under unmeasured confounding or a
 general SOTA claim. The next isolated cycle is M4 occurrence, followed by M5
 frozen hypergraph shrinkage.
+
+## Locked M4 occurrence result
+
+M4 adds a separate independent-group prevalence head for supplied
+subject-level binary linkage calls. It uses a fixed Jeffreys-Beta posterior,
+keeps missing calls distinct from absence, and reports prevalence, difference,
+posterior log-odds ratio, and a descriptive standardized ranking value. It
+does not reuse ADR-013 active-null probability and emits no p/q value.
+
+Development used 20 seeds from 20280101--20280120. Locked validation used 20
+fresh seeds from 20280501--20280520 and 6,000 events. The validation fixture
+manifest SHA256 is
+`b90ffccc0dc097d6eeea1c935f910c193f9b4a2763ecd7fe856bd33e8a54def1`;
+the output manifest SHA256 is
+`b9544e0eb176f437979eac8dbc54eb127b027df6b3cd829a3959fc22f8e1a721`.
+
+M4 passed all locked gates with AP 0.943, AUROC 0.965, direction accuracy
+0.998, and coverage 0.9985. It ranked 2/4 behind raw prevalence difference
+(AP 0.952), ahead of the DCST-style Fisher baseline (AP 0.939), and far ahead
+of continuous M0 on the occurrence estimand (AP 0.396). Versus M0, paired AP
+delta was +0.547 (95% CI [+0.537, +0.557]); AUROC delta was +0.274
+(95% CI [+0.266, +0.283]). M4 improved prevalence Brier and log-odds RMSE over
+raw estimates, while raw prevalence remains the required simple ranker.
+
+The full result and limitations are in
+`benchmarks/results/SUGGESTIONS_NEXT_M4_VALIDATION_20260724.md`. This fixture
+uses supplied binary calls and independent groups; it is not an actual DCST
+package run and does not validate paired occurrence inference. The next
+isolated cycle is M5 frozen hypergraph shrinkage.
