@@ -69,8 +69,8 @@
       "C": 12
     },
     "mean_cells_per_sample": 180,
-    "fixture_manifest_sha256": "PENDING_FRESH_FIXTURE",
-    "source_evaluation_manifest_sha256": "PENDING_FRESH_SOURCE_EVALUATION",
+    "fixture_manifest_sha256": "afbf43f29ed2e9214ef0e920efb4751dc05f97bc3eaff506be0efea48e28ac6c",
+    "source_evaluation_manifest_sha256": "a725ef7a854dfda7a201d24b7c2139bad87670a0fd6e7cc4e4024f2b0669efd6",
     "minimum_paired_seeds": 20,
     "bootstrap_replicates": 20000,
     "bootstrap_seed": 20260724
