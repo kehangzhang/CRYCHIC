@@ -8,7 +8,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 
-from crychic.core import canonical_digest
+from crychic.core import canonical_digest, stable_id
 
 from .contracts_v2 import (
     ParentActivityCalibrationV2,
@@ -16,6 +16,10 @@ from .contracts_v2 import (
     SenderAttributionV2Spec,
     SenderDetectionCalibrationV2,
     SenderV2CalibrationStatus,
+)
+from .coupling_v2 import (
+    EBShrunkenCouplingFunctionalV2,
+    EBShrunkenCouplingStatus,
 )
 
 _KEY = ("sample_id", "sender", "receiver", "interaction_id")
@@ -341,11 +345,40 @@ def _normalized_entropy(probabilities: np.ndarray) -> float:
     return min(1.0, max(0.0, entropy))
 
 
+def sender_attribution_v2_application_id(
+    functional: SenderAttributionFunctionalV2,
+    coupling_functional: EBShrunkenCouplingFunctionalV2 | None = None,
+) -> str:
+    """Return the exact lineage ID for one attribution application rule."""
+
+    if not isinstance(functional, SenderAttributionFunctionalV2):
+        raise TypeError("functional must be SenderAttributionFunctionalV2")
+    if coupling_functional is None:
+        return functional.functional_id
+    if not isinstance(coupling_functional, EBShrunkenCouplingFunctionalV2):
+        raise TypeError("coupling_functional must be EBShrunkenCouplingFunctionalV2")
+    return cast(
+        str,
+        stable_id(
+            "sender_attribution_v2_coupling_application",
+            {
+                "attribution_functional_id": functional.functional_id,
+                "coupling_functional_id": coupling_functional.functional_id,
+                "coupling_weight": (
+                    coupling_functional.spec.attribution_coupling_weight
+                ),
+            },
+            schema_version="2",
+        ),
+    )
+
+
 def apply_sender_attribution_v2(
     functional: SenderAttributionFunctionalV2,
     score_table: pd.DataFrame,
     *,
     activity_transform_id: str,
+    coupling_functional: EBShrunkenCouplingFunctionalV2 | None = None,
 ) -> pd.DataFrame:
     """Apply null-sender 1.5-entmax attribution without altering raw detection."""
 
@@ -354,6 +387,21 @@ def apply_sender_attribution_v2(
     transform_id = _name(activity_transform_id, field_name="activity_transform_id")
     if transform_id != functional.activity_transform_id:
         raise ValueError("application activity transform does not match functional")
+    if coupling_functional is not None:
+        if not isinstance(coupling_functional, EBShrunkenCouplingFunctionalV2):
+            raise TypeError(
+                "coupling_functional must be EBShrunkenCouplingFunctionalV2 or None"
+            )
+        if (
+            coupling_functional.fold_id != functional.fold_id
+            or coupling_functional.training_subject_ids
+            != functional.training_subject_ids
+            or coupling_functional.training_input_digest
+            != functional.training_input_digest
+            or coupling_functional.sender_activity_transform_id
+            != functional.activity_transform_id
+        ):
+            raise ValueError("coupling functional does not match attribution lineage")
     table = _validate_common(
         score_table,
         parent_head=functional.spec.parent_activity_head,
@@ -364,6 +412,11 @@ def apply_sender_attribution_v2(
     for status_column in ("occurrence_status", "attribution_status"):
         if not table[status_column].eq("not_computed").all():
             raise ValueError(f"sender v2 refuses to overwrite {status_column}")
+    if (
+        coupling_functional is not None
+        and not table["coupling_status"].eq("not_computed").all()
+    ):
+        raise ValueError("sender v2 refuses to overwrite coupling_status")
     parent_by_key = {
         (item.receiver, item.interaction_id): item
         for item in functional.parent_calibrations
@@ -372,6 +425,17 @@ def apply_sender_attribution_v2(
         (item.sender, item.receiver, item.interaction_id): item
         for item in functional.detection_calibrations
     }
+    coupling_by_key = (
+        {
+            (item.sender, item.receiver, item.interaction_id): item
+            for item in coupling_functional.records
+        }
+        if coupling_functional is not None
+        else {}
+    )
+    attribution_application_id = sender_attribution_v2_application_id(
+        functional, coupling_functional
+    )
     output = table.copy(deep=True)
     for _, indices in output.groupby(
         ["sample_id", "context_id", "fold_id", "receiver", "interaction_id"],
@@ -379,6 +443,44 @@ def apply_sender_attribution_v2(
         sort=False,
     ).groups.items():
         group_index = list(indices)
+        coupling_terms: dict[int, float] = {}
+        if coupling_functional is not None:
+            for index in group_index:
+                row = output.loc[index]
+                coupling_key = (
+                    str(row["sender"]),
+                    str(row["receiver"]),
+                    str(row["interaction_id"]),
+                )
+                coupling_record = coupling_by_key.get(coupling_key)
+                output.loc[index, "coupling_functional_id"] = (
+                    coupling_functional.functional_id
+                )
+                if (
+                    coupling_functional.status is EBShrunkenCouplingStatus.OBSERVED
+                    and coupling_record is not None
+                    and coupling_record.status is EBShrunkenCouplingStatus.OBSERVED
+                    and coupling_record.shrunken_correlation is not None
+                ):
+                    output.loc[index, "coupling_prior"] = (
+                        coupling_record.shrunken_correlation
+                    )
+                    output.loc[index, "coupling_status"] = "observed"
+                    output.loc[index, "coupling_reason_code"] = None
+                    coupling_terms[index] = (
+                        coupling_functional.spec.attribution_coupling_weight
+                        * coupling_record.shrunken_correlation
+                    )
+                else:
+                    output.loc[index, "coupling_prior"] = np.nan
+                    output.loc[index, "coupling_status"] = "not_estimable"
+                    output.loc[index, "coupling_reason_code"] = (
+                        "coupling_record_missing"
+                        if coupling_record is None
+                        else coupling_record.reason_code
+                        or coupling_functional.reason_code
+                        or "coupling_not_estimable"
+                    )
         first = output.loc[group_index[0]]
         parent_key = (str(first["receiver"]), str(first["interaction_id"]))
         parent_calibration = parent_by_key.get(parent_key)
@@ -403,7 +505,7 @@ def apply_sender_attribution_v2(
             output.loc[group_index, "attribution_status"] = "not_estimable"
             output.loc[group_index, "attribution_reason_code"] = reason
             output.loc[group_index, "attribution_functional_id"] = (
-                functional.functional_id
+                attribution_application_id
             )
             continue
         active_probability = _empirical_active_probability(
@@ -427,6 +529,7 @@ def apply_sender_attribution_v2(
                 str(row["interaction_id"]),
             )
             calibration = detection_by_key.get(detection_key)
+            coupling_term = coupling_terms.get(index, 0.0)
             if pd.isna(row["sender_detection_raw"]):
                 missing_reasons[index] = "sender_detection_not_estimable"
             elif calibration is None:
@@ -444,14 +547,16 @@ def apply_sender_attribution_v2(
                 logits.append(
                     float(
                         np.clip(
-                            standardized,
+                            standardized + coupling_term,
                             -functional.spec.maximum_abs_logit,
                             functional.spec.maximum_abs_logit,
                         )
                     )
                 )
                 valid_indices.append(index)
-        output.loc[group_index, "attribution_functional_id"] = functional.functional_id
+        output.loc[group_index, "attribution_functional_id"] = (
+            attribution_application_id
+        )
         if not valid_indices:
             output.loc[group_index, "attribution_status"] = "not_estimable"
             output.loc[group_index, "attribution_reason_code"] = (
@@ -483,4 +588,5 @@ def apply_sender_attribution_v2(
 __all__ = [
     "apply_sender_attribution_v2",
     "fit_sender_attribution_v2",
+    "sender_attribution_v2_application_id",
 ]

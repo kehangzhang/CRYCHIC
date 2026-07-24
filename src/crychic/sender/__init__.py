@@ -4,6 +4,7 @@ from .assignment import assign_senders
 from .assignment_v2 import (
     apply_sender_attribution_v2,
     fit_sender_attribution_v2,
+    sender_attribution_v2_application_id,
 )
 from .common import (
     allocate_sender_resolved_strength,
@@ -49,11 +50,20 @@ from .coupling import (
     ResidualizedSenderCoupling,
     fit_residualized_sender_coupling,
 )
+from .coupling_v2 import (
+    EB_SHRUNKEN_COUPLING_V2_VERSION,
+    EBShrunkenCouplingFunctionalV2,
+    EBShrunkenCouplingRecordV2,
+    EBShrunkenCouplingStatus,
+    EBShrunkenCouplingV2Spec,
+    fit_eb_shrunken_coupling_v2,
+)
 
 __all__ = [
     "ASSIGNMENT_GROUP_COLUMNS",
     "COMMON_SENDER_APPLICATION_COLUMNS",
     "COMMON_SENDER_GROUP_COLUMNS",
+    "EB_SHRUNKEN_COUPLING_V2_VERSION",
     "RESIDUALIZED_COUPLING_VERSION",
     "SENDER_ASSIGNMENT_COLUMNS",
     "SENDER_ATTRIBUTION_V2_VERSION",
@@ -62,6 +72,10 @@ __all__ = [
     "CommonSenderApplicationStatus",
     "ContrastCommonSenderFunctional",
     "ContrastCommonSenderParameters",
+    "EBShrunkenCouplingFunctionalV2",
+    "EBShrunkenCouplingRecordV2",
+    "EBShrunkenCouplingStatus",
+    "EBShrunkenCouplingV2Spec",
     "InteractionLigandContrastGate",
     "InteractionLigandContrastSupport",
     "ParentActivityCalibrationV2",
@@ -84,10 +98,12 @@ __all__ = [
     "apply_sender_attribution_v2",
     "assign_senders",
     "fit_contrast_common_sender_functional",
+    "fit_eb_shrunken_coupling_v2",
     "fit_residualized_sender_coupling",
     "fit_sender_attribution_v2",
     "freeze_common_sender_candidate_manifest",
     "interaction_ligand_contrast_gate",
     "interaction_ligand_contrast_gates",
     "sender_assignment_id",
+    "sender_attribution_v2_application_id",
 ]

@@ -68,6 +68,21 @@ head. It is used only to define null-sender mass and is not a posterior
 probability or formal M4 occurrence result. M4 and its resampled p/q values have
 their own later release gate.
 
+M2 consumes a different training-only estimand: the subject-level M0 ligand
+contrast for each candidate sender and the frozen-direction M1 receiver-program
+contrast. Both are residualized on the same declared batch, composition, and
+other nuisance design. For residual correlation `r`, M2 clips only for numeric
+stability, applies Fisher `z = atanh(r)`, and uses sampling variance
+`v = 1 / (n - p - 3)`. A zero-mean cross-edge second-moment estimate of `tau^2`
+gives shrinkage factor `tau^2 / (tau^2 + v)` and the saved prior
+`tanh(shrinkage_factor * z)`.
+
+The coupling prior enters only the attribution logit with a globally frozen
+weight in `{0, 0.25, 0.5}`. It never multiplies communication intensity. A
+missing or weak coupling record contributes zero to the logit, remains visibly
+not estimable in the coupling head, and cannot filter an otherwise measurable
+sender.
+
 ## Inference boundary
 
 Analytic HC3/CR2 models provide point effects and diagnostics. Formal p-values,

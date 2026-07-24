@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -7,10 +9,13 @@ from tests.support.sample_edge_v2 import sample_edge_scores
 
 from crychic.scoring import SampleEdgeScoreV2
 from crychic.sender import (
+    EBShrunkenCouplingV2Spec,
     SenderAttributionV2Spec,
     SenderV2CalibrationStatus,
     apply_sender_attribution_v2,
+    fit_eb_shrunken_coupling_v2,
     fit_sender_attribution_v2,
+    sender_attribution_v2_application_id,
 )
 
 
@@ -45,6 +50,36 @@ def _functional(*, minimum_subjects: int = 4):
         training_input_digest="training-input-digest",
         activity_transform_id="transform-id",
         spec=SenderAttributionV2Spec(minimum_calibration_subjects=minimum_subjects),
+    )
+
+
+def _coupling_functional():
+    receiver = np.asarray([-1.0, -0.7, -0.3, -0.1, 0.2, 0.4, 0.8, 1.1])
+    decoy = np.asarray([0.8, -0.9, 0.5, -0.4, 0.2, -0.1, -0.6, 0.7])
+    rows = [
+        {
+            "subject_id": f"train-subject-{index}",
+            "sender": sender,
+            "receiver": "receiver",
+            "interaction_id": "interaction-1",
+            "sender_effect": float(values[index]),
+            "receiver_effect": float(receiver[index]),
+        }
+        for sender, values in (("sender-a", receiver), ("sender-b", decoy))
+        for index in range(8)
+    ]
+    return fit_eb_shrunken_coupling_v2(
+        pd.DataFrame(rows),
+        fold_id="fold-1",
+        training_subject_ids=tuple(f"train-subject-{index}" for index in range(8)),
+        training_input_digest="training-input-digest",
+        sender_activity_transform_id="transform-id",
+        receiver_program_functional_id="program-functional-id",
+        spec=EBShrunkenCouplingV2Spec(
+            minimum_subjects=4,
+            minimum_observed_edges_for_eb=2,
+            attribution_coupling_weight=0.5,
+        ),
     )
 
 
@@ -134,6 +169,69 @@ def test_parent_activity_probability_is_monotone_in_heldout_score() -> None:
         low_result["null_sender_attribution"].iloc[0]
         > high_result["null_sender_attribution"].iloc[0]
     )
+
+
+def test_eb_coupling_changes_attribution_not_raw_detection() -> None:
+    functional = _functional()
+    coupling = _coupling_functional()
+    scores = _unattributed_scores()
+    baseline = apply_sender_attribution_v2(
+        functional,
+        scores.table,
+        activity_transform_id="transform-id",
+    ).set_index("sender")
+    coupled = apply_sender_attribution_v2(
+        functional,
+        scores.table,
+        activity_transform_id="transform-id",
+        coupling_functional=coupling,
+    )
+    result = SampleEdgeScoreV2(
+        table=coupled, provenance=scores.provenance
+    ).table.set_index("sender")
+
+    assert result["sender_detection_raw"].equals(
+        scores.table.set_index("sender")["sender_detection_raw"]
+    )
+    assert (
+        result.loc["sender-a", "coupling_prior"]
+        > result.loc["sender-b", "coupling_prior"]
+    )
+    assert (
+        result.loc["sender-a", "sender_attribution"]
+        > baseline.loc["sender-a", "sender_attribution"]
+    )
+    assert set(result["coupling_functional_id"]) == {coupling.functional_id}
+    assert set(result["attribution_functional_id"]) == {
+        sender_attribution_v2_application_id(functional, coupling)
+    }
+
+
+def test_missing_coupling_record_is_annotation_not_hard_filter() -> None:
+    functional = _functional()
+    coupling = _coupling_functional()
+    partial_coupling = replace(
+        coupling,
+        records=tuple(
+            record for record in coupling.records if record.sender == "sender-a"
+        ),
+    )
+    scores = _unattributed_scores()
+
+    output = apply_sender_attribution_v2(
+        functional,
+        scores.table,
+        activity_transform_id="transform-id",
+        coupling_functional=partial_coupling,
+    )
+    result = SampleEdgeScoreV2(
+        table=output, provenance=scores.provenance
+    ).table.set_index("sender")
+
+    assert result.loc["sender-b", "coupling_status"] == "not_estimable"
+    assert pd.isna(result.loc["sender-b", "coupling_prior"])
+    assert result.loc["sender-b", "attribution_status"] == "observed"
+    assert pd.notna(result.loc["sender-b", "sender_attribution"])
 
 
 def test_missing_sender_does_not_invalidate_observed_candidate() -> None:
