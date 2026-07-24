@@ -37,6 +37,9 @@ def test_missing_sender_does_not_invalidate_other_candidate() -> None:
     table.loc[missing, "attribution_reason_code"] = "sender_measurement_missing"
     table["null_sender_attribution"] = 0.2
     table.loc[~missing, "sender_attribution"] = 0.8
+    table["attribution_entropy"] = -(0.8 * np.log(0.8) + 0.2 * np.log(0.2)) / np.log(
+        2.0
+    )
     table["effective_candidate_count"] = 1
     table["parent_peak_raw"] = 2.0
     table["parent_total_raw"] = 2.0

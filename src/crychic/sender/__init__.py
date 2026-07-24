@@ -1,6 +1,10 @@
 """Exploratory, evidence-based sender soft assignment."""
 
 from .assignment import assign_senders
+from .assignment_v2 import (
+    apply_sender_attribution_v2,
+    fit_sender_attribution_v2,
+)
 from .common import (
     allocate_sender_resolved_strength,
     apply_contrast_common_sender_functional,
@@ -30,6 +34,14 @@ from .contracts import (
     SenderPrevalenceStatus,
     sender_assignment_id,
 )
+from .contracts_v2 import (
+    SENDER_ATTRIBUTION_V2_VERSION,
+    ParentActivityCalibrationV2,
+    SenderAttributionFunctionalV2,
+    SenderAttributionV2Spec,
+    SenderDetectionCalibrationV2,
+    SenderV2CalibrationStatus,
+)
 from .coupling import (
     RESIDUALIZED_COUPLING_VERSION,
     ResidualizedCouplingSpec,
@@ -44,6 +56,7 @@ __all__ = [
     "COMMON_SENDER_GROUP_COLUMNS",
     "RESIDUALIZED_COUPLING_VERSION",
     "SENDER_ASSIGNMENT_COLUMNS",
+    "SENDER_ATTRIBUTION_V2_VERSION",
     "SENDER_EVIDENCE_COMPONENTS",
     "CommonSenderApplication",
     "CommonSenderApplicationStatus",
@@ -51,21 +64,28 @@ __all__ = [
     "ContrastCommonSenderParameters",
     "InteractionLigandContrastGate",
     "InteractionLigandContrastSupport",
+    "ParentActivityCalibrationV2",
     "ResidualizedCouplingSpec",
     "ResidualizedCouplingStatus",
     "ResidualizedSenderCoupling",
     "SenderAssignment",
     "SenderAssignmentStatus",
+    "SenderAttributionFunctionalV2",
+    "SenderAttributionV2Spec",
     "SenderContrastSupportStatus",
     "SenderCouplingStatus",
+    "SenderDetectionCalibrationV2",
     "SenderEvidenceParameters",
     "SenderPrevalencePrior",
     "SenderPrevalenceStatus",
+    "SenderV2CalibrationStatus",
     "allocate_sender_resolved_strength",
     "apply_contrast_common_sender_functional",
+    "apply_sender_attribution_v2",
     "assign_senders",
     "fit_contrast_common_sender_functional",
     "fit_residualized_sender_coupling",
+    "fit_sender_attribution_v2",
     "freeze_common_sender_candidate_manifest",
     "interaction_ligand_contrast_gate",
     "interaction_ligand_contrast_gates",

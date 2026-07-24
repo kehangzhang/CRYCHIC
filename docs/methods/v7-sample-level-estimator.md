@@ -48,6 +48,26 @@ coverage creates an NA row with an explicit reason. Low evidence remains a
 finite continuous score and cannot be converted to zero by a condition-derived
 gate.
 
+## Sender detection and attribution
+
+`sender_detection_raw` is never normalized across candidate senders. Adding a
+candidate therefore cannot change another sender's raw detection measurement.
+Attribution is a separate fold-fitted head. Training subjects define a robust
+parent-specific detection scale and a subject-equal empirical parent-activity
+reference distribution; condition labels and receiver outcomes are not inputs.
+
+On held-out samples, the conditional sender distribution uses 1.5-entmax. Its
+mass is multiplied by the fold-reference parent activity calibration, while the
+remaining mass is assigned to an explicit null sender. Missing candidate rows
+stay NA and do not invalidate estimable candidates. Sender weights, null mass,
+and normalized attribution entropy are saved separately and sum to one over
+the estimable sender set plus the null sender.
+
+The empirical parent activity calibration is marked as a partial occurrence
+head. It is used only to define null-sender mass and is not a posterior
+probability or formal M4 occurrence result. M4 and its resampled p/q values have
+their own later release gate.
+
 ## Inference boundary
 
 Analytic HC3/CR2 models provide point effects and diagnostics. Formal p-values,

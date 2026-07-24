@@ -29,6 +29,19 @@ from .sample_edge_v2 import (
 
 ABSOLUTE_ACTIVITY_V2_SCORE_VERSION = "sample_comparable_log_geometric_activity_m0_v2"
 ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION = "fold_library_robust_expression_v2"
+ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS = (
+    "sample_id",
+    "subject_id",
+    "context_id",
+    "sender",
+    "receiver",
+    "interaction_id",
+    "sender_detection_raw",
+    "parent_peak_raw",
+    "parent_total_raw",
+    "parent_mean_raw",
+    "status",
+)
 
 _PARENT_KEY = (
     "sample_id",
@@ -461,19 +474,14 @@ def _condition_value(row: pd.Series, columns: tuple[str, ...]) -> str:
     return str(canonical_json({column: row[column] for column in columns}))
 
 
-def apply_absolute_activity_v2_transform(
+def _compute_absolute_activity_v2_source(
     transform: AbsoluteActivityV2Transform,
     aggregate: PseudobulkDataset,
     availability: BatchAvailability,
     *,
     condition_columns: Sequence[str],
-    repeat_id: str,
-    application_input_digest: str,
-    config_digest: str,
-    seed_lineage_id: str,
-    package_version: str,
-) -> SampleEdgeScoreV2:
-    """Apply one frozen transform to held-out sample x sender x LR x receiver rows."""
+) -> pd.DataFrame:
+    """Compute activity rows without assigning inferential application lineage."""
 
     if not isinstance(transform, AbsoluteActivityV2Transform):
         raise TypeError("transform must be AbsoluteActivityV2Transform")
@@ -481,33 +489,27 @@ def apply_absolute_activity_v2_transform(
         raise TypeError("M0 v2 application requires a raw-count PseudobulkDataset")
     if not isinstance(availability, BatchAvailability):
         raise TypeError("availability must be BatchAvailability")
-    if (
-        availability.filter_application
-        is not InteractionFilterApplication.FROZEN_APPLICATION_V1
-    ):
-        raise ValueError(
-            "M0 v2 held-out application requires a frozen interaction universe"
-        )
     universe = availability.frozen_interaction_universe
     if (
         universe.filter_universe_id != transform.interaction_universe_id
         or availability.resource_id != transform.resource_id
         or availability.resource_version != transform.resource_version
     ):
-        raise ValueError("held-out availability does not match the activity transform")
+        raise ValueError("availability does not match the activity transform")
     conditions = _names(tuple(condition_columns), field_name="condition_columns")
     source = availability.sample_interactions.copy(deep=True)
     missing = _AVAILABILITY_COLUMNS.union(conditions).difference(source.columns)
     if missing:
         raise ValueError(f"availability lacks M0 v2 columns: {sorted(missing)}")
     if source.duplicated(list(_CANDIDATE_KEY)).any():
-        raise ValueError("held-out availability candidate keys must be unique")
+        raise ValueError("activity availability candidate keys must be unique")
 
     feature_index = {name: index for index, name in enumerate(aggregate.feature_ids)}
     missing_features = set(transform.feature_ids).difference(feature_index)
     if missing_features:
         raise ValueError(
-            f"held-out aggregate lacks transform features: {sorted(missing_features)}"
+            "application aggregate lacks transform features: "
+            f"{sorted(missing_features)}"
         )
     selected_columns = np.asarray(
         [feature_index[name] for name in transform.feature_ids], dtype=np.int64
@@ -689,7 +691,79 @@ def apply_absolute_activity_v2_transform(
         source[reason] = f"{head}_not_computed"
         source[functional_id] = None
     source["null_sender_attribution"] = np.nan
+    source["attribution_entropy"] = np.nan
     source["selection_stability"] = np.nan
+    return cast(pd.DataFrame, source)
+
+
+def build_absolute_activity_v2_training_table(
+    transform: AbsoluteActivityV2Transform,
+    aggregate: PseudobulkDataset,
+    availability: BatchAvailability,
+    *,
+    condition_columns: Sequence[str],
+) -> pd.DataFrame:
+    """Build non-OOF activity rows solely for fold-training calibration."""
+
+    if not isinstance(transform, AbsoluteActivityV2Transform):
+        raise TypeError("transform must be AbsoluteActivityV2Transform")
+    if not isinstance(aggregate, PseudobulkDataset):
+        raise TypeError("M0 v2 calibration requires a raw-count PseudobulkDataset")
+    if not isinstance(availability, BatchAvailability) or (
+        availability.filter_application
+        is not InteractionFilterApplication.TRAINING_SELECTION_V1
+    ):
+        raise ValueError(
+            "M0 v2 training calibration requires training-selection availability"
+        )
+    aggregate_subjects = tuple(
+        sorted(set(aggregate.unit_metadata["subject_id"].astype(str)))
+    )
+    if (
+        availability.application_subject_ids != transform.training_subject_ids
+        or aggregate_subjects != transform.training_subject_ids
+    ):
+        raise ValueError(
+            "M0 v2 training calibration subjects must match the fitted transform"
+        )
+    source = _compute_absolute_activity_v2_source(
+        transform,
+        aggregate,
+        availability,
+        condition_columns=condition_columns,
+    )
+    return source.loc[:, list(ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS)].sort_values(
+        list(_CANDIDATE_KEY), kind="stable", ignore_index=True
+    )
+
+
+def apply_absolute_activity_v2_transform(
+    transform: AbsoluteActivityV2Transform,
+    aggregate: PseudobulkDataset,
+    availability: BatchAvailability,
+    *,
+    condition_columns: Sequence[str],
+    repeat_id: str,
+    application_input_digest: str,
+    config_digest: str,
+    seed_lineage_id: str,
+    package_version: str,
+) -> SampleEdgeScoreV2:
+    """Apply one frozen transform to held-out sample x sender x LR x receiver rows."""
+
+    if not isinstance(availability, BatchAvailability) or (
+        availability.filter_application
+        is not InteractionFilterApplication.FROZEN_APPLICATION_V1
+    ):
+        raise ValueError(
+            "M0 v2 held-out application requires a frozen interaction universe"
+        )
+    source = _compute_absolute_activity_v2_source(
+        transform,
+        aggregate,
+        availability,
+        condition_columns=condition_columns,
+    )
 
     application_subjects = tuple(
         sorted(set(aggregate.unit_metadata["subject_id"].astype(str)))
@@ -727,11 +801,13 @@ def apply_absolute_activity_v2_transform(
 
 
 __all__ = [
+    "ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS",
     "ABSOLUTE_ACTIVITY_V2_SCORE_VERSION",
     "ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION",
     "AbsoluteActivityV2Spec",
     "AbsoluteActivityV2Transform",
     "FrozenActivityInteractionV2",
     "apply_absolute_activity_v2_transform",
+    "build_absolute_activity_v2_training_table",
     "fit_absolute_activity_v2_transform",
 ]

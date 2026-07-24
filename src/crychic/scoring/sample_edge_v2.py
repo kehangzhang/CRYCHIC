@@ -46,6 +46,7 @@ SAMPLE_EDGE_SCORE_V2_COLUMNS = (
     "occurrence_functional_id",
     "sender_attribution",
     "null_sender_attribution",
+    "attribution_entropy",
     "attribution_status",
     "attribution_reason_code",
     "attribution_functional_id",
@@ -107,6 +108,7 @@ _UNIT_INTERVAL_COLUMNS = (
     "active_probability",
     "sender_attribution",
     "null_sender_attribution",
+    "attribution_entropy",
     "cell_count_reliability",
     "reliability_weight",
     "selection_stability",
@@ -576,20 +578,43 @@ class SampleEdgeScoreV2:
                 "occurrence_status",
                 "occurrence_reason_code",
                 "null_sender_attribution",
+                "attribution_entropy",
             ):
                 if not _same_nullable(group, column):
                     raise ValueError(f"{column} must be constant within each parent")
             sender_weights = group["sender_attribution"].dropna().astype(float)
             null_values = group["null_sender_attribution"].dropna().astype(float)
+            entropy_values = group["attribution_entropy"].dropna().astype(float)
             if sender_weights.empty:
-                if not null_values.empty:
-                    raise ValueError("null attribution requires sender attribution")
+                if not null_values.empty or not entropy_values.empty:
+                    raise ValueError(
+                        "null attribution and entropy require sender attribution"
+                    )
                 continue
             if null_values.empty:
                 raise ValueError("sender attribution requires a null sender")
             total = float(sender_weights.sum()) + float(null_values.iloc[0])
             if not math.isclose(total, 1.0, rel_tol=1e-12, abs_tol=1e-12):
                 raise ValueError("sender and null attribution must sum to one")
+            if entropy_values.empty:
+                raise ValueError("sender attribution requires attribution entropy")
+            probabilities = np.concatenate(
+                ([float(null_values.iloc[0])], sender_weights.to_numpy(dtype=float))
+            )
+            positive = probabilities[probabilities > 0.0]
+            expected_entropy = (
+                -float(np.sum(positive * np.log(positive)))
+                / math.log(len(probabilities))
+                if len(probabilities) > 1
+                else 0.0
+            )
+            if not math.isclose(
+                float(entropy_values.iloc[0]),
+                expected_entropy,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise ValueError("attribution_entropy disagrees with sender weights")
 
 
 __all__ = [

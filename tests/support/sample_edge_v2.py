@@ -60,6 +60,10 @@ def sample_edge_scores() -> SampleEdgeScoreV2:
         "occurrence_reason_code": "occurrence_head_not_computed",
         "occurrence_functional_id": None,
         "null_sender_attribution": 0.1,
+        "attribution_entropy": -(
+            0.6 * np.log(0.6) + 0.3 * np.log(0.3) + 0.1 * np.log(0.1)
+        )
+        / np.log(3.0),
         "attribution_status": "observed",
         "attribution_reason_code": None,
         "attribution_functional_id": "attribution-functional-test-v2",

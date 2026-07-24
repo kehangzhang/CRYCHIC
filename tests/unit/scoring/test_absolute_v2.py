@@ -22,9 +22,11 @@ from crychic.resources import (
     Species,
 )
 from crychic.scoring import (
+    ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS,
     ABSOLUTE_ACTIVITY_V2_SCORE_VERSION,
     AbsoluteActivityV2Spec,
     apply_absolute_activity_v2_transform,
+    build_absolute_activity_v2_training_table,
     fit_absolute_activity_v2_transform,
 )
 
@@ -151,10 +153,17 @@ def _availability(
     aggregate: PseudobulkDataset,
     *,
     include_sender_c: bool = True,
+    filter_application: InteractionFilterApplication = (
+        InteractionFilterApplication.FROZEN_APPLICATION_V1
+    ),
 ) -> BatchAvailability:
-    senders = ("sender-a", "sender-b", "sender-c") if include_sender_c else (
-        "sender-a",
-        "sender-b",
+    senders = (
+        ("sender-a", "sender-b", "sender-c")
+        if include_sender_c
+        else (
+            "sender-a",
+            "sender-b",
+        )
     )
     rows: list[dict[str, object]] = []
     sample_metadata = aggregate.unit_metadata.drop_duplicates("sample_id")
@@ -185,7 +194,7 @@ def _availability(
         resource_version="1",
         detection_available=True,
         frozen_interaction_universe=_universe(),
-        filter_application=InteractionFilterApplication.FROZEN_APPLICATION_V1,
+        filter_application=filter_application,
         application_subject_ids=subjects,
     )
 
@@ -244,6 +253,27 @@ def test_fit_is_fold_frozen_and_does_not_consume_condition_labels() -> None:
     assert (fit_a.feature_mads >= fit_a.spec.robust_scale_floor).all()
 
 
+def test_training_calibration_table_is_not_mislabeled_as_oof() -> None:
+    aggregate = _aggregate(("train-1", "train-2"), condition="training-label")
+    transform = _fit()
+    availability = _availability(
+        aggregate,
+        filter_application=InteractionFilterApplication.TRAINING_SELECTION_V1,
+    )
+
+    table = build_absolute_activity_v2_training_table(
+        transform,
+        aggregate,
+        availability,
+        condition_columns=("condition",),
+    )
+
+    assert tuple(table.columns) == ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS
+    assert "out_of_fold" not in table
+    assert set(table["subject_id"]) == {"train-1", "train-2"}
+    assert table["sender_detection_raw"].notna().all()
+
+
 def test_m0_v2_is_library_scale_invariant_and_not_mechanism_gated() -> None:
     transform = _fit()
     heldout = _aggregate(("heldout-1",), count_multiplier=1)
@@ -255,8 +285,7 @@ def test_m0_v2_is_library_scale_invariant_and_not_mechanism_gated() -> None:
     assert set(base["score_version"]) == {ABSOLUTE_ACTIVITY_V2_SCORE_VERSION}
     assert np.allclose(base["sender_detection_raw"], scaled["sender_detection_raw"])
     ungated = base.loc[
-        base["sender"].eq("sender-a")
-        & base["interaction_id"].eq("lr-simple")
+        base["sender"].eq("sender-a") & base["interaction_id"].eq("lr-simple")
     ].iloc[0]
     assert ungated["mechanism_support"] == 0.0
     assert ungated["sender_detection_raw"] > 0.0
@@ -276,9 +305,9 @@ def test_log_geometric_formula_and_frozen_bottleneck_penalty() -> None:
         heldout,
         availability,
     )
-    key = plain.table["interaction_id"].eq("lr-simple") & plain.table[
-        "sender"
-    ].eq("sender-b")
+    key = plain.table["interaction_id"].eq("lr-simple") & plain.table["sender"].eq(
+        "sender-b"
+    )
     row = plain.table.loc[key].iloc[0]
     expected = 0.5 * (row["ligand_activity_raw"] + row["receptor_activity_raw"])
 
@@ -293,12 +322,14 @@ def test_complex_and_alternative_or_use_distinct_rules() -> None:
     result = _apply(_fit(), heldout, _availability(heldout)).table
     sender_a = result[result["sender"].eq("sender-a")].set_index("interaction_id")
 
-    assert sender_a.loc["lr-and", "ligand_activity_raw"] < sender_a.loc[
-        "lr-or", "ligand_activity_raw"
-    ]
-    assert sender_a.loc["lr-and", "sender_detection_raw"] < sender_a.loc[
-        "lr-or", "sender_detection_raw"
-    ]
+    assert (
+        sender_a.loc["lr-and", "ligand_activity_raw"]
+        < sender_a.loc["lr-or", "ligand_activity_raw"]
+    )
+    assert (
+        sender_a.loc["lr-and", "sender_detection_raw"]
+        < sender_a.loc["lr-or", "sender_detection_raw"]
+    )
 
 
 def test_sender_detection_is_invariant_to_candidate_cardinality() -> None:

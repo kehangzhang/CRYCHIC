@@ -6,12 +6,14 @@ from .absolute import (
     build_absolute_activity_heads,
 )
 from .absolute_v2 import (
+    ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS,
     ABSOLUTE_ACTIVITY_V2_SCORE_VERSION,
     ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION,
     AbsoluteActivityV2Spec,
     AbsoluteActivityV2Transform,
     FrozenActivityInteractionV2,
     apply_absolute_activity_v2_transform,
+    build_absolute_activity_v2_training_table,
     fit_absolute_activity_v2_transform,
 )
 from .active_edge import (
@@ -153,6 +155,7 @@ from .sample_edge_v2 import (
 __all__ = [
     "ABSOLUTE_ACTIVITY_HEAD_COLUMNS",
     "ABSOLUTE_ACTIVITY_SCORE_VERSION",
+    "ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS",
     "ABSOLUTE_ACTIVITY_V2_SCORE_VERSION",
     "ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION",
     "ACTIVE_EDGE_CANDIDATE_UNIVERSE_POLICY_ID",
@@ -237,6 +240,7 @@ __all__ = [
     "apply_receiver_family_scoring_artifact",
     "apply_receiver_program_training_artifact",
     "build_absolute_activity_heads",
+    "build_absolute_activity_v2_training_table",
     "downstream_modulated_strength",
     "family_common_edge_evidence_digest",
     "family_common_sender_application_digest",
