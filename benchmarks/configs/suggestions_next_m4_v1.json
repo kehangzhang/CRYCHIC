@@ -1,0 +1,87 @@
+{
+  "schema_version": "crychic-suggestions-next-m4-config-v1",
+  "candidate": {
+    "name": "crychic_m4_posterior_standardized_prevalence",
+    "score_version": "jeffreys_beta_prevalence_contrast_m4_v1",
+    "design": "independent_groups",
+    "beta_prior": 0.5,
+    "minimum_subjects_per_group": 8,
+    "ranking_score": "absolute_posterior_standardized_prevalence_difference",
+    "missing_occurrence_policy": "missing_not_absent",
+    "tuned_parameters": 0,
+    "formal_inference_allowed": false
+  },
+  "claim_boundary": {
+    "occurrence_is_separate_from_continuous_magnitude": true,
+    "adr013_active_probability_is_not_reused": true,
+    "fisher_p_values_are_baseline_only": true,
+    "m4_emits_no_p_or_q_values": true,
+    "m4_emits_no_event_activity_probability": true,
+    "synthetic_occurrence_fixture_is_not_general_sota_evidence": true
+  },
+  "development": {
+    "seeds": [
+      20280101,
+      20280102,
+      20280103,
+      20280104,
+      20280105,
+      20280106,
+      20280107,
+      20280108,
+      20280109,
+      20280110,
+      20280111,
+      20280112,
+      20280113,
+      20280114,
+      20280115,
+      20280116,
+      20280117,
+      20280118,
+      20280119,
+      20280120
+    ],
+    "fixture_manifest_sha256": "PENDING_DEVELOPMENT_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260728
+  },
+  "validation": {
+    "seeds": [
+      20280501,
+      20280502,
+      20280503,
+      20280504,
+      20280505,
+      20280506,
+      20280507,
+      20280508,
+      20280509,
+      20280510,
+      20280511,
+      20280512,
+      20280513,
+      20280514,
+      20280515,
+      20280516,
+      20280517,
+      20280518,
+      20280519,
+      20280520
+    ],
+    "fixture_manifest_sha256": "PENDING_VALIDATION_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260729
+  },
+  "gates": {
+    "ap_delta_vs_m0_ci_lower_exclusive": 0.0,
+    "auroc_delta_vs_m0_ci_lower_exclusive": 0.0,
+    "ap_delta_vs_fisher_ci_lower_minimum": -0.03,
+    "brier_delta_vs_raw_ci_upper_exclusive": 0.0,
+    "log_odds_rmse_delta_vs_raw_ci_upper_maximum": 0.0,
+    "minimum_event_coverage": 0.95,
+    "minimum_direction_accuracy": 0.9
+  }
+}

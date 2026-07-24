@@ -46,6 +46,10 @@ def test_occurrence_contrast_uses_jeffreys_prevalence_and_no_inference() -> None
     assert result["reference_posterior_prevalence"] == pytest.approx(1.5 / 5.0)
     assert result["target_posterior_prevalence"] == pytest.approx(3.5 / 5.0)
     assert result["prevalence_difference"] == pytest.approx(0.4)
+    expected_variance = (1.5 * 3.5) / (5.0**2 * 6.0)
+    assert result["posterior_standardized_prevalence_difference"] == pytest.approx(
+        0.4 / math.sqrt(2.0 * expected_variance)
+    )
     expected_log_or = math.log(3.5 / 1.5) - math.log(1.5 / 3.5)
     assert result["posterior_log_odds_ratio"] == pytest.approx(expected_log_or)
     assert result["direction"] == 1

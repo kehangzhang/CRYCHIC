@@ -26,6 +26,7 @@ OCCURRENCE_CONTRAST_COLUMNS = (
     "reference_posterior_variance",
     "target_posterior_variance",
     "prevalence_difference",
+    "posterior_standardized_prevalence_difference",
     "posterior_log_odds_ratio",
     "direction",
     "status",
@@ -149,6 +150,9 @@ def _result_row(
             target_occurrences, target_subjects, spec.beta_prior
         )
         difference: float | None = target_mean - reference_mean
+        standardized_difference: float | None = difference / math.sqrt(
+            reference_variance + target_variance
+        )
         log_odds_ratio: float | None = target_log_odds - reference_log_odds
         direction: int | None = int(np.sign(difference))
     else:
@@ -157,6 +161,7 @@ def _result_row(
         target_mean = None
         target_variance = None
         difference = None
+        standardized_difference = None
         log_odds_ratio = None
         direction = None
     identity = {
@@ -172,6 +177,7 @@ def _result_row(
         "reference_posterior_variance": reference_variance,
         "target_posterior_variance": target_variance,
         "prevalence_difference": difference,
+        "posterior_standardized_prevalence_difference": standardized_difference,
         "posterior_log_odds_ratio": log_odds_ratio,
         "direction": direction,
         "status": status.value,
