@@ -89,6 +89,7 @@ from .hypergraph_prior import (
     fit_hypergraph_prior_shrinkage,
     freeze_hypergraph_prior,
     permute_hypergraph_prior_degree_matched,
+    rewire_hypergraph_prior_degree_matched,
     select_hypergraph_prior_views,
 )
 from .integration import (
@@ -223,6 +224,7 @@ __all__ = [
     "mechanistic_strength",
     "pair_softmin",
     "permute_hypergraph_prior_degree_matched",
+    "rewire_hypergraph_prior_degree_matched",
     "score_communication",
     "scoring_source_key_digest",
     "select_communication_score",

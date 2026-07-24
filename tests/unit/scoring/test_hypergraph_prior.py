@@ -9,6 +9,7 @@ from crychic.scoring import (
     fit_hypergraph_prior_shrinkage,
     freeze_hypergraph_prior,
     permute_hypergraph_prior_degree_matched,
+    rewire_hypergraph_prior_degree_matched,
     select_hypergraph_prior_views,
 )
 
@@ -46,6 +47,33 @@ def test_degree_matched_permutation_is_stable_and_preserves_every_view_degree() 
     assert first.prior_id != prior.prior_id
     assert first.degree_profile() == prior.degree_profile()
     assert first.parent_prior_id == prior.prior_id
+
+
+def test_partial_rewiring_is_stable_bounded_and_degree_matched() -> None:
+    prior = _prior()
+    first = rewire_hypergraph_prior_degree_matched(
+        prior, fraction=0.25, seed=17
+    )
+    second = rewire_hypergraph_prior_degree_matched(
+        prior, fraction=0.25, seed=17
+    )
+
+    changed = sum(
+        source.memberships != target.memberships
+        for source, target in zip(prior.edges, first.edges, strict=True)
+    )
+    assert first.to_dict() == second.to_dict()
+    assert first.prior_id != prior.prior_id
+    assert first.parent_prior_id == prior.prior_id
+    assert first.degree_profile() == prior.degree_profile()
+    assert first.topology_kind == "degree_matched_partial_rewire:fraction=0.25"
+    assert 0 < changed <= 6
+
+
+@pytest.mark.parametrize("fraction", [0.0, -0.1, 1.0, 1.1, float("nan")])
+def test_partial_rewiring_rejects_invalid_fractions(fraction: float) -> None:
+    with pytest.raises(ValueError, match="strictly between"):
+        rewire_hypergraph_prior_degree_matched(_prior(), fraction=fraction, seed=3)
 
 
 def test_view_subset_preserves_edges_and_declares_only_selected_memberships() -> None:

@@ -97,10 +97,10 @@ class FrozenHypergraphPrior:
             raise ValueError("permutation_seed must be an integer or None")
         if topology_kind == "declared" and (parent is not None or seed is not None):
             raise ValueError("declared priors cannot have permutation parents")
-        if topology_kind == "degree_matched_permutation" and (
+        if topology_kind.startswith("degree_matched_") and (
             parent is None or seed is None
         ):
-            raise ValueError("permuted priors require parent and seed")
+            raise ValueError("degree-matched controls require parent and seed")
         if self.schema_version != _SCHEMA_VERSION:
             raise ValueError(f"schema_version must be {_SCHEMA_VERSION!r}")
         object.__setattr__(self, "view_names", views)
@@ -259,6 +259,83 @@ def permute_hypergraph_prior_degree_matched(
     )
     if result.degree_profile() != prior.degree_profile():
         raise RuntimeError("degree-matched permutation changed node degrees")
+    return result
+
+
+def rewire_hypergraph_prior_degree_matched(
+    prior: FrozenHypergraphPrior,
+    *,
+    fraction: float,
+    seed: int,
+) -> FrozenHypergraphPrior:
+    """Rewire a bounded edge subset while preserving every view degree exactly."""
+
+    if not isinstance(prior, FrozenHypergraphPrior):
+        raise TypeError("prior must be a FrozenHypergraphPrior")
+    if isinstance(fraction, bool | np.bool_) or not isinstance(
+        fraction, int | float | np.integer | np.floating
+    ):
+        raise TypeError("fraction must be numeric")
+    resolved_fraction = float(fraction)
+    if not math.isfinite(resolved_fraction) or not 0.0 < resolved_fraction < 1.0:
+        raise ValueError("fraction must be finite and strictly between zero and one")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("seed must be an integer")
+    edge_count = len(prior.edges)
+    if edge_count < 2:
+        raise ValueError("partial rewiring requires at least two hyperedges")
+
+    selected_count = min(
+        edge_count,
+        max(2, int(math.ceil(resolved_fraction * edge_count))),
+    )
+    rng = np.random.default_rng(seed)
+    selected = np.sort(rng.choice(edge_count, size=selected_count, replace=False))
+    memberships = np.asarray([edge.memberships for edge in prior.edges], dtype=object)
+    rewired = memberships.copy()
+    changed = np.zeros(edge_count, dtype=bool)
+    identity = np.arange(selected_count)
+    for view_index in range(len(prior.view_names)):
+        values = memberships[selected, view_index]
+        best_order = identity
+        best_changed = 0
+        for _ in range(256):
+            order = rng.permutation(selected_count)
+            changed_count = int(np.count_nonzero(values[order] != values))
+            if changed_count > best_changed:
+                best_order = order
+                best_changed = changed_count
+            if changed_count == selected_count:
+                break
+        rewired[selected, view_index] = values[best_order]
+        changed[selected] |= values[best_order] != values
+    if not changed.any():
+        raise ValueError("degree-matched partial rewiring cannot alter this prior")
+
+    edges = tuple(
+        FrozenHyperedgePrior(edge_id=edge.edge_id, memberships=tuple(map(str, row)))
+        for edge, row in zip(prior.edges, rewired, strict=True)
+    )
+    result = FrozenHypergraphPrior(
+        view_names=prior.view_names,
+        edges=edges,
+        source_digest=canonical_digest(
+            {
+                "parent_prior_id": prior.prior_id,
+                "fraction": resolved_fraction,
+                "seed": seed,
+                "selected_edge_ids": [prior.edges[index].edge_id for index in selected],
+            },
+        ),
+        topology_kind=(
+            "degree_matched_partial_rewire:"
+            f"fraction={format(resolved_fraction, '.12g')}"
+        ),
+        parent_prior_id=prior.prior_id,
+        permutation_seed=seed,
+    )
+    if result.degree_profile() != prior.degree_profile():
+        raise RuntimeError("degree-matched partial rewiring changed node degrees")
     return result
 
 
@@ -519,5 +596,6 @@ __all__ = [
     "fit_hypergraph_prior_shrinkage",
     "freeze_hypergraph_prior",
     "permute_hypergraph_prior_degree_matched",
+    "rewire_hypergraph_prior_degree_matched",
     "select_hypergraph_prior_views",
 ]
