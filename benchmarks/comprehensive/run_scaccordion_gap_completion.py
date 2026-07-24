@@ -10,6 +10,7 @@ import os
 import platform
 import resource
 import time
+import warnings
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,6 @@ from sklearn.metrics import adjusted_rand_score, rand_score
 from benchmarks.adapters.common import git_metadata, json_safe, sha256_file
 from benchmarks.comprehensive.run_scaccordion_under100k import (
     _finite_distance,
-    accordion_distances,
     align_sample_universe,
     build_accordion,
     canonical_event_matrix,
@@ -62,7 +62,7 @@ def _kbarycenter_once(
     seed: int,
     max_iterations: int,
     regularization: float,
-) -> tuple[np.ndarray, float, int]:
+) -> tuple[np.ndarray, float, int, bool, float | None]:
     import ot
 
     rng = np.random.default_rng(seed)
@@ -71,6 +71,8 @@ def _kbarycenter_once(
     centroid_distance = distance[:, initial].copy()
     labels = np.argmin(centroid_distance, axis=1)
     iterations = 0
+    sinkhorn_warnings = 0
+    final_errors: list[float] = []
     for iteration in range(1, max_iterations + 1):
         iterations = iteration
         updated = np.empty((n_samples, k), dtype=float)
@@ -83,9 +85,21 @@ def _kbarycenter_once(
             selected = selected / np.maximum(
                 selected.sum(axis=0, keepdims=True), 1.0e-15
             )
-            barycenter = ot.barycenter(
-                A=selected, M=cost, reg=regularization, numItermax=10_000
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                barycenter, barycenter_log = ot.barycenter(
+                    A=selected,
+                    M=cost,
+                    reg=regularization,
+                    numItermax=10_000,
+                    log=True,
+                )
+            sinkhorn_warnings += sum(
+                "did not converge" in str(item.message) for item in caught
             )
+            errors = barycenter_log.get("err", [])
+            if len(errors):
+                final_errors.append(float(errors[-1]))
             barycenter = np.asarray(barycenter, dtype=float)
             barycenter = np.clip(barycenter, 0.0, None)
             barycenter /= max(float(barycenter.sum()), 1.0e-15)
@@ -104,7 +118,11 @@ def _kbarycenter_once(
             break
         labels = new_labels
     inertia = float(centroid_distance[np.arange(n_samples), labels].sum())
-    return labels, inertia, iterations
+    final_error = max(final_errors) if final_errors else None
+    converged = sinkhorn_warnings == 0 and (
+        final_error is None or final_error <= 1.0e-4
+    )
+    return labels, inertia, iterations, converged, final_error
 
 
 def best_kbarycenter(
@@ -119,9 +137,10 @@ def best_kbarycenter(
     regularization: float,
 ) -> tuple[np.ndarray, float, int, int]:
     best: tuple[np.ndarray, float, int, int] | None = None
+    best_key: tuple[bool, float, float, tuple[int, ...]] | None = None
     for offset in range(starts):
         current_seed = seed + offset
-        labels, inertia, iterations = _kbarycenter_once(
+        labels, inertia, iterations, converged, final_error = _kbarycenter_once(
             distance,
             distributions,
             cost,
@@ -131,18 +150,22 @@ def best_kbarycenter(
             regularization=regularization,
         )
         candidate = labels, inertia, current_seed, iterations
-        if best is None or inertia < best[1] - 1.0e-12:
+        candidate_key = (
+            not converged,
+            inertia,
+            final_error if final_error is not None else math.inf,
+            tuple(labels.tolist()),
+        )
+        if best_key is None or candidate_key < best_key:
             best = candidate
-        elif best is not None and math.isclose(inertia, best[1], abs_tol=1.0e-12):
-            if tuple(labels.tolist()) < tuple(best[0].tolist()):
-                best = candidate
+            best_key = candidate_key
     if best is None:
         raise RuntimeError("k-barycenter produced no fit")
     return best
 
 
 def _kbary_start_job(payload: Mapping[str, Any]) -> dict[str, Any]:
-    labels, inertia, iterations = _kbarycenter_once(
+    labels, inertia, iterations, converged, final_error = _kbarycenter_once(
         np.asarray(payload["distance"]),
         np.asarray(payload["distributions"]),
         np.asarray(payload["cost"]),
@@ -158,6 +181,8 @@ def _kbary_start_job(payload: Mapping[str, Any]) -> dict[str, Any]:
         "inertia": inertia,
         "seed": int(payload["seed"]),
         "iterations": iterations,
+        "sinkhorn_converged": converged,
+        "sinkhorn_final_error": final_error,
     }
 
 
@@ -292,7 +317,12 @@ def run_cohort(args: argparse.Namespace) -> None:
             )
         )
     accordion = build_accordion(tables)
-    accordion_values = accordion_distances(accordion)
+    accordion.compute_cost(mode="HTD", beta=0.5)
+    accordion.compute_cost(mode="distance", metric="correlation")
+    accordion_values = {
+        method: base_distances[method]
+        for method in ("scaccordion_dw_ot", "corr_ot")
+    }
     distributions = accordion.p.loc[:, sample_ids].to_numpy(dtype=float)
     kbary_rows: list[dict[str, Any]] = []
     kbary_jobs: list[dict[str, Any]] = []
@@ -325,7 +355,11 @@ def run_cohort(args: argparse.Namespace) -> None:
         candidates = [row for row in kbary_results if row["method"] == method]
         selected = min(
             candidates,
-            key=lambda row: (row["inertia"], tuple(row["labels"].tolist())),
+            key=lambda row: (
+                not row["sinkhorn_converged"],
+                row["inertia"],
+                tuple(row["labels"].tolist()),
+            ),
         )
         predicted = selected["labels"]
         kbary_rows.append(
@@ -343,6 +377,11 @@ def run_cohort(args: argparse.Namespace) -> None:
                 "starts": int(config["kbarycenter_starts"]),
                 "iterations": int(selected["iterations"]),
                 "regularization": float(config["kbarycenter_regularization"]),
+                "sinkhorn_converged": bool(selected["sinkhorn_converged"]),
+                "sinkhorn_final_error": selected["sinkhorn_final_error"],
+                "converged_starts": sum(
+                    bool(row["sinkhorn_converged"]) for row in candidates
+                ),
             }
         )
     resolution_config = config["leiden_resolutions"]
@@ -410,15 +449,32 @@ def run_cohort(args: argparse.Namespace) -> None:
                     "selected_resolution": float(selected["resolution"])
                     if "resolution" in selected
                     else None,
+                    "numerical_status": (
+                        "converged"
+                        if backend != "k_barycenter"
+                        or bool(selected["sinkhorn_converged"])
+                        else "diagnostic_nonconverged"
+                    ),
                 }
             )
     pd.DataFrame(summaries).to_csv(
         args.output / "summary_metrics.tsv", sep="\t", index=False
     )
+    nonconverged_methods = kbary.loc[
+        ~kbary["sinkhorn_converged"].astype(bool), "method"
+    ].tolist()
     coverage = pd.DataFrame.from_records(
         [
             {"endpoint": "canonical_spearman", "status": "complete", "reason_code": ""},
-            {"endpoint": "k_barycenter", "status": "complete", "reason_code": ""},
+            {
+                "endpoint": "k_barycenter",
+                "status": "complete"
+                if not nonconverged_methods
+                else "diagnostic_nonconverged",
+                "reason_code": ""
+                if not nonconverged_methods
+                else "no_converged_start_for_" + ",".join(nonconverged_methods),
+            },
             {
                 "endpoint": "leiden_resolution_0_to_1",
                 "status": "complete",
@@ -448,7 +504,11 @@ def run_cohort(args: argparse.Namespace) -> None:
         args.output / "manifest.json",
         {
             "schema_version": SCHEMA,
-            "status": "complete_with_declared_NE",
+            "status": (
+                "complete_with_declared_NE"
+                if not nonconverged_methods
+                else "complete_with_declared_NE_and_numerical_diagnostics"
+            ),
             "benchmark_id": args.benchmark_id,
             "canonical_event_count": event_count,
             "source_repository": git_metadata(args.repo_root),
