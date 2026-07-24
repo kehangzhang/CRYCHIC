@@ -2,6 +2,11 @@
 
 更新日期：2026-07-24
 
+版本边界：压缩包中的源码快照来自 `optimize/suggestions-next-m0-20260724`，精确 commit 记录在
+`BUNDLE_METADATA.json`；最新核心算法变更为 `209e6a3`。两个已执行 notebook 及其独立图表是此前
+冻结的正式 benchmark 结果；单组 notebook 最后更新于 `055c67d`。当前源码新增的 M0
+absolute-activity 输出头仅通过开发集门禁，尚未进入跨算法冻结验证，因此不纳入下述正式名次。
+
 ## 1. 压缩包内容
 
 本压缩包是便于传阅的紧凑快照，不包含原始单细胞数据、完整运行目录、软件环境或大体积中间矩阵。
@@ -25,7 +30,7 @@
 4. 4 类扰动下的 Top-250 稳健性。
 5. 最新源码逐行一致性复跑。
 
-最新版 `availability_state` 在可重跑的 7 个 CITE-seq、56 个 IPF 和 1 个 HER2 数据集上与旧结果完全一致：64 个数据集、4,757,604 行，未匹配、数值差异和文本差异均为 0。因此既有单组 AUROC/AP 排名不变。IPF 中 CRYCHIC 为 AUROC 2/11、AP 1/11、balanced AUPRC 1/11。
+截至单组 notebook 的冻结提交，`availability_state` 在可重跑的 7 个 CITE-seq、56 个 IPF 和 1 个 HER2 数据集上与旧结果完全一致：64 个数据集、4,757,604 行，未匹配、数值差异和文本差异均为 0。因此既有单组 AUROC/AP 排名不变。IPF 中 CRYCHIC 为 AUROC 2/11、AP 1/11、balanced AUPRC 1/11。
 
 多组 RC12/RC14 不能直接套用到一个样本：RC12 需要训练折生成的 sender assignment 和跨条件 receiver program；RC14 需要多条件差异统计和空间 pair prior。这两项在单样本分析中是 NE，不用 receptor expression 伪造替代。
 
@@ -92,4 +97,3 @@ RC14 是在 Kuppe 上冻结的 benchmark-only Top-K head。它在 K=100 时于 K
 3. strict native event-count 与 continuous-weighted DES 仍落后于 scSeqCommDiff；RC14 只在部分 Top-K 预算上领先。
 4. CRYCHIC 在 synthetic exact hypergraph truth 为 1/4，说明高阶表示有明确模拟优势，但尚不能替代真实数据验证。
 5. 当前 RC12/RC14 均是 benchmark-only 输出头，未替换 public default；formal p/q 仍禁用。整体状态是“若干赛道竞争力明显提高，但尚未形成跨 estimand 的全面第一”。
-
