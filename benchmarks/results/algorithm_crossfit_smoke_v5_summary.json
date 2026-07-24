@@ -1,10 +1,10 @@
 {
-  "base_revision": "c5b1ec3300737d7dd43e908e717588b07c918810",
+  "base_revision": "0ffdb0a9edf998cdb684aadc161f11954d3b8f2d",
   "full_artifact": {
-    "canonical_sha256": "ca2379faece87d76a4d3319ec423421b8d83e9ae941f7b6d7a427220ae3a288b",
-    "file_sha256": "88d8d676d3673391f12096a476f173522efcb9e0122c084df87ab0bc3d3525dd",
+    "canonical_sha256": "708e1d5ec6f7462b2ecec2dd661b771f926da6f57f1d00f17b794431ac0679d6",
+    "file_sha256": "7e43c2e85eb2123b8d552f087fe43adcc8422c51a53d0d463ebdbc5792aaac23",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
-    "size_bytes": 15180
+    "size_bytes": 15181
   },
   "generated_on": "2026-07-24",
   "guardrails": {
@@ -17,14 +17,14 @@
   },
   "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract after the v7 coordinate, lineage, and factorized-nuisance updates. Active has positive bounded and raw diagnostic gain (0.0510551), while ligand-only has zero bounded gain and negative raw gain (-0.0174719). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
   "process_performance": {
-    "peak_rss_kib": 440112,
-    "wall_clock_seconds": 14.873762274160981
+    "peak_rss_kib": 1735540,
+    "wall_clock_seconds": 13.769319513812661
   },
   "records": [
     {
       "crossfit_id": "subject_crossfit_1dd0ce714a19a26e040d658ed8a80727",
       "dataset": "synthetic_active",
-      "elapsed_seconds": 8.829236826859415,
+      "elapsed_seconds": 8.743977354839444,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -46,7 +46,7 @@
     {
       "crossfit_id": "subject_crossfit_20a60ca01060bdce5bdc0e9cdb3999fc",
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 6.044525447301567,
+      "elapsed_seconds": 5.025342158973217,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -130,13 +130,13 @@
     "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
     "src/crychic/response/fold.py": "d801caff1b411db202c48d5017ac0168f97d0e8ba873d1dab501c9590b3f8fec",
     "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
-    "src/crychic/scoring/__init__.py": "0e7b62f5ab0b2051a00b7a78678475235d33de0ca170baa15270182046872b29",
+    "src/crychic/scoring/__init__.py": "498ac70f61796bde58637ef35a207bb8d888f0c6e0eada45d7dcf69a8c87eedc",
     "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
     "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a",
     "src/crychic/scoring/family_common.py": "546133b652600f2073756f220b1a3a6d4d7f0d6d41479e47eae103106593f616",
     "src/crychic/scoring/integration.py": "e322f57b6322f6afdbe1bda39c31654ab53968fcf2fcff90a3c619589fd42c71",
     "src/crychic/scoring/receiver_family.py": "b019c67322587d510c116f5f082c542a363ca156bbeab16c5524ab7ac759314c",
-    "src/crychic/sender/__init__.py": "3477805908d512e0ebe995806300b523bff8fc118e591f2e14486ed92487d6ff",
+    "src/crychic/sender/__init__.py": "69bef06800f5c0302a5f7c69ed1b7f1a7df5d5ca78faffb41ed2a9bb6dd5c5d2",
     "src/crychic/sender/assignment.py": "a3c83945508b49decd70ae834dee5e7d15218f7dffc2e5e56a0d72847d917079",
     "src/crychic/sender/common.py": "0f98d38f0048fbc2e45d531c7caaa35cdf51eb81dd1f3478918d306a8db1de22",
     "src/crychic/sender/contracts.py": "de44ba7f338ea00364373591aae830eda01ec76cf1365697f1530c24087a362b",
