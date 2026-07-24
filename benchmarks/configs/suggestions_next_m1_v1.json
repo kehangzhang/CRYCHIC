@@ -70,7 +70,7 @@
       20270519,
       20270520
     ],
-    "fixture_manifest_sha256": "PENDING_FRESH_VALIDATION_FIXTURE",
+    "fixture_manifest_sha256": "7660c9a63fb4f8cabd2be54acc869cd46783be9a717b1ddbd369a85f646fd640",
     "minimum_paired_seeds": 20,
     "bootstrap_replicates": 20000,
     "bootstrap_seed": 20260725
