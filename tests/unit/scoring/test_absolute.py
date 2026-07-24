@@ -203,3 +203,28 @@ def test_sample_missing_a_frozen_sender_keeps_detection_but_not_attribution() ->
         "sender_attribution"
     ].sum()
     assert np.allclose(sums, 1.0)
+
+
+def test_complete_candidate_set_preserves_missing_assignment_evidence_reason() -> None:
+    source = _availability()
+    missing_table = source.sample_interactions.copy()
+    missing_table["ligand_availability"] = np.nan
+    missing_evidence = BatchAvailability(
+        sample_interactions=missing_table,
+        mapping_summary=source.mapping_summary,
+        resource_id=source.resource_id,
+        resource_version=source.resource_version,
+        detection_available=source.detection_available,
+        frozen_interaction_universe=source.frozen_interaction_universe,
+        filter_application=source.filter_application,
+        application_subject_ids=source.application_subject_ids,
+    )
+
+    result = build_absolute_activity_heads(
+        missing_evidence, _assignment(missing_evidence)
+    )
+
+    assert result["sender_detection"].notna().all()
+    assert result["sender_attribution"].isna().all()
+    assert set(result["attribution_status"]) == {"missing_evidence"}
+    assert set(result["attribution_reason_code"]) == {"all_candidate_evidence_missing"}

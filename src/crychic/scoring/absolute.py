@@ -150,6 +150,7 @@ def build_absolute_activity_heads(
             observed=True,
             sort=False,
         )["sender"].transform("size")
+        assignment["_assignment_row_present"] = True
         source = source.merge(
             assignment,
             on=list(_ASSIGNMENT_KEYS),
@@ -180,14 +181,14 @@ def build_absolute_activity_heads(
         expected_count = attribution_groups["_assignment_candidate_count"].transform(
             "max"
         )
-        source["_assignment_coverage_complete"] = (
+        source["_assignment_candidate_coverage_complete"] = (
             expected_count.notna()
             & source["candidate_sender_count"].eq(expected_count)
-            & source["sender_attribution"].notna()
+            & source["_assignment_row_present"].fillna(False).astype(bool)
         )
-        parent_complete = attribution_groups["_assignment_coverage_complete"].transform(
-            "all"
-        )
+        parent_complete = attribution_groups[
+            "_assignment_candidate_coverage_complete"
+        ].transform("all")
         incomplete = ~parent_complete
         source.loc[incomplete, "sender_attribution"] = np.nan
         source.loc[incomplete, "attribution_status"] = "not_estimable"
