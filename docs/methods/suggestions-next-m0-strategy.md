@@ -171,3 +171,32 @@ inhibition, probability calibration, or formal inference. The next isolated
 cycle is M2 residualized coupling on decoy-sender, composition, and confounding
 families. The full locked evidence and claim boundary are recorded in
 `benchmarks/results/SUGGESTIONS_NEXT_M1_VALIDATION_20260724.md`.
+
+## Locked M2 sender-specificity result
+
+M2 adds one descriptive component: fold-training residual correlation between
+the M0 candidate-sender ligand contrast and the M1 receiver-program contrast,
+after adjustment for recorded batch, composition design, and candidate-sender
+proportion changes. It retains signed correlation separately and uses only its
+positive part as coupling support. It emits no probability, p value, or q
+value.
+
+Development used 20 root seeds from 20270801--20270820. Locked validation used
+20 fresh seeds from 20271201--20271220, 20 paired subjects, four candidate
+senders, and 191,683 cells. The fixture manifest SHA256 is
+`4cf8d84779608f1c1cfffc7dc57980f804a353676db769cca8ae6fb9cfe25e6b`;
+the validation output manifest SHA256 is
+`89abe24e86fd0039bb273f85c90934eacfd6c0e540a29cf1394917bfaa13b32c`.
+
+M2 passed all locked gates: AP 1.000, AUROC 1.000, true-sender rank 1 in all 20
+seeds, complete candidate/fold coverage, and rank 1/4. Raw unadjusted coupling
+scored AP 0.421 and AUROC 0.417. The paired M2-minus-raw AP delta was +0.579
+(95% CI [+0.479, +0.658]); AUROC delta was +0.583 (95% CI
+[+0.467, +0.700]). The full development history, including rejected raw
+proportion, full-log-ratio, and PC1 nuisance alternatives, is retained in
+`benchmarks/results/SUGGESTIONS_NEXT_M2_VALIDATION_20260724.md`.
+
+M2 evidence is limited to a synthetic paired estimand with recorded nuisance
+covariates. It does not establish behavior under unmeasured confounding or a
+general SOTA claim. The next isolated cycle is M4 occurrence, followed by M5
+frozen hypergraph shrinkage.
