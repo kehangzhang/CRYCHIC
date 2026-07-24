@@ -262,7 +262,11 @@ def got_distance(accordion: Any) -> np.ndarray:
     for left in range(len(sample_ids)):
         for right in range(left + 1, len(sample_ids)):
             value = actl.GOT.wass_dist_(laplacians[left], laplacians[right])
-            value = float(np.real_if_close(value))
+            # scipy.linalg.sqrtm can leave numerical imaginary residue even
+            # for real positive-semidefinite graph Laplacians.  GOT is a real
+            # distance; the reference implementation likewise uses its real
+            # scalar component downstream.
+            value = float(np.real(np.asarray(value).item()))
             distance[left, right] = distance[right, left] = max(value, 0.0)
     return _finite_distance(distance)
 
