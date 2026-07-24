@@ -5,6 +5,15 @@ from .absolute import (
     ABSOLUTE_ACTIVITY_SCORE_VERSION,
     build_absolute_activity_heads,
 )
+from .absolute_v2 import (
+    ABSOLUTE_ACTIVITY_V2_SCORE_VERSION,
+    ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION,
+    AbsoluteActivityV2Spec,
+    AbsoluteActivityV2Transform,
+    FrozenActivityInteractionV2,
+    apply_absolute_activity_v2_transform,
+    fit_absolute_activity_v2_transform,
+)
 from .active_edge import (
     ACTIVE_EDGE_CANDIDATE_UNIVERSE_POLICY_ID,
     ActiveEdgeCandidate,
@@ -144,6 +153,8 @@ from .sample_edge_v2 import (
 __all__ = [
     "ABSOLUTE_ACTIVITY_HEAD_COLUMNS",
     "ABSOLUTE_ACTIVITY_SCORE_VERSION",
+    "ABSOLUTE_ACTIVITY_V2_SCORE_VERSION",
+    "ABSOLUTE_ACTIVITY_V2_TRANSFORM_VERSION",
     "ACTIVE_EDGE_CANDIDATE_UNIVERSE_POLICY_ID",
     "CORE_COMPONENTS",
     "FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS",
@@ -173,6 +184,8 @@ __all__ = [
     "SCORING_SOURCE_KEY_COLUMNS",
     "SIGNED_PROGRAM_CONCORDANCE_FORMULA",
     "SIGNED_PROGRAM_CONCORDANCE_VERSION",
+    "AbsoluteActivityV2Spec",
+    "AbsoluteActivityV2Transform",
     "ActiveEdgeCandidate",
     "ActiveEdgePointStatus",
     "CommunicationScoreStatus",
@@ -189,6 +202,7 @@ __all__ = [
     "FamilyCommonScoringFunctional",
     "FoldLatentNuisanceArtifact",
     "FrozenActiveEdgeUniverse",
+    "FrozenActivityInteractionV2",
     "FrozenFamilyInteraction",
     "FrozenHyperedgePrior",
     "FrozenHypergraphPrior",
@@ -215,6 +229,7 @@ __all__ = [
     "ScoringFunctionalStatus",
     "ScoringModelManifest",
     "SubjectEqualActiveEdgeScore",
+    "apply_absolute_activity_v2_transform",
     "apply_cross_receiver_common_scoring_functional",
     "apply_downstream_functional",
     "apply_family_common_scoring_functional",
@@ -225,6 +240,7 @@ __all__ = [
     "downstream_modulated_strength",
     "family_common_edge_evidence_digest",
     "family_common_sender_application_digest",
+    "fit_absolute_activity_v2_transform",
     "fit_cross_receiver_common_scoring_functional",
     "fit_downstream_functional",
     "fit_family_common_scoring_functional",
