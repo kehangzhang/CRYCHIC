@@ -30,11 +30,19 @@ from .contracts import (
     SenderPrevalenceStatus,
     sender_assignment_id,
 )
+from .coupling import (
+    RESIDUALIZED_COUPLING_VERSION,
+    ResidualizedCouplingSpec,
+    ResidualizedCouplingStatus,
+    ResidualizedSenderCoupling,
+    fit_residualized_sender_coupling,
+)
 
 __all__ = [
     "ASSIGNMENT_GROUP_COLUMNS",
     "COMMON_SENDER_APPLICATION_COLUMNS",
     "COMMON_SENDER_GROUP_COLUMNS",
+    "RESIDUALIZED_COUPLING_VERSION",
     "SENDER_ASSIGNMENT_COLUMNS",
     "SENDER_EVIDENCE_COMPONENTS",
     "CommonSenderApplication",
@@ -43,6 +51,9 @@ __all__ = [
     "ContrastCommonSenderParameters",
     "InteractionLigandContrastGate",
     "InteractionLigandContrastSupport",
+    "ResidualizedCouplingSpec",
+    "ResidualizedCouplingStatus",
+    "ResidualizedSenderCoupling",
     "SenderAssignment",
     "SenderAssignmentStatus",
     "SenderContrastSupportStatus",
@@ -54,6 +65,7 @@ __all__ = [
     "apply_contrast_common_sender_functional",
     "assign_senders",
     "fit_contrast_common_sender_functional",
+    "fit_residualized_sender_coupling",
     "freeze_common_sender_candidate_manifest",
     "interaction_ligand_contrast_gate",
     "interaction_ligand_contrast_gates",
