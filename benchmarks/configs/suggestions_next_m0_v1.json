@@ -1,0 +1,94 @@
+{
+  "schema_version": "crychic-suggestions-next-m0-config-v1",
+  "status": "preregistered_experimental_benchmark_only",
+  "candidate": {
+    "name": "crychic_m0_absolute_sender_detection",
+    "score_version": "log_reference_additive_m0_v1",
+    "expression_transform": "clip(log1p(expression)/log1p(reference),0,1)",
+    "absolute_expression_reference": 1000000.0,
+    "ligand_weight": 0.5,
+    "receptor_weight": 0.5,
+    "sender_detection_conserved": false,
+    "conditional_attribution_conserved": true,
+    "null_sender_enabled": true,
+    "formal_inference_allowed": false
+  },
+  "development": {
+    "fixture_manifest_sha256": "1130761f0f8b572f67dc4a4984264ff37a2b3dadfd66ce2746db73c131a7a6fd",
+    "source_evaluation_manifest_sha256": "ce5140f55759b9175fdec8773c2f00be78ba4faded91d948b85efa806d1d6bcf",
+    "seeds": [
+      20260801,
+      20260802,
+      20260803,
+      20260804,
+      20260805,
+      20260806,
+      20260807,
+      20260808,
+      20260809,
+      20260810,
+      20260811,
+      20260812,
+      20260813,
+      20260814,
+      20260815,
+      20260816,
+      20260817,
+      20260818,
+      20260819,
+      20260820
+    ],
+    "selection_rule": "fixed_equal_weight_log_additive_parent_no_validation_tuning"
+  },
+  "validation": {
+    "seeds": [
+      20261201,
+      20261202,
+      20261203,
+      20261204,
+      20261205,
+      20261206,
+      20261207,
+      20261208,
+      20261209,
+      20261210,
+      20261211,
+      20261212,
+      20261213,
+      20261214,
+      20261215,
+      20261216,
+      20261217,
+      20261218,
+      20261219,
+      20261220
+    ],
+    "group_subjects": {
+      "A": 8,
+      "B": 10,
+      "C": 12
+    },
+    "mean_cells_per_sample": 180,
+    "fixture_manifest_sha256": "PENDING_FRESH_FIXTURE",
+    "source_evaluation_manifest_sha256": "PENDING_FRESH_SOURCE_EVALUATION",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260724
+  },
+  "gates": {
+    "auprc_delta_ci_lower_minimum": -0.01,
+    "auroc_delta_ci_lower_minimum_exclusive": 0.0,
+    "direction_accuracy_maximum_degradation": 0.02,
+    "minimum_event_coverage": 0.8,
+    "require_lower_zero_fraction_than_canonical": true,
+    "require_lower_tie_fraction_than_canonical": true,
+    "require_sender_invariant_tests": true
+  },
+  "claim_boundary": {
+    "experimental_head_only": true,
+    "communication_strength_is_not_replaced": true,
+    "active_probability_is_not_emitted": true,
+    "p_and_q_values_are_not_emitted": true,
+    "expression_driven_fixture_is_not_general_sota_evidence": true
+  }
+}

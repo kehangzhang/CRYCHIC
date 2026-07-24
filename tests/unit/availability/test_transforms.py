@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from crychic.availability import (
     DetectionShrinkage,
     generalized_harmonic_softmin,
     hill_transform,
+    log_reference_evidence,
     shrink_detection_fraction,
 )
+from crychic.core import ContractError
 
 
 def test_hill_transform_is_bounded_and_monotone() -> None:
@@ -35,3 +39,25 @@ def test_softmin_is_limited_by_weak_complex_subunit_and_monotone() -> None:
     assert limited < 0.06
     assert limited < raised_limit < balanced
     assert generalized_harmonic_softmin((0.8, 0.0), power=8) == 0.0
+
+
+def test_log_reference_evidence_preserves_dynamic_range_without_probability_claim() -> (
+    None
+):
+    assert log_reference_evidence(0.0) == 0.0
+    assert log_reference_evidence(1_000_000.0) == 1.0
+    low = log_reference_evidence(10_000.0)
+    high = log_reference_evidence(100_000.0)
+    assert 0.0 < low < high < 1.0
+    assert log_reference_evidence(2_000_000.0) == 1.0
+
+
+@pytest.mark.parametrize(
+    ("value", "reference"),
+    [(-1.0, 1_000_000.0), (math.inf, 1_000_000.0), (1.0, 0.0)],
+)
+def test_log_reference_evidence_rejects_invalid_scale(
+    value: float, reference: float
+) -> None:
+    with pytest.raises(ContractError):
+        log_reference_evidence(value, reference=reference)

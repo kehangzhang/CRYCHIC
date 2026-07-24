@@ -22,6 +22,7 @@ from .table import BatchAvailability, estimate_bundle_availability
 from .transforms import (
     generalized_harmonic_softmin,
     hill_transform,
+    log_reference_evidence,
     shrink_detection_fraction,
     single_gene_availability,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "estimate_interaction_availability",
     "generalized_harmonic_softmin",
     "hill_transform",
+    "log_reference_evidence",
     "shrink_detection_fraction",
     "single_gene_availability",
 ]

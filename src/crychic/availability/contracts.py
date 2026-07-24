@@ -192,10 +192,8 @@ class FrozenInteractionUniverse:
                 and self.training_subject_ids == repeated.training_subject_ids
                 and self.resource_id == repeated.resource_id
                 and self.resource_version == repeated.resource_version
-                and self.resource_manifest_digest
-                == repeated.resource_manifest_digest
-                and self.min_pooled_availability
-                == repeated.min_pooled_availability
+                and self.resource_manifest_digest == repeated.resource_manifest_digest
+                and self.min_pooled_availability == repeated.min_pooled_availability
                 and self.max_interactions == repeated.max_interactions
                 and self.selection_policy == repeated.selection_policy
                 and self.schema_version == repeated.schema_version
@@ -273,10 +271,11 @@ class DetectionShrinkage:
 class AvailabilityParameters:
     """Fold-frozen numerical parameters for availability estimation."""
 
-    hill: HillParameters = HillParameters()
-    detection: DetectionShrinkage = DetectionShrinkage()
+    hill: HillParameters = field(default_factory=HillParameters)
+    detection: DetectionShrinkage = field(default_factory=DetectionShrinkage)
     complex_power: float = 4.0
     complex_epsilon: float = 1e-12
+    absolute_expression_reference: float = 1_000_000.0
 
     def __post_init__(self) -> None:
         if self.complex_power <= 0 or self.complex_epsilon <= 0:
@@ -285,6 +284,16 @@ class AvailabilityParameters:
                 code="invalid_complex_parameters",
                 field="complex_power",
                 remediation="Use a positive generalized-harmonic power and epsilon",
+            )
+        if (
+            not math.isfinite(self.absolute_expression_reference)
+            or self.absolute_expression_reference <= 0
+        ):
+            raise ContractError(
+                "Absolute-expression reference must be finite and positive",
+                code="invalid_absolute_expression_reference",
+                field="absolute_expression_reference",
+                remediation="Use a fixed positive expression reference such as 1e6 CPM",
             )
 
 

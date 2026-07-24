@@ -271,6 +271,17 @@ def test_batch_availability_preserves_state_and_ecosystem_components() -> None:
     assert len(active) == 3
     assert (active["availability_state"] > 0).all()
     assert (active["availability_ecosystem"] < active["availability_state"]).all()
+    assert {
+        "ligand_absolute_evidence",
+        "receptor_absolute_evidence",
+        "absolute_lr_activity",
+    }.issubset(table.columns)
+    assert np.allclose(
+        active["absolute_lr_activity"],
+        0.5
+        * (active["ligand_absolute_evidence"] + active["receptor_absolute_evidence"]),
+    )
+    assert active["absolute_lr_activity"].between(0.0, 1.0).all()
     assert set(table["state_status"].astype(str)) == {"observed"}
     assert table["state_reason_code"].isna().all()
     assert set(table["ecosystem_status"].astype(str)) == {"observed"}

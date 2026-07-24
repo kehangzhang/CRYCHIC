@@ -144,6 +144,30 @@ def _entity_values(
     return result
 
 
+def _absolute_entity_values(
+    gene_values: np.ndarray,
+    indices: Sequence[int],
+    *,
+    power: float,
+    epsilon: float,
+) -> npt.NDArray[np.float64]:
+    """Aggregate required absolute-evidence subunits without sharing caches."""
+
+    values = gene_values[:, indices]
+    if values.shape[1] == 1:
+        return np.asarray(values[:, 0], dtype=np.float64).copy()
+    missing = np.isnan(values).any(axis=1)
+    has_zero = np.equal(values, 0.0).any(axis=1)
+    shifted_inverse = np.mean((values + epsilon) ** (-power), axis=1)
+    result = np.asarray(
+        np.clip(shifted_inverse ** (-1.0 / power) - epsilon, 0.0, 1.0),
+        dtype=np.float64,
+    )
+    result[has_zero] = 0.0
+    result[missing] = np.nan
+    return result
+
+
 def _context_value(row: pd.Series, key: str) -> object:
     if key != "context":
         return row[key]
@@ -176,6 +200,9 @@ def _empty_sample_table(context_keys: Sequence[str]) -> pd.DataFrame:
             "pathway",
             "ligand_availability",
             "receptor_availability",
+            "ligand_absolute_evidence",
+            "receptor_absolute_evidence",
+            "absolute_lr_activity",
             "sender_proportion",
             "receiver_proportion",
             "availability_state",
@@ -344,12 +371,20 @@ def estimate_bundle_availability(
         shrunk_detection = np.ones_like(selected)
     gene_values = hill * shrunk_detection**parameters.detection.exponent
     gene_values[~state_eligible, :] = np.nan
+    log_reference = np.log1p(selected) / math.log1p(
+        parameters.absolute_expression_reference
+    )
+    log_reference = np.clip(log_reference, 0.0, 1.0)
+    log_reference[~state_eligible, :] = np.nan
 
     ligand_columns: list[np.ndarray] = []
     receptor_columns: list[np.ndarray] = []
+    ligand_absolute_columns: list[np.ndarray] = []
+    receptor_absolute_columns: list[np.ndarray] = []
     supported: list[Interaction] = []
     dropped_no_support: list[str] = []
     entity_values: dict[tuple[str, ...], npt.NDArray[np.float64]] = {}
+    absolute_entity_values: dict[tuple[str, ...], npt.NDArray[np.float64]] = {}
 
     def values_for(subunits: tuple[str, ...]) -> npt.NDArray[np.float64]:
         values = entity_values.get(subunits)
@@ -361,6 +396,18 @@ def estimate_bundle_availability(
                 epsilon=parameters.complex_epsilon,
             )
             entity_values[subunits] = values
+        return values
+
+    def absolute_values_for(subunits: tuple[str, ...]) -> npt.NDArray[np.float64]:
+        values = absolute_entity_values.get(subunits)
+        if values is None:
+            values = _absolute_entity_values(
+                log_reference,
+                [local_index[gene] for gene in subunits],
+                power=parameters.complex_power,
+                epsilon=parameters.complex_epsilon,
+            )
+            absolute_entity_values[subunits] = values
         return values
 
     for interaction in mapped:
@@ -378,6 +425,10 @@ def estimate_bundle_availability(
         supported.append(interaction)
         ligand_columns.append(ligand)
         receptor_columns.append(receptor)
+        ligand_absolute_columns.append(absolute_values_for(interaction.ligand_subunits))
+        receptor_absolute_columns.append(
+            absolute_values_for(interaction.receptor_subunits)
+        )
 
     if max_interactions is not None and len(supported) > max_interactions:
         pooled = np.array(
@@ -397,6 +448,10 @@ def estimate_bundle_availability(
         supported = [supported[index] for index in order]
         ligand_columns = [ligand_columns[index] for index in order]
         receptor_columns = [receptor_columns[index] for index in order]
+        ligand_absolute_columns = [ligand_absolute_columns[index] for index in order]
+        receptor_absolute_columns = [
+            receptor_absolute_columns[index] for index in order
+        ]
 
     if frozen_interaction_universe is None:
         selection_policy = (
@@ -455,6 +510,8 @@ def estimate_bundle_availability(
 
     ligand_matrix = np.column_stack(ligand_columns)
     receptor_matrix = np.column_stack(receptor_columns)
+    ligand_absolute_matrix = np.column_stack(ligand_absolute_columns)
+    receptor_absolute_matrix = np.column_stack(receptor_absolute_columns)
     state_rows = metadata.index[state_eligible]
     records: list[pd.DataFrame] = []
     interaction_fields = {
@@ -471,10 +528,13 @@ def estimate_bundle_availability(
         for sender_row in row_indices:
             sender = metadata.loc[sender_row]
             ligand = ligand_matrix[sender_row]
+            ligand_absolute = ligand_absolute_matrix[sender_row]
             for receiver_row in row_indices:
                 receiver = metadata.loc[receiver_row]
                 receptor = receptor_matrix[receiver_row]
+                receptor_absolute = receptor_absolute_matrix[receiver_row]
                 state = ligand * receptor
+                absolute_lr_activity = 0.5 * (ligand_absolute + receptor_absolute)
                 sender_proportion = float(sender["cell_proportion"])
                 receiver_proportion = float(receiver["cell_proportion"])
                 sender_abundance_eligible = bool(sender["abundance_eligible"])
@@ -512,6 +572,9 @@ def estimate_bundle_availability(
                 frame.insert(0, "sample_id", sample_id)
                 frame["ligand_availability"] = ligand
                 frame["receptor_availability"] = receptor
+                frame["ligand_absolute_evidence"] = ligand_absolute
+                frame["receptor_absolute_evidence"] = receptor_absolute
+                frame["absolute_lr_activity"] = absolute_lr_activity
                 frame["sender_proportion"] = sender_proportion
                 frame["receiver_proportion"] = receiver_proportion
                 frame["availability_state"] = state

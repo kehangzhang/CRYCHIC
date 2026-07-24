@@ -1,5 +1,10 @@
 """Frozen sample-level communication strength integration."""
 
+from .absolute import (
+    ABSOLUTE_ACTIVITY_HEAD_COLUMNS,
+    ABSOLUTE_ACTIVITY_SCORE_VERSION,
+    build_absolute_activity_heads,
+)
 from .active_edge import (
     ACTIVE_EDGE_CANDIDATE_UNIVERSE_POLICY_ID,
     ActiveEdgeCandidate,
@@ -110,6 +115,8 @@ from .receiver_program import (
 )
 
 __all__ = [
+    "ABSOLUTE_ACTIVITY_HEAD_COLUMNS",
+    "ABSOLUTE_ACTIVITY_SCORE_VERSION",
     "ACTIVE_EDGE_CANDIDATE_UNIVERSE_POLICY_ID",
     "CORE_COMPONENTS",
     "FAMILY_COMMON_EDGE_EVIDENCE_COLUMNS",
@@ -172,6 +179,7 @@ __all__ = [
     "apply_incremental_downstream_functional",
     "apply_receiver_family_scoring_artifact",
     "apply_receiver_program_training_artifact",
+    "build_absolute_activity_heads",
     "downstream_modulated_strength",
     "family_common_edge_evidence_digest",
     "family_common_sender_application_digest",

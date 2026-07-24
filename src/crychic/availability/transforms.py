@@ -13,9 +13,7 @@ _DEFAULT_HILL = HillParameters()
 _DEFAULT_DETECTION = DetectionShrinkage()
 
 
-def hill_transform(
-    value: float, parameters: HillParameters = _DEFAULT_HILL
-) -> float:
+def hill_transform(value: float, parameters: HillParameters = _DEFAULT_HILL) -> float:
     """Map non-negative expression to [0, 1) with a Hill transform."""
 
     if not math.isfinite(value) or value < 0:
@@ -74,6 +72,32 @@ def single_gene_availability(
     return value, hill_value, shrunk
 
 
+def log_reference_evidence(value: float, *, reference: float = 1_000_000.0) -> float:
+    """Map non-negative expression to bounded log evidence without early saturation.
+
+    ``reference`` is a fixed measurement-scale reference, not a fitted parameter.
+    For count-derived CPM, one million is the natural upper bound. Values above
+    the declared reference remain valid but are clipped to one rather than being
+    interpreted as probabilities.
+    """
+
+    if not math.isfinite(value) or value < 0:
+        raise ContractError(
+            "Log-reference input must be finite and non-negative",
+            code="invalid_log_reference_input",
+            field="value",
+            remediation="Provide validated non-negative expression",
+        )
+    if not math.isfinite(reference) or reference <= 0:
+        raise ContractError(
+            "Log-reference scale must be finite and positive",
+            code="invalid_log_reference_scale",
+            field="reference",
+            remediation="Use the declared upper reference for the expression scale",
+        )
+    return float(min(1.0, math.log1p(value) / math.log1p(reference)))
+
+
 def generalized_harmonic_softmin(
     values: Iterable[float],
     *,
@@ -111,9 +135,7 @@ def generalized_harmonic_softmin(
         )
     if any(value == 0 for value in collected):
         return 0.0
-    shifted_inverse = sum(
-        (value + epsilon) ** (-power) for value in collected
-    ) / len(collected)
-    return float(
-        min(1.0, max(0.0, shifted_inverse ** (-1.0 / power) - epsilon))
+    shifted_inverse = sum((value + epsilon) ** (-power) for value in collected) / len(
+        collected
     )
+    return float(min(1.0, max(0.0, shifted_inverse ** (-1.0 / power) - epsilon)))
