@@ -20,7 +20,8 @@
         "sender", "receiver", "interaction_id", "ligand", "receptor",
         "ligand_activity_raw", "receptor_activity_raw", "sender_detection_raw",
         "parent_peak_raw", "parent_total_raw", "parent_mean_raw",
-        "program_signed", "program_status", "program_reason_code",
+        "program_unaligned_raw", "program_direction", "program_signed",
+        "program_status", "program_reason_code",
         "program_functional_id",
         "mechanism_support", "coupling_prior", "coupling_status",
         "coupling_reason_code", "coupling_functional_id", "active_probability",
@@ -49,6 +50,8 @@
         "parent_peak_raw": {"$ref": "#/$defs/nonnegativeNullable"},
         "parent_total_raw": {"$ref": "#/$defs/nonnegativeNullable"},
         "parent_mean_raw": {"$ref": "#/$defs/nonnegativeNullable"},
+        "program_unaligned_raw": {"$ref": "#/$defs/floatNullable"},
+        "program_direction": {"$ref": "#/$defs/programDirection"},
         "program_signed": {"$ref": "#/$defs/floatNullable"},
         "program_status": {"$ref": "#/$defs/headStatus"},
         "program_reason_code": {"$ref": "#/$defs/stringNullable"},
@@ -95,6 +98,7 @@
     "nonnegativeInteger": {"dtype": "integer", "nullable": false, "minimum": 0, "unit": "candidate"},
     "booleanRequired": {"dtype": "boolean", "nullable": false, "unit": null},
     "headStatus": {"dtype": "string", "nullable": false, "enum": ["observed", "partial", "not_estimable", "not_computed"], "unit": null},
+    "programDirection": {"dtype": "string", "nullable": false, "enum": ["activation", "attenuation", "unknown", "not_computed"], "unit": null},
     "coverageStatus": {"dtype": "string", "nullable": false, "enum": ["measured", "low_coverage", "structural_impossible", "not_measured_or_not_estimable"], "unit": null},
     "valueStatus": {"dtype": "string", "nullable": false, "enum": ["observed", "low_evidence", "structural_impossible", "not_estimable"], "unit": null}
   }

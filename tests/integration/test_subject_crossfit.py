@@ -72,6 +72,7 @@ from crychic.scoring import (
     ReceiverScoringFunctionalManifest,
     ScoringCollectionDocument,
     ScoringCollectionManifest,
+    SignedProgramV2Spec,
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
     mark_receiver_program_application_not_estimable,
@@ -1158,19 +1159,26 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
                 minimum_calibration_subjects=4
             ),
         )
+    with pytest.raises(ValueError, match="requires absolute_activity_v2_spec"):
+        replace(legacy, signed_program_v2_spec=SignedProgramV2Spec())
     v7_spec = replace(
         legacy,
         absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
         sender_attribution_v2_spec=SenderAttributionV2Spec(
             minimum_calibration_subjects=4
         ),
+        signed_program_v2_spec=SignedProgramV2Spec(
+            minimum_training_samples=4,
+            minimum_training_subjects=3,
+        ),
     )
 
     assert "absolute_activity_v2_spec" not in legacy.to_dict()
     assert "sender_attribution_v2_spec" not in legacy.to_dict()
+    assert "signed_program_v2_spec" not in legacy.to_dict()
     assert v7_spec.spec_id != legacy.spec_id
     result = run_subject_crossfit(
-        _adata(),
+        _independent_adata(),
         _config(),
         _bundle(),
         _prior(),
@@ -1179,7 +1187,16 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
 
     scores = result.oof_sample_edge_scores_v2
     assert not scores.empty
-    assert set(scores["subject_id"]) == {"p1", "p2", "p3", "p4"}
+    assert set(scores["subject_id"]) == {
+        "control-0",
+        "control-1",
+        "control-2",
+        "control-3",
+        "stim-0",
+        "stim-1",
+        "stim-2",
+        "stim-3",
+    }
     assert scores["out_of_fold"].all()
     assert scores["sender_detection_raw"].notna().any()
     assert not scores["structural_impossibility"].any()
@@ -1187,9 +1204,11 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
         transform = fold.absolute_activity_v2_transform
         fold_scores = fold.sample_edge_scores_v2
         sender_functional = fold.sender_attribution_v2_functional
+        program_functional = fold.signed_program_v2_functional
         assert transform is not None
         assert fold_scores is not None
         assert sender_functional is not None
+        assert program_functional is not None
         assert transform.spec.spec_id == v7_spec.absolute_activity_v2_spec.spec_id
         assert not set(transform.training_subject_ids).intersection(
             fold_scores.provenance.application_subject_ids
@@ -1205,13 +1224,20 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
         assert set(fold_scores.table["occurrence_functional_id"]) == {
             sender_functional.functional_id
         }
+        assert set(fold_scores.table["program_functional_id"]) == {
+            program_functional.functional_id
+        }
         assert not fold_scores.table["attribution_status"].eq("not_computed").any()
+        assert not fold_scores.table["program_status"].eq("not_computed").any()
+        assert fold_scores.table["program_signed"].notna().any()
     manifest = result.to_manifest()
     assert manifest["absolute_activity_v2_stage_connected"] is True
     assert manifest["absolute_activity_v2_score_rows"] == len(scores)
     assert manifest["absolute_activity_v2_formal_inference_eligible"] is False
     assert manifest["sender_attribution_v2_stage_connected"] is True
     assert manifest["sender_attribution_v2_formal_inference_eligible"] is False
+    assert manifest["signed_program_v2_stage_connected"] is True
+    assert manifest["signed_program_v2_formal_inference_eligible"] is False
     persisted = write_crossfit_sample_edge_v2_result(
         result, tmp_path / "sample-edge-v2"
     )

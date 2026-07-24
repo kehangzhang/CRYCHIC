@@ -88,6 +88,19 @@ def test_optional_head_requires_applied_functional_lineage() -> None:
         SampleEdgeScoreV2(table=impossible_lineage, provenance=scores.provenance)
 
 
+def test_not_estimable_known_program_cannot_retain_raw_value() -> None:
+    scores = sample_edge_scores()
+    table = scores.table.copy()
+    table["program_unaligned_raw"] = 1.0
+    table["program_direction"] = "activation"
+    table["program_status"] = "not_estimable"
+    table["program_reason_code"] = "program_unavailable"
+    table["program_functional_id"] = "program-functional"
+
+    with pytest.raises(ValueError, match="empty raw value"):
+        SampleEdgeScoreV2(table=table, provenance=scores.provenance)
+
+
 def test_sample_edge_v2_schema_is_valid() -> None:
     schema = json.loads(
         (ROOT / "schemas" / "sample_edge_scores_v2.schema.json").read_text(

@@ -31,6 +31,8 @@ SAMPLE_EDGE_SCORE_V2_COLUMNS = (
     "parent_peak_raw",
     "parent_total_raw",
     "parent_mean_raw",
+    "program_unaligned_raw",
+    "program_direction",
     "program_signed",
     "program_status",
     "program_reason_code",
@@ -363,6 +365,7 @@ class SampleEdgeScoreV2:
         for column in _RAW_COLUMNS:
             table[column] = _numeric(table, column, minimum=0.0)
         table["program_signed"] = _numeric(table, "program_signed")
+        table["program_unaligned_raw"] = _numeric(table, "program_unaligned_raw")
         table["coupling_prior"] = _numeric(
             table, "coupling_prior", minimum=-1.0, maximum=1.0
         )
@@ -393,6 +396,7 @@ class SampleEdgeScoreV2:
 
         self._validate_lineage(table)
         self._validate_statuses(table)
+        self._validate_program_head(table)
         self._validate_parent_geometry(table)
         self._validate_optional_heads(table)
         object.__setattr__(self, "table", table)
@@ -475,6 +479,60 @@ class SampleEdgeScoreV2:
             raise ValueError("observed rows cannot carry a reason_code")
         if table.loc[~status_is_observed, "reason_code"].isna().any():
             raise ValueError("non-observed rows require a reason_code")
+
+    def _validate_program_head(self, table: pd.DataFrame) -> None:
+        allowed_directions = {"activation", "attenuation", "unknown", "not_computed"}
+        if not set(table["program_direction"]).issubset(allowed_directions):
+            raise ValueError("program_direction is unsupported")
+        status = table["program_status"]
+        not_computed = status.eq(SampleEdgeHeadStatus.NOT_COMPUTED.value)
+        if (
+            table.loc[not_computed, "program_unaligned_raw"].notna().any()
+            or not table.loc[not_computed, "program_direction"].eq("not_computed").all()
+        ):
+            raise ValueError("not-computed program rows require empty raw direction")
+        applied = ~not_computed
+        if table.loc[applied, "program_direction"].eq("not_computed").any():
+            raise ValueError("applied program rows require a mechanism direction")
+        observed = status.isin(
+            [
+                SampleEdgeHeadStatus.OBSERVED.value,
+                SampleEdgeHeadStatus.PARTIAL.value,
+            ]
+        )
+        if (
+            table.loc[observed, "program_unaligned_raw"].isna().any()
+            or table.loc[observed, "program_direction"].eq("unknown").any()
+        ):
+            raise ValueError(
+                "observed program rows require raw value and known direction"
+            )
+        sign = table.loc[observed, "program_direction"].map(
+            {"activation": 1.0, "attenuation": -1.0}
+        )
+        expected = table.loc[observed, "program_unaligned_raw"] * sign
+        if not np.allclose(
+            table.loc[observed, "program_signed"].to_numpy(dtype=float),
+            expected.to_numpy(dtype=float),
+            rtol=1e-12,
+            atol=1e-12,
+        ):
+            raise ValueError("program_signed does not match raw value and direction")
+        unknown = table["program_direction"].eq("unknown")
+        if (
+            table.loc[unknown, "program_signed"].notna().any()
+            or not status.loc[unknown]
+            .eq(SampleEdgeHeadStatus.NOT_ESTIMABLE.value)
+            .all()
+        ):
+            raise ValueError("unknown program direction cannot emit a signed value")
+        unavailable_known = status.eq(SampleEdgeHeadStatus.NOT_ESTIMABLE.value) & table[
+            "program_direction"
+        ].isin(["activation", "attenuation"])
+        if table.loc[unavailable_known, "program_unaligned_raw"].notna().any():
+            raise ValueError(
+                "not-estimable known-direction programs require an empty raw value"
+            )
 
     def _validate_parent_geometry(self, table: pd.DataFrame) -> None:
         for _, group in table.groupby(list(_PARENT_KEY), observed=True, sort=False):
@@ -572,8 +630,11 @@ class SampleEdgeScoreV2:
         for _, group in table.groupby(list(_PARENT_KEY), observed=True, sort=False):
             for column in (
                 "program_signed",
+                "program_unaligned_raw",
+                "program_direction",
                 "program_status",
                 "program_reason_code",
+                "program_functional_id",
                 "active_probability",
                 "occurrence_status",
                 "occurrence_reason_code",

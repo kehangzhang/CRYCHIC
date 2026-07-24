@@ -47,6 +47,8 @@ def sample_edge_scores() -> SampleEdgeScoreV2:
         "parent_peak_raw": 2.0,
         "parent_total_raw": 3.0,
         "parent_mean_raw": 1.5,
+        "program_unaligned_raw": np.nan,
+        "program_direction": "not_computed",
         "program_signed": np.nan,
         "program_status": "not_computed",
         "program_reason_code": "program_head_not_computed",

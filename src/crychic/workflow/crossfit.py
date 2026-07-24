@@ -125,11 +125,15 @@ from crychic.scoring import (
     SampleEdgeScoreV2,
     ScoringCollectionDocument,
     ScoringCollectionManifest,
+    SignedProgramDefinitionV2,
+    SignedProgramFunctionalV2,
+    SignedProgramV2Spec,
     apply_absolute_activity_v2_transform,
     apply_cross_receiver_common_scoring_functional,
     apply_family_common_scoring_functional,
     apply_receiver_family_scoring_artifact,
     apply_receiver_program_training_artifact,
+    apply_signed_program_v2_to_sample_edges,
     build_absolute_activity_v2_training_table,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
@@ -138,12 +142,14 @@ from crychic.scoring import (
     fit_family_common_scoring_functional,
     fit_receiver_family_scoring_artifact,
     fit_receiver_program_training_artifact,
+    fit_signed_program_v2,
     mark_family_common_scoring_application_not_estimable,
     mark_family_common_scoring_not_estimable,
     mark_receiver_family_application_not_estimable,
     mark_receiver_family_scoring_not_estimable,
     mark_receiver_program_application_not_estimable,
     mark_receiver_program_training_not_estimable,
+    signed_program_definitions_from_resources_v2,
 )
 from crychic.sender import (
     COMMON_SENDER_APPLICATION_COLUMNS,
@@ -555,6 +561,7 @@ class CrossFitSpec:
     gain_calibration_spec: GainCalibrationSpec | None = None
     absolute_activity_v2_spec: AbsoluteActivityV2Spec | None = None
     sender_attribution_v2_spec: SenderAttributionV2Spec | None = None
+    signed_program_v2_spec: SignedProgramV2Spec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -688,6 +695,7 @@ class CrossFitSpec:
         latent_nuisance_spec = self.latent_nuisance_spec
         absolute_activity_v2_spec = self.absolute_activity_v2_spec
         sender_attribution_v2_spec = self.sender_attribution_v2_spec
+        signed_program_v2_spec = self.signed_program_v2_spec
         autonomous_use_scope = self.autonomous_program_use_scope
         if not isinstance(autonomous_use_scope, str) or autonomous_use_scope not in {
             "algorithm_diagnostic",
@@ -733,6 +741,16 @@ class CrossFitSpec:
         if sender_attribution_v2_spec is not None and absolute_activity_v2_spec is None:
             raise ValueError(
                 "sender_attribution_v2_spec requires absolute_activity_v2_spec"
+            )
+        if signed_program_v2_spec is not None and not isinstance(
+            signed_program_v2_spec, SignedProgramV2Spec
+        ):
+            raise TypeError(
+                "signed_program_v2_spec must be SignedProgramV2Spec or None"
+            )
+        if signed_program_v2_spec is not None and absolute_activity_v2_spec is None:
+            raise ValueError(
+                "signed_program_v2_spec requires absolute_activity_v2_spec"
             )
         tuning_spec = self.penalty_tuning_spec
         if tuning_spec is not None:
@@ -785,6 +803,8 @@ class CrossFitSpec:
             payload["sender_attribution_v2_spec_id"] = (
                 sender_attribution_v2_spec.spec_id
             )
+        if signed_program_v2_spec is not None:
+            payload["signed_program_v2_spec_id"] = signed_program_v2_spec.spec_id
         if autonomous_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
             payload["autonomous_program_use_scope"] = autonomous_use_scope
         if tuning_spec is not None:
@@ -811,6 +831,7 @@ class CrossFitSpec:
         object.__setattr__(
             self, "sender_attribution_v2_spec", sender_attribution_v2_spec
         )
+        object.__setattr__(self, "signed_program_v2_spec", signed_program_v2_spec)
         object.__setattr__(
             self,
             "autonomous_program_use_scope",
@@ -882,6 +903,8 @@ class CrossFitSpec:
             result["sender_attribution_v2_spec"] = (
                 self.sender_attribution_v2_spec.to_dict()
             )
+        if self.signed_program_v2_spec is not None:
+            result["signed_program_v2_spec"] = self.signed_program_v2_spec.to_dict()
         if self.outer_fold_partition_seed is not None:
             result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
         if self.autonomous_program_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
@@ -913,6 +936,7 @@ class CrossFitSpec:
                 gain_calibration_spec=self.gain_calibration_spec,
                 absolute_activity_v2_spec=self.absolute_activity_v2_spec,
                 sender_attribution_v2_spec=self.sender_attribution_v2_spec,
+                signed_program_v2_spec=self.signed_program_v2_spec,
                 schema_version=self.schema_version,
             )
             valid = (
@@ -950,6 +974,16 @@ class CrossFitSpec:
                     None
                     if repeated.sender_attribution_v2_spec is None
                     else repeated.sender_attribution_v2_spec.spec_id
+                )
+                and (
+                    None
+                    if self.signed_program_v2_spec is None
+                    else self.signed_program_v2_spec.spec_id
+                )
+                == (
+                    None
+                    if repeated.signed_program_v2_spec is None
+                    else repeated.signed_program_v2_spec.spec_id
                 )
                 and (
                     None
@@ -1404,6 +1438,7 @@ class CrossFitFoldArtifacts:
     absolute_activity_v2_transform: AbsoluteActivityV2Transform | None = None
     sample_edge_scores_v2: SampleEdgeScoreV2 | None = None
     sender_attribution_v2_functional: SenderAttributionFunctionalV2 | None = None
+    signed_program_v2_functional: SignedProgramFunctionalV2 | None = None
     directional_response_bindings: tuple[DirectionalCrossFitBinding, ...] = ()
     cross_receiver_common_functionals: tuple[
         CrossReceiverCommonScoringFunctional, ...
@@ -1429,6 +1464,7 @@ class CrossFitFoldArtifacts:
         activity_transform = self.absolute_activity_v2_transform
         activity_scores = self.sample_edge_scores_v2
         sender_functional = self.sender_attribution_v2_functional
+        signed_program_functional = self.signed_program_v2_functional
         if (activity_transform is None) != (activity_scores is None):
             raise ValueError(
                 "absolute-activity transform and sample-edge scores must coexist"
@@ -1530,9 +1566,37 @@ class CrossFitFoldArtifacts:
                 raise ValueError(
                     "sample-edge attribution heads do not match sender functional"
                 )
+        if signed_program_functional is not None:
+            if not isinstance(signed_program_functional, SignedProgramFunctionalV2):
+                raise TypeError(
+                    "signed_program_v2_functional must be SignedProgramFunctionalV2"
+                )
+            if activity_transform is None or activity_scores is None:
+                raise ValueError("signed M1 functional requires M0 v2 artifacts")
+            if (
+                signed_program_functional.fold_id != self.fold_id
+                or signed_program_functional.training_subject_ids
+                != self.training.training_subject_ids
+                or signed_program_functional.training_input_digest
+                != self.training.training_input_digest
+                or signed_program_functional.activity_transform_id
+                != activity_transform.transform_manifest_id
+            ):
+                raise ValueError("signed M1 functional does not match fold lineage")
+            if (
+                set(activity_scores.table["program_functional_id"].dropna())
+                != {signed_program_functional.functional_id}
+                or activity_scores.table["program_status"].eq("not_computed").any()
+            ):
+                raise ValueError(
+                    "sample-edge program head does not match signed M1 functional"
+                )
         object.__setattr__(self, "absolute_activity_v2_transform", activity_transform)
         object.__setattr__(self, "sample_edge_scores_v2", activity_scores)
         object.__setattr__(self, "sender_attribution_v2_functional", sender_functional)
+        object.__setattr__(
+            self, "signed_program_v2_functional", signed_program_functional
+        )
         support_records = tuple(self.receiver_training_support)
         if not support_records or any(
             not isinstance(record, ReceiverTrainingSupportRecord)
@@ -2566,6 +2630,7 @@ class CrossFitArtifacts:
             item.__post_init__()
             configured_activity = self.spec.absolute_activity_v2_spec
             configured_sender = self.spec.sender_attribution_v2_spec
+            configured_program = self.spec.signed_program_v2_spec
             if configured_activity is None:
                 if (
                     item.absolute_activity_v2_transform is not None
@@ -2597,6 +2662,19 @@ class CrossFitArtifacts:
             ):
                 raise ValueError(
                     "configured cross-fit requires exact sender v2 functional per fold"
+                )
+            if configured_program is None:
+                if item.signed_program_v2_functional is not None:
+                    raise ValueError(
+                        "unconfigured cross-fit cannot contain signed M1 artifacts"
+                    )
+            elif (
+                item.signed_program_v2_functional is None
+                or item.signed_program_v2_functional.spec.spec_id
+                != configured_program.spec_id
+            ):
+                raise ValueError(
+                    "configured cross-fit requires exact signed M1 functional per fold"
                 )
         by_id = {fold.fold_id: fold for fold in self.fold_plan.folds}
         if len(folds) != len(by_id) or {item.fold_id for item in folds} != set(by_id):
@@ -3167,6 +3245,15 @@ class CrossFitArtifacts:
                                 if item.sender_attribution_v2_functional is not None
                                 else {}
                             ),
+                            **(
+                                {
+                                    "signed_program_v2_functional_id": (
+                                        item.signed_program_v2_functional.functional_id
+                                    )
+                                }
+                                if item.signed_program_v2_functional is not None
+                                else {}
+                            ),
                         }
                         if item.absolute_activity_v2_transform is not None
                         and item.sample_edge_scores_v2 is not None
@@ -3589,6 +3676,19 @@ class CrossFitArtifacts:
                         if self.spec.sender_attribution_v2_spec is not None
                         else {}
                     ),
+                    **(
+                        {
+                            "signed_program_v2_stage_connected": True,
+                            "signed_program_v2_functional_ids": [
+                                fold.signed_program_v2_functional.functional_id
+                                for fold in self.folds
+                                if fold.signed_program_v2_functional is not None
+                            ],
+                            "signed_program_v2_formal_inference_eligible": False,
+                        }
+                        if self.spec.signed_program_v2_spec is not None
+                        else {}
+                    ),
                 }
                 if self.spec.absolute_activity_v2_spec is not None
                 else {}
@@ -3777,6 +3877,15 @@ class CrossFitArtifacts:
                                     )
                                 }
                                 if item.sender_attribution_v2_functional is not None
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "signed_program_v2_functional": (
+                                        item.signed_program_v2_functional.to_dict()
+                                    )
+                                }
+                                if item.signed_program_v2_functional is not None
                                 else {}
                             ),
                         }
@@ -6104,7 +6213,33 @@ def _run_crossfit_fold(
         absolute_activity_v2_transform = None
         sample_edge_scores_v2 = None
         sender_attribution_v2_functional = None
+        signed_program_v2_functional = None
     else:
+        signed_program_v2_spec = spec.signed_program_v2_spec
+        signed_program_definitions_v2: tuple[SignedProgramDefinitionV2, ...] | None
+        if signed_program_v2_spec is None:
+            signed_program_definitions_v2 = None
+            additional_activity_feature_ids: tuple[str, ...] = ()
+        else:
+            frozen_interaction_ids = set(
+                training.frozen_interaction_universe.interaction_ids
+            )
+            signed_program_definitions_v2 = tuple(
+                definition
+                for definition in signed_program_definitions_from_resources_v2(
+                    resource_bundle, target_prior
+                )
+                if definition.interaction_id in frozen_interaction_ids
+            )
+            if not signed_program_definitions_v2:
+                raise ValueError(
+                    "signed_program_v2_spec requires at least one target-program "
+                    "definition in the frozen interaction universe"
+                )
+            # The all-gene axis supplies an outcome-blind global receiver state.
+            # M0 application still materializes only LR features; M1 reads one
+            # receiver block at a time.
+            additional_activity_feature_ids = tuple(training_aggregate.feature_ids)
         stage_started = _fold_stage_started(fold.fold_id, "absolute_activity_v2")
         absolute_activity_v2_transform = fit_absolute_activity_v2_transform(
             training_aggregate,
@@ -6113,6 +6248,7 @@ def _run_crossfit_fold(
             fold_id=fold.fold_id,
             training_input_digest=training.training_input_digest,
             spec=spec.absolute_activity_v2_spec,
+            additional_feature_ids=additional_activity_feature_ids,
         )
         sample_edge_scores_v2 = apply_absolute_activity_v2_transform(
             absolute_activity_v2_transform,
@@ -6125,9 +6261,31 @@ def _run_crossfit_fold(
             seed_lineage_id=_absolute_activity_seed_lineage_id(spec, fold),
             package_version=_package_version(),
         )
+        _fold_stage_completed(fold.fold_id, "absolute_activity_v2", stage_started)
+        if signed_program_v2_spec is None:
+            signed_program_v2_functional = None
+        else:
+            if signed_program_definitions_v2 is None:  # pragma: no cover - narrowed
+                raise RuntimeError("signed-program definitions were not initialized")
+            stage_started = _fold_stage_started(fold.fold_id, "signed_program_v2")
+            signed_program_v2_functional = fit_signed_program_v2(
+                absolute_activity_v2_transform,
+                training_aggregate,
+                signed_program_definitions_v2,
+                training_input_digest=training.training_input_digest,
+                spec=signed_program_v2_spec,
+            )
+            sample_edge_scores_v2 = apply_signed_program_v2_to_sample_edges(
+                signed_program_v2_functional,
+                absolute_activity_v2_transform,
+                heldout_aggregate,
+                sample_edge_scores_v2,
+            )
+            _fold_stage_completed(fold.fold_id, "signed_program_v2", stage_started)
         if spec.sender_attribution_v2_spec is None:
             sender_attribution_v2_functional = None
         else:
+            stage_started = _fold_stage_started(fold.fold_id, "sender_attribution_v2")
             training_activity_v2 = build_absolute_activity_v2_training_table(
                 absolute_activity_v2_transform,
                 training_aggregate,
@@ -6155,7 +6313,7 @@ def _run_crossfit_fold(
                 table=attributed_table,
                 provenance=sample_edge_scores_v2.provenance,
             )
-        _fold_stage_completed(fold.fold_id, "absolute_activity_v2", stage_started)
+            _fold_stage_completed(fold.fold_id, "sender_attribution_v2", stage_started)
     stage_started = _fold_stage_started(fold.fold_id, "receiver_family")
     receiver_family_models = _training_receiver_families(
         prepared=prepared_training,
@@ -6318,6 +6476,7 @@ def _run_crossfit_fold(
         absolute_activity_v2_transform=absolute_activity_v2_transform,
         sample_edge_scores_v2=sample_edge_scores_v2,
         sender_attribution_v2_functional=sender_attribution_v2_functional,
+        signed_program_v2_functional=signed_program_v2_functional,
         directional_response_bindings=directional_response_bindings,
         cross_receiver_common_functionals=cross_receiver_common_functionals,
         cross_receiver_common_applications=cross_receiver_common_applications,

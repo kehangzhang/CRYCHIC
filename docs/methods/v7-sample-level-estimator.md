@@ -83,6 +83,29 @@ missing or weak coupling record contributes zero to the logit, remains visibly
 not estimable in the coupling head, and cannot filter an otherwise measurable
 sender.
 
+## Signed receiver mechanism head
+
+M1 is fitted inside each outer training fold and applied unchanged to held-out
+samples. The interaction-to-target mapping and activation/attenuation direction
+come only from the frozen target prior. Condition labels are not inputs to the
+program fit and cannot select targets, define a threshold, or orient the sign.
+
+For each receiver, target expression is transformed with the same fold-fitted
+size-factor, median, and MAD rules as M0. A subject-equal nuisance regression
+removes log cell count, an all-gene global receiver state, optional predeclared
+generic-state features, and declared batch/composition covariates. Invariant
+nuisance columns contain no removable information and are omitted; unseen
+held-out categorical levels remain explicitly not estimable.
+
+The output keeps both `program_unaligned_raw` and `program_signed`. Activation
+uses the raw positive-minus-negative target program; attenuation reverses its
+sign. Neither negative values nor large positive values are clipped or
+saturated. An unknown mechanism direction may retain the unaligned diagnostic
+but cannot emit a signed value. The program is parent-level and therefore
+constant across candidate senders for one sample, receiver, and interaction.
+M1 remains a separate measurement head: it does not multiply M0 intensity and
+is not itself a formal p/q result.
+
 ## Inference boundary
 
 Analytic HC3/CR2 models provide point effects and diagnostics. Formal p-values,

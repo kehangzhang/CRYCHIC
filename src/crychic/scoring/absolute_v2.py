@@ -358,6 +358,7 @@ def fit_absolute_activity_v2_transform(
     fold_id: str,
     training_input_digest: str,
     spec: AbsoluteActivityV2Spec | None = None,
+    additional_feature_ids: Sequence[str] = (),
 ) -> AbsoluteActivityV2Transform:
     """Fit outcome-independent expression transforms on training subjects only."""
 
@@ -367,13 +368,23 @@ def fit_absolute_activity_v2_transform(
     if not isinstance(resolved, AbsoluteActivityV2Spec):
         raise TypeError("spec must be AbsoluteActivityV2Spec or None")
     interactions = _require_resource_binding(resource_bundle, interaction_universe)
+    if isinstance(additional_feature_ids, str):
+        raise TypeError("additional_feature_ids must be a sequence, not a string")
+    additional_features = tuple(
+        sorted(
+            _name(value, field_name="additional_feature_ids")
+            for value in additional_feature_ids
+        )
+    )
+    if len(additional_features) != len(set(additional_features)):
+        raise ValueError("additional_feature_ids must be unique")
     feature_ids = tuple(
         sorted(
             {
                 gene
                 for item in interactions
                 for gene in (*item.ligand_subunits, *item.receptor_subunits)
-            }
+            }.union(additional_features)
         )
     )
     feature_index = {name: index for index, name in enumerate(aggregate.feature_ids)}
@@ -511,8 +522,20 @@ def _compute_absolute_activity_v2_source(
             "application aggregate lacks transform features: "
             f"{sorted(missing_features)}"
         )
+    activity_feature_ids = tuple(
+        sorted(
+            {
+                gene
+                for interaction in transform.interactions
+                for gene in (
+                    *interaction.ligand_subunits,
+                    *interaction.receptor_subunits,
+                )
+            }
+        )
+    )
     selected_columns = np.asarray(
-        [feature_index[name] for name in transform.feature_ids], dtype=np.int64
+        [feature_index[name] for name in activity_feature_ids], dtype=np.int64
     )
     cell_type_index = {
         cell_type: index for index, cell_type in enumerate(transform.cell_type_ids)
@@ -540,8 +563,8 @@ def _compute_absolute_activity_v2_source(
         unit_expression[(sample_id, cell_type)] = np.log2(normalized + 1.0)
 
     interactions = {item.interaction_id: item for item in transform.interactions}
-    transform_feature_index = {
-        name: index for index, name in enumerate(transform.feature_ids)
+    activity_feature_index = {
+        name: index for index, name in enumerate(activity_feature_ids)
     }
     entity_cache: dict[tuple[str, str, str, str], float] = {}
 
@@ -572,7 +595,7 @@ def _compute_absolute_activity_v2_source(
             )
             value = _aggregate_entity(
                 expression,
-                [transform_feature_index[gene] for gene in subunits],
+                [activity_feature_index[gene] for gene in subunits],
                 is_complex=is_complex,
                 temperature=transform.spec.complex_temperature,
             )
@@ -690,6 +713,8 @@ def _compute_absolute_activity_v2_source(
         source[status] = "not_computed"
         source[reason] = f"{head}_not_computed"
         source[functional_id] = None
+    source["program_unaligned_raw"] = np.nan
+    source["program_direction"] = "not_computed"
     source["null_sender_attribution"] = np.nan
     source["attribution_entropy"] = np.nan
     source["selection_stability"] = np.nan
