@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -117,6 +119,87 @@ def _dataset_spec(
     }
 
 
+def _generate_dataset_task(
+    *,
+    staged: str,
+    output_dir: str,
+    replicate: int,
+    arm: int,
+    root_seed: int,
+    scenario: str,
+    n_subjects: int,
+    mean_cells_per_sample: int,
+    known_interaction: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    staged_path = Path(staged)
+    final_output = Path(output_dir)
+    dataset_id = f"m1_mechanism_r{replicate:03d}_arm{arm:02d}"
+    scenario_seed = _scenario_seed(root_seed, scenario)
+    simulation = simulate_ccc(
+        cast(Any, scenario),
+        n_subjects=n_subjects,
+        mean_cells_per_sample=mean_cells_per_sample,
+        seed=scenario_seed,
+    )
+    adata = _normalized_copy(simulation.adata)
+    dataset_dir = staged_path / "inputs" / dataset_id
+    dataset_dir.mkdir()
+    input_path = dataset_dir / f"{dataset_id}.h5ad"
+    adata.write_h5ad(input_path, compression="gzip")
+    input_sha = sha256_file(input_path)
+    input_manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_id": dataset_id,
+        "root_seed": root_seed,
+        "scenario_seed": scenario_seed,
+        "scenario": scenario,
+        "inferential_unit": "subject_id",
+        "design": "paired_subject",
+        "conditions": list(CONDITIONS),
+        "output": {
+            "filename": input_path.name,
+            "sha256": input_sha,
+            "shape": [int(adata.n_obs), int(adata.n_vars)],
+        },
+    }
+    manifest_path = dataset_dir / "manifest.json"
+    _write_json(manifest_path, input_manifest)
+    record = {
+        "dataset_id": dataset_id,
+        "root_seed": root_seed,
+        "scenario_seed": scenario_seed,
+        "scenario": scenario,
+        "h5ad": str(input_path.relative_to(staged_path)),
+        "manifest": str(manifest_path.relative_to(staged_path)),
+        "sha256": input_sha,
+        "cells": int(adata.n_obs),
+    }
+    lr_change, program_change, integrated = EXPECTED_COMPONENTS[scenario]
+    truth = {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_id": dataset_id,
+        "root_seed": root_seed,
+        "scenario_seed": scenario_seed,
+        "scenario": scenario,
+        "sender": KNOWN_SENDER,
+        "receiver": KNOWN_RECEIVER,
+        "interaction_id": known_interaction,
+        "ligand": KNOWN_LIGAND,
+        "receptor": KNOWN_RECEPTOR,
+        "expected_lr_change": lr_change,
+        "expected_target_program_change": program_change,
+        "expected_program_direction": 1,
+        "expected_integrated_edge": integrated,
+    }
+    spec = _dataset_spec(
+        dataset_id=dataset_id,
+        input_path=(final_output / input_path.relative_to(staged_path)),
+        input_sha256=input_sha,
+        seed=scenario_seed,
+    )
+    return record, truth, spec
+
+
 def _publish(staged: Path, output: Path, *, overwrite: bool) -> None:
     if output.exists() and not overwrite:
         raise FileExistsError(f"output exists: {output}; pass --overwrite")
@@ -142,6 +225,7 @@ def generate(
     seeds: Sequence[int],
     n_subjects: int = 10,
     mean_cells_per_sample: int = 180,
+    n_jobs: int = 1,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Write paired H5AD inputs, component truth, program map, and manifests."""
@@ -154,6 +238,8 @@ def generate(
         raise ValueError("n_subjects must be at least four")
     if mean_cells_per_sample < 60:
         raise ValueError("mean_cells_per_sample must be at least 60")
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be positive")
     source_resource = pd.read_csv(resource_path, sep="\t")
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -199,76 +285,39 @@ def generate(
         records: list[dict[str, Any]] = []
         truth_records: list[dict[str, Any]] = []
         datasets: dict[str, Any] = {}
-        for replicate, root_seed in enumerate(map(int, seeds), start=1):
-            for arm, scenario in enumerate(SCENARIOS, start=1):
-                dataset_id = f"m1_mechanism_r{replicate:03d}_arm{arm:02d}"
-                scenario_seed = _scenario_seed(root_seed, scenario)
-                simulation = simulate_ccc(
-                    scenario,
+        tasks = [
+            (replicate, arm, int(root_seed), scenario)
+            for replicate, root_seed in enumerate(map(int, seeds), start=1)
+            for arm, scenario in enumerate(SCENARIOS, start=1)
+        ]
+        workers = min(int(n_jobs), len(tasks))
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            futures = [
+                executor.submit(
+                    _generate_dataset_task,
+                    staged=str(staged),
+                    output_dir=str(output_dir),
+                    replicate=replicate,
+                    arm=arm,
+                    root_seed=root_seed,
+                    scenario=scenario,
                     n_subjects=n_subjects,
                     mean_cells_per_sample=mean_cells_per_sample,
-                    seed=scenario_seed,
+                    known_interaction=known_interaction,
                 )
-                adata = _normalized_copy(simulation.adata)
-                dataset_dir = inputs / dataset_id
-                dataset_dir.mkdir()
-                input_path = dataset_dir / f"{dataset_id}.h5ad"
-                adata.write_h5ad(input_path, compression="gzip")
-                input_sha = sha256_file(input_path)
-                input_manifest = {
-                    "schema_version": SCHEMA_VERSION,
-                    "dataset_id": dataset_id,
-                    "root_seed": root_seed,
-                    "scenario_seed": scenario_seed,
-                    "scenario": scenario,
-                    "inferential_unit": "subject_id",
-                    "design": "paired_subject",
-                    "conditions": list(CONDITIONS),
-                    "output": {
-                        "filename": input_path.name,
-                        "sha256": input_sha,
-                        "shape": [int(adata.n_obs), int(adata.n_vars)],
-                    },
-                }
-                manifest_path = dataset_dir / "manifest.json"
-                _write_json(manifest_path, input_manifest)
-                records.append(
-                    {
-                        "dataset_id": dataset_id,
-                        "root_seed": root_seed,
-                        "scenario_seed": scenario_seed,
-                        "scenario": scenario,
-                        "h5ad": str(input_path.relative_to(staged)),
-                        "manifest": str(manifest_path.relative_to(staged)),
-                        "sha256": input_sha,
-                        "cells": int(adata.n_obs),
-                    }
-                )
-                lr_change, program_change, integrated = EXPECTED_COMPONENTS[scenario]
-                truth_records.append(
-                    {
-                        "schema_version": SCHEMA_VERSION,
-                        "dataset_id": dataset_id,
-                        "root_seed": root_seed,
-                        "scenario_seed": scenario_seed,
-                        "scenario": scenario,
-                        "sender": KNOWN_SENDER,
-                        "receiver": KNOWN_RECEIVER,
-                        "interaction_id": known_interaction,
-                        "ligand": KNOWN_LIGAND,
-                        "receptor": KNOWN_RECEPTOR,
-                        "expected_lr_change": lr_change,
-                        "expected_target_program_change": program_change,
-                        "expected_program_direction": 1,
-                        "expected_integrated_edge": integrated,
-                    }
-                )
-                datasets[dataset_id] = _dataset_spec(
-                    dataset_id=dataset_id,
-                    input_path=(output_dir / input_path.relative_to(staged)),
-                    input_sha256=input_sha,
-                    seed=scenario_seed,
-                )
+                for replicate, arm, root_seed, scenario in tasks
+            ]
+            for future in as_completed(futures):
+                record, truth_record, spec = future.result()
+                records.append(record)
+                truth_records.append(truth_record)
+                datasets[str(record["dataset_id"])] = spec
+        records.sort(key=lambda record: str(record["dataset_id"]))
+        truth_records.sort(key=lambda record: str(record["dataset_id"]))
+        datasets = dict(sorted(datasets.items()))
 
         truth = pd.DataFrame.from_records(truth_records)
         truth_path = staged / "mechanism_truth.tsv"
@@ -303,6 +352,7 @@ def generate(
             "design": "paired_subject",
             "n_subjects": int(n_subjects),
             "mean_cells_per_sample": int(mean_cells_per_sample),
+            "generation_workers": workers,
             "conditions": list(CONDITIONS),
             "resource": {
                 "filename": str(frozen_resource_path.relative_to(staged)),
@@ -357,6 +407,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", required=True, type=_parse_seeds)
     parser.add_argument("--n-subjects", type=int, default=10)
     parser.add_argument("--mean-cells-per-sample", type=int, default=180)
+    parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
@@ -369,6 +420,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seeds=args.seeds,
         n_subjects=args.n_subjects,
         mean_cells_per_sample=args.mean_cells_per_sample,
+        n_jobs=args.n_jobs,
         overwrite=args.overwrite,
     )
     print(

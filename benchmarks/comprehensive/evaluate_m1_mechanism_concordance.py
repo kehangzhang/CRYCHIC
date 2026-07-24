@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import tempfile
@@ -662,7 +663,10 @@ def evaluate(
     heads: dict[str, pd.DataFrame] = {}
     timings: list[dict[str, Any]] = []
     records = definition.to_dict(orient="records")
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
         futures = {
             executor.submit(
                 _fit_dataset,

@@ -221,10 +221,12 @@ def test_generator_masks_method_ids_and_freezes_program_truth(tmp_path: Path) ->
         seeds=(20270101,),
         n_subjects=4,
         mean_cells_per_sample=60,
+        n_jobs=2,
     )
 
     assert manifest["schema_version"] == SCHEMA_VERSION
     assert manifest["status"] == "complete"
+    assert manifest["generation_workers"] == 2
     assert len(manifest["records"]) == 7
     assert all("active" not in record["dataset_id"] for record in manifest["records"])
     truth = pd.read_csv(output / "mechanism_truth.tsv", sep="\t")
