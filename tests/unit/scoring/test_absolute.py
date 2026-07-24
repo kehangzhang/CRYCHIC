@@ -169,3 +169,37 @@ def test_detection_remains_available_without_conditional_attribution() -> None:
     assert result["sender_attribution"].isna().all()
     assert set(result["attribution_status"]) == {"not_estimable"}
     assert set(result["attribution_reason_code"]) == {"sender_assignment_not_supplied"}
+
+
+def test_sample_missing_a_frozen_sender_keeps_detection_but_not_attribution() -> None:
+    complete = _availability()
+    assignment = _assignment(complete)
+    source = complete.sample_interactions
+    incomplete_table = source.loc[
+        ~(source["sample_id"].eq("sample-0") & source["sender"].eq("weak"))
+    ].copy()
+    incomplete = BatchAvailability(
+        sample_interactions=incomplete_table,
+        mapping_summary=complete.mapping_summary,
+        resource_id=complete.resource_id,
+        resource_version=complete.resource_version,
+        detection_available=complete.detection_available,
+        frozen_interaction_universe=complete.frozen_interaction_universe,
+        filter_application=complete.filter_application,
+        application_subject_ids=complete.application_subject_ids,
+    )
+
+    result = build_absolute_activity_heads(incomplete, assignment)
+    missing_sample = result.loc[result["sample_id"].eq("sample-0")]
+    complete_samples = result.loc[~result["sample_id"].eq("sample-0")]
+
+    assert missing_sample["sender_detection"].notna().all()
+    assert missing_sample["sender_attribution"].isna().all()
+    assert set(missing_sample["attribution_status"]) == {"not_estimable"}
+    assert set(missing_sample["attribution_reason_code"]) == {
+        "sender_candidate_coverage_incomplete"
+    }
+    sums = complete_samples.groupby("sample_id", observed=True)[
+        "sender_attribution"
+    ].sum()
+    assert np.allclose(sums, 1.0)

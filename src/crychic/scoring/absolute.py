@@ -145,6 +145,11 @@ def build_absolute_activity_heads(
             }
         )
         _require_unique(assignment, _ASSIGNMENT_KEYS, name="sender assignment")
+        assignment["_assignment_candidate_count"] = assignment.groupby(
+            ["context_id", "receiver", "interaction_id"],
+            observed=True,
+            sort=False,
+        )["sender"].transform("size")
         source = source.merge(
             assignment,
             on=list(_ASSIGNMENT_KEYS),
@@ -155,9 +160,40 @@ def build_absolute_activity_heads(
         source["sender_attribution"] = _unit_series(
             source.pop("assignment_weight"), field="assignment_weight"
         )
+        source["attribution_status"] = source["attribution_status"].astype("object")
+        source["attribution_reason_code"] = source["attribution_reason_code"].astype(
+            "object"
+        )
         absent = source["attribution_status"].isna()
         source.loc[absent, "attribution_status"] = "not_estimable"
         source.loc[absent, "attribution_reason_code"] = "sender_assignment_row_missing"
+        attribution_groups = source.groupby(
+            list(_PARENT_KEYS), observed=True, sort=False
+        )
+        expected_count_variants = attribution_groups[
+            "_assignment_candidate_count"
+        ].transform(lambda values: values.dropna().nunique())
+        if expected_count_variants.gt(1).any():
+            raise RuntimeError(
+                "sender assignment candidate counts differ within parent"
+            )
+        expected_count = attribution_groups["_assignment_candidate_count"].transform(
+            "max"
+        )
+        source["_assignment_coverage_complete"] = (
+            expected_count.notna()
+            & source["candidate_sender_count"].eq(expected_count)
+            & source["sender_attribution"].notna()
+        )
+        parent_complete = attribution_groups["_assignment_coverage_complete"].transform(
+            "all"
+        )
+        incomplete = ~parent_complete
+        source.loc[incomplete, "sender_attribution"] = np.nan
+        source.loc[incomplete, "attribution_status"] = "not_estimable"
+        source.loc[incomplete, "attribution_reason_code"] = (
+            "sender_candidate_coverage_incomplete"
+        )
 
     active_sender_mass = 1.0 - source["null_sender_attribution"]
     source["sender_attribution_with_null"] = (
