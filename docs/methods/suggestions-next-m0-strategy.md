@@ -167,9 +167,13 @@ attribution becomes typed not-estimable; remaining sender weights are not
 renormalized. This preserves the intended M0 detection/attribution separation.
 
 M1 remains an experimental contrast diagnostic and does not claim active
-inhibition, probability calibration, or formal inference. The next isolated
-cycle is M2 residualized coupling on decoy-sender, composition, and confounding
-families. The full locked evidence and claim boundary are recorded in
+inhibition, probability calibration, or formal inference. Its fixed formula is
+now owned by the core scoring API at commit `28197e7`; replaying the locked
+fixture produced five byte-identical scientific result tables, with replay
+manifest SHA256
+`f5f2bbec0a236a3a745a926e9bfe6c0030fd96054b2b10938dd74a305658663d`.
+The next isolated cycle is M2 residualized coupling on decoy-sender,
+composition, and confounding families. The full locked evidence and claim boundary are recorded in
 `benchmarks/results/SUGGESTIONS_NEXT_M1_VALIDATION_20260724.md`.
 
 ## Locked M2 sender-specificity result

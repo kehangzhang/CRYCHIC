@@ -93,6 +93,21 @@ the optional attribution was not fully representable. Commit `c5b1ec3` now:
 Regression tests cover both incomplete candidate coverage and complete but
 missing assignment evidence.
 
+## Core API migration parity
+
+The frozen concordance formula was subsequently moved from the benchmark
+evaluator into the public scoring module at commit `28197e7`, without changing
+its version string, formula string, inputs, or output. The original locked
+fixture and configuration were rerun from a clean worktree with 16 workers.
+
+The five scientific tables (`mechanism_effects`, `method_summary`,
+`paired_comparisons`, `scenario_summary`, and `seed_metrics`) were byte-for-byte
+identical to the `c5b1ec3` validation outputs. Timing and provenance were
+regenerated rather than compared. The core-migration replay manifest SHA256 is
+`f5f2bbec0a236a3a745a926e9bfe6c0030fd96054b2b10938dd74a305658663d`.
+This proves implementation relocation parity; it does not broaden the original
+mechanism-family claim.
+
 ## Runtime and boundary
 
 The validation evaluated 140 datasets and 503,479 cells in 13.6 seconds wall
