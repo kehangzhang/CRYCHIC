@@ -113,6 +113,13 @@ from .hypotheses import (
     freeze_hypothesis_universe,
     validate_frozen_hypothesis_coverage,
 )
+from .occurrence import (
+    OCCURRENCE_CONTRAST_COLUMNS,
+    OCCURRENCE_CONTRAST_VERSION,
+    OccurrenceContrastSpec,
+    OccurrenceContrastStatus,
+    fit_subject_occurrence_contrasts,
+)
 from .omnibus import (
     FullPipelineOmnibusDistribution,
     FullPipelineOmnibusRecord,
@@ -126,6 +133,8 @@ from .omnibus import (
 )
 
 __all__ = [
+    "OCCURRENCE_CONTRAST_COLUMNS",
+    "OCCURRENCE_CONTRAST_VERSION",
     "ActiveEdgeScoreStatus",
     "ActiveProbabilityCollection",
     "ActiveProbabilityRecord",
@@ -195,6 +204,8 @@ __all__ = [
     "OOFEffectFormalEligibility",
     "OOFEffectFormalEligibilityStatus",
     "OOFEffectSpec",
+    "OccurrenceContrastSpec",
+    "OccurrenceContrastStatus",
     "PointActiveEdgeScoreRecord",
     "SelectionFrequencyResult",
     "SelectionFrequencySpec",
@@ -214,6 +225,7 @@ __all__ = [
     "fit_beta_uniform_mixture",
     "fit_oof_context_effect",
     "fit_oof_context_omnibus",
+    "fit_subject_occurrence_contrasts",
     "freeze_g3p_simulation_truth",
     "freeze_hierarchical_fdr_spec",
     "freeze_hypothesis_universe",
