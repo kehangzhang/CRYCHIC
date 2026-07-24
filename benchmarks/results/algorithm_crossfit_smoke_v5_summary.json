@@ -1,8 +1,8 @@
 {
-  "base_revision": "0ffdb0a9edf998cdb684aadc161f11954d3b8f2d",
+  "base_revision": "d30af71dcb2e1136ec0493156ae929cc5d47e2cb",
   "full_artifact": {
-    "canonical_sha256": "708e1d5ec6f7462b2ecec2dd661b771f926da6f57f1d00f17b794431ac0679d6",
-    "file_sha256": "7e43c2e85eb2123b8d552f087fe43adcc8422c51a53d0d463ebdbc5792aaac23",
+    "canonical_sha256": "ea397346d2417be5377ed78b700314382cdd53247344a0d23f60b23724e6ac16",
+    "file_sha256": "88441c4b96bbd913ff8b1dd623fb224d7a28b64a00c2bb91ab78ec6b361de9e3",
     "relative_workspace_path": "benchmark_work/algorithm_smoke/crossfit_summary_v5.json",
     "size_bytes": 15181
   },
@@ -17,14 +17,14 @@
   },
   "interpretation": "The v5 fixed-penalty public path preserves exact receiver coverage under the paired loss contract after the v7 coordinate, lineage, and factorized-nuisance updates. Active has positive bounded and raw diagnostic gain (0.0510551), while ligand-only has zero bounded gain and negative raw gain (-0.0174719). This smoke does not supply the trusted autonomous resource or PenaltyTuningSpec, so all 48 official rows per dataset remain not_estimable. It is a fixed-penalty diagnostic comparison, not an official incremental, integrated-edge, biological, or superiority claim.",
   "process_performance": {
-    "peak_rss_kib": 1735540,
-    "wall_clock_seconds": 13.769319513812661
+    "peak_rss_kib": 1736228,
+    "wall_clock_seconds": 12.735616989433765
   },
   "records": [
     {
       "crossfit_id": "subject_crossfit_1dd0ce714a19a26e040d658ed8a80727",
       "dataset": "synthetic_active",
-      "elapsed_seconds": 8.743977354839444,
+      "elapsed_seconds": 7.789383947849274,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -46,7 +46,7 @@
     {
       "crossfit_id": "subject_crossfit_20a60ca01060bdce5bdc0e9cdb3999fc",
       "dataset": "synthetic_ligand_only",
-      "elapsed_seconds": 5.025342158973217,
+      "elapsed_seconds": 4.946233041584492,
       "gain_denominator_status_counts": {
         "positive_receiver_null_loss_ratio_v1": 2
       },
@@ -130,7 +130,7 @@
     "src/crychic/response/contracts.py": "15039c869c5a0f6ada379bd454c5a82c75379c69ab5bc651e510e6b00f0a17a6",
     "src/crychic/response/fold.py": "d801caff1b411db202c48d5017ac0168f97d0e8ba873d1dab501c9590b3f8fec",
     "src/crychic/response/gene.py": "0b69b90aaa8a7981b80bdb025a6add629e7e12e661db7eaf435039ec38ead52d",
-    "src/crychic/scoring/__init__.py": "498ac70f61796bde58637ef35a207bb8d888f0c6e0eada45d7dcf69a8c87eedc",
+    "src/crychic/scoring/__init__.py": "82bbf4f07c1e627664bff483a1cf34165f7401f95dc81678b3753d4689ab6f96",
     "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
     "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a",
     "src/crychic/scoring/family_common.py": "546133b652600f2073756f220b1a3a6d4d7f0d6d41479e47eae103106593f616",
