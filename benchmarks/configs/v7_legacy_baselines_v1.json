@@ -1,0 +1,36 @@
+{
+  "schema_version": "crychic-v7-legacy-baseline-freeze-v1",
+  "frozen_at_commit": "918dfeff38f6aa9b856aee08c5417fef543e1d14",
+  "policy": {
+    "benchmark_diagnostic_only": true,
+    "formal_inference_eligible": false,
+    "public_default_replaced": false,
+    "further_rc_development_allowed": false
+  },
+  "baselines": [
+    {
+      "name": "legacy_family_common_v2",
+      "kind": "sample_score_generator",
+      "score_version": "family_first_mechanistic_ligand_contrast_gated_softmin_v2",
+      "source": "src/crychic/scoring/family_common.py",
+      "benchmark_diagnostic_only": true,
+      "formal_inference_eligible": false
+    },
+    {
+      "name": "RC12_sender_response_ranker",
+      "kind": "benchmark_ranking_head",
+      "config": "benchmarks/configs/sender_response_detection_rc12_preregistered.json",
+      "config_sha256": "521cc0a1c564604543f4737b043877bb8e70ae1bf610a47ec1a30449953bcfca",
+      "benchmark_diagnostic_only": true,
+      "formal_inference_eligible": false
+    },
+    {
+      "name": "RC14_pair_prioritized_event_ranker",
+      "kind": "benchmark_ranking_head",
+      "config": "benchmarks/configs/pair_prioritized_event_evidence_rc14_v1.json",
+      "config_sha256": "96e320fc6ad3bdd1ca5189ecbb7b9b0d83ba58888f32f3f00ede52738fb75c51",
+      "benchmark_diagnostic_only": true,
+      "formal_inference_eligible": false
+    }
+  ]
+}
