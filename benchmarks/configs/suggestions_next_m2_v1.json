@@ -1,0 +1,99 @@
+{
+  "schema_version": "crychic-suggestions-next-m2-config-v1",
+  "absolute_expression_reference": 1000000.0,
+  "candidate": {
+    "name": "crychic_m2_residualized_sender_program_coupling",
+    "score_version": "subject_contrast_residual_correlation_m2_v1",
+    "input_unit": "subject_level_paired_condition_contrast",
+    "sender_input": "m0_ligand_absolute_evidence",
+    "receiver_input": "m1_frozen_direction_program_evidence",
+    "numerical_covariates": [
+      "batch_contrast",
+      "composition_design_contrast",
+      "sender_proportion_effect"
+    ],
+    "categorical_covariates": [],
+    "folds": 4,
+    "fold_aggregation": "median_positive_coupling_support",
+    "minimum_training_subjects": 10,
+    "tuned_parameters": 0,
+    "formal_inference_allowed": false
+  },
+  "claim_boundary": {
+    "experimental_head_only": true,
+    "m0_and_m1_heads_are_retained_separately": true,
+    "held_out_subjects_are_excluded_from_each_fit": true,
+    "generation_latents_are_not_method_inputs": true,
+    "recorded_nuisance_covariates_are_required": true,
+    "probability_is_not_emitted": true,
+    "p_and_q_values_are_not_emitted": true,
+    "synthetic_sender_fixture_is_not_general_sota_evidence": true
+  },
+  "development": {
+    "seeds": [
+      20270801,
+      20270802,
+      20270803,
+      20270804,
+      20270805,
+      20270806,
+      20270807,
+      20270808,
+      20270809,
+      20270810,
+      20270811,
+      20270812,
+      20270813,
+      20270814,
+      20270815,
+      20270816,
+      20270817,
+      20270818,
+      20270819,
+      20270820
+    ],
+    "fixture_manifest_sha256": "PENDING_DEVELOPMENT_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260726
+  },
+  "validation": {
+    "seeds": [
+      20271201,
+      20271202,
+      20271203,
+      20271204,
+      20271205,
+      20271206,
+      20271207,
+      20271208,
+      20271209,
+      20271210,
+      20271211,
+      20271212,
+      20271213,
+      20271214,
+      20271215,
+      20271216,
+      20271217,
+      20271218,
+      20271219,
+      20271220
+    ],
+    "fixture_manifest_sha256": "PENDING_VALIDATION_FIXTURE",
+    "minimum_paired_seeds": 20,
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 20260727
+  },
+  "gates": {
+    "ap_delta_ci_lower_minimum_exclusive": 0.0,
+    "auroc_delta_ci_lower_minimum_exclusive": 0.0,
+    "ap_delta_vs_m1_ci_lower_minimum_exclusive": 0.0,
+    "minimum_seed_win_fraction_vs_raw": 0.8,
+    "maximum_median_true_sender_rank": 1.0,
+    "minimum_candidate_coverage": 1.0,
+    "minimum_mean_true_sender_support": 0.25,
+    "maximum_q95_decoy_to_true_ratio": 0.9,
+    "minimum_fold_coverage": 1.0
+  }
+}
