@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
 from benchmarks.comprehensive.evaluate_three_group import (
     RunRecord,
     _active_metrics,
     _active_multigroup_metrics,
+    _method_code_commits,
     _method_summary,
     _multigroup_method_summary,
     _multigroup_metrics,
@@ -358,3 +358,24 @@ def test_run_binding_requires_crychic_algorithm_commit_identity() -> None:
             expected_resource_sha256="resource",
             expected_code_commit="commit",
         )
+
+
+def test_method_commits_separate_fixture_and_adapter_provenance(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "panel_manifest.json").write_text(
+        """{
+          "status": "complete",
+          "fixture_code": {"commit": "fixture", "dirty": false},
+          "adapter_code": {"commit": "adapter", "dirty": false},
+          "methods": ["cellchat", "liana", "scseqcommdiff"]
+        }""",
+        encoding="utf-8",
+    )
+
+    commits = _method_code_commits(tmp_path, "fixture")
+
+    assert commits["crychic"] == "fixture"
+    assert commits["cellchat"] == "adapter"
+    assert commits["liana_rank_aggregate"] == "adapter"
+    assert commits["scseqcommdiff"] == "adapter"

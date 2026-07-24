@@ -42,6 +42,11 @@ EXPECTED_METHOD_VERSIONS = {
     "cellchat": "2.1.2",
     "liana_rank_aggregate": "1.7.3",
 }
+PANEL_METHOD_IDS = {
+    "cellchat": "cellchat",
+    "liana": "liana_rank_aggregate",
+    "scseqcommdiff": "scseqcommdiff",
+}
 EXTERNAL_SCHEMA = "crychic-external-adapter-manifest-v1"
 SCSEQ_SCHEMA = "crychic-scseqcommdiff-paper-benchmark-v2"
 MINIMUM_COVERAGE = 0.80
@@ -298,6 +303,40 @@ def _require_mapping(value: object, *, label: str) -> Mapping[str, Any]:
     return value
 
 
+def _method_code_commits(runs_dir: Path, fixture_commit: str) -> dict[str, str]:
+    """Resolve clean method commits without conflating fixture and adapters."""
+
+    result = {method: fixture_commit for method in METHODS}
+    panel_path = runs_dir / "panel_manifest.json"
+    if not panel_path.is_file():
+        return result
+    panel = _read_json(panel_path)
+    if panel.get("status") != "complete":
+        raise ValueError("external panel manifest is not complete")
+    fixture_code = _require_mapping(
+        panel.get("fixture_code"), label="external panel fixture provenance"
+    )
+    if (
+        fixture_code.get("dirty") is not False
+        or fixture_code.get("commit") != fixture_commit
+    ):
+        raise ValueError("external panel fixture provenance mismatch")
+    adapter_code = _require_mapping(
+        panel.get("adapter_code"), label="external panel adapter provenance"
+    )
+    adapter_commit = str(adapter_code.get("commit", ""))
+    if adapter_code.get("dirty") is not False or not adapter_commit:
+        raise ValueError("external panel adapter provenance is not clean")
+    panel_methods = panel.get("methods")
+    if not isinstance(panel_methods, list):
+        raise ValueError("external panel methods are absent")
+    for panel_method in panel_methods:
+        evaluation_method = PANEL_METHOD_IDS.get(str(panel_method))
+        if evaluation_method is not None:
+            result[evaluation_method] = adapter_commit
+    return result
+
+
 def _validate_run_binding(
     record: RunRecord,
     *,
@@ -463,7 +502,7 @@ def _top_effect_recovery(
     active = truth_effect.ne(0.0)
     if not active.any():
         return 0, 0, 0, math.nan
-    requested = max(1, int(math.ceil(0.10 * int(active.sum()))))
+    requested = max(1, math.ceil(0.10 * int(active.sum())))
     truth_top = _tie_inclusive_top_k(truth_effect.abs(), requested)
     predicted_top = _tie_inclusive_top_k(predicted_effect.abs(), requested)
     recovered = int((truth_top & predicted_top).sum())
@@ -1346,6 +1385,7 @@ def evaluate(
         raise ValueError("fixture truth checksum mismatch")
     truth = pd.read_csv(truth_path, sep="\t")
     records, excluded = _discover_runs(runs_dir)
+    method_code_commits = _method_code_commits(runs_dir, expected_code_commit)
     effect_frames: list[pd.DataFrame] = []
     metric_rows: list[dict[str, Any]] = []
     missing_runs: list[dict[str, str]] = []
@@ -1396,7 +1436,7 @@ def evaluate(
                 record,
                 expected_input_sha256=str(expected_input["sha256"]),
                 expected_resource_sha256=expected_resource_sha256,
-                expected_code_commit=expected_code_commit,
+                expected_code_commit=method_code_commits[method],
             )
             effects = (
                 _scseq_effects(record, selected_truth)
@@ -1515,7 +1555,7 @@ def evaluate(
             "design": "independent_subject_groups",
             "resource_mode": "H-common",
             "frozen_code_commit": expected_code_commit,
-            "method_output_code_commit": expected_code_commit,
+            "method_output_code_commits": method_code_commits,
             "evaluator_code": evaluator_code,
             "evaluator_script_sha256": sha256_file(Path(__file__)),
             "methods_requested": list(METHODS),
