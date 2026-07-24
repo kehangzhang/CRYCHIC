@@ -137,3 +137,37 @@ This is evidence for the score geometry on an expression-driven mechanism
 family only. It is not a general SOTA claim and does not establish behavior on
 ligand-only, receptor-only, generic-downstream, inhibitory, occurrence,
 decoy-sender, complex-AND, confounding, or hypergraph-prior mechanisms.
+
+## Locked M1 mechanism-family result
+
+M1 was evaluated as a separate signed target-program concordance head, without
+changing M0 activity or the public default score. It uses no fitted parameter:
+the fixed contrast diagnostic is the signed geometric mean of the M0 LR effect
+and the frozen-direction receiver-program effect when their directions agree,
+and zero otherwise.
+
+Development used 20 root seeds from 20270101--20270120. Locked validation used
+20 fresh root seeds from 20270501--20270520, seven paired mechanism families,
+10 subjects, and a mean of 180 cells per sample. The validation fixture
+manifest SHA256 is
+`7660c9a63fb4f8cabd2be54acc869cd46783be9a717b1ddbd369a85f646fd640`;
+the final validation manifest SHA256 is
+`a2a1b9943feadd721cb5b0efb3c91f80c1cce6d80be782ed0a62a03f60a96ad2`.
+
+M1 passed all locked gates: mechanism-family AP 1.000, AUROC 1.000, median
+active rank 1, full active retention, full coverage, and a maximum partial to
+active mean-score ratio of 0.197. M0 scored AP 0.350 and AUROC 0.683 on the
+same estimand. M1 beat M0 on all 20 seeds for both metrics. In particular,
+target-only and receptor-knockout had zero M1 concordance while their component
+effects remained visible separately.
+
+The benchmark also exposed incomplete candidate-sender coverage in one
+development sample. Detection now remains available while conditional
+attribution becomes typed not-estimable; remaining sender weights are not
+renormalized. This preserves the intended M0 detection/attribution separation.
+
+M1 remains an experimental contrast diagnostic and does not claim active
+inhibition, probability calibration, or formal inference. The next isolated
+cycle is M2 residualized coupling on decoy-sender, composition, and confounding
+families. The full locked evidence and claim boundary are recorded in
+`benchmarks/results/SUGGESTIONS_NEXT_M1_VALIDATION_20260724.md`.

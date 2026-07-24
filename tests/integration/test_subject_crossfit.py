@@ -1802,7 +1802,7 @@ def test_default_outer_partition_policy_preserves_partition_identity() -> None:
         "subject_fold_218f1768ece07284cde48fa7e33efa6a",
         "subject_fold_e713d5365a1199325444c995b43a997c",
     ]
-    assert result.crossfit_id == ("subject_crossfit_7d27607bfaee39ccf29ffba03bd8e8d9")
+    assert result.crossfit_id == ("subject_crossfit_115bffa3ab4a57bcfaebcf3bf4e13346")
 
 
 def test_autonomous_program_use_scope_preserves_legacy_and_binds_biology() -> None:
@@ -3053,6 +3053,9 @@ def test_crossfit_binds_typed_inner_tuning_children_without_fallback() -> None:
         functional,
         design_application,
         fold.application.availability.sample_interactions,
+        communication_modes=tuple(
+            sorted(mode.value for mode in _config().communication_modes)
+        ),
     )
     sender_application = crossfit_module._completed_common_sender_application(
         functional.sender_functional,

@@ -1,7 +1,7 @@
 {
   "artifact": {
-    "canonical_sha256": "9f87ab9ce432d0d827f3e4ba1fa2bb8337710f13893bcda702c26b8a1652c844",
-    "file_sha256": "c08c748c8e68621390dd9292ce8b0dc55869ee887222480e9da1083450cad66a",
+    "canonical_sha256": "2c88b01fca3d7dbe988fdad04228ea91826d7532d49a1a9467e05718c6dc49f5",
+    "file_sha256": "aa810afa421cc6e149ce686324fe13de6ed17d180e421368302fbf84af38a0a2",
     "path": "benchmark_work/algorithm_smoke/autonomous_overlap_v1.json",
     "size_bytes": 4332,
     "tracked": false
@@ -34,7 +34,7 @@
       "src/crychic/resources/manifest.py": "6ce4cf2680f5d2d59c8ab5d5a20aa228976811251503d80482aec429ac402eb3",
       "src/crychic/response/__init__.py": "a8fa8fe1490dba5518501ce137487ee890a0c9833da218b6c1bf811bc85b3c1d",
       "src/crychic/response/autonomous.py": "ed21139eaa1a8939db08918d16094a0234a2616decffa3981aeb8dbc5ecbb9cf",
-      "src/crychic/scoring/__init__.py": "36e326289092e2bec11b8a26aed926a9f07ca16dc16f0bd1b13553b394b2d374",
+      "src/crychic/scoring/__init__.py": "0e7b62f5ab0b2051a00b7a78678475235d33de0ca170baa15270182046872b29",
       "src/crychic/scoring/contracts.py": "56d620cade583dc7fee122675368b591249b3f8562ab08578b72e3fb4ecc4d42",
       "src/crychic/scoring/downstream.py": "2c3d8d6ee52b9025749fdad00b10083e247620f404d8c5569e19b28449b6aa6a"
     }
