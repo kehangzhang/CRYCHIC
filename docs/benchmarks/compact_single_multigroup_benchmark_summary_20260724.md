@@ -83,7 +83,7 @@ RC14 是在 Kuppe 上冻结的 benchmark-only Top-K head。它在 K=100 时于 K
 
 ### suggestions-next 后续模块
 
-M1 在 7 类合成机制判别中相对 M0 为 AP/AUROC 1.000/1.000；M2 在 4 个 sender 候选中为 1/4，20/20 次将真实 sender 排第一；M4 occurrence head 在 4 个内部基线中为 2/4，AP/AUROC 0.943/0.965。M5 在合成 additive H-prior shrinkage 中为 MSE/AP/AUROC 1/6，并胜过 exact-degree-matched permutation。M1/M2/M4/M5 的比较对象不是 CellChat、LIANA 或 scSeqCommDiff，因此不计入跨算法名次；M5 仍缺 prior rewiring 与真实 subject-level 验证。
+M1 在 7 类合成机制判别中相对 M0 为 AP/AUROC 1.000/1.000；M2 在 4 个 sender 候选中为 1/4，20/20 次将真实 sender 排第一；M4 occurrence head 在 4 个内部基线中为 2/4，AP/AUROC 0.943/0.965。M5 在合成 additive H-prior shrinkage 中为 MSE/AP/AUROC 1/6，并胜过 exact-degree-matched permutation；10%/25% degree-matched rewiring 分别保留 79.7%/55.1% MSE 增益与 81.6%/57.7% AP 增益。M1/M2/M4/M5 的比较对象不是 CellChat、LIANA 或 scSeqCommDiff，因此不计入跨算法名次；M5 仍缺真实 subject-level 验证。
 
 ## 5. 不能直接排名的赛道
 

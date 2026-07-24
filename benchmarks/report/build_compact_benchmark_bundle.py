@@ -85,6 +85,9 @@ REPORTS = {
     "benchmarks/results/SUGGESTIONS_NEXT_M5_VALIDATION_20260724.md": (
         "reports/SUGGESTIONS_NEXT_M5_VALIDATION.md"
     ),
+    "benchmarks/results/SUGGESTIONS_NEXT_M5_REWIRING_VALIDATION_20260724.md": (
+        "reports/SUGGESTIONS_NEXT_M5_REWIRING_VALIDATION.md"
+    ),
 }
 
 

@@ -114,7 +114,9 @@ over no prior, an exact-degree-matched wrong topology, and single-view priors.
 It does not establish benefit on real pseudobulk effects, misspecified or
 partially wrong biological resources, raw-expression end-to-end fitting,
 formal uncertainty, or published-method SOTA comparisons. The generator is
-aligned with the fitted additive incidence model. Only one fixed fully
-permuted topology was used; the suggested 10%--25% prior-rewiring robustness
-gate remains outstanding. M5 must remain experimental until that robustness
-test and subject-level pipeline integration are completed.
+aligned with the fitted additive incidence model. The separate locked M5b
+evaluation subsequently passed the suggested 10%--25% degree-matched
+prior-rewiring gate; see
+`SUGGESTIONS_NEXT_M5_REWIRING_VALIDATION_20260724.md`. M5 must remain
+experimental until subject-level pipeline integration and real-resource
+misspecification tests are completed.

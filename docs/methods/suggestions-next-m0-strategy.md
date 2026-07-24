@@ -255,5 +255,14 @@ and pathway-only controls in all 20 seeds.
 The full result, rejected exploratory smoother, and limitations are in
 `benchmarks/results/SUGGESTIONS_NEXT_M5_VALIDATION_20260724.md`. This is a
 synthetic additive effect-summary result aligned with the model, not real-data
-or general SOTA evidence. Prior-rewiring robustness and subject-level pipeline
-integration remain outstanding.
+or general SOTA evidence.
+
+The follow-up bounded-rewiring test also passed on 20 fresh seeds. At 10% and
+25% degree-matched rewiring, MSE topology-gain retention was 0.797 and 0.551;
+AP retention was 0.816 and 0.577. Both perturbed priors remained significantly
+better than raw and fully permuted controls. The 50% diagnostic retained 0.247
+MSE gain and 0.251 AP gain, establishing the expected topology-dose response.
+All per-view node degrees were exactly preserved. The locked evidence is in
+`benchmarks/results/SUGGESTIONS_NEXT_M5_REWIRING_VALIDATION_20260724.md`.
+Subject-level pipeline integration and real-resource misspecification remain
+outstanding.
