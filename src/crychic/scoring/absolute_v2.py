@@ -155,9 +155,10 @@ class FrozenActivityInteractionV2:
             "receptor_subunits",
             _names(self.receptor_subunits, field_name="receptor_subunits"),
         )
-        if type(self.ligand_is_complex) is not bool or type(
-            self.receptor_is_complex
-        ) is not bool:
+        if (
+            type(self.ligand_is_complex) is not bool
+            or type(self.receptor_is_complex) is not bool
+        ):
             raise TypeError("interaction complex flags must be boolean")
 
     @classmethod
@@ -219,9 +220,7 @@ class AbsoluteActivityV2Transform:
                 field_name,
                 _name(getattr(self, field_name), field_name=field_name),
             )
-        subjects = _names(
-            self.training_subject_ids, field_name="training_subject_ids"
-        )
+        subjects = _names(self.training_subject_ids, field_name="training_subject_ids")
         cell_types = _names(self.cell_type_ids, field_name="cell_type_ids")
         features = _names(self.feature_ids, field_name="feature_ids")
         interactions = tuple(
@@ -508,8 +507,7 @@ def apply_absolute_activity_v2_transform(
     missing_features = set(transform.feature_ids).difference(feature_index)
     if missing_features:
         raise ValueError(
-            "held-out aggregate lacks transform features: "
-            f"{sorted(missing_features)}"
+            f"held-out aggregate lacks transform features: {sorted(missing_features)}"
         )
     selected_columns = np.asarray(
         [feature_index[name] for name in transform.feature_ids], dtype=np.int64
@@ -592,9 +590,7 @@ def apply_absolute_activity_v2_transform(
         interaction = interactions.get(interaction_id)
         if interaction is None:
             raise ValueError(f"availability has unknown interaction {interaction_id!r}")
-        ligand_values.append(
-            entity_value(sample_id, sender, interaction_id, "ligand")
-        )
+        ligand_values.append(entity_value(sample_id, sender, interaction_id, "ligand"))
         receptor_values.append(
             entity_value(sample_id, receiver, interaction_id, "receptor")
         )
@@ -602,36 +598,29 @@ def apply_absolute_activity_v2_transform(
         receiver_reliability = unit_reliability.get((sample_id, receiver), math.nan)
         reliability_values.append(
             math.sqrt(sender_reliability * receiver_reliability)
-            if math.isfinite(sender_reliability)
-            and math.isfinite(receiver_reliability)
+            if math.isfinite(sender_reliability) and math.isfinite(receiver_reliability)
             else math.nan
         )
         ligand_names.append(interaction.ligand_name)
         receptor_names.append(interaction.receptor_name)
     source["ligand_activity_raw"] = ligand_values
     source["receptor_activity_raw"] = receptor_values
-    average = 0.5 * (
-        source["ligand_activity_raw"] + source["receptor_activity_raw"]
-    )
-    imbalance = (
-        source["ligand_activity_raw"] - source["receptor_activity_raw"]
-    ).abs()
+    average = 0.5 * (source["ligand_activity_raw"] + source["receptor_activity_raw"])
+    imbalance = (source["ligand_activity_raw"] - source["receptor_activity_raw"]).abs()
     source["sender_detection_raw"] = average - (
         transform.spec.bottleneck_penalty * imbalance
     )
     source["ligand"] = ligand_names
     source["receptor"] = receptor_names
-    source["condition"] = source.apply(
-        _condition_value, axis=1, columns=conditions
-    )
+    source["condition"] = source.apply(_condition_value, axis=1, columns=conditions)
     source["cell_count_reliability"] = reliability_values
     source["reliability_weight"] = reliability_values
 
     grouped = source.groupby(list(_PARENT_KEY), observed=True, sort=False)
     source["candidate_sender_count"] = grouped["sender"].transform("size").astype(int)
-    source["effective_candidate_count"] = grouped[
-        "sender_detection_raw"
-    ].transform("count").astype(int)
+    source["effective_candidate_count"] = (
+        grouped["sender_detection_raw"].transform("count").astype(int)
+    )
     summaries = grouped["sender_detection_raw"].agg(
         parent_peak_raw="max",
         parent_total_raw=lambda values: values.sum(min_count=1),
@@ -669,15 +658,36 @@ def apply_absolute_activity_v2_transform(
         raise ValueError("availability_state must contain values in [0, 1] or NA")
     source["mechanism_support"] = mechanism_support.astype(float)
 
-    for head, status, reason in (
-        ("program_signed", "program_status", "program_reason_code"),
-        ("coupling_prior", "coupling_status", "coupling_reason_code"),
-        ("active_probability", "occurrence_status", "occurrence_reason_code"),
-        ("sender_attribution", "attribution_status", "attribution_reason_code"),
+    for head, status, reason, functional_id in (
+        (
+            "program_signed",
+            "program_status",
+            "program_reason_code",
+            "program_functional_id",
+        ),
+        (
+            "coupling_prior",
+            "coupling_status",
+            "coupling_reason_code",
+            "coupling_functional_id",
+        ),
+        (
+            "active_probability",
+            "occurrence_status",
+            "occurrence_reason_code",
+            "occurrence_functional_id",
+        ),
+        (
+            "sender_attribution",
+            "attribution_status",
+            "attribution_reason_code",
+            "attribution_functional_id",
+        ),
     ):
         source[head] = np.nan
         source[status] = "not_computed"
         source[reason] = f"{head}_not_computed"
+        source[functional_id] = None
     source["null_sender_attribution"] = np.nan
     source["selection_stability"] = np.nan
 

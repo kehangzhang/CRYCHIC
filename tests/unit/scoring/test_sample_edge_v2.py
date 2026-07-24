@@ -71,6 +71,20 @@ def test_low_evidence_is_not_structural_impossibility() -> None:
     assert not bool(observed.table.loc[0, "structural_impossibility"])
 
 
+def test_optional_head_requires_applied_functional_lineage() -> None:
+    scores = sample_edge_scores()
+    missing_lineage = scores.table.copy()
+    missing_lineage["attribution_functional_id"] = None
+
+    with pytest.raises(ValueError, match="attribution_functional_id"):
+        SampleEdgeScoreV2(table=missing_lineage, provenance=scores.provenance)
+
+    impossible_lineage = scores.table.copy()
+    impossible_lineage["program_functional_id"] = "program-not-applied"
+    with pytest.raises(ValueError, match="not-computed program_status"):
+        SampleEdgeScoreV2(table=impossible_lineage, provenance=scores.provenance)
+
+
 def test_sample_edge_v2_schema_is_valid() -> None:
     schema = json.loads(
         (ROOT / "schemas" / "sample_edge_scores_v2.schema.json").read_text(

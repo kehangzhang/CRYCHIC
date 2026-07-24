@@ -34,17 +34,21 @@ SAMPLE_EDGE_SCORE_V2_COLUMNS = (
     "program_signed",
     "program_status",
     "program_reason_code",
+    "program_functional_id",
     "mechanism_support",
     "coupling_prior",
     "coupling_status",
     "coupling_reason_code",
+    "coupling_functional_id",
     "active_probability",
     "occurrence_status",
     "occurrence_reason_code",
+    "occurrence_functional_id",
     "sender_attribution",
     "null_sender_attribution",
     "attribution_status",
     "attribution_reason_code",
+    "attribution_functional_id",
     "cell_count_reliability",
     "reliability_weight",
     "candidate_sender_count",
@@ -209,8 +213,7 @@ class SampleEdgeScoreV2Provenance:
             raise ValueError("v7 primary activity cannot use a condition-derived gate")
         if self.schema_version != SAMPLE_EDGE_SCORE_V2_SCHEMA_VERSION:
             raise ValueError(
-                "schema_version must equal "
-                f"{SAMPLE_EDGE_SCORE_V2_SCHEMA_VERSION!r}"
+                f"schema_version must equal {SAMPLE_EDGE_SCORE_V2_SCHEMA_VERSION!r}"
             )
         object.__setattr__(self, "training_subject_ids", training)
         object.__setattr__(self, "application_subject_ids", application)
@@ -380,9 +383,9 @@ class SampleEdgeScoreV2:
         ):
             raise ValueError("structural_impossibility must contain booleans")
         table["out_of_fold"] = table["out_of_fold"].astype(bool)
-        table["structural_impossibility"] = table[
-            "structural_impossibility"
-        ].astype(bool)
+        table["structural_impossibility"] = table["structural_impossibility"].astype(
+            bool
+        )
         if not table["out_of_fold"].all():
             raise ValueError("v2 primary sample-edge rows must be out of fold")
 
@@ -443,20 +446,27 @@ class SampleEdgeScoreV2:
             0.0,
         ):
             raise ValueError("structural-impossible detection must be zero")
-        if not table.loc[structural, "structural_impossibility"].all() or table.loc[
-            ~structural, "structural_impossibility"
-        ].any():
+        if (
+            not table.loc[structural, "structural_impossibility"].all()
+            or table.loc[~structural, "structural_impossibility"].any()
+        ):
             raise ValueError("structural_impossibility must match status")
-        if not table.loc[structural, "coverage_status"].eq(
-            SampleEdgeCoverageStatus.STRUCTURAL_IMPOSSIBLE.value
-        ).all():
+        if (
+            not table.loc[structural, "coverage_status"]
+            .eq(SampleEdgeCoverageStatus.STRUCTURAL_IMPOSSIBLE.value)
+            .all()
+        ):
             raise ValueError("structural rows require structural coverage status")
-        if not table.loc[not_estimable, "coverage_status"].isin(
-            [
-                SampleEdgeCoverageStatus.NOT_ESTIMABLE.value,
-                SampleEdgeCoverageStatus.LOW_COVERAGE.value,
-            ]
-        ).all():
+        if (
+            not table.loc[not_estimable, "coverage_status"]
+            .isin(
+                [
+                    SampleEdgeCoverageStatus.NOT_ESTIMABLE.value,
+                    SampleEdgeCoverageStatus.LOW_COVERAGE.value,
+                ]
+            )
+            .all()
+        ):
             raise ValueError("not-estimable rows require missing or low coverage")
         status_is_observed = status.eq(SampleEdgeValueStatus.OBSERVED.value)
         if table.loc[status_is_observed, "reason_code"].notna().any():
@@ -495,12 +505,32 @@ class SampleEdgeScoreV2:
     def _validate_optional_heads(self, table: pd.DataFrame) -> None:
         allowed = {item.value for item in SampleEdgeHeadStatus}
         head_specs = (
-            ("program_status", "program_signed", "program_reason_code"),
-            ("coupling_status", "coupling_prior", "coupling_reason_code"),
-            ("occurrence_status", "active_probability", "occurrence_reason_code"),
-            ("attribution_status", "sender_attribution", "attribution_reason_code"),
+            (
+                "program_status",
+                "program_signed",
+                "program_reason_code",
+                "program_functional_id",
+            ),
+            (
+                "coupling_status",
+                "coupling_prior",
+                "coupling_reason_code",
+                "coupling_functional_id",
+            ),
+            (
+                "occurrence_status",
+                "active_probability",
+                "occurrence_reason_code",
+                "occurrence_functional_id",
+            ),
+            (
+                "attribution_status",
+                "sender_attribution",
+                "attribution_reason_code",
+                "attribution_functional_id",
+            ),
         )
-        for status_column, value_column, reason_column in head_specs:
+        for status_column, value_column, reason_column, functional_column in head_specs:
             if not set(table[status_column]).issubset(allowed):
                 raise ValueError(f"{status_column} is unsupported")
             observed = table[status_column].isin(
@@ -519,6 +549,24 @@ class SampleEdgeScoreV2:
                 raise ValueError(f"observed {status_column} cannot carry a reason")
             if table.loc[~observed, reason_column].isna().any():
                 raise ValueError(f"unavailable {status_column} requires a reason")
+            functional_ids = table[functional_column]
+            not_computed = table[status_column].eq(
+                SampleEdgeHeadStatus.NOT_COMPUTED.value
+            )
+            if functional_ids.loc[not_computed].notna().any():
+                raise ValueError(
+                    f"not-computed {status_column} requires {functional_column}=NA"
+                )
+            if functional_ids.loc[~not_computed].isna().any():
+                raise ValueError(
+                    f"applied {status_column} requires {functional_column}"
+                )
+            supplied_ids = functional_ids.dropna()
+            if any(
+                not isinstance(value, str) or not value or value != value.strip()
+                for value in supplied_ids
+            ):
+                raise ValueError(f"{functional_column} must contain canonical IDs")
         for _, group in table.groupby(list(_PARENT_KEY), observed=True, sort=False):
             for column in (
                 "program_signed",
