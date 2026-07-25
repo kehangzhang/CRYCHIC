@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -1142,6 +1142,41 @@ def _relabel_cached_effects(
     return result.loc[:, list(EFFECT_COLUMNS)]
 
 
+@dataclass(slots=True)
+class V7InferenceFitCache:
+    """Dataset-local cache for exact design-aware score inputs."""
+
+    _effects: dict[str, pd.DataFrame] = field(default_factory=dict, repr=False)
+    requests: int = 0
+    hits: int = 0
+    misses: int = 0
+
+    def get(self, key: str) -> pd.DataFrame | None:
+        self.requests += 1
+        cached = self._effects.get(key)
+        if cached is None:
+            return None
+        self.hits += 1
+        return cached
+
+    def store(self, key: str, effects: pd.DataFrame) -> None:
+        if key in self._effects:
+            raise ValueError("v7 inference cache key is already populated")
+        if tuple(effects.columns) != EFFECT_COLUMNS:
+            raise ValueError("v7 inference cache effects violate the contract")
+        self._effects[key] = effects.copy(deep=True)
+        self.misses += 1
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "policy": "dataset_local_exact_score_axis_sha256_v1",
+            "requests": self.requests,
+            "hits": self.hits,
+            "misses": self.misses,
+            "entries": len(self._effects),
+        }
+
+
 def _zscore(values: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(values, errors="coerce").astype(float)
     finite = numeric[np.isfinite(numeric)]
@@ -1229,6 +1264,7 @@ def run_v7_inference_matrix(
     design: DifferentialDesignSpec,
     sample_metadata: pd.DataFrame,
     arms: Iterable[tuple[str, str]],
+    fit_cache: V7InferenceFitCache | None = None,
 ) -> pd.DataFrame:
     """Run requested paired generator/inference arms on frozen score views."""
 
@@ -1247,7 +1283,9 @@ def run_v7_inference_matrix(
     if any(inference not in {"I0", "I1", "I2"} for _, inference in requested):
         raise ValueError("arms contain an unknown inference")
     frames: list[pd.DataFrame] = []
-    fit_cache: dict[str, pd.DataFrame] = {}
+    cache = fit_cache if fit_cache is not None else V7InferenceFitCache()
+    if not isinstance(cache, V7InferenceFitCache):
+        raise TypeError("fit_cache must be V7InferenceFitCache or None")
     grouping = [
         "dataset_id",
         "generator_id",
@@ -1267,7 +1305,7 @@ def run_v7_inference_matrix(
                 design=design,
                 base_inference_id=base_inference_id,
             )
-            base = fit_cache.get(cache_key)
+            base = cache.get(cache_key)
             if base is None:
                 base = _fit_one_view(
                     view,
@@ -1275,7 +1313,7 @@ def run_v7_inference_matrix(
                     sample_metadata=sample_metadata,
                     inference_id=base_inference_id,
                 )
-                fit_cache[cache_key] = base
+                cache.store(cache_key, base)
             else:
                 base = _relabel_cached_effects(
                     base,
@@ -1347,6 +1385,7 @@ def run_v7_integrated_matrix(
     design: DifferentialDesignSpec,
     sample_metadata: pd.DataFrame,
     arms: Sequence[tuple[str, str]],
+    fit_cache: V7InferenceFitCache | None = None,
 ) -> V7IntegratedMatrixResult:
     """Build score views once and run the requested frozen method arms."""
 
@@ -1356,6 +1395,7 @@ def run_v7_integrated_matrix(
         design=design,
         sample_metadata=sample_metadata,
         arms=arms,
+        fit_cache=fit_cache,
     )
     return V7IntegratedMatrixResult(
         score_views=score_views,
@@ -1370,6 +1410,7 @@ __all__ = [
     "PARENT_SENDER",
     "SCHEMA_VERSION",
     "SCORE_VIEW_COLUMNS",
+    "V7InferenceFitCache",
     "V7IntegratedMatrixResult",
     "build_v7_score_views",
     "g0_g2_equivalence_diagnostic",

@@ -25,6 +25,7 @@ from benchmarks.simulation.v7_hypergraph_swaps import (
 from benchmarks.simulation.v7_integrated import (
     EFFECT_COLUMNS,
     SCORE_VIEW_COLUMNS,
+    V7InferenceFitCache,
     V7IntegratedMatrixResult,
     build_v7_score_views,
     g0_g2_equivalence_diagnostic,
@@ -199,15 +200,24 @@ def test_inference_matrix_exact_cache_preserves_uncached_effects(
         return original(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(v7_integrated_module, "_fit_one_view", counted)
+    fit_cache = V7InferenceFitCache()
     cached = run_v7_integrated_matrix(
         prepared.crossfit,
         dataset_id=prepared.fixture.dataset_id,
         design=prepared.fixture.differential_design,
         sample_metadata=prepared.fixture.sample_metadata,
         arms=arms,
+        fit_cache=fit_cache,
     ).effects
 
     assert calls == 5
+    assert fit_cache.to_dict() == {
+        "policy": "dataset_local_exact_score_axis_sha256_v1",
+        "requests": 10,
+        "hits": 5,
+        "misses": 5,
+        "entries": 5,
+    }
     unique_key = 0
 
     def disable_cache(*args: object, **kwargs: object) -> str:

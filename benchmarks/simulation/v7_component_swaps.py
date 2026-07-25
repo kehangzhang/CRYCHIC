@@ -10,6 +10,7 @@ import pandas as pd
 from benchmarks.simulation.v7_integrated import (
     EFFECT_COLUMNS,
     SCORE_VIEW_COLUMNS,
+    V7InferenceFitCache,
     build_v7_score_views,
     run_v7_inference_matrix,
 )
@@ -229,6 +230,7 @@ def run_v7_e2_component_swap(
     truth: pd.DataFrame,
     dgp_family: str,
     design_kind: str,
+    fit_cache: V7InferenceFitCache | None = None,
 ) -> V7E2ComponentSwapResult:
     """Run all E2 arms through the same frozen I1 and truth evaluator."""
 
@@ -241,6 +243,7 @@ def run_v7_e2_component_swap(
         design=design,
         sample_metadata=sample_metadata,
         arms=((E2_GENERATOR_ID, "I1"),),
+        fit_cache=fit_cache,
     )
     aligned, metrics = evaluate_v7_integrated_matrix(
         score_views,

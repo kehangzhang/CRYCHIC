@@ -12,6 +12,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from benchmarks.simulation.v7_integrated import (
     EFFECT_COLUMNS,
     SCORE_VIEW_COLUMNS,
+    V7InferenceFitCache,
     build_v7_score_views,
     run_v7_inference_matrix,
 )
@@ -203,14 +204,18 @@ def _legacy_assignment_table(crossfit: CrossFitArtifacts) -> pd.DataFrame:
 
 
 def _head_status(values: pd.Series, statuses: pd.Series) -> pd.Series:
-    result = statuses.astype(str).map(
-        {
-            "observed": "observed",
-            "partial": "low_evidence",
-            "not_estimable": "not_estimable",
-            "not_computed": "not_estimable",
-        }
-    ).fillna("not_estimable")
+    result = (
+        statuses.astype(str)
+        .map(
+            {
+                "observed": "observed",
+                "partial": "low_evidence",
+                "not_estimable": "not_estimable",
+                "not_computed": "not_estimable",
+            }
+        )
+        .fillna("not_estimable")
+    )
     return result.where(pd.to_numeric(values, errors="coerce").notna(), "not_estimable")
 
 
@@ -574,9 +579,7 @@ def summarize_e3_sender_metrics(
     for (score_view, contrast_name), group in aligned.groupby(
         ["score_view", "contrast_name"], observed=True, sort=True
     ):
-        known = group.loc[
-            group["status"].eq("observed") & group["truth_known"]
-        ].copy()
+        known = group.loc[group["status"].eq("observed") & group["truth_known"]].copy()
         ranking = pd.to_numeric(known["ranking_score"], errors="coerce").abs()
         usable = ranking.notna()
         known = known.loc[usable].copy()
@@ -671,9 +674,7 @@ def summarize_e3_sender_metrics(
                     **{**common, "n_observed": aux_count},
                     metric="mean_max_attribution",
                     value=(
-                        float(max_attribution.mean())
-                        if len(max_attribution)
-                        else None
+                        float(max_attribution.mean()) if len(max_attribution) else None
                     ),
                     reason_code="arm_does_not_produce_attribution",
                 ),
@@ -735,6 +736,7 @@ def run_v7_e3_sender_swap(
     dgp_family: str,
     design_kind: str,
     candidate_sender_count: int,
+    fit_cache: V7InferenceFitCache | None = None,
 ) -> V7E3SenderSwapResult:
     """Run every E3 sender arm through identical I1 and sender metrics."""
 
@@ -750,6 +752,7 @@ def run_v7_e3_sender_swap(
         design=design,
         sample_metadata=sample_metadata,
         arms=arms,
+        fit_cache=fit_cache,
     )
     family = _name(dgp_family, field="dgp_family")
     design_name = _name(design_kind, field="design_kind")

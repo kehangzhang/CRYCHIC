@@ -35,7 +35,10 @@ from benchmarks.adapters.common import (
 from benchmarks.simulation.v7_component_swaps import run_v7_e2_component_swap
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
 from benchmarks.simulation.v7_hypergraph_swaps import run_v7_e5_hypergraph_swap
-from benchmarks.simulation.v7_integrated import run_v7_integrated_matrix
+from benchmarks.simulation.v7_integrated import (
+    V7InferenceFitCache,
+    run_v7_integrated_matrix,
+)
 from benchmarks.simulation.v7_metrics import evaluate_v7_integrated_matrix
 from benchmarks.simulation.v7_protocol import (
     DEFAULT_CONFIG,
@@ -489,6 +492,7 @@ def run_v7_dataset(
                 "system memory is already at or above the configured campaign limit"
             )
         with monitor, threadpool_limits(limits=1):
+            inference_fit_cache = V7InferenceFitCache()
             with logger.stage("generate_raw_dgp"):
                 fixture = generate_v7_dgp(
                     dataset_id=dataset_id,
@@ -515,6 +519,7 @@ def run_v7_dataset(
                     design=fixture.differential_design,
                     sample_metadata=fixture.sample_metadata,
                     arms=arms,
+                    fit_cache=inference_fit_cache,
                 )
             with logger.stage("truth_metrics"):
                 aligned, metrics = evaluate_v7_integrated_matrix(
@@ -533,6 +538,7 @@ def run_v7_dataset(
                     truth=fixture.truth,
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
+                    fit_cache=inference_fit_cache,
                 )
             with logger.stage("e3_sender_detection_attribution_swaps"):
                 e3 = run_v7_e3_sender_swap(
@@ -544,6 +550,7 @@ def run_v7_dataset(
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
                     candidate_sender_count=int(dataset_plan["candidate_sender_count"]),
+                    fit_cache=inference_fit_cache,
                 )
             with logger.stage("e5_hypergraph_topology_swaps"):
                 e5 = run_v7_e5_hypergraph_swap(
@@ -639,6 +646,7 @@ def run_v7_dataset(
                     },
                 },
                 "g0_g2_equivalence": dict(integrated.equivalence_diagnostic),
+                "inference_fit_cache": inference_fit_cache.to_dict(),
                 "outputs": outputs,
                 "runtime": {
                     "python": sys.version,

@@ -89,6 +89,10 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
     assert manifest["status"] == "completed"
     assert manifest["formal_inference_allowed"] is False
     assert manifest["maximum_system_memory_fraction"] < 0.8
+    cache = manifest["inference_fit_cache"]
+    assert cache["requests"] == cache["hits"] + cache["misses"]
+    assert cache["entries"] == cache["misses"]
+    assert cache["hits"] > 0
     assert set(manifest["experiments"]) == {
         "E2_hard_gate_attrition",
         "E3_sender_detection_attribution",
