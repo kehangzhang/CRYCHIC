@@ -25,6 +25,7 @@ from crychic.scoring import (
     permute_hypergraph_prior_degree_matched,
     rewire_hypergraph_prior_degree_matched,
     select_hypergraph_prior_views,
+    sparse_hypergraph_incidence_v2,
 )
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-e5-hypergraph-swap-v1"
@@ -582,6 +583,32 @@ def _raw_result(estimates: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _not_estimable_prior_result(
+    estimates: pd.DataFrame,
+    *,
+    prior: FrozenHypergraphPrior,
+    reason_code: str,
+) -> pd.DataFrame:
+    source = estimates.sort_values("edge_id", kind="stable", ignore_index=True)
+    return pd.DataFrame(
+        {
+            "edge_id": source["edge_id"].astype(str),
+            "raw_effect": source["effect"],
+            "raw_standard_error": source["standard_error"],
+            "topology_mean": np.nan,
+            "prior_variance": np.nan,
+            "shrinkage_factor": np.nan,
+            "posterior_effect": np.nan,
+            "posterior_standard_error": np.nan,
+            "posterior_se_scope": "not_estimable",
+            "status": "not_estimable",
+            "reason_code": reason_code,
+            "prior_id": prior.prior_id,
+            "fit_id": None,
+        }
+    )
+
+
 def _tensor_result(
     estimates: pd.DataFrame,
     *,
@@ -855,15 +882,21 @@ def _topology_advantage_rows(metrics: pd.DataFrame) -> pd.DataFrame:
     ].groupby(["dataset_id", "contrast_name"], observed=True, sort=True):
         baseline = group.loc[
             group["score_view"].eq("degree_matched_permuted_hypergraph")
-            & group["status"].eq("observed")
         ]
         if len(baseline) != 1:
-            raise ValueError("E5 lacks one observed permuted-topology MSE")
-        baseline_mse = float(baseline.iloc[0]["value"])
+            raise ValueError("E5 lacks one permuted-topology MSE row")
+        baseline_row = baseline.iloc[0]
+        baseline_mse = (
+            float(baseline_row["value"])
+            if baseline_row["status"] == "observed" and pd.notna(baseline_row["value"])
+            else None
+        )
         for row in group.itertuples(index=False):
             value = (
                 baseline_mse - float(row.value)
-                if row.status == "observed" and pd.notna(row.value)
+                if baseline_mse is not None
+                and row.status == "observed"
+                and pd.notna(row.value)
                 else None
             )
             records.append(
@@ -948,6 +981,9 @@ def run_v7_e5_hypergraph_swap(
         estimates = local.loc[:, ["event_id", "effect", "standard_error"]].rename(
             columns={"event_id": "edge_id"}
         )
+        observed_effect_count = int(
+            (estimates["effect"].notna() & estimates["standard_error"].notna()).sum()
+        )
         raw = _raw_result(estimates)
         method_results: dict[str, pd.DataFrame] = {"no_prior": raw}
         fit_records.append(
@@ -973,28 +1009,39 @@ def run_v7_e5_hypergraph_swap(
             }
         )
         for arm, prior in controls.items():
-            result, fit = fit_uncertainty_aware_hypergraph_shrinkage_v2(
-                estimates,
-                prior=prior,
-                spec=spec,
-            )
-            method_results[arm] = result.loc[
-                :,
-                [
-                    "edge_id",
-                    "raw_effect",
-                    "raw_standard_error",
-                    "topology_mean",
-                    "prior_variance",
-                    "shrinkage_factor",
-                    "posterior_effect",
-                    "posterior_standard_error",
-                    "posterior_se_scope",
-                    "status",
-                    "reason_code",
-                    "prior_id",
-                ],
-            ].assign(fit_id=fit.fit_id)
+            if observed_effect_count < spec.minimum_observed_edges:
+                result = _not_estimable_prior_result(
+                    estimates,
+                    prior=prior,
+                    reason_code="insufficient_observed_edges_for_hypergraph_fit",
+                )
+                fit = None
+                incidence, _ = sparse_hypergraph_incidence_v2(prior)
+            else:
+                fitted, fit = fit_uncertainty_aware_hypergraph_shrinkage_v2(
+                    estimates,
+                    prior=prior,
+                    spec=spec,
+                )
+                result = fitted.loc[
+                    :,
+                    [
+                        "edge_id",
+                        "raw_effect",
+                        "raw_standard_error",
+                        "topology_mean",
+                        "prior_variance",
+                        "shrinkage_factor",
+                        "posterior_effect",
+                        "posterior_standard_error",
+                        "posterior_se_scope",
+                        "status",
+                        "reason_code",
+                        "prior_id",
+                    ],
+                ].assign(fit_id=fit.fit_id)
+                incidence = None
+            method_results[arm] = result
             fit_records.append(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -1009,26 +1056,46 @@ def run_v7_e5_hypergraph_swap(
                         else "sparse_incidence_ridge_eb"
                     ),
                     "prior_id": prior.prior_id,
-                    "fit_id": fit.fit_id,
-                    "edge_count": fit.edge_count,
-                    "observed_edge_count": fit.observed_edge_count,
-                    "incidence_column_count": fit.incidence_column_count,
-                    "incidence_nnz": fit.incidence_nnz,
-                    "prior_variance": fit.prior_variance,
-                    "iterations": fit.iterations,
-                    "converged": fit.converged,
+                    "fit_id": None if fit is None else fit.fit_id,
+                    "edge_count": len(result) if fit is None else fit.edge_count,
+                    "observed_edge_count": (
+                        observed_effect_count
+                        if fit is None
+                        else fit.observed_edge_count
+                    ),
+                    "incidence_column_count": (
+                        incidence.shape[1]
+                        if fit is None and incidence is not None
+                        else fit.incidence_column_count
+                    ),
+                    "incidence_nnz": (
+                        incidence.nnz
+                        if fit is None and incidence is not None
+                        else fit.incidence_nnz
+                    ),
+                    "prior_variance": None if fit is None else fit.prior_variance,
+                    "iterations": 0 if fit is None else fit.iterations,
+                    "converged": False if fit is None else fit.converged,
                     "tensor_rank": None,
                     "formal_inference_allowed": False,
                 }
             )
         tensor_seed = _derived_seed(root_seed, f"tensor:{contrast}")
-        tensor, tensor_fit = _tensor_result(
-            estimates,
-            prior=full,
-            seed=tensor_seed,
-        )
+        if observed_effect_count < spec.minimum_observed_edges:
+            tensor = _not_estimable_prior_result(
+                estimates,
+                prior=full,
+                reason_code="insufficient_observed_edges_for_tensor_fit",
+            )
+            tensor_fit = None
+        else:
+            tensor, tensor_fit = _tensor_result(
+                estimates,
+                prior=full,
+                seed=tensor_seed,
+            )
         method_results["tensor_factorization"] = tensor
-        tensor_fit_id = str(tensor["fit_id"].iloc[0])
+        tensor_fit_id = None if tensor_fit is None else str(tensor["fit_id"].iloc[0])
         fit_records.append(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -1037,7 +1104,7 @@ def run_v7_e5_hypergraph_swap(
                 "design_kind": design,
                 "contrast_name": contrast,
                 "score_view": "tensor_factorization",
-                "method_kind": "fixed_rank_cp_tensor_als_eb",
+                "method_kind": "fixed_rank_cp_tensor_lbfgs_eb",
                 "prior_id": full.prior_id,
                 "fit_id": tensor_fit_id,
                 "edge_count": len(tensor),
@@ -1048,9 +1115,11 @@ def run_v7_e5_hypergraph_swap(
                 )
                 * _TENSOR_RANK,
                 "incidence_nnz": len(full.edges) * len(full.view_names) * _TENSOR_RANK,
-                "prior_variance": tensor_fit.prior_variance,
-                "iterations": tensor_fit.iterations,
-                "converged": tensor_fit.converged,
+                "prior_variance": (
+                    None if tensor_fit is None else tensor_fit.prior_variance
+                ),
+                "iterations": 0 if tensor_fit is None else tensor_fit.iterations,
+                "converged": False if tensor_fit is None else tensor_fit.converged,
                 "tensor_rank": _TENSOR_RANK,
                 "formal_inference_allowed": False,
             }

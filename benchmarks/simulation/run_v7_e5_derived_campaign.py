@@ -495,7 +495,7 @@ def run_derived_campaign(
                         "design_kind": source["design_kind"],
                         "seed": source["seed"],
                         "status": "failed",
-                        "reason_code": type(error).__name__,
+                        "reason_code": f"{type(error).__name__}:{error}",
                         "elapsed_seconds": 0.0,
                         "peak_process_tree_rss_bytes": 0,
                         "result_directory": "",

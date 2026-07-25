@@ -263,6 +263,46 @@ def test_e5_runs_every_topology_arm_on_one_outcome_blind_event_universe(
     assert degree_matched["degree_profiles_equal"].astype(bool).all()
 
 
+def test_e5_types_an_upstream_nonestimable_design_without_process_failure(
+    prepared: _Prepared,
+    integrated: V7IntegratedMatrixResult,
+) -> None:
+    effects = integrated.effects.copy(deep=True)
+    selected = (
+        effects["generator_id"].eq("G3")
+        & effects["score_view"].eq("primary_sender_detection")
+        & effects["inference_id"].eq("I1")
+    )
+    effects.loc[selected, ["effect", "standard_error"]] = pd.NA
+    effects.loc[selected, "status"] = "not_estimable"
+    effects.loc[selected, "reason_code"] = "design_is_fully_confounded"
+
+    result = run_v7_e5_hypergraph_swap(
+        effects,
+        resource=prepared.fixture.resource,
+        truth=prepared.fixture.truth,
+        dataset_id=prepared.fixture.dataset_id,
+        dgp_family=prepared.fixture.dgp_family,
+        design_kind=prepared.fixture.design_kind,
+        root_seed=prepared.fixture.seed,
+    )
+
+    assert set(result.edge_estimates["score_view"]) == set(E5_ARMS)
+    assert result.edge_estimates["status"].eq("not_estimable").all()
+    assert result.metrics["status"].eq("not_estimable").all()
+    assert set(result.metrics["metric"]) == set(E5_METRICS)
+    prior = result.edge_estimates.loc[
+        result.edge_estimates["score_view"].eq("full_hypergraph")
+    ]
+    assert set(prior["reason_code"]) == {
+        "insufficient_observed_edges_for_hypergraph_fit"
+    }
+    tensor = result.edge_estimates.loc[
+        result.edge_estimates["score_view"].eq("tensor_factorization")
+    ]
+    assert set(tensor["reason_code"]) == {"insufficient_observed_edges_for_tensor_fit"}
+
+
 def test_metrics_align_each_estimand_and_never_convert_unknown_truth_to_negative(
     prepared: _Prepared,
     integrated: V7IntegratedMatrixResult,
