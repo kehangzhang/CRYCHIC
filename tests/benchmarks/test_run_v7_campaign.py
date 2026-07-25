@@ -8,8 +8,10 @@ from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.run_v7_campaign import (
     DATASET_TABLES,
     build_v7_campaign_plan,
+    build_v7_diagnostic_truth,
     run_v7_campaign,
 )
+from benchmarks.simulation.v7_dgp import generate_v7_dgp
 from benchmarks.simulation.v7_protocol import load_v7_benchmark_protocol
 
 
@@ -37,6 +39,26 @@ def test_campaign_plan_unions_profiles_without_recomputing_datasets() -> None:
         )
         assert len(unique_arms) == 8
         assert ("G3", "I1") in unique_arms
+
+
+def test_continuous_truth_maps_only_for_the_descriptive_crossfit_diagnostic() -> None:
+    fixture = generate_v7_dgp(
+        dataset_id="continuous-diagnostic",
+        dgp_family="global_null",
+        design_kind="continuous",
+        seed=22,
+        candidate_sender_count=2,
+        cells_per_type=1,
+        subjects_per_level=4,
+    )
+    mapped = build_v7_diagnostic_truth(
+        fixture.truth,
+        contrast_names=("B_vs_A",),
+    )
+
+    assert set(fixture.truth["contrast_name"]) == {"slope:dose"}
+    assert set(mapped["contrast_name"]) == {"B_vs_A"}
+    assert mapped["truth"].equals(fixture.truth["truth_causal_sender"])
 
 
 def test_one_dataset_campaign_persists_checksums_logs_and_resumes(

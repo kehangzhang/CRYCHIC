@@ -96,9 +96,13 @@ of the coupling functional lineage.
 ## Signed receiver mechanism head
 
 M1 is fitted inside each outer training fold and applied unchanged to held-out
-samples. The interaction-to-target mapping and activation/attenuation direction
-come only from the frozen target prior. Condition labels are not inputs to the
-program fit and cannot select targets, define a threshold, or orient the sign.
+samples. The interaction-to-target mapping comes only from the frozen target
+prior. Activation/attenuation direction comes from that prior or a
+pre-registered, content-bound per-interaction override in `SignedProgramV2Spec`.
+The override permits heterogeneous activation and inhibition while the legacy
+v0.1 attribution path continues to consume its required unsigned positive
+prior. Condition labels are not inputs to the program fit and cannot select
+targets, define a threshold, or orient the sign.
 
 For each receiver, target expression is transformed with the same fold-fitted
 size-factor, median, and MAD rules as M0. A subject-equal nuisance regression
@@ -258,6 +262,15 @@ omnibus diagnostic. Samples are collapsed to one equally represented row per
 subject and context before fitting. Cell-count and coverage reliability enter
 only as precision weights. A repeated design with too few subject clusters does
 not silently fall back to an independence covariance model.
+
+For independent multi-group cross-fitting, a pairwise contrast legitimately
+contains only subjects observed in either declared context. The OOF audit
+persists and content-binds the exact expected subject set for every fold by
+contrast. It still rejects leakage, a missing eligible subject, an extra
+subject from an unrelated context, incomplete context coverage, or multiple
+fold functionals. Paired and repeated contrasts retain whole subject
+trajectories; a repeated multi-context tuning fit and its final functional use
+the same mixed subject-equal prediction-loss estimand.
 
 Fields named `diagnostic_p_value`, `diagnostic_ci_lower`, and
 `diagnostic_ci_upper` describe only the analytic regression diagnostic. The

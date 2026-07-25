@@ -652,8 +652,9 @@ def _validate_parent_lineage(
         )
     if (
         sender_functional.contrast_name != incremental_functional.contrast_name
-        or sender_functional.training_subject_ids
-        != incremental_functional.training_subject_ids
+        or not set(sender_functional.training_subject_ids).issubset(
+            incremental_functional.training_subject_ids
+        )
     ):
         raise ContractError(
             "Family-common parents do not share one contrast and training scope",
@@ -885,7 +886,9 @@ def mark_family_common_scoring_not_estimable(
             remediation="Use the planned receiver from the same physical fold",
         )
     if (
-        receiver_family.training_subject_ids != sender_functional.training_subject_ids
+        not set(sender_functional.training_subject_ids).issubset(
+            receiver_family.training_subject_ids
+        )
         or receiver_family.filter_universe_id != sender_functional.filter_universe_id
     ):
         raise ContractError(
@@ -1138,6 +1141,7 @@ def _validated_edge_evidence(
                 incremental_application.sample_context_ids,
                 strict=True,
             )
+            if context_id in functional.context_ids
         }
     )
     observed_samples = {

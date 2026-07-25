@@ -361,7 +361,7 @@ class TrainingArtifacts:
             )
         if functionals:
             if any(
-                functional.training_subject_ids != subjects
+                not set(functional.training_subject_ids).issubset(subjects)
                 or functional.training_input_digest != training_input_digest
                 or functional.filter_universe_id
                 != frozen_interaction_universe.filter_universe_id

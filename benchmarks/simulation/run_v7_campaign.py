@@ -371,8 +371,12 @@ def _summary_from_manifest(
     )
 
 
-def _diagnostic_truth(truth: pd.DataFrame) -> pd.DataFrame:
-    return truth.loc[
+def build_v7_diagnostic_truth(
+    truth: pd.DataFrame,
+    *,
+    contrast_names: tuple[str, ...],
+) -> pd.DataFrame:
+    result = truth.loc[
         :,
         [
             "contrast_name",
@@ -390,6 +394,13 @@ def _diagnostic_truth(truth: pd.DataFrame) -> pd.DataFrame:
             "truth_score_effect": "truth_effect",
         }
     )
+    observed = set(result["contrast_name"].astype(str))
+    declared = set(contrast_names)
+    if not observed.issubset(declared):
+        if len(observed) != 1 or len(declared) != 1:
+            raise ValueError("diagnostic truth cannot map incompatible contrasts")
+        result["contrast_name"] = contrast_names[0]
+    return result
 
 
 def _dataset_manifest_base(
@@ -495,7 +506,12 @@ def run_v7_dataset(
                 diagnostics = build_v7_diagnostics(
                     crossfit,
                     dataset_id=dataset_id,
-                    truth=_diagnostic_truth(fixture.truth),
+                    truth=build_v7_diagnostic_truth(
+                        fixture.truth,
+                        contrast_names=tuple(
+                            contrast.name for contrast in crossfit.spec.contrasts
+                        ),
+                    ),
                     cell_counts=fixture.cell_counts,
                 )
             with logger.stage("persist_outputs"):

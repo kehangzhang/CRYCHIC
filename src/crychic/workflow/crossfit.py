@@ -1865,8 +1865,9 @@ class CrossFitFoldArtifacts:
                 != family_model.receiver_family_artifact.training_artifact_id
                 or program_application.training_artifact.training_artifact_id
                 != program_model.training_artifact_id
-                or program_application.heldout_subject_ids
-                != self.application.heldout_subject_ids
+                or not set(program_application.heldout_subject_ids).issubset(
+                    self.application.heldout_subject_ids
+                )
             ):
                 raise ValueError("receiver-program parent lineage is invalid")
             encoder, design_application = design_by_name[program_model.contrast_name]
@@ -3084,6 +3085,16 @@ class CrossFitArtifacts:
             coverage,
             self.fold_plan,
             contrast_contexts=contrast_contexts,
+            expected_subjects_by_fold_contrast=(
+                None
+                if not self.coverage_audit.contrast_subject_ids
+                else {
+                    (fold_id, contrast_id): subject_ids
+                    for fold_id, contrast_id, subject_ids in (
+                        self.coverage_audit.contrast_subject_ids
+                    )
+                }
+            ),
             context_column="contrast_context",
             scoring_function_column="sender_functional_id",
             model_manifest_column="training_artifact_id",
@@ -6410,7 +6421,15 @@ def _run_crossfit_fold(
                 training.frozen_interaction_universe.interaction_ids
             )
             signed_program_definitions_v2 = tuple(
-                definition
+                replace(
+                    definition,
+                    mechanism_direction=dict(
+                        signed_program_v2_spec.mechanism_direction_overrides
+                    ).get(
+                        definition.interaction_id,
+                        definition.mechanism_direction,
+                    ),
+                )
                 for definition in signed_program_definitions_from_resources_v2(
                     resource_bundle, target_prior
                 )
@@ -6992,10 +7011,32 @@ def _run_subject_crossfit(
     contrast_contexts = {
         _contrast_id(contrast): tuple(contrast.weights) for contrast in spec.contrasts
     }
+    expected_subjects_by_fold_contrast: dict[tuple[str, str], tuple[str, ...]] = {}
+    context_keys = tuple(config.context_keys)
+    for fold in fold_plan.folds:
+        fold_metadata = validated.report.sample_metadata.loc[
+            validated.report.sample_metadata[config.subject_key]
+            .astype(str)
+            .isin(fold.test_subject_ids)
+        ]
+        for contrast in spec.contrasts:
+            contrast_id = _contrast_id(contrast)
+            contrast_nodes = set(contrast.weights)
+            subjects = tuple(
+                sorted(
+                    {
+                        str(row[config.subject_key])
+                        for _, row in fold_metadata.iterrows()
+                        if _context_node(row, context_keys) in contrast_nodes
+                    }
+                )
+            )
+            expected_subjects_by_fold_contrast[(fold.fold_id, contrast_id)] = subjects
     audit = validate_oof_subject_coverage(
         coverage,
         fold_plan,
         contrast_contexts=contrast_contexts,
+        expected_subjects_by_fold_contrast=expected_subjects_by_fold_contrast,
         context_column="contrast_context",
         scoring_function_column="sender_functional_id",
         model_manifest_column="training_artifact_id",

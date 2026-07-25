@@ -375,7 +375,7 @@ def _target_prior(dgp_family: str) -> TargetPrior:
         indices.append(target_index[item.target])
         weights.append(abs(float(item.target_weight)))
         indptr.append(len(indices))
-    direction = -1 if dgp_family == "inhibitory_program" else 1
+    direction = 1
     manifest_digest = str(
         canonical_digest(
             {
@@ -840,6 +840,7 @@ def _differential_design(
 def _crossfit_spec(
     conditions: tuple[str, ...],
     *,
+    dgp_family: str,
     seed: int,
     candidate_sender_count: int,
 ) -> CrossFitSpec:
@@ -880,6 +881,11 @@ def _crossfit_spec(
         ),
         signed_program_v2_spec=SignedProgramV2Spec(
             generic_state_feature_ids=("G_STATE",),
+            mechanism_direction_overrides=(
+                (("lr_inhibitory", "attenuation"),)
+                if dgp_family == "inhibitory_program"
+                else ()
+            ),
             minimum_training_samples=4,
             minimum_training_subjects=3,
         ),
@@ -1082,6 +1088,7 @@ def generate_v7_dgp(
     )
     crossfit_spec = _crossfit_spec(
         conditions,
+        dgp_family=dgp_family,
         seed=seed,
         candidate_sender_count=candidate_sender_count,
     )

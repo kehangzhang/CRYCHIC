@@ -193,3 +193,44 @@ def test_each_fold_contrast_must_cover_every_test_subject() -> None:
             plan,
             contrast_contexts=_contexts(plan),
         )
+
+
+def test_contrast_specific_subject_scopes_are_exact_and_content_bound() -> None:
+    plan, table = _table(multiple_contrasts=True)
+    scopes: dict[tuple[str, str], tuple[str, ...]] = {}
+    for fold in plan.folds:
+        contrasts = tuple(sorted(fold.contrast_ids))
+        subjects = tuple(sorted(fold.test_subject_ids))
+        scopes[(fold.fold_id, contrasts[0])] = subjects[:1]
+        scopes[(fold.fold_id, contrasts[1])] = subjects[1:]
+        for contrast_id, keep in (
+            (contrasts[0], set(subjects[:1])),
+            (contrasts[1], set(subjects[1:])),
+        ):
+            table = table.loc[
+                ~(
+                    table["fold_id"].eq(fold.fold_id)
+                    & table["contrast_id"].eq(contrast_id)
+                    & ~table["subject_id"].isin(keep)
+                )
+            ].copy()
+
+    audit = validate_oof_subject_coverage(
+        table,
+        plan,
+        contrast_contexts=_contexts(plan),
+        expected_subjects_by_fold_contrast=scopes,
+    )
+
+    assert audit.contrast_subject_ids
+    assert audit.to_dict()["contrast_subject_ids"]
+    wrong = dict(scopes)
+    first_key = next(iter(wrong))
+    wrong[first_key] = plan.folds[0].test_subject_ids
+    with pytest.raises(ValueError, match="test subject coverage mismatch"):
+        validate_oof_subject_coverage(
+            table,
+            plan,
+            contrast_contexts=_contexts(plan),
+            expected_subjects_by_fold_contrast=wrong,
+        )

@@ -25,6 +25,7 @@ class OOFCoverageAudit:
     fold_ids: tuple[str, ...]
     contrast_ids: tuple[str, ...]
     n_rows: int
+    contrast_subject_ids: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
     audit_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -43,12 +44,39 @@ class OOFCoverageAudit:
             raise ValueError("n_rows must be an integer")
         if self.n_rows < len(self.subject_ids):
             raise ValueError("OOF audit must contain at least one row per subject")
+        contrast_subjects = tuple(
+            sorted(
+                (
+                    str(fold_id),
+                    str(contrast_id),
+                    tuple(sorted(map(str, subjects))),
+                )
+                for fold_id, contrast_id, subjects in self.contrast_subject_ids
+            )
+        )
+        keys = [(fold_id, contrast_id) for fold_id, contrast_id, _ in contrast_subjects]
+        if len(keys) != len(set(keys)) or any(
+            not fold_id
+            or not contrast_id
+            or not subjects
+            or fold_id not in self.fold_ids
+            or contrast_id not in self.contrast_ids
+            or len(subjects) != len(set(subjects))
+            or not set(subjects).issubset(self.subject_ids)
+            for fold_id, contrast_id, subjects in contrast_subjects
+        ):
+            raise ValueError("contrast_subject_ids has invalid fold/contrast scopes")
+        object.__setattr__(self, "contrast_subject_ids", contrast_subjects)
         payload = {
             "contrast_ids": list(self.contrast_ids),
             "fold_ids": list(self.fold_ids),
             "fold_plan_id": self.fold_plan_id,
             "n_rows": self.n_rows,
             "subject_ids": list(self.subject_ids),
+            "contrast_subject_ids": [
+                [fold_id, contrast_id, list(subjects)]
+                for fold_id, contrast_id, subjects in contrast_subjects
+            ],
         }
         object.__setattr__(self, "audit_id", stable_id("oof_coverage_audit", payload))
 
@@ -62,6 +90,7 @@ class OOFCoverageAudit:
                 fold_ids=self.fold_ids,
                 contrast_ids=self.contrast_ids,
                 n_rows=self.n_rows,
+                contrast_subject_ids=self.contrast_subject_ids,
             )
             valid = (
                 isinstance(self.subject_ids, tuple)
@@ -72,6 +101,7 @@ class OOFCoverageAudit:
                 and self.fold_ids == repeated.fold_ids
                 and self.contrast_ids == repeated.contrast_ids
                 and self.n_rows == repeated.n_rows
+                and self.contrast_subject_ids == repeated.contrast_subject_ids
                 and self.audit_id == repeated.audit_id
             )
         except (AttributeError, TypeError, ValueError) as error:
@@ -98,6 +128,14 @@ class OOFCoverageAudit:
             "fold_ids": list(self.fold_ids),
             "contrast_ids": list(self.contrast_ids),
             "n_rows": self.n_rows,
+            "contrast_subject_ids": [
+                {
+                    "fold_id": fold_id,
+                    "contrast_id": contrast_id,
+                    "subject_ids": list(subjects),
+                }
+                for fold_id, contrast_id, subjects in self.contrast_subject_ids
+            ],
             "coverage_complete": True,
             "common_functional_validated": True,
         }
@@ -108,6 +146,9 @@ def validate_oof_subject_coverage(
     plan: SubjectFoldPlan,
     *,
     contrast_contexts: Mapping[str, Sequence[Hashable]],
+    expected_subjects_by_fold_contrast: (
+        Mapping[tuple[str, str], Sequence[str]] | None
+    ) = None,
     subject_column: str = "subject_id",
     fold_column: str = "fold_id",
     contrast_id_column: str = "contrast_id",
@@ -201,6 +242,30 @@ def validate_oof_subject_coverage(
     observed_contrasts = set(table[contrast_id_column].astype(str))
     if observed_contrasts != set(declared_contexts):
         raise ValueError("OOF contrast IDs must exactly match contrast_contexts")
+    expected_scope_keys = {
+        (fold.fold_id, str(contrast_id))
+        for fold in plan.folds
+        for contrast_id in fold.contrast_ids
+    }
+    normalized_subject_scopes: dict[tuple[str, str], set[str]] | None = None
+    if expected_subjects_by_fold_contrast is not None:
+        normalized_subject_scopes = {
+            (str(fold_id), str(contrast_id)): set(map(str, subjects))
+            for (fold_id, contrast_id), subjects in (
+                expected_subjects_by_fold_contrast.items()
+            )
+        }
+        if set(normalized_subject_scopes) != expected_scope_keys:
+            raise ValueError(
+                "expected_subjects_by_fold_contrast keys must match the fold plan"
+            )
+        for (fold_id, _), subjects in normalized_subject_scopes.items():
+            if not subjects or not subjects.issubset(
+                folds_by_id[fold_id].test_subject_ids
+            ):
+                raise ValueError(
+                    "expected contrast subjects must be a non-empty test-fold subset"
+                )
     for group_fold_id, fold_table in table.groupby(
         fold_column, sort=False, observed=True
     ):
@@ -221,7 +286,11 @@ def validate_oof_subject_coverage(
                 fold_table[contrast_id_column].astype(str).eq(contrast_id)
             ]
             observed_test_subjects = set(group[subject_column].astype(str))
-            expected_test_subjects = set(fold.test_subject_ids)
+            expected_test_subjects = (
+                set(fold.test_subject_ids)
+                if normalized_subject_scopes is None
+                else normalized_subject_scopes[(str(group_fold_id), contrast_id)]
+            )
             if observed_test_subjects != expected_test_subjects:
                 missing_subjects = sorted(
                     expected_test_subjects.difference(observed_test_subjects)
@@ -256,6 +325,20 @@ def validate_oof_subject_coverage(
         fold_ids=tuple(observed_fold_ids),
         contrast_ids=tuple(observed_contrasts),
         n_rows=len(table),
+        contrast_subject_ids=(
+            ()
+            if normalized_subject_scopes is None
+            else tuple(
+                (
+                    fold_id,
+                    contrast_id,
+                    tuple(sorted(subjects)),
+                )
+                for (fold_id, contrast_id), subjects in sorted(
+                    normalized_subject_scopes.items()
+                )
+            )
+        ),
     )
 
 

@@ -2414,11 +2414,19 @@ def fit_receiver_incremental_training_artifact(
                         tuning_artifact.reason_code or "penalty_tuning_not_estimable"
                     )
                 else:
+                    allocation = _inner_tuning_subject_design(inputs)
+                    final_loss_design_override = (
+                        _MIXED_LOSS_DESIGN
+                        if allocation.design
+                        in {SubjectDesign.MIXED, SubjectDesign.REPEATED_MULTI_CONTEXT}
+                        else None
+                    )
                     functional = _fit_incremental_subset(
                         inputs,
                         subject_ids=response.training_subject_ids,
                         fold_id=response.fold_id,
                         penalty_candidate=selected,
+                        loss_design_override=final_loss_design_override,
                     )
                     lambda1 = functional.lambda1
                     lambda2 = functional.lambda2

@@ -302,6 +302,27 @@ def test_signed_program_fit_is_condition_label_independent() -> None:
     assert first.functional_id == second.functional_id
 
 
+def test_signed_program_spec_freezes_interaction_direction_overrides() -> None:
+    spec = SignedProgramV2Spec(
+        mechanism_direction_overrides=(
+            ("lr_z", "attenuation"),
+            ("lr_a", "activation"),
+        )
+    )
+
+    assert spec.to_dict()["mechanism_direction_overrides"] == [
+        ["lr_a", "activation"],
+        ["lr_z", "attenuation"],
+    ]
+    with pytest.raises(ValueError, match="interaction-unique"):
+        SignedProgramV2Spec(
+            mechanism_direction_overrides=(
+                ("lr_a", "activation"),
+                ("lr_a", "attenuation"),
+            )
+        )
+
+
 def test_signed_program_drops_invariant_numeric_nuisance() -> None:
     subjects = tuple(f"train-{index}" for index in range(12))
     aggregate = _aggregate(subjects)

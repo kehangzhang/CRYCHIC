@@ -100,7 +100,12 @@ def test_program_only_and_inhibitory_truth_keep_estimands_separate() -> None:
         inhibitory.truth["interaction_id"].eq("lr_inhibitory")
     ]
     assert active_inhibitory["truth_program_effect"].gt(0.0).all()
-    assert inhibitory.target_prior.direction == -1
+    assert inhibitory.target_prior.direction == 1
+    signed_spec = inhibitory.crossfit_spec.signed_program_v2_spec
+    assert signed_spec is not None
+    assert signed_spec.to_dict()["mechanism_direction_overrides"] == [
+        ["lr_inhibitory", "attenuation"]
+    ]
 
 
 def test_null_families_do_not_gain_truth_from_nuisance_expression() -> None:
@@ -293,3 +298,36 @@ def test_dgp_freezes_the_preregistered_legacy_g1_tuning_grid() -> None:
     assert tuning.min_inner_train_subjects_per_context == 1
     assert tuning.min_inner_validation_subjects_per_context == 1
     assert tuning.root_seed == fixture.seed
+
+
+@pytest.mark.parametrize(
+    ("family", "design", "subjects_per_level"),
+    (
+        ("expression_joint", "independent_multi_group", 4),
+        ("topology_jump", "repeated", 8),
+        ("inhibitory_program", "paired", 8),
+    ),
+)
+def test_crossfit_supports_multigroup_repeated_and_inhibitory_v7_families(
+    family: str,
+    design: str,
+    subjects_per_level: int,
+) -> None:
+    fixture = generate_v7_dgp(
+        dataset_id=f"pipeline-{family}",
+        dgp_family=family,
+        design_kind=design,
+        seed=301,
+        candidate_sender_count=2,
+        cells_per_type=1,
+        subjects_per_level=subjects_per_level,
+    )
+    crossfit = run_subject_crossfit(
+        fixture.adata,
+        fixture.config,
+        fixture.resource,
+        fixture.target_prior,
+        spec=fixture.crossfit_spec,
+    )
+    assert not crossfit.oof_sample_edge_scores_v2.empty
+    assert all(fold.family_common_applications for fold in crossfit.folds)

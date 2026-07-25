@@ -237,6 +237,9 @@ class SignedProgramV2Spec:
     continuous_covariates: tuple[str, ...] = ()
     categorical_covariates: tuple[str, ...] = ()
     generic_state_feature_ids: tuple[str, ...] = ()
+    mechanism_direction_overrides: tuple[
+        tuple[str, SignedMechanismDirection | str], ...
+    ] = ()
     minimum_training_samples: int = 6
     minimum_training_subjects: int = 4
     minimum_matched_targets: int = 1
@@ -256,6 +259,18 @@ class SignedProgramV2Spec:
             self.generic_state_feature_ids,
             field_name="generic_state_feature_ids",
         )
+        supplied_overrides = tuple(self.mechanism_direction_overrides)
+        overrides = tuple(
+            sorted(
+                (
+                    _name(interaction_id, field_name="override_interaction_id"),
+                    SignedMechanismDirection(direction),
+                )
+                for interaction_id, direction in supplied_overrides
+            )
+        )
+        if len({interaction_id for interaction_id, _ in overrides}) != len(overrides):
+            raise ValueError("mechanism direction overrides must be interaction-unique")
         if set(continuous).intersection(categorical):
             raise ValueError("signed-program covariate roles overlap")
         for field_name, minimum in (
@@ -280,6 +295,7 @@ class SignedProgramV2Spec:
         object.__setattr__(self, "continuous_covariates", continuous)
         object.__setattr__(self, "categorical_covariates", categorical)
         object.__setattr__(self, "generic_state_feature_ids", generic)
+        object.__setattr__(self, "mechanism_direction_overrides", overrides)
         object.__setattr__(self, "nuisance_scale_floor", scale_floor)
         object.__setattr__(self, "maximum_condition_number", condition)
         object.__setattr__(
@@ -297,6 +313,10 @@ class SignedProgramV2Spec:
             "categorical_covariates": list(self.categorical_covariates),
             "continuous_covariates": list(self.continuous_covariates),
             "generic_state_feature_ids": list(self.generic_state_feature_ids),
+            "mechanism_direction_overrides": [
+                [interaction_id, SignedMechanismDirection(direction).value]
+                for interaction_id, direction in self.mechanism_direction_overrides
+            ],
             "maximum_condition_number": self.maximum_condition_number,
             "minimum_matched_targets": self.minimum_matched_targets,
             "minimum_training_samples": self.minimum_training_samples,
