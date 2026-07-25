@@ -1011,7 +1011,10 @@ def run_v7_full_refit_dataset(
                     progress_callback=progress,
                 )
             with logger.stage("full_refit_inference_finalizer"):
-                inference = finalize_v7_full_pipeline_inference(resampling)
+                inference = finalize_v7_full_pipeline_inference(
+                    resampling,
+                    _prevalidated=True,
+                )
             with logger.stage("persist_outputs"):
                 tables = {
                     "truth": fixture.truth,

@@ -931,12 +931,16 @@ def finalize_v7_full_pipeline_inference(
     *,
     spec: V7FullPipelineInferenceSpec | None = None,
     calibration_gate: V7FullPipelineCalibrationGate | None = None,
+    _prevalidated: bool = False,
 ) -> V7FullPipelineInferenceResult:
     """Finalize candidate distributions and release fields only after all gates."""
 
     if not isinstance(resampling, V7FullPipelineResamplingResult):
         raise TypeError("resampling must be V7FullPipelineResamplingResult")
-    resampling._require_intact()
+    if not isinstance(_prevalidated, bool):
+        raise TypeError("_prevalidated must be boolean")
+    if not _prevalidated:
+        resampling._require_intact()
     resolved = spec or V7FullPipelineInferenceSpec()
     if not isinstance(resolved, V7FullPipelineInferenceSpec):
         raise TypeError("spec must be V7FullPipelineInferenceSpec or None")
