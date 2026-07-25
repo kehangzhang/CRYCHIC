@@ -573,6 +573,7 @@ def run_v7_dataset(
                         ),
                     ),
                     cell_counts=fixture.cell_counts,
+                    gate_stage_ledger=e2.gate_stage_ledger,
                 )
             with logger.stage("persist_outputs"):
                 tables = {

@@ -17,6 +17,7 @@ import pandas as pd
 from pandas.api.types import is_scalar
 
 from crychic.core import canonical_digest, canonical_json, stable_id
+from crychic.core._validation import validation_scope
 from crychic.inference import (
     CANDIDATE_SENDER_BIAS_COLUMNS,
     RESOLUTION_PERFORMANCE_COLUMNS,
@@ -432,9 +433,14 @@ def _decorate_scores(
 
 
 def _first_reason(values: pd.Series) -> str | None:
-    present = values.dropna().astype(str)
-    present = present.loc[present.ne("")]
-    return None if present.empty else str(sorted(set(present))[0])
+    first: str | None = None
+    for value in values.to_numpy(dtype=object):
+        if _is_missing_scalar(value):
+            continue
+        reason = str(value)
+        if reason and (first is None or reason < first):
+            first = reason
+    return first
 
 
 def _combine_stage_record(
@@ -550,6 +556,11 @@ def _legacy_gate_records(
                     downstream_status = (
                         "passed" if observed_gain.gt(0.0).any() else "failed"
                     )
+                receptor_reason = _first_reason(group["reason_code"])
+                ligand_reason = _first_reason(
+                    group["ligand_contrast_gate_reason_code"]
+                )
+                family_reason = _first_reason(group["family_reason_code"])
                 parent_key = tuple(str(value) for value in values)
                 for sender in candidate_senders.get(parent_key, ()):
                     sample_id, context_id, receiver, interaction_id = parent_key
@@ -566,25 +577,25 @@ def _legacy_gate_records(
                         result,
                         (*parent_child_key, "receptor_eligible"),
                         receptor_status,
-                        _first_reason(group["reason_code"]),
+                        receptor_reason,
                     )
                     _combine_stage_record(
                         result,
                         (*parent_child_key, "ligand_contrast_supported"),
                         ligand_status,
-                        _first_reason(group["ligand_contrast_gate_reason_code"]),
+                        ligand_reason,
                     )
                     _combine_stage_record(
                         result,
                         (*parent_child_key, "family_selected"),
                         family_status,
-                        _first_reason(group["family_reason_code"]),
+                        family_reason,
                     )
                     _combine_stage_record(
                         result,
                         (*parent_child_key, "downstream_supported"),
                         downstream_status,
-                        _first_reason(group["family_reason_code"]),
+                        family_reason,
                     )
 
             for values, group in senders.groupby(
@@ -742,6 +753,72 @@ def _stage_arrays(
     return statuses
 
 
+def _stage_arrays_from_ledger(
+    scores: pd.DataFrame,
+    ledger: pd.DataFrame,
+    *,
+    dataset_id: str,
+) -> dict[str, np.ndarray]:
+    """Align a previously materialized producer ledger to decorated scores."""
+
+    if not isinstance(ledger, pd.DataFrame):
+        raise TypeError("gate_stage_ledger must be a pandas DataFrame or None")
+    if tuple(ledger.columns) != GATE_STAGE_LEDGER_COLUMNS:
+        raise ValueError("gate_stage_ledger does not match its frozen contract")
+    if set(ledger["dataset_id"].astype(str)) != {dataset_id}:
+        raise ValueError("gate_stage_ledger dataset_id differs from the request")
+    key = list(_STAGE_KEY)
+    if ledger.duplicated(key).any():
+        raise ValueError("gate_stage_ledger child keys must be unique")
+
+    score_axis = scores.loc[:, [*key, "subject_id", "condition"]].copy()
+    ledger_axis = ledger.loc[
+        :,
+        [
+            *key,
+            "subject_id",
+            "condition",
+            *[f"{stage}_status" for stage in GATE_STAGES],
+        ],
+    ]
+    aligned = score_axis.merge(
+        ledger_axis,
+        on=key,
+        how="left",
+        validate="one_to_one",
+        sort=False,
+        suffixes=("_score", "_ledger"),
+    )
+    if len(aligned) != len(scores):
+        raise ValueError("gate_stage_ledger does not cover the exact score child axis")
+    if ledger.shape[0] != scores.shape[0]:
+        raise ValueError("gate_stage_ledger contains rows outside the score child axis")
+    for column in ("subject_id", "condition"):
+        score_values = aligned[f"{column}_score"].astype(str).to_numpy()
+        ledger_values = aligned[f"{column}_ledger"].astype(str).to_numpy()
+        if not np.array_equal(score_values, ledger_values):
+            raise ValueError(
+                f"gate_stage_ledger {column} differs from the score child axis"
+            )
+
+    statuses: dict[str, np.ndarray] = {}
+    for stage in GATE_STAGES:
+        column = f"{stage}_status"
+        values = aligned[column]
+        if values.isna().any():
+            raise ValueError(
+                "gate_stage_ledger does not cover the exact score child axis"
+            )
+        normalized = values.astype(str)
+        unknown = set(normalized).difference(_STAGE_STATUSES)
+        if unknown:
+            raise ValueError(
+                f"gate_stage_ledger contains unsupported {column}: {sorted(unknown)}"
+            )
+        statuses[stage] = normalized.map(_STAGE_STATUS_CODE).to_numpy(dtype=np.int8)
+    return statuses
+
+
 def _gate_stage_ledger(
     scores: pd.DataFrame,
     *,
@@ -817,6 +894,7 @@ def _gate_stage_ledger(
     return result
 
 
+@validation_scope()
 def build_v7_gate_stage_ledger(
     crossfit: CrossFitArtifacts,
     *,
@@ -1226,6 +1304,7 @@ class V7DiagnosticsResult:
         }
 
 
+@validation_scope()
 def build_v7_diagnostics(
     crossfit: CrossFitArtifacts,
     *,
@@ -1236,6 +1315,7 @@ def build_v7_diagnostics(
     gate_annotations: pd.DataFrame | None = None,
     significance: pd.DataFrame | None = None,
     resolution_evaluation: pd.DataFrame | None = None,
+    gate_stage_ledger: pd.DataFrame | None = None,
 ) -> V7DiagnosticsResult:
     """Build all preregistered v7 descriptive diagnostics from OOF artifacts."""
 
@@ -1248,12 +1328,25 @@ def build_v7_diagnostics(
     scores, truth_table, count_table = _decorate_scores(
         crossfit, truth=truth, cell_counts=cell_counts
     )
-    stage_records = _stage_record_map(
-        crossfit,
-        gate_annotations=gate_annotations,
-        significance=significance,
-    )
-    stage_statuses = _stage_arrays(scores, stage_records)
+    if gate_stage_ledger is not None and (
+        gate_annotations is not None or significance is not None
+    ):
+        raise ValueError(
+            "gate_stage_ledger cannot be combined with gate_annotations or significance"
+        )
+    if gate_stage_ledger is None:
+        stage_records = _stage_record_map(
+            crossfit,
+            gate_annotations=gate_annotations,
+            significance=significance,
+        )
+        stage_statuses = _stage_arrays(scores, stage_records)
+    else:
+        stage_statuses = _stage_arrays_from_ledger(
+            scores,
+            gate_stage_ledger,
+            dataset_id=dataset,
+        )
     gate_attrition = _gate_attrition(
         scores,
         dataset_id=dataset,

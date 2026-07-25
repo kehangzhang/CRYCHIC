@@ -24,6 +24,7 @@ from crychic.workflow import (
     CrossFitArtifacts,
     V7DiagnosticsResult,
     build_v7_diagnostics,
+    build_v7_gate_stage_ledger,
     run_subject_crossfit,
     summarize_v7_resolution_performance,
 )
@@ -245,6 +246,45 @@ def test_uncomputed_legacy_gates_are_not_called_failures(
         assert int(overall.loc[stage, "n_stage_failed"]) == 0
         assert int(overall.loc[stage, "n_not_computed"]) == 32
     assert int(overall.loc["measurable_ligand_receptor", "n_stage_passed"]) == 32
+
+
+def test_precomputed_gate_ledger_is_an_exact_diagnostic_cache(
+    crossfit: CrossFitArtifacts,
+) -> None:
+    baseline = build_v7_diagnostics(crossfit, dataset_id="tiny-v7")
+    ledger = build_v7_gate_stage_ledger(crossfit, dataset_id="tiny-v7")
+    cached = build_v7_diagnostics(
+        crossfit,
+        dataset_id="tiny-v7",
+        gate_stage_ledger=ledger.sample(frac=1.0, random_state=19),
+    )
+
+    assert baseline.input_digest == cached.input_digest
+    assert baseline.output_digest == cached.output_digest
+    assert baseline.result_id == cached.result_id
+    pd.testing.assert_frame_equal(baseline.gate_attrition, cached.gate_attrition)
+    pd.testing.assert_frame_equal(baseline.score_geometry, cached.score_geometry)
+    pd.testing.assert_frame_equal(
+        baseline.candidate_sender_bias,
+        cached.candidate_sender_bias,
+    )
+
+    invalid = ledger.copy()
+    invalid.loc[0, "subject_id"] = "wrong-subject"
+    with pytest.raises(ValueError, match="subject_id differs"):
+        build_v7_diagnostics(
+            crossfit,
+            dataset_id="tiny-v7",
+            gate_stage_ledger=invalid,
+        )
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        build_v7_diagnostics(
+            crossfit,
+            dataset_id="tiny-v7",
+            gate_annotations=_gate_annotations(crossfit),
+            gate_stage_ledger=ledger,
+        )
 
 
 def test_diagnostic_identity_is_input_order_independent_and_tamper_evident(

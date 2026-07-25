@@ -171,9 +171,7 @@ def _score_grain(head: str) -> str:
     return "parent" if head in _PARENT_SCORE_HEADS else "sender_child"
 
 
-def _head_table(source: pd.DataFrame, head: str) -> pd.DataFrame:
-    if head not in _PARENT_SCORE_HEADS:
-        return source.copy()
+def _parent_head_table(source: pd.DataFrame) -> pd.DataFrame:
     parent_key = list(_PARENT_KEY)
     truth = (
         source.groupby(parent_key, observed=True)["truth_class"]
@@ -248,19 +246,28 @@ def _variance_geometry(
     null_table = null_table.loc[
         null_table[head].notna(), [*identity, "condition", head]
     ]
-    amplitudes: list[float] = []
-    for _, event in null_table.groupby(identity, observed=True, sort=False):
-        means = (
-            event.groupby("condition", observed=True)[head]
-            .mean()
-            .sort_index()
-            .to_numpy(dtype=float)
+    null_condition_means = (
+        null_table.groupby([*identity, "condition"], observed=True, sort=True)[head]
+        .mean()
+        .reset_index()
+    )
+    if null_condition_means.empty:
+        amplitudes = np.empty(0, dtype=float)
+    else:
+        event_summary = null_condition_means.groupby(
+            identity, observed=True, sort=False
+        )[head].agg(["size", "first", "last", "min", "max"])
+        amplitudes = np.where(
+            event_summary["size"].to_numpy(dtype=int) == 2,
+            event_summary["last"].to_numpy(dtype=float)
+            - event_summary["first"].to_numpy(dtype=float),
+            event_summary["max"].to_numpy(dtype=float)
+            - event_summary["min"].to_numpy(dtype=float),
         )
-        if len(means) == 2:
-            amplitudes.append(float(means[1] - means[0]))
-        elif len(means) > 2:
-            amplitudes.append(float(np.max(means) - np.min(means)))
-    null_sd = float(np.std(amplitudes, ddof=1)) if len(amplitudes) > 1 else np.nan
+        amplitudes = amplitudes[event_summary["size"].to_numpy(dtype=int) > 1]
+    null_sd = (
+        float(np.std(amplitudes, ddof=1)) if len(amplitudes) > 1 else np.nan
+    )
     return within, between, null_sd
 
 
@@ -307,8 +314,9 @@ def summarize_v7_score_geometry(
                 if fold_id == "__all__"
                 else contrast_rows.loc[contrast_rows["fold_id"].astype(str).eq(fold_id)]
             )
+            parent_scope = _parent_head_table(scope)
             for head in heads:
-                table = _head_table(scope, head)
+                table = parent_scope if head in _PARENT_SCORE_HEADS else scope
                 numeric = pd.to_numeric(table[head], errors="coerce")
                 finite = numeric.dropna()
                 n_rows = len(table)
@@ -483,21 +491,35 @@ def summarize_v7_candidate_sender_bias(
                 max_attribution = table.groupby(parent_key, observed=True)[
                     "sender_attribution"
                 ].max()
-                top1: list[float] = []
-                for _, group in table.groupby(parent_key, observed=True, sort=False):
-                    if group["truth_class"].eq("unknown").any():
-                        continue
-                    group_scores = pd.to_numeric(
-                        group["sender_detection_raw"], errors="coerce"
-                    )
-                    if (
-                        group_scores.notna().sum() == 0
-                        or not group["truth_class"].eq("truth_positive").any()
-                    ):
-                        continue
-                    maximum = float(group_scores.max())
-                    winners = group.loc[group_scores.eq(maximum), "truth_class"]
-                    top1.append(float(winners.eq("truth_positive").any()))
+                top1_table = table.loc[:, parent_key].copy()
+                top1_table["detection"] = detection.to_numpy(dtype=float)
+                top1_table["truth_positive"] = table["truth_class"].eq(
+                    "truth_positive"
+                ).to_numpy()
+                top1_table["truth_unknown"] = table["truth_class"].eq(
+                    "unknown"
+                ).to_numpy()
+                maximum = top1_table.groupby(
+                    parent_key, observed=True, sort=False
+                )["detection"].transform("max")
+                top1_table["winner_positive"] = (
+                    top1_table["detection"].eq(maximum)
+                    & top1_table["truth_positive"]
+                )
+                top1_summary = top1_table.groupby(
+                    parent_key, observed=True, sort=False
+                ).agg(
+                    any_score=("detection", "count"),
+                    any_positive=("truth_positive", "any"),
+                    any_unknown=("truth_unknown", "any"),
+                    winner_positive=("winner_positive", "any"),
+                )
+                top1_eligible = (
+                    top1_summary["any_score"].gt(0)
+                    & top1_summary["any_positive"]
+                    & ~top1_summary["any_unknown"]
+                )
+                top1 = top1_summary.loc[top1_eligible, "winner_positive"]
                 positive = table["truth_class"].eq("truth_positive")
                 records.append(
                     {
@@ -544,7 +566,7 @@ def summarize_v7_candidate_sender_bias(
                         "sender_auprc": auprc,
                         "sender_auroc": auroc,
                         "true_sender_top1_accuracy": (
-                            float(np.mean(top1)) if top1 else np.nan
+                            float(top1.mean()) if not top1.empty else np.nan
                         ),
                         "parent_score_mean": (
                             float(

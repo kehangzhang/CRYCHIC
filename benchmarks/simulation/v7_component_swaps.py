@@ -231,12 +231,14 @@ def run_v7_e2_component_swap(
     dgp_family: str,
     design_kind: str,
     fit_cache: V7InferenceFitCache | None = None,
+    gate_stage_ledger: pd.DataFrame | None = None,
 ) -> V7E2ComponentSwapResult:
     """Run all E2 arms through the same frozen I1 and truth evaluator."""
 
     score_views, ledger = build_e2_component_swap_score_views(
         crossfit,
         dataset_id=dataset_id,
+        gate_stage_ledger=gate_stage_ledger,
     )
     effects = run_v7_inference_matrix(
         score_views,
