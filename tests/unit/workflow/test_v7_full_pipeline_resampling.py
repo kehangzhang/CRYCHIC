@@ -222,12 +222,16 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
         n_jobs=1,
         **arguments,
     )
+    progress: list[tuple[str, int, int]] = []
     parallel = run_v7_full_pipeline_resampling(
         _five_subject_adata(),
         _config(),
         _bundle(),
         _prior(),
         n_jobs=3,
+        progress_callback=lambda record, completed, total: progress.append(
+            (record.record_id, completed, total)
+        ),
         **arguments,
     )
 
@@ -236,6 +240,11 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
     assert tuple(record.record_id for record in serial.records) == tuple(
         record.record_id for record in parallel.records
     )
+    assert len(progress) == len(parallel.records)
+    assert sorted(completed for _, completed, _ in progress) == list(
+        range(1, len(parallel.records) + 1)
+    )
+    assert {total for _, _, total in progress} == {len(parallel.records)}
     assert len(serial.records) == 7
     assert {record.operation for record in serial.records} == {
         V7FullPipelineOperation.SUBJECT_BOOTSTRAP,

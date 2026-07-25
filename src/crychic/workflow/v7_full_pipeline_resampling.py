@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Hashable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
@@ -1587,6 +1587,9 @@ def run_v7_full_pipeline_resampling(
     ) = None,
     seed_lineage: SeedLineage | None = None,
     n_jobs: int = 1,
+    progress_callback: (
+        Callable[[V7FullPipelineResampleRecord, int, int], None] | None
+    ) = None,
 ) -> V7FullPipelineResamplingResult:
     """Refit every configured v7 estimator stage in each subject-level resample."""
 
@@ -1612,6 +1615,8 @@ def run_v7_full_pipeline_resampling(
     if not isinstance(run_loso, bool):
         raise TypeError("run_loso must be boolean")
     requested_jobs = _positive_count(n_jobs, field_name="n_jobs", allow_zero=False)
+    if progress_callback is not None and not callable(progress_callback):
+        raise TypeError("progress_callback must be callable or None")
     auxiliary_sample_columns = _design_auxiliary_sample_columns(
         adata,
         config,
@@ -1725,14 +1730,37 @@ def run_v7_full_pipeline_resampling(
         auxiliary_sample_columns,
         source_snapshot_id=snapshot.snapshot_id,
     )
+    total_plans = len(plans)
     if effective_jobs == 1:
-        records = tuple(execute(plan=plan) for plan in plans)
+        serial_records: list[V7FullPipelineResampleRecord] = []
+        for completed, plan in enumerate(plans, start=1):
+            record = execute(plan=plan)
+            serial_records.append(record)
+            if progress_callback is not None:
+                progress_callback(record, completed, total_plans)
+        records = tuple(serial_records)
     else:
         with ThreadPoolExecutor(
             max_workers=effective_jobs,
             thread_name_prefix="crychic-v7-full-refit",
         ) as executor:
-            records = tuple(executor.map(execute, plans))
+            pending = {
+                executor.submit(execute, plan=plan): index
+                for index, plan in enumerate(plans)
+            }
+            ordered: list[V7FullPipelineResampleRecord | None] = [
+                None
+            ] * total_plans
+            completed = 0
+            for future in as_completed(pending):
+                record = future.result()
+                ordered[pending[future]] = record
+                completed += 1
+                if progress_callback is not None:
+                    progress_callback(record, completed, total_plans)
+            if any(record is None for record in ordered):  # pragma: no cover
+                raise RuntimeError("v7 full-refit executor lost a planned record")
+            records = tuple(cast(V7FullPipelineResampleRecord, row) for row in ordered)
     return V7FullPipelineResamplingResult(
         point=point,
         plans=plans,
