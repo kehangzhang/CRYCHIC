@@ -10,6 +10,8 @@ from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.v7_protocol import (
     AMENDMENT_CONFIG,
     AMENDMENT_SCHEMA_VERSION,
+    BASELINE_AMENDMENT_CONFIG,
+    BASELINE_AMENDMENT_SCHEMA_VERSION,
     DEFAULT_CONFIG,
     GENERATORS,
     INFERENCES,
@@ -53,7 +55,16 @@ def test_frozen_v7_protocol_has_disjoint_complete_dgp_axes() -> None:
     assert protocol.config["inference_matrix"].keys() == set(INFERENCES)
 
 
-def test_v2_amendment_authenticates_v1_and_adds_only_m4_experiment() -> None:
+def test_v2_baseline_amendment_remains_loadable() -> None:
+    amended = load_v7_benchmark_protocol(BASELINE_AMENDMENT_CONFIG)
+
+    assert amended.source_schema_version == BASELINE_AMENDMENT_SCHEMA_VERSION
+    m4 = amended.config["experiments"][M4_EXPERIMENT]
+    assert m4["parameter_role"] == "fixed_baseline_before_m4_development"
+    assert "occurrence_state_source" not in m4
+
+
+def test_v3_amendment_authenticates_v1_and_freezes_fold_fitted_m4() -> None:
     base = load_v7_benchmark_protocol(DEFAULT_CONFIG)
     amended = load_v7_benchmark_protocol(AMENDMENT_CONFIG)
 
@@ -65,6 +76,10 @@ def test_v2_amendment_authenticates_v1_and_adds_only_m4_experiment() -> None:
     m4 = amended.config["experiments"][M4_EXPERIMENT]
     assert m4["activity_head"] == "parent_mean_raw"
     assert m4["activity_threshold_raw"] == 1.0
+    assert m4["occurrence_state_source"] == "fold_fitted_parent_ecdf"
+    assert m4["active_probability_threshold"] == 0.8
+    assert m4["raw_comparator_state_source"] == "raw_activity_threshold"
+    assert m4["comparator_isolation_required"]
     assert not m4["release_calibration_complete"]
     manifest = amended.to_manifest()
     assert manifest["schema_version"] == AMENDMENT_SCHEMA_VERSION

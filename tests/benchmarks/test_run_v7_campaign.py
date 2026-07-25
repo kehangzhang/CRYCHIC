@@ -132,6 +132,17 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
     assert manifest["experiments"]["E6_m4_occurrence"][
         "fixed_threshold_formal_inference_allowed"
     ]
+    assert (
+        manifest["experiments"]["E6_m4_occurrence"]["formal_inference_scope"]
+        == "fold_fitted_parent_ecdf_threshold_oof_occurrence_only"
+    )
+    occurrence_manifest = manifest["experiments"]["E6_m4_occurrence"]["occurrence"]
+    assert occurrence_manifest["occurrence_spec"]["occurrence_state_source"] == (
+        "fold_fitted_parent_ecdf"
+    )
+    assert occurrence_manifest["raw_comparator_state_source"] == (
+        "raw_activity_threshold"
+    )
     assert not manifest["experiments"]["E6_m4_occurrence"][
         "release_calibration_complete"
     ]

@@ -1,0 +1,63 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-benchmark-protocol-amendment-v3",
+  "status": "amended_after_m4_baseline_smoke_before_development",
+  "base_protocol": {
+    "filename": "suggest_next2_v7_benchmark_v1.json",
+    "sha256": "f3f7b338624c7758e68fde8e89f860afc3b914c7bf157b2de6356b1d774c28f5"
+  },
+  "minimum_estimator_commit": "7f35ddda3546dd2bbfe7a4d08e4f918acb132c66",
+  "amendment_reason": "The checksum-bound 20-seed-by-two-design baseline smoke showed complete raw-threshold saturation. Freeze the outcome-agnostic fold-fitted parent ECDF state candidate for development while preserving a separately fitted raw-threshold comparator.",
+  "experiment": {
+    "name": "E6_m4_occurrence",
+    "parameter_role": "fixed_fold_fitted_candidate_for_m4_development",
+    "activity_head": "parent_mean_raw",
+    "activity_threshold_raw": 1.0,
+    "probability_transition_scale": 0.25,
+    "occurrence_state_source": "fold_fitted_parent_ecdf",
+    "active_probability_threshold": 0.8,
+    "active_probability_mapping": "upper_tail_excess_v1",
+    "raw_comparator_state_source": "raw_activity_threshold",
+    "comparator_isolation_required": true,
+    "probability_semantics": "working_score_not_released_as_calibrated_probability",
+    "selection_provenance": {
+      "source_phase": "smoke_regression_diagnostic",
+      "dgp_family": "occurrence_heterogeneity",
+      "designs": [
+        "independent_two_group",
+        "paired"
+      ],
+      "replicates_per_design": 20,
+      "baseline_protocol_sha256": "1d1b025bf422be2430cb4d67f59e00d2bb0622976c7c7eb03aa3fd4716d889f9",
+      "locked_evaluation_used": false,
+      "real_data_used": false
+    },
+    "methods": [
+      "raw_prevalence_difference",
+      "fisher_exact",
+      "dcst_protocol_compatible_exact",
+      "logistic_model",
+      "beta_binomial",
+      "crychic_m4_design_aware"
+    ],
+    "metrics": [
+      "estimable_fraction",
+      "occurrence_auprc",
+      "occurrence_auroc",
+      "prevalence_effect_rmse",
+      "prevalence_effect_bias",
+      "direction_accuracy",
+      "odds_ratio_bias",
+      "log_odds_rmse",
+      "subject_brier_score",
+      "calibration_intercept",
+      "calibration_slope",
+      "type1_error_alpha_0_05",
+      "fdr_at_q_0_10",
+      "power_at_q_0_10"
+    ],
+    "truth_policy": "unknown_receiver_or_event_truth_is_not_negative",
+    "dcst_scope": "protocol-compatible Fisher proxy, not the external package",
+    "beta_binomial_policy": "not_estimable_when_one_Bernoulli_trial_per_subject_does_not_identify_overdispersion",
+    "release_calibration_complete": false
+  }
+}

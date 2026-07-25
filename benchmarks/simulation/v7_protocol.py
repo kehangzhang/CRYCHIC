@@ -19,17 +19,25 @@ from benchmarks.adapters.common import json_safe, sha256_file
 from crychic.core import canonical_digest, stable_id
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-v1"
-AMENDMENT_SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-amendment-v2"
+BASELINE_AMENDMENT_SCHEMA_VERSION = (
+    "crychic-suggest-next2-v7-benchmark-protocol-amendment-v2"
+)
+AMENDMENT_SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-amendment-v3"
 PLAN_SCHEMA_VERSION = "crychic-suggest-next2-v7-run-plan-v2"
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs"
     / "suggest_next2_v7_benchmark_v1.json"
 )
-AMENDMENT_CONFIG = (
+BASELINE_AMENDMENT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs"
     / "suggest_next2_v7_benchmark_v2.json"
+)
+AMENDMENT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "suggest_next2_v7_benchmark_v3.json"
 )
 
 DESIGN_KINDS = (
@@ -425,13 +433,35 @@ def _validate_experiments(config: Mapping[str, Any]) -> None:
         raise ValueError("E3 candidate counts must be 2/5/10/20")
     if amended:
         m4 = _mapping(experiments[M4_EXPERIMENT], field=M4_EXPERIMENT)
+        provenance = _mapping(
+            config["_amendment_provenance"], field="_amendment_provenance"
+        )
+        amendment_schema = str(provenance.get("schema_version", ""))
         if (
-            m4.get("parameter_role") != "fixed_baseline_before_m4_development"
-            or m4.get("activity_head") != "parent_mean_raw"
+            m4.get("activity_head") != "parent_mean_raw"
             or float(m4.get("activity_threshold_raw", math.nan)) != 1.0
             or float(m4.get("probability_transition_scale", math.nan)) != 0.25
         ):
-            raise ValueError("E6 M4 fixed baseline policy changed")
+            raise ValueError("E6 M4 common activity policy changed")
+        if amendment_schema == BASELINE_AMENDMENT_SCHEMA_VERSION:
+            if m4.get("parameter_role") != "fixed_baseline_before_m4_development":
+                raise ValueError("E6 M4 v2 baseline role changed")
+        elif amendment_schema == AMENDMENT_SCHEMA_VERSION:
+            if (
+                m4.get("parameter_role")
+                != "fixed_fold_fitted_candidate_for_m4_development"
+                or m4.get("occurrence_state_source") != "fold_fitted_parent_ecdf"
+                or float(m4.get("active_probability_threshold", math.nan)) != 0.8
+                or m4.get("active_probability_mapping") != "upper_tail_excess_v1"
+                or m4.get("raw_comparator_state_source") != "raw_activity_threshold"
+                or m4.get("comparator_isolation_required") is not True
+                or m4.get("probability_semantics")
+                != "working_score_not_released_as_calibrated_probability"
+                or m4.get("release_calibration_complete") is not False
+            ):
+                raise ValueError("E6 M4 v3 development policy changed")
+        else:  # pragma: no cover - guarded by protocol resolution
+            raise ValueError("E6 M4 amendment schema is unsupported")
         expected_methods = (
             "raw_prevalence_difference",
             "fisher_exact",
@@ -520,9 +550,15 @@ def _resolve_protocol_config(
         if raw.get("status") != "preregistered_before_integrated_v7_campaign":
             raise ValueError("v7 benchmark protocol status is not preregistered")
         return raw, schema
-    if schema != AMENDMENT_SCHEMA_VERSION:
+    supported_amendments = {
+        BASELINE_AMENDMENT_SCHEMA_VERSION: "amended_after_smoke_before_development",
+        AMENDMENT_SCHEMA_VERSION: (
+            "amended_after_m4_baseline_smoke_before_development"
+        ),
+    }
+    if schema not in supported_amendments:
         raise ValueError("v7 benchmark protocol schema is unsupported")
-    if raw.get("status") != "amended_after_smoke_before_development":
+    if raw.get("status") != supported_amendments[schema]:
         raise ValueError("v7 benchmark amendment status is unsupported")
     base_record = _mapping(raw.get("base_protocol"), field="base_protocol")
     if set(base_record) != {"filename", "sha256"}:
