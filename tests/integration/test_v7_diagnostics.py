@@ -12,8 +12,10 @@ from tests.integration.test_subject_crossfit import (
 
 from crychic.scoring import AbsoluteActivityV2Spec
 from crychic.workflow import (
+    GATE_STAGE_LEDGER_COLUMNS,
     GATE_STAGES,
     build_v7_diagnostics,
+    build_v7_gate_stage_ledger,
     run_subject_crossfit,
 )
 
@@ -49,3 +51,24 @@ def test_legacy_parent_gates_propagate_to_the_exact_frozen_sender_axis() -> None
         ) == 32
     assert int(overall.loc["receptor_eligible", "n_stage_passed"]) == 16
     assert int(overall.loc["sender_assignment_available", "n_stage_passed"]) == 32
+
+    ledger = build_v7_gate_stage_ledger(
+        crossfit,
+        dataset_id="legacy-connected",
+    )
+    assert tuple(ledger.columns) == GATE_STAGE_LEDGER_COLUMNS
+    assert len(ledger) == 32
+    assert not ledger.duplicated(
+        [
+            "contrast_name",
+            "fold_id",
+            "sample_id",
+            "context_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+        ]
+    ).any()
+    assert ledger["common_candidate_universe_status"].eq("passed").all()
+    assert ledger["receptor_eligible_status"].eq("passed").sum() == 16
+    assert ledger["sender_assignment_available_status"].eq("passed").sum() == 32

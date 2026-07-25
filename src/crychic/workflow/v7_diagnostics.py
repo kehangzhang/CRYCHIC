@@ -61,6 +61,7 @@ _NOT_COMPUTED_CODE = _STAGE_STATUS_CODE["not_computed"]
 _NOT_ESTIMABLE_CODE = _STAGE_STATUS_CODE["not_estimable"]
 _FAILED_CODE = _STAGE_STATUS_CODE["failed"]
 _PASSED_CODE = _STAGE_STATUS_CODE["passed"]
+_STATUS_BY_CODE = {int(code): status for status, code in _STAGE_STATUS_CODE.items()}
 
 _DEFAULT_SCORE_HEADS = V7_DIAGNOSTIC_SCORE_HEADS
 _ALLOWED_SCORE_HEADS = set(_DEFAULT_SCORE_HEADS)
@@ -84,6 +85,24 @@ GATE_ATTRITION_COLUMNS = (
     "stage_pass_fraction",
     "retention_fraction_from_previous",
     "retention_fraction_from_universe",
+)
+_GATE_STAGE_LEDGER_STATUS_COLUMNS = tuple(
+    field
+    for stage in GATE_STAGES
+    for field in (f"{stage}_status", f"{stage}_reason_code")
+)
+GATE_STAGE_LEDGER_COLUMNS = (
+    "dataset_id",
+    "contrast_name",
+    "fold_id",
+    "sample_id",
+    "subject_id",
+    "condition",
+    "context_id",
+    "sender",
+    "receiver",
+    "interaction_id",
+    *_GATE_STAGE_LEDGER_STATUS_COLUMNS,
 )
 
 _BASE_KEY = (
@@ -723,6 +742,107 @@ def _stage_arrays(
     return statuses
 
 
+def _gate_stage_ledger(
+    scores: pd.DataFrame,
+    *,
+    dataset_id: str,
+    statuses: Mapping[str, np.ndarray],
+    stage_records: Mapping[tuple[str, ...], tuple[str, str | None]],
+) -> pd.DataFrame:
+    base_columns = (
+        "contrast_name",
+        "fold_id",
+        "sample_id",
+        "subject_id",
+        "condition",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+    )
+    result = scores.loc[:, list(base_columns)].copy(deep=True)
+    result.insert(0, "dataset_id", dataset_id)
+    keys = [
+        tuple(str(value) for value in row)
+        for row in scores.loc[:, list(_STAGE_KEY)].itertuples(index=False, name=None)
+    ]
+    for stage in GATE_STAGES:
+        stage_values = statuses[stage]
+        result[f"{stage}_status"] = [
+            _STATUS_BY_CODE[int(value)] for value in stage_values
+        ]
+        if stage == "common_candidate_universe":
+            reasons: list[str | None] = [None] * len(result)
+        elif stage == "measurable_ligand_receptor":
+            reasons = [
+                None
+                if int(value) == int(_PASSED_CODE)
+                else "ligand_or_receptor_not_measurable"
+                for value in stage_values
+            ]
+        else:
+            reasons = [
+                stage_records.get(
+                    (*key, stage),
+                    ("not_computed", f"{stage}_not_computed"),
+                )[1]
+                for key in keys
+            ]
+        result[f"{stage}_reason_code"] = reasons
+    result = result.loc[:, list(GATE_STAGE_LEDGER_COLUMNS)].sort_values(
+        [
+            "dataset_id",
+            "contrast_name",
+            "fold_id",
+            "sample_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+        ],
+        kind="stable",
+        ignore_index=True,
+    )
+    if result.duplicated(
+        [
+            "contrast_name",
+            "fold_id",
+            "sample_id",
+            "context_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+        ]
+    ).any():
+        raise ValueError("gate-stage ledger child keys must be unique")
+    return result
+
+
+def build_v7_gate_stage_ledger(
+    crossfit: CrossFitArtifacts,
+    *,
+    dataset_id: str,
+    gate_annotations: pd.DataFrame | None = None,
+    significance: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Materialize exact per-child legacy gate states for component swaps."""
+
+    if not isinstance(crossfit, CrossFitArtifacts):
+        raise TypeError("crossfit must be CrossFitArtifacts")
+    dataset = _name(dataset_id, field_name="dataset_id")
+    scores, _, _ = _decorate_scores(crossfit, truth=None, cell_counts=None)
+    stage_records = _stage_record_map(
+        crossfit,
+        gate_annotations=gate_annotations,
+        significance=significance,
+    )
+    return _gate_stage_ledger(
+        scores,
+        dataset_id=dataset,
+        statuses=_stage_arrays(scores, stage_records),
+        stage_records=stage_records,
+    )
+
+
 def _strata_masks(scope: pd.DataFrame) -> Iterable[tuple[str, str, np.ndarray]]:
     yield "overall", "all", np.ones(len(scope), dtype=bool)
     columns = (
@@ -1196,11 +1316,13 @@ __all__ = [
     "CANDIDATE_SENDER_BIAS_COLUMNS",
     "GATE_ATTRITION_COLUMNS",
     "GATE_STAGES",
+    "GATE_STAGE_LEDGER_COLUMNS",
     "RESOLUTION_PERFORMANCE_COLUMNS",
     "SCORE_GEOMETRY_COLUMNS",
     "V7_DIAGNOSTICS_VERSION",
     "V7DiagnosticsResult",
     "V7DiagnosticsSpec",
     "build_v7_diagnostics",
+    "build_v7_gate_stage_ledger",
     "summarize_v7_resolution_performance",
 ]

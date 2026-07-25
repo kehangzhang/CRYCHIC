@@ -4,6 +4,14 @@ from dataclasses import dataclass
 
 import pandas as pd
 import pytest
+from benchmarks.simulation.v7_component_swaps import (
+    E2_ANNOTATION_ARMS,
+    E2_ARMS,
+    E2_BASE_ARM,
+    E2_HARD_GATE_ARMS,
+    build_e2_component_swap_score_views,
+    run_v7_e2_component_swap,
+)
 from benchmarks.simulation.v7_dgp import V7DGPFixture, generate_v7_dgp
 from benchmarks.simulation.v7_integrated import (
     EFFECT_COLUMNS,
@@ -254,3 +262,95 @@ def test_metrics_align_each_estimand_and_never_convert_unknown_truth_to_negative
     assert not unknown_event.empty
     assert not unknown_event["truth_known"].any()
     assert unknown_event["truth_label"].isna().all()
+
+
+def test_e2_annotation_arms_are_exact_g3_copies_and_hard_gates_are_typed(
+    prepared: _Prepared,
+) -> None:
+    scores, ledger = build_e2_component_swap_score_views(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+    )
+    assert set(scores["score_view"]) == set(E2_ARMS)
+    comparison_key = ["contrast_scope", "event_id", "fold_id", "sample_id"]
+    base = scores.loc[
+        scores["score_view"].eq(E2_BASE_ARM),
+        [*comparison_key, "score", "score_status"],
+    ].sort_values(comparison_key, ignore_index=True)
+    for arm in E2_ANNOTATION_ARMS:
+        annotation = scores.loc[
+            scores["score_view"].eq(arm),
+            [*comparison_key, "score", "score_status"],
+        ].sort_values(comparison_key, ignore_index=True)
+        pd.testing.assert_frame_equal(base, annotation)
+
+    join_key = [
+        "fold_id",
+        "sample_id",
+        "subject_id",
+        "condition",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+    ]
+    usable = {"observed", "low_evidence", "structural_impossible"}
+    for arm, stage in E2_HARD_GATE_ARMS.items():
+        hard = scores.loc[scores["score_view"].eq(arm)].merge(
+            ledger.loc[
+                :,
+                ["contrast_name", *join_key, f"{stage}_status"],
+            ],
+            left_on=["contrast_scope", *join_key],
+            right_on=["contrast_name", *join_key],
+            how="left",
+            validate="one_to_one",
+        )
+        reference = scores.loc[
+            scores["score_view"].eq(E2_BASE_ARM),
+            ["contrast_scope", *join_key, "score", "score_status"],
+        ].rename(columns={"score": "base_score", "score_status": "base_status"})
+        hard = hard.merge(
+            reference,
+            on=["contrast_scope", *join_key],
+            how="left",
+            validate="one_to_one",
+        )
+        retained = hard[f"{stage}_status"].eq("passed")
+        failed = (
+            hard[f"{stage}_status"].eq("failed")
+            & hard["base_status"].isin(usable)
+            & hard["base_score"].notna()
+        )
+        pd.testing.assert_series_equal(
+            hard.loc[retained, "score"].reset_index(drop=True),
+            hard.loc[retained, "base_score"].reset_index(drop=True),
+            check_names=False,
+        )
+        assert hard.loc[failed, "score"].eq(0.0).all()
+        assert hard.loc[failed, "score_status"].eq("low_evidence").all()
+        unavailable = ~(retained | failed)
+        assert hard.loc[unavailable, "score"].isna().all()
+        assert hard.loc[unavailable, "score_status"].eq("not_estimable").all()
+
+
+def test_e2_runs_every_arm_through_i1_without_formal_fields(
+    prepared: _Prepared,
+) -> None:
+    result = run_v7_e2_component_swap(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+        design=prepared.fixture.differential_design,
+        sample_metadata=prepared.fixture.sample_metadata,
+        truth=prepared.fixture.truth,
+        dgp_family=prepared.fixture.dgp_family,
+        design_kind=prepared.fixture.design_kind,
+    )
+
+    assert set(result.effects["score_view"]) == set(E2_ARMS)
+    assert set(result.effects["inference_id"]) == {"I1"}
+    assert not result.effects["formal_inference_allowed"].any()
+    assert result.effects[["p_value", "q_value"]].isna().all(axis=None)
+    assert {"event_auprc", "effect_spearman"}.issubset(
+        set(result.metrics["metric"])
+    )

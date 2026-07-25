@@ -211,6 +211,7 @@ from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifact
 from .v7_diagnostics import (
     CANDIDATE_SENDER_BIAS_COLUMNS,
     GATE_ATTRITION_COLUMNS,
+    GATE_STAGE_LEDGER_COLUMNS,
     GATE_STAGES,
     RESOLUTION_PERFORMANCE_COLUMNS,
     SCORE_GEOMETRY_COLUMNS,
@@ -218,6 +219,7 @@ from .v7_diagnostics import (
     V7DiagnosticsResult,
     V7DiagnosticsSpec,
     build_v7_diagnostics,
+    build_v7_gate_stage_ledger,
     summarize_v7_resolution_performance,
 )
 from .v7_estimator import (
@@ -252,6 +254,7 @@ __all__ = [
     "CROSSFIT_SAMPLE_EDGE_V2_SCHEMA_VERSION",
     "GATE_ATTRITION_COLUMNS",
     "GATE_STAGES",
+    "GATE_STAGE_LEDGER_COLUMNS",
     "RESOLUTION_PERFORMANCE_COLUMNS",
     "SCORE_GEOMETRY_COLUMNS",
     "V7_CROSSFIT_ESTIMATOR_VERSION",
@@ -376,6 +379,7 @@ __all__ = [
     "build_graph_fused_training_problem",
     "build_graph_fused_tuning_folds",
     "build_v7_diagnostics",
+    "build_v7_gate_stage_ledger",
     "derive_graph_fused_family_effects",
     "dry_run_baseline",
     "evaluate_v7_full_pipeline_calibration",
