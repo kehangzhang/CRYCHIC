@@ -42,10 +42,11 @@ from crychic.resources import ResourceBundle, TargetPrior
 from crychic.scoring import FrozenHypergraphPrior
 
 from .crossfit import (
-    CrossFitArtifacts,
+    _V7_PRIMARY_EXECUTION_PROFILE,
     CrossFitSpec,
     _reduce_mapping_proxy,
-    _run_subject_crossfit,
+    _run_v7_primary_crossfit,
+    _V7EstimatorCrossFitArtifacts,
 )
 from .full_pipeline_resampling import (
     _materialize_context_permutation,
@@ -537,7 +538,7 @@ def _materialize_loso(
 
 
 def _stage_lineage(
-    crossfit: CrossFitArtifacts,
+    crossfit: _V7EstimatorCrossFitArtifacts,
     estimator: CrossFitV7EstimatorResult,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     stages: dict[str, tuple[str, ...]] = {
@@ -1192,7 +1193,7 @@ def _execute_plan(
             child_config,
             auxiliary_sample_columns=auxiliary_sample_columns,
         )
-        child = _run_subject_crossfit(
+        child = _run_v7_primary_crossfit(
             child_snapshot,
             child_config,
             resource_bundle,
@@ -1656,6 +1657,16 @@ class V7FullPipelineResamplingResult:
             "bootstrap_policy": _BOOTSTRAP_POLICY,
             "loso_policy": _LOSO_POLICY,
             "full_pipeline_refit_per_resample": True,
+            "crossfit_execution_profile": _V7_PRIMARY_EXECUTION_PROFILE,
+            "omitted_legacy_diagnostic_stages": [
+                "contrast_common_sender_application",
+                "frozen_design_encoder",
+                "receiver_family",
+                "receiver_program",
+                "receiver_incremental",
+                "family_common",
+                "cross_receiver_common",
+            ],
             "rerun_stage_catalog": list(_RERUN_STAGES),
             "configured_rerun_stages_observed": list(configured_stages),
             "large_crossfit_children_retained": False,
@@ -1778,7 +1789,7 @@ def run_v7_full_pipeline_resampling(
     if not isinstance(lineage, SeedLineage):
         raise TypeError("seed_lineage must be SeedLineage or None")
 
-    point_crossfit = _run_subject_crossfit(
+    point_crossfit = _run_v7_primary_crossfit(
         snapshot,
         config,
         resource_bundle,

@@ -216,7 +216,7 @@ def _process_tree_rss(process: psutil.Process) -> int:
 
 
 class _PeakRSSMonitor:
-    def __init__(self, *, interval_seconds: float = 0.05) -> None:
+    def __init__(self, *, interval_seconds: float = 2.0) -> None:
         self._process = psutil.Process()
         self._interval = interval_seconds
         self._stop = threading.Event()

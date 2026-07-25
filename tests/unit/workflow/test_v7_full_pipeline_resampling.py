@@ -35,8 +35,14 @@ from crychic.workflow import (
     V7FullPipelineResampleStatus,
     evaluate_v7_full_pipeline_calibration,
     finalize_v7_full_pipeline_inference,
+    fit_crossfit_v7_estimator,
     run_v7_full_pipeline_resampling,
 )
+from crychic.workflow.crossfit import (
+    _run_subject_crossfit,
+    _run_v7_primary_crossfit,
+)
+from crychic.workflow.training import _sanitized_raw_input_snapshot
 from crychic.workflow.v7_full_pipeline_inference import _finalize_channel
 from crychic.workflow.v7_full_pipeline_resampling import (
     _plan_design_stratified_bootstraps,
@@ -194,6 +200,63 @@ def test_continuous_m5_accepts_the_registered_slope_contrast() -> None:
     assert spec.hypergraph_contrast_name == "slope:dose"
 
 
+def test_v7_primary_execution_is_exactly_equal_to_the_full_score_path() -> None:
+    adata = _five_subject_adata()
+    config = _config()
+    crossfit_spec = replace(
+        _spec(),
+        absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
+    )
+    snapshot = _sanitized_raw_input_snapshot(adata, config)
+    full = _run_subject_crossfit(
+        snapshot,
+        config,
+        _bundle(),
+        _prior(),
+        spec=crossfit_spec,
+    )
+    primary = _run_v7_primary_crossfit(
+        snapshot,
+        config,
+        _bundle(),
+        _prior(),
+        spec=crossfit_spec,
+    )
+    sample_metadata = adata.obs.loc[
+        :, ["sample_id", "subject_id", "condition"]
+    ].drop_duplicates("sample_id")
+    estimator_spec = V7EstimatorSpec(design=_paired_design())
+    full_estimator = fit_crossfit_v7_estimator(
+        full,
+        estimator_spec,
+        sample_metadata=sample_metadata,
+    )
+    primary_estimator = fit_crossfit_v7_estimator(
+        primary,
+        estimator_spec,
+        sample_metadata=sample_metadata,
+    )
+
+    assert full.crossfit_id != primary.crossfit_id
+    assert full_estimator.output_digest == primary_estimator.output_digest
+    assert full_estimator.score_provenance_ids == primary_estimator.score_provenance_ids
+    pd.testing.assert_frame_equal(
+        full_estimator.differential.effects,
+        primary_estimator.differential.effects,
+        check_exact=True,
+    )
+    pd.testing.assert_frame_equal(
+        full_estimator.differential.omnibus,
+        primary_estimator.differential.omnibus,
+        check_exact=True,
+    )
+    assert all(fold.application.sender_assignments for fold in full.folds)
+    assert all(not fold.application.sender_assignments for fold in primary.folds)
+    assert all(not fold.receiver_family_models for fold in primary.folds)
+    assert all(not fold.receiver_incremental_models for fold in primary.folds)
+    assert all(not fold.family_common_functionals for fold in primary.folds)
+
+
 def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() -> None:
     crossfit_spec = replace(
         _spec(),
@@ -303,6 +366,8 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
     }
     manifest = serial.to_manifest()
     assert manifest["full_pipeline_refit_per_resample"] is True
+    assert manifest["crossfit_execution_profile"] == "v7_primary_m0_m5_v1"
+    assert "family_common" in manifest["omitted_legacy_diagnostic_stages"]
     assert manifest["large_crossfit_children_retained"] is False
     assert manifest["resample_retention_policy"] == "minimal_effect_tables_only_v1"
     assert manifest["hypothesis_axis_id"] == serial.hypothesis_axis_id

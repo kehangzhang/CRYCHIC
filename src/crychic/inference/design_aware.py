@@ -1227,22 +1227,25 @@ def build_sample_edge_differential_input(
         table = table.drop_duplicates(
             ["sample_id", "context_id", "fold_id", *identity_columns]
         ).copy()
-    table["event_id"] = [
-        stable_id(
+    identity_rows = tuple(
+        tuple(str(value) for value in values)
+        for values in table.loc[:, list(identity_columns)].itertuples(
+            index=False,
+            name=None,
+        )
+    )
+    event_id_by_identity = {
+        values: stable_id(
             "sample_edge_differential_event",
             {
                 "score_head": score_head,
-                **{
-                    column: str(value)
-                    for column, value in zip(identity_columns, values, strict=True)
-                },
+                **dict(zip(identity_columns, values, strict=True)),
             },
             schema_version="1",
         )
-        for values in table.loc[:, list(identity_columns)].itertuples(
-            index=False, name=None
-        )
-    ]
+        for values in dict.fromkeys(identity_rows)
+    }
+    table["event_id"] = [event_id_by_identity[values] for values in identity_rows]
     table["score"] = table[score_head]
     if score_head == "sender_detection_raw":
         table["score_status"] = np.where(

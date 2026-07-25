@@ -14,7 +14,11 @@ from crychic.inference import (
     fit_two_part_occurrence_v2,
 )
 
-from .crossfit import CrossFitArtifacts
+from .crossfit import (
+    CrossFitArtifacts,
+    _V7EstimatorCrossFitArtifacts,
+    _V7PrimaryCrossFitArtifacts,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -81,15 +85,15 @@ class CrossFitTwoPartOccurrenceV2Result:
 
 
 def fit_crossfit_two_part_occurrence_v2(
-    crossfit: CrossFitArtifacts,
+    crossfit: _V7EstimatorCrossFitArtifacts,
     spec: TwoPartOccurrenceV2Spec,
     *,
     sample_metadata: pd.DataFrame | None = None,
 ) -> CrossFitTwoPartOccurrenceV2Result:
     """Fit M4 from exact held-out v2 score rows across all outer folds."""
 
-    if not isinstance(crossfit, CrossFitArtifacts):
-        raise TypeError("crossfit must be CrossFitArtifacts")
+    if not isinstance(crossfit, CrossFitArtifacts | _V7PrimaryCrossFitArtifacts):
+        raise TypeError("crossfit must contain full or v7-primary artifacts")
     crossfit._require_intact()
     if not isinstance(spec, TwoPartOccurrenceV2Spec):
         raise TypeError("spec must be TwoPartOccurrenceV2Spec")

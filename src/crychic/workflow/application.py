@@ -62,7 +62,7 @@ def _table_digest(table_name: str, table: pd.DataFrame) -> str:
         schema_version="1",
         digest_length=64,
     )
-    id_prefix = validation_id[:-(64 + 1)]
+    id_prefix = validation_id[: -(64 + 1)]
     template = canonical_json(
         {
             "components": {
@@ -310,8 +310,7 @@ class TrainingArtifactApplication:
                 and isinstance(self.excluded_cell_type_ids, tuple)
                 and self.heldout_subject_ids == repeated.heldout_subject_ids
                 and self.heldout_sample_ids == repeated.heldout_sample_ids
-                and self.excluded_cell_type_ids
-                == repeated.excluded_cell_type_ids
+                and self.excluded_cell_type_ids == repeated.excluded_cell_type_ids
                 and self.application_status == repeated.application_status
                 and self.availability_mapping_summary_digest
                 == repeated.availability_mapping_summary_digest
@@ -354,12 +353,16 @@ class TrainingArtifactApplication:
 def _apply_training_artifacts_from_prepared(
     artifacts: TrainingArtifacts,
     prepared: _PreparedRawFold,
+    *,
+    apply_sender_functionals: bool = True,
 ) -> TrainingArtifactApplication:
     if not isinstance(artifacts, TrainingArtifacts):
         raise TypeError("artifacts must be TrainingArtifacts")
     artifacts._require_producer_owned()
     if not isinstance(prepared, _PreparedRawFold):
         raise TypeError("prepared must be a _PreparedRawFold")
+    if not isinstance(apply_sender_functionals, bool):
+        raise TypeError("apply_sender_functionals must be boolean")
     prepared.require_compatible(
         artifacts.config,
         min_cells=artifacts.spec.min_cells,
@@ -389,12 +392,16 @@ def _apply_training_artifacts_from_prepared(
             filter_application=availability.filter_application,
             application_subject_ids=prepared.subject_ids,
         )
-    sender_assignments = tuple(
-        apply_contrast_common_sender_functional(
-            functional,
-            availability.sample_interactions,
+    sender_assignments = (
+        tuple(
+            apply_contrast_common_sender_functional(
+                functional,
+                availability.sample_interactions,
+            )
+            for functional in artifacts.sender_functionals
         )
-        for functional in artifacts.sender_functionals
+        if apply_sender_functionals
+        else ()
     )
     return TrainingArtifactApplication(
         training_artifact_id=artifacts.training_artifact_id,

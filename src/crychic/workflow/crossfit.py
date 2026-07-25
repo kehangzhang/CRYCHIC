@@ -218,6 +218,8 @@ _STAGE_NAME = "contrast_common_sender_application"
 _RECEIVER_STAGE_NAME = "receiver_incremental_application_diagnostic"
 _STAGE_STATUS = "verified_train_only_oof_partial_pipeline"
 _PRODUCER_MARKER = "crychic.workflow.crossfit.v1"
+_FULL_EXECUTION_PROFILE = "full_crossfit_v1"
+_V7_PRIMARY_EXECUTION_PROFILE = "v7_primary_m0_m5_v1"
 _REMAINING_PUBLIC_STAGES = (
     "attribution_tuning",
     "common_scoring_functional",
@@ -468,7 +470,7 @@ def _optional_table_text(value: object) -> str | None:
         value is None
         or value is pd.NA
         or value is pd.NaT
-        or (isinstance(value, (float, np.floating)) and math.isnan(float(value)))
+        or (isinstance(value, float | np.floating) and math.isnan(float(value)))
     ):
         return None
     return str(value)
@@ -1526,6 +1528,7 @@ class CrossFitFoldArtifacts:
     cross_receiver_common_applications: tuple[
         CrossReceiverCommonScoringApplication, ...
     ] = ()
+    execution_profile: str = _FULL_EXECUTION_PROFILE
 
     @validation_scope()
     def __post_init__(self) -> None:
@@ -1533,6 +1536,11 @@ class CrossFitFoldArtifacts:
             return
         if not isinstance(self.fold_id, str) or not self.fold_id:
             raise ValueError("fold_id must be a non-empty identifier")
+        if self.execution_profile not in {
+            _FULL_EXECUTION_PROFILE,
+            _V7_PRIMARY_EXECUTION_PROFILE,
+        }:
+            raise ValueError("unsupported cross-fit fold execution profile")
         if not isinstance(self.training, TrainingArtifacts):
             raise TypeError("training must be TrainingArtifacts")
         self.training._require_intact()
@@ -1719,6 +1727,58 @@ class CrossFitFoldArtifacts:
             "eb_shrunken_coupling_v2_functional",
             coupling_functional,
         )
+        if self.execution_profile == _V7_PRIMARY_EXECUTION_PROFILE:
+            legacy_groups = (
+                self.receiver_training_support,
+                self.design_encoders,
+                self.design_applications,
+                self.receiver_family_models,
+                self.receiver_family_applications,
+                self.receiver_program_models,
+                self.receiver_program_applications,
+                self.receiver_responses,
+                self.response_precisions,
+                self.receiver_incremental_models,
+                self.receiver_response_applications,
+                self.receiver_incremental_applications,
+                self.family_common_functionals,
+                self.family_common_applications,
+                self.family_common_bindings,
+                self.directional_response_bindings,
+                self.cross_receiver_common_functionals,
+                self.cross_receiver_common_applications,
+            )
+            if any(bool(group) for group in legacy_groups):
+                raise ValueError(
+                    "v7-primary folds cannot contain legacy receiver diagnostics"
+                )
+            if self.application.sender_assignments:
+                raise ValueError(
+                    "v7-primary folds cannot apply legacy sender functionals"
+                )
+            for field_name in (
+                "receiver_training_support",
+                "design_encoders",
+                "design_applications",
+                "receiver_family_models",
+                "receiver_family_applications",
+                "receiver_program_models",
+                "receiver_program_applications",
+                "receiver_responses",
+                "response_precisions",
+                "receiver_incremental_models",
+                "receiver_response_applications",
+                "receiver_incremental_applications",
+                "family_common_functionals",
+                "family_common_applications",
+                "family_common_bindings",
+                "directional_response_bindings",
+                "cross_receiver_common_functionals",
+                "cross_receiver_common_applications",
+            ):
+                object.__setattr__(self, field_name, ())
+            record_validation(self)
+            return
         support_records = tuple(self.receiver_training_support)
         if not support_records or any(
             not isinstance(record, ReceiverTrainingSupportRecord)
@@ -4435,6 +4495,352 @@ class CrossFitArtifacts:
         }
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class _V7PrimaryCrossFitArtifacts:
+    """Internal cross-fit carrier containing only stages consumed by M0-M5."""
+
+    spec: CrossFitSpec
+    root_input_identity: SanitizedRawInputIdentity
+    receiver_universe: FrozenReceiverUniverse
+    fold_plan: SubjectFoldPlan
+    folds: tuple[CrossFitFoldArtifacts, ...]
+    execution_profile: str
+    oof_sample_edge_score_table_digest: str = field(init=False)
+    crossfit_id: str = field(init=False)
+    _producer_marker: str = field(init=False, repr=False)
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "v7-primary artifacts are producer-owned; use the v7 resampling workflow"
+        )
+
+    @classmethod
+    def _from_workflow(
+        cls,
+        *,
+        spec: CrossFitSpec,
+        root_input_identity: SanitizedRawInputIdentity,
+        receiver_universe: FrozenReceiverUniverse,
+        fold_plan: SubjectFoldPlan,
+        folds: tuple[CrossFitFoldArtifacts, ...],
+    ) -> _V7PrimaryCrossFitArtifacts:
+        with validation_scope():
+            self = object.__new__(cls)
+            for name, value in {
+                "spec": spec,
+                "root_input_identity": root_input_identity,
+                "receiver_universe": receiver_universe,
+                "fold_plan": fold_plan,
+                "folds": folds,
+                "execution_profile": _V7_PRIMARY_EXECUTION_PROFILE,
+                "_producer_marker": _PRODUCER_MARKER,
+            }.items():
+                object.__setattr__(self, name, value)
+            self.__post_init__()
+            return self
+
+    @validation_scope()
+    def __post_init__(self) -> None:
+        if validation_is_cached(self):
+            return
+        if (
+            self._producer_marker != _PRODUCER_MARKER
+            or self.execution_profile != _V7_PRIMARY_EXECUTION_PROFILE
+        ):
+            raise TypeError("invalid v7-primary cross-fit producer or profile")
+        if not isinstance(self.spec, CrossFitSpec):
+            raise TypeError("spec must be a CrossFitSpec")
+        self.spec._require_intact()
+        if not isinstance(self.root_input_identity, SanitizedRawInputIdentity):
+            raise TypeError("root_input_identity must be a SanitizedRawInputIdentity")
+        self.root_input_identity._require_intact()
+        if not isinstance(self.receiver_universe, FrozenReceiverUniverse):
+            raise TypeError("receiver_universe must be a FrozenReceiverUniverse")
+        self.receiver_universe._require_intact()
+        if (
+            self.receiver_universe.root_input_identity_id
+            != self.root_input_identity.identity_id
+            or self.receiver_universe.root_input_digest
+            != self.root_input_identity.input_digest
+            or self.receiver_universe.root_config_digest
+            != self.root_input_identity.config_digest
+        ):
+            raise ValueError("receiver universe does not match the root input")
+        if not isinstance(self.fold_plan, SubjectFoldPlan):
+            raise TypeError("fold_plan must be a SubjectFoldPlan")
+        self.fold_plan._require_intact()
+        if (
+            self.fold_plan.repeat_id != self.spec.repeat_id
+            or self.fold_plan.subject_ids != self.root_input_identity.subject_ids
+            or self.fold_plan.allowed_n_splits != self.spec.allowed_n_splits
+        ):
+            raise ValueError("v7-primary fold plan does not match its run root")
+        expected_partition_lineage = _outer_fold_partition_lineage(self.spec)
+        observed_partition_lineage = self.fold_plan.partition_seed_lineage
+        if (
+            None
+            if observed_partition_lineage is None
+            else observed_partition_lineage.to_dict()
+        ) != (
+            None
+            if expected_partition_lineage is None
+            else expected_partition_lineage.to_dict()
+        ):
+            raise ValueError("v7-primary fold partition lineage changed")
+
+        folds = tuple(self.folds)
+        planned = {fold.fold_id: fold for fold in self.fold_plan.folds}
+        if (
+            not folds
+            or any(not isinstance(item, CrossFitFoldArtifacts) for item in folds)
+            or len(folds) != len(planned)
+            or {item.fold_id for item in folds} != set(planned)
+        ):
+            raise ValueError("v7-primary artifacts must exactly cover the fold plan")
+        for item in folds:
+            if item.execution_profile != _V7_PRIMARY_EXECUTION_PROFILE:
+                raise ValueError("v7-primary run contains a full-profile fold")
+            manifest = planned[item.fold_id]
+            if (
+                item.training.config.digest != self.root_input_identity.config_digest
+                or item.training.training_subject_ids != manifest.train_subject_ids
+                or item.application.heldout_subject_ids != manifest.test_subject_ids
+                or set(item.training.training_subject_ids).intersection(
+                    item.application.heldout_subject_ids
+                )
+            ):
+                raise ValueError("v7-primary fold train/apply lineage is invalid")
+            configured_activity = self.spec.absolute_activity_v2_spec
+            configured_sender = self.spec.sender_attribution_v2_spec
+            configured_program = self.spec.signed_program_v2_spec
+            configured_coupling = self.spec.eb_shrunken_coupling_v2_spec
+            if configured_activity is None:
+                raise ValueError("v7-primary execution requires M0 configuration")
+            if (
+                item.absolute_activity_v2_transform is None
+                or item.sample_edge_scores_v2 is None
+                or item.absolute_activity_v2_transform.spec.spec_id
+                != configured_activity.spec_id
+                or item.sample_edge_scores_v2.provenance.repeat_id
+                != self.spec.repeat_id
+            ):
+                raise ValueError("v7-primary M0 artifacts do not match the spec")
+            if (configured_sender is None) != (
+                item.sender_attribution_v2_functional is None
+            ):
+                raise ValueError("v7-primary sender stage does not match the spec")
+            if configured_sender is not None and (
+                item.sender_attribution_v2_functional is None
+                or item.sender_attribution_v2_functional.spec.spec_id
+                != configured_sender.spec_id
+            ):
+                raise ValueError("v7-primary sender functional changed")
+            if (configured_program is None) != (
+                item.signed_program_v2_functional is None
+            ):
+                raise ValueError(
+                    "v7-primary signed-program stage does not match the spec"
+                )
+            if configured_program is not None and (
+                item.signed_program_v2_functional is None
+                or item.signed_program_v2_functional.spec.spec_id
+                != configured_program.spec_id
+            ):
+                raise ValueError("v7-primary signed-program functional changed")
+            if (configured_coupling is None) != (
+                item.eb_shrunken_coupling_v2_functional is None
+            ):
+                raise ValueError("v7-primary coupling stage does not match the spec")
+            if configured_coupling is not None:
+                coupling = item.eb_shrunken_coupling_v2_functional
+                contrast = _m2_contrast(self.spec)
+                if (
+                    coupling is None
+                    or coupling.spec.spec_id != configured_coupling.spec_id
+                    or coupling.contrast_id != _contrast_id(contrast)
+                    or coupling.contrast_name != contrast.name
+                ):
+                    raise ValueError("v7-primary M2 functional changed")
+
+        table = self._build_oof_sample_edge_scores(folds)
+        key_columns = (
+            "fold_id",
+            "sample_id",
+            "context_id",
+            "sender",
+            "receiver",
+            "interaction_id",
+        )
+        if table.empty or table.duplicated(list(key_columns)).any():
+            raise ValueError("v7-primary OOF score grain is empty or duplicated")
+        if set(table["fold_id"].astype(str)) != set(planned):
+            raise ValueError("v7-primary OOF scores do not cover every fold")
+        for item in folds:
+            assert item.sample_edge_scores_v2 is not None
+            score_table = item.sample_edge_scores_v2.table
+            if set(score_table["fold_id"].astype(str)) != {item.fold_id} or not set(
+                score_table["sample_id"].astype(str)
+            ).issubset(item.application.heldout_sample_ids):
+                raise ValueError("v7-primary OOF scores escape their held-out fold")
+        table_digest = self._fast_oof_table_digest(table)
+        payload = self._identity_payload(folds, table_digest=table_digest)
+        object.__setattr__(self, "folds", folds)
+        object.__setattr__(self, "oof_sample_edge_score_table_digest", table_digest)
+        object.__setattr__(
+            self,
+            "crossfit_id",
+            stable_id("v7_primary_subject_crossfit", payload),
+        )
+        record_validation(self)
+
+    def _identity_payload(
+        self,
+        folds: tuple[CrossFitFoldArtifacts, ...],
+        *,
+        table_digest: str,
+    ) -> dict[str, object]:
+        return {
+            "execution_profile": self.execution_profile,
+            "fold_plan_id": self.fold_plan.plan_id,
+            "folds": [
+                {
+                    "application_id": item.application.application_id,
+                    "fold_id": item.fold_id,
+                    "m0_provenance_id": cast(
+                        SampleEdgeScoreV2, item.sample_edge_scores_v2
+                    ).provenance.provenance_id,
+                    "m0_transform_id": cast(
+                        AbsoluteActivityV2Transform,
+                        item.absolute_activity_v2_transform,
+                    ).transform_manifest_id,
+                    "m1_functional_id": (
+                        None
+                        if item.signed_program_v2_functional is None
+                        else item.signed_program_v2_functional.functional_id
+                    ),
+                    "m2_functional_id": (
+                        None
+                        if item.eb_shrunken_coupling_v2_functional is None
+                        else item.eb_shrunken_coupling_v2_functional.functional_id
+                    ),
+                    "sender_functional_id": (
+                        None
+                        if item.sender_attribution_v2_functional is None
+                        else item.sender_attribution_v2_functional.functional_id
+                    ),
+                    "training_artifact_id": item.training.training_artifact_id,
+                }
+                for item in sorted(folds, key=lambda value: value.fold_id)
+            ],
+            "oof_sample_edge_score_table_digest": table_digest,
+            "receiver_universe_id": self.receiver_universe.universe_id,
+            "root_input_identity_id": self.root_input_identity.identity_id,
+            "spec_id": self.spec.spec_id,
+        }
+
+    @staticmethod
+    def _fast_oof_table_digest(table: pd.DataFrame) -> str:
+        digest = hashlib.sha256()
+        digest.update(b"v7_primary_oof_sample_edge_scores_v1\x00")
+        digest.update(
+            canonical_json(
+                {
+                    "columns": list(table.columns),
+                    "dtypes": [str(dtype) for dtype in table.dtypes],
+                    "rows": len(table),
+                }
+            ).encode("ascii")
+        )
+        row_hashes = pd.util.hash_pandas_object(
+            table,
+            index=False,
+            categorize=True,
+        ).to_numpy(dtype=np.uint64, copy=False)
+        digest.update(row_hashes.tobytes(order="C"))
+        return f"v7_primary_oof_sample_edge_scores_{digest.hexdigest()}"
+
+    @staticmethod
+    def _build_oof_sample_edge_scores(
+        folds: tuple[CrossFitFoldArtifacts, ...],
+    ) -> pd.DataFrame:
+        tables = [
+            cast(SampleEdgeScoreV2, fold.sample_edge_scores_v2).table
+            for fold in folds
+            if fold.sample_edge_scores_v2 is not None
+        ]
+        if not tables:
+            return pd.DataFrame(columns=SAMPLE_EDGE_SCORE_V2_COLUMNS)
+        return cast(
+            pd.DataFrame,
+            pd.concat(tables, ignore_index=True).sort_values(
+                [
+                    "fold_id",
+                    "sample_id",
+                    "context_id",
+                    "sender",
+                    "receiver",
+                    "interaction_id",
+                ],
+                kind="stable",
+                ignore_index=True,
+            ),
+        )
+
+    @property
+    def oof_sample_edge_scores_v2(self) -> pd.DataFrame:
+        return self._build_oof_sample_edge_scores(self.folds).copy(deep=True)
+
+    @validation_scope()
+    def _require_intact(self) -> None:
+        if validation_is_cached(self):
+            return
+        try:
+            table_digest = self._fast_oof_table_digest(
+                self._build_oof_sample_edge_scores(self.folds)
+            )
+            expected_id = stable_id(
+                "v7_primary_subject_crossfit",
+                self._identity_payload(self.folds, table_digest=table_digest),
+            )
+            valid = (
+                self._producer_marker == _PRODUCER_MARKER
+                and self.execution_profile == _V7_PRIMARY_EXECUTION_PROFILE
+                and all(
+                    isinstance(item, CrossFitFoldArtifacts)
+                    and item.execution_profile == _V7_PRIMARY_EXECUTION_PROFILE
+                    for item in self.folds
+                )
+                and expected_id == self.crossfit_id
+                and table_digest == self.oof_sample_edge_score_table_digest
+            )
+        except (
+            AttributeError,
+            ContractError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise ContractError(
+                "v7-primary cross-fit artifact integrity validation failed",
+                code="v7_primary_crossfit_integrity_violation",
+                field="crossfit_id",
+                remediation="Rerun v7 full-pipeline resampling from raw counts",
+            ) from error
+        if not valid:
+            raise ContractError(
+                "v7-primary cross-fit artifact integrity validation failed",
+                code="v7_primary_crossfit_integrity_violation",
+                field="crossfit_id",
+                remediation="Rerun v7 full-pipeline resampling from raw counts",
+            )
+        record_validation(self)
+
+
+_V7EstimatorCrossFitArtifacts: TypeAlias = (
+    CrossFitArtifacts | _V7PrimaryCrossFitArtifacts
+)
+
+
 def _context_node(row: pd.Series, context_keys: tuple[str, ...]) -> Hashable:
     if len(context_keys) == 1:
         result: Hashable = plain_context_value(row[context_keys[0]])
@@ -6190,6 +6596,7 @@ class _CrossFitFoldExecutionContext:
     receiver_family_opportunity_universe: FrozenReceiverFamilyOpportunityUniverse
     directional_lr_hypothesis_universe: FrozenReceiverFamilyLRHypothesisUniverse | None
     sample_metadata: pd.DataFrame
+    execution_profile: str = _FULL_EXECUTION_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -6335,6 +6742,7 @@ def _run_crossfit_fold(
     receiver_family_opportunity_universe = context.receiver_family_opportunity_universe
     directional_lr_hypothesis_universe = context.directional_lr_hypothesis_universe
     sample_metadata = context.sample_metadata
+    v7_primary = context.execution_profile == _V7_PRIMARY_EXECUTION_PROFILE
 
     stage_started = _fold_stage_started(fold.fold_id, "training")
     prepared_training = _subset_prepared_raw_fold(
@@ -6353,10 +6761,14 @@ def _run_crossfit_fold(
     )
     training = training_result.artifacts
     _fold_stage_completed(fold.fold_id, "training", stage_started)
-    receiver_training_support = assess_receiver_training_support(
-        receiver_universe,
-        outer_fold_id=fold.fold_id,
-        training_cell_type_ids=training.cell_type_ids,
+    receiver_training_support = (
+        ()
+        if v7_primary
+        else assess_receiver_training_support(
+            receiver_universe,
+            outer_fold_id=fold.fold_id,
+            training_cell_type_ids=training.cell_type_ids,
+        )
     )
     stage_started = _fold_stage_started(fold.fold_id, "heldout_application")
     prepared_heldout = _subset_prepared_raw_fold(
@@ -6370,31 +6782,36 @@ def _run_crossfit_fold(
     application = _apply_training_artifacts_from_prepared(
         training,
         prepared_heldout,
+        apply_sender_functionals=not v7_primary,
     )
     training_metadata = sample_metadata.loc[
         sample_metadata[config.subject_key].astype(str).isin(fold.train_subject_ids)
     ]
-    heldout_metadata = sample_metadata.loc[
-        sample_metadata[config.subject_key].astype(str).isin(fold.test_subject_ids)
-    ]
-    design_encoders = tuple(
-        fit_frozen_design_encoder(
-            training_metadata,
-            contrast=contrast,
-            context_keys=config.context_keys,
-            covariates=config.covariates,
-            categorical_covariates=config.categorical_covariates,
-            formula=config.design
-            or default_design_formula(config.context_keys, config.covariates),
-            sample_key=config.sample_key,
-            subject_key=config.subject_key,
+    if v7_primary:
+        design_encoders: tuple[FrozenDesignEncoder, ...] = ()
+        design_applications: tuple[FrozenDesignApplication, ...] = ()
+    else:
+        heldout_metadata = sample_metadata.loc[
+            sample_metadata[config.subject_key].astype(str).isin(fold.test_subject_ids)
+        ]
+        design_encoders = tuple(
+            fit_frozen_design_encoder(
+                training_metadata,
+                contrast=contrast,
+                context_keys=config.context_keys,
+                covariates=config.covariates,
+                categorical_covariates=config.categorical_covariates,
+                formula=config.design
+                or default_design_formula(config.context_keys, config.covariates),
+                sample_key=config.sample_key,
+                subject_key=config.subject_key,
+            )
+            for contrast in spec.contrasts
         )
-        for contrast in spec.contrasts
-    )
-    design_applications = tuple(
-        apply_frozen_design_encoder(encoder, heldout_metadata)
-        for encoder in design_encoders
-    )
+        design_applications = tuple(
+            apply_frozen_design_encoder(encoder, heldout_metadata)
+            for encoder in design_encoders
+        )
     _fold_stage_completed(fold.fold_id, "heldout_application", stage_started)
     training_aggregate = prepared_training.aggregate
     heldout_aggregate = prepared_heldout.aggregate
@@ -6578,6 +6995,53 @@ def _run_crossfit_fold(
                 provenance=sample_edge_scores_v2.provenance,
             )
             _fold_stage_completed(fold.fold_id, "sender_attribution_v2", stage_started)
+    if v7_primary:
+        observed_contrasts = {
+            _contrast_id(functional.contrast)
+            for functional in training.sender_functionals
+        }
+        if observed_contrasts != set(fold.contrast_ids):
+            raise ValueError(
+                "training sender functionals do not match the planned contrasts"
+            )
+        stage_started = _fold_stage_started(fold.fold_id, "v7_primary_validation")
+        artifact = CrossFitFoldArtifacts(
+            fold_id=fold.fold_id,
+            training=training,
+            application=application,
+            receiver_training_support=(),
+            design_encoders=(),
+            design_applications=(),
+            receiver_family_models=(),
+            receiver_family_applications=(),
+            receiver_program_models=(),
+            receiver_program_applications=(),
+            receiver_responses=(),
+            response_precisions=(),
+            receiver_incremental_models=(),
+            receiver_response_applications=(),
+            receiver_incremental_applications=(),
+            family_common_functionals=(),
+            family_common_applications=(),
+            family_common_bindings=(),
+            absolute_activity_v2_transform=absolute_activity_v2_transform,
+            sample_edge_scores_v2=sample_edge_scores_v2,
+            sender_attribution_v2_functional=sender_attribution_v2_functional,
+            signed_program_v2_functional=signed_program_v2_functional,
+            eb_shrunken_coupling_v2_functional=(eb_shrunken_coupling_v2_functional),
+            execution_profile=_V7_PRIMARY_EXECUTION_PROFILE,
+        )
+        _fold_stage_completed(
+            fold.fold_id,
+            "v7_primary_validation",
+            stage_started,
+        )
+        return _CrossFitFoldExecutionResult(
+            artifact=artifact,
+            coverage_rows=(),
+            receiver_coverage_rows=(),
+            sender_parts=(),
+        )
     stage_started = _fold_stage_started(fold.fold_id, "receiver_family")
     receiver_family_models = _training_receiver_families(
         prepared=prepared_training,
@@ -6795,7 +7259,8 @@ def _run_subject_crossfit(
     spec: CrossFitSpec,
     n_jobs: int = 1,
     _receiver_axis_source: FrozenReceiverUniverse | None = None,
-) -> CrossFitArtifacts:
+    _execution_profile: str = _FULL_EXECUTION_PROFILE,
+) -> _V7EstimatorCrossFitArtifacts:
     """Run subject-blocked train/apply and verify the current sender audit scope.
 
     The function accepts no caller-created folds, fitted values, matrices, or
@@ -6804,6 +7269,11 @@ def _run_subject_crossfit(
     """
 
     jobs = _positive_jobs(n_jobs, field_name="n_jobs")
+    if _execution_profile not in {
+        _FULL_EXECUTION_PROFILE,
+        _V7_PRIMARY_EXECUTION_PROFILE,
+    }:
+        raise ValueError("unsupported cross-fit execution profile")
     if not isinstance(snapshot, SanitizedRawInputSnapshot):
         raise TypeError("snapshot must be a SanitizedRawInputSnapshot")
     snapshot._require_intact()
@@ -6818,6 +7288,11 @@ def _run_subject_crossfit(
     if not isinstance(spec, CrossFitSpec):
         raise TypeError("spec must be a CrossFitSpec")
     spec._require_intact()
+    if (
+        _execution_profile == _V7_PRIMARY_EXECUTION_PROFILE
+        and spec.absolute_activity_v2_spec is None
+    ):
+        raise ValueError("v7-primary execution requires absolute_activity_v2_spec")
     if _receiver_axis_source is not None:
         if not isinstance(_receiver_axis_source, FrozenReceiverUniverse):
             raise TypeError("_receiver_axis_source must be a FrozenReceiverUniverse")
@@ -6957,6 +7432,7 @@ def _run_subject_crossfit(
         receiver_family_opportunity_universe=receiver_family_opportunity_universe,
         directional_lr_hypothesis_universe=directional_lr_hypothesis_universe,
         sample_metadata=validated.report.sample_metadata,
+        execution_profile=_execution_profile,
     )
 
     planned_folds = tuple(fold_plan)
@@ -6995,6 +7471,16 @@ def _run_subject_crossfit(
         coverage_rows.extend(execution.coverage_rows)
         receiver_coverage_rows.extend(execution.receiver_coverage_rows)
         sender_parts.extend(execution.sender_parts)
+    if _execution_profile == _V7_PRIMARY_EXECUTION_PROFILE:
+        if coverage_rows or receiver_coverage_rows or sender_parts:
+            raise RuntimeError("v7-primary execution produced legacy coverage rows")
+        return _V7PrimaryCrossFitArtifacts._from_workflow(
+            spec=spec,
+            root_input_identity=root_input_identity,
+            receiver_universe=receiver_universe,
+            fold_plan=fold_plan,
+            folds=tuple(fold_artifacts),
+        )
     coverage = pd.DataFrame(coverage_rows, columns=_COVERAGE_COLUMNS)
     receiver_coverage = pd.DataFrame(
         receiver_coverage_rows, columns=_RECEIVER_COVERAGE_COLUMNS
@@ -7054,6 +7540,31 @@ def _run_subject_crossfit(
         oof_sender_assignments=assignments,
         coverage_audit=audit,
     )
+
+
+def _run_v7_primary_crossfit(
+    snapshot: SanitizedRawInputSnapshot,
+    config: CrychicConfig,
+    resource_bundle: ResourceBundle,
+    target_prior: TargetPrior,
+    *,
+    spec: CrossFitSpec,
+    n_jobs: int = 1,
+    _receiver_axis_source: FrozenReceiverUniverse | None = None,
+) -> _V7PrimaryCrossFitArtifacts:
+    result = _run_subject_crossfit(
+        snapshot,
+        config,
+        resource_bundle,
+        target_prior,
+        spec=spec,
+        n_jobs=n_jobs,
+        _receiver_axis_source=_receiver_axis_source,
+        _execution_profile=_V7_PRIMARY_EXECUTION_PROFILE,
+    )
+    if not isinstance(result, _V7PrimaryCrossFitArtifacts):  # pragma: no cover
+        raise RuntimeError("v7-primary execution returned a full cross-fit artifact")
+    return result
 
 
 @validation_scope()

@@ -23,7 +23,11 @@ from crychic.scoring import (
     UncertaintyAwareHypergraphShrinkageV2Spec,
 )
 
-from .crossfit import CrossFitArtifacts
+from .crossfit import (
+    CrossFitArtifacts,
+    _V7EstimatorCrossFitArtifacts,
+    _V7PrimaryCrossFitArtifacts,
+)
 from .occurrence_v2 import (
     CrossFitTwoPartOccurrenceV2Result,
     fit_crossfit_two_part_occurrence_v2,
@@ -92,15 +96,15 @@ def _frame_digest(table: pd.DataFrame) -> str:
         for column, value in zip(table.columns, row, strict=True):
             if value is None or value is pd.NA or value is pd.NaT:
                 normalized: object = None
-            elif isinstance(value, (float, np.floating)):
+            elif isinstance(value, float | np.floating):
                 normalized = (
                     None
                     if not np.isfinite(float(value))
                     else {"float_hex": float(value).hex()}
                 )
-            elif isinstance(value, (bool, np.bool_)):
+            elif isinstance(value, bool | np.bool_):
                 normalized = bool(value)
-            elif isinstance(value, (int, np.integer)):
+            elif isinstance(value, int | np.integer):
                 normalized = int(value)
             else:
                 normalized = str(value)
@@ -171,7 +175,7 @@ def _merge_required_metadata(
 
 
 def _build_oof_input(
-    crossfit: CrossFitArtifacts,
+    crossfit: _V7EstimatorCrossFitArtifacts,
     *,
     score_head: str,
     design: DifferentialDesignSpec,
@@ -483,7 +487,7 @@ class CrossFitV7EstimatorResult:
 
 
 def fit_crossfit_v7_estimator(
-    crossfit: CrossFitArtifacts,
+    crossfit: _V7EstimatorCrossFitArtifacts,
     spec: V7EstimatorSpec,
     *,
     sample_metadata: pd.DataFrame | None = None,
@@ -491,8 +495,8 @@ def fit_crossfit_v7_estimator(
 ) -> CrossFitV7EstimatorResult:
     """Fit all configured v7 post-cross-fit stages on exact held-out rows."""
 
-    if not isinstance(crossfit, CrossFitArtifacts):
-        raise TypeError("crossfit must be CrossFitArtifacts")
+    if not isinstance(crossfit, CrossFitArtifacts | _V7PrimaryCrossFitArtifacts):
+        raise TypeError("crossfit must contain full or v7-primary artifacts")
     crossfit._require_intact()
     if not isinstance(spec, V7EstimatorSpec):
         raise TypeError("spec must be V7EstimatorSpec")
