@@ -157,3 +157,31 @@ intentional release evidence targets, not claims that those campaigns have
 already run. A plan manifest is `planned_not_executed` until a separate runner
 has checksum-bound every generated fixture, method result, failure, timing,
 and peak process-tree RSS record.
+
+Execute both frozen profiles while fitting each generated dataset only once:
+
+```bash
+uv run --extra benchmark python -m benchmarks.simulation.run_v7_campaign \
+  --phase smoke \
+  --profiles score_primary inference_crossover \
+  --output-dir benchmark_work/suggest_next2_v7/smoke
+```
+
+The runner first completes one single-core pilot, then derives process-level
+parallelism from the pilot peak RSS, host CPU count, and the frozen 80% system
+memory ceiling. Every worker is limited to one numerical-library thread, so
+process and BLAS parallelism cannot oversubscribe one another. Each dataset
+directory contains stage-by-stage JSONL logs, compact Zstandard Parquet tables,
+and a manifest that binds the raw fixture, cross-fit, method arms, timings,
+process-tree peak RSS, versions, Git state, and output checksums. Completed
+datasets resume only after every checksum verifies. `--maximum-replicates` and
+`--maximum-datasets` are diagnostic subsets and do not redefine a frozen tier.
+
+`G0` and `G2` are intentionally both executed. Under the frozen formulas they
+are constant rescalings whenever the `1e6` CPM clip does not bind; every result
+therefore includes an explicit equivalence diagnostic rather than presenting
+their matching rank metrics as independent evidence. `G4` combines standardized
+M0-parent and signed-program effects only after separate I1 fits, and withholds
+an analytic SE because their covariance is unknown. `G5` leaves raw M0 sender
+detection unchanged and evaluates M1, M2 coupling, and conditional attribution
+as separate heads.
