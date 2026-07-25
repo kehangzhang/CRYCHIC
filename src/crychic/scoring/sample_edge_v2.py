@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -329,11 +328,18 @@ def _numeric(
     return values
 
 
-def _same_nullable(group: pd.DataFrame, column: str) -> bool:
-    values = group[column]
-    if values.isna().all():
-        return True
-    return not values.isna().any() and values.nunique(dropna=False) == 1
+def _nullable_group_constants(
+    grouped: Any,
+    columns: tuple[str, ...],
+) -> pd.DataFrame:
+    """Return whether every nullable column is constant in every group."""
+
+    sizes = grouped.size()
+    nonmissing = grouped[list(columns)].count()
+    unique = grouped[list(columns)].nunique(dropna=True)
+    return nonmissing.eq(0) | (
+        nonmissing.eq(sizes, axis="index") & unique.eq(1)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,31 +541,53 @@ class SampleEdgeScoreV2:
             )
 
     def _validate_parent_geometry(self, table: pd.DataFrame) -> None:
-        for _, group in table.groupby(list(_PARENT_KEY), observed=True, sort=False):
-            row_count = len(group)
-            if set(group["candidate_sender_count"]) != {row_count}:
-                raise ValueError("candidate_sender_count must equal parent row count")
-            finite = group["sender_detection_raw"].dropna().astype(float)
-            if set(group["effective_candidate_count"]) != {len(finite)}:
-                raise ValueError(
-                    "effective_candidate_count must equal measured senders"
-                )
-            for column in ("parent_peak_raw", "parent_total_raw", "parent_mean_raw"):
-                if not _same_nullable(group, column):
-                    raise ValueError(f"{column} must be constant within each parent")
-            summaries = group.iloc[0][
-                ["parent_peak_raw", "parent_total_raw", "parent_mean_raw"]
-            ]
-            if finite.empty:
-                if summaries.notna().any():
-                    raise ValueError("unmeasured parent summaries must be NA")
-                continue
-            expected = (float(finite.max()), float(finite.sum()), float(finite.mean()))
-            observed = tuple(float(value) for value in summaries)
-            if not all(
-                math.isclose(left, right, rel_tol=1e-12, abs_tol=1e-12)
-                for left, right in zip(observed, expected, strict=True)
-            ):
+        grouped = table.groupby(list(_PARENT_KEY), observed=True, sort=False)
+        sizes = grouped.size()
+        candidate = grouped["candidate_sender_count"].agg(["min", "max"])
+        if (
+            candidate["min"].ne(candidate["max"]).any()
+            or candidate["min"].ne(sizes).any()
+        ):
+            raise ValueError("candidate_sender_count must equal parent row count")
+
+        detection = grouped["sender_detection_raw"].agg(
+            ["count", "max", "sum", "mean"]
+        )
+        effective = grouped["effective_candidate_count"].agg(["min", "max"])
+        if (
+            effective["min"].ne(effective["max"]).any()
+            or effective["min"].ne(detection["count"]).any()
+        ):
+            raise ValueError("effective_candidate_count must equal measured senders")
+
+        summary_columns = (
+            "parent_peak_raw",
+            "parent_total_raw",
+            "parent_mean_raw",
+        )
+        constants = _nullable_group_constants(grouped, summary_columns)
+        for column in summary_columns:
+            if not constants[column].all():
+                raise ValueError(f"{column} must be constant within each parent")
+
+        summaries = grouped[list(summary_columns)].first()
+        unmeasured = detection["count"].eq(0)
+        if summaries.loc[unmeasured].notna().any(axis=None):
+            raise ValueError("unmeasured parent summaries must be NA")
+        measured = ~unmeasured
+        if measured.any():
+            observed = summaries.loc[measured, list(summary_columns)].to_numpy(
+                dtype=float
+            )
+            expected = detection.loc[measured, ["max", "sum", "mean"]].to_numpy(
+                dtype=float
+            )
+            if not np.isclose(
+                observed,
+                expected,
+                rtol=1e-12,
+                atol=1e-12,
+            ).all():
                 raise ValueError("parent summaries do not match sender detections")
 
     def _validate_optional_heads(self, table: pd.DataFrame) -> None:
@@ -627,55 +655,86 @@ class SampleEdgeScoreV2:
                 for value in supplied_ids
             ):
                 raise ValueError(f"{functional_column} must contain canonical IDs")
-        for _, group in table.groupby(list(_PARENT_KEY), observed=True, sort=False):
-            for column in (
-                "program_signed",
-                "program_unaligned_raw",
-                "program_direction",
-                "program_status",
-                "program_reason_code",
-                "program_functional_id",
-                "active_probability",
-                "occurrence_status",
-                "occurrence_reason_code",
-                "null_sender_attribution",
-                "attribution_entropy",
-            ):
-                if not _same_nullable(group, column):
-                    raise ValueError(f"{column} must be constant within each parent")
-            sender_weights = group["sender_attribution"].dropna().astype(float)
-            null_values = group["null_sender_attribution"].dropna().astype(float)
-            entropy_values = group["attribution_entropy"].dropna().astype(float)
-            if sender_weights.empty:
-                if not null_values.empty or not entropy_values.empty:
-                    raise ValueError(
-                        "null attribution and entropy require sender attribution"
-                    )
-                continue
-            if null_values.empty:
-                raise ValueError("sender attribution requires a null sender")
-            total = float(sender_weights.sum()) + float(null_values.iloc[0])
-            if not math.isclose(total, 1.0, rel_tol=1e-12, abs_tol=1e-12):
-                raise ValueError("sender and null attribution must sum to one")
-            if entropy_values.empty:
-                raise ValueError("sender attribution requires attribution entropy")
-            probabilities = np.concatenate(
-                ([float(null_values.iloc[0])], sender_weights.to_numpy(dtype=float))
+        grouped = table.groupby(list(_PARENT_KEY), observed=True, sort=False)
+        parent_columns = (
+            "program_signed",
+            "program_unaligned_raw",
+            "program_direction",
+            "program_status",
+            "program_reason_code",
+            "program_functional_id",
+            "active_probability",
+            "occurrence_status",
+            "occurrence_reason_code",
+            "null_sender_attribution",
+            "attribution_entropy",
+        )
+        constants = _nullable_group_constants(grouped, parent_columns)
+        for column in parent_columns:
+            if not constants[column].all():
+                raise ValueError(f"{column} must be constant within each parent")
+
+        sender_count = grouped["sender_attribution"].count()
+        null_count = grouped["null_sender_attribution"].count()
+        entropy_count = grouped["attribution_entropy"].count()
+        sender_missing = sender_count.eq(0)
+        if ((null_count.gt(0) | entropy_count.gt(0)) & sender_missing).any():
+            raise ValueError(
+                "null attribution and entropy require sender attribution"
             )
-            positive = probabilities[probabilities > 0.0]
-            expected_entropy = (
-                -float(np.sum(positive * np.log(positive)))
-                / math.log(len(probabilities))
-                if len(probabilities) > 1
-                else 0.0
+        sender_observed = ~sender_missing
+        if (sender_observed & null_count.eq(0)).any():
+            raise ValueError("sender attribution requires a null sender")
+
+        sender_sum = grouped["sender_attribution"].sum(min_count=1)
+        null_value = grouped["null_sender_attribution"].first()
+        total = sender_sum + null_value
+        if not np.isclose(
+            total.loc[sender_observed].to_numpy(dtype=float),
+            1.0,
+            rtol=1e-12,
+            atol=1e-12,
+        ).all():
+            raise ValueError("sender and null attribution must sum to one")
+        if (sender_observed & entropy_count.eq(0)).any():
+            raise ValueError("sender attribution requires attribution entropy")
+
+        if sender_observed.any():
+            weights = table["sender_attribution"].to_numpy(dtype=float)
+            positive = np.isfinite(weights) & (weights > 0.0)
+            terms = np.zeros(len(table), dtype=float)
+            terms[positive] = weights[positive] * np.log(weights[positive])
+            entropy_terms = table.loc[:, list(_PARENT_KEY)].copy()
+            entropy_terms["term"] = terms
+            sender_term = entropy_terms.groupby(
+                list(_PARENT_KEY), observed=True, sort=False
+            )["term"].sum()
+            null_array = null_value.to_numpy(dtype=float)
+            null_term = np.zeros(len(null_array), dtype=float)
+            null_positive = np.isfinite(null_array) & (null_array > 0.0)
+            null_term[null_positive] = (
+                null_array[null_positive] * np.log(null_array[null_positive])
             )
-            if not math.isclose(
-                float(entropy_values.iloc[0]),
-                expected_entropy,
-                rel_tol=1e-12,
-                abs_tol=1e-12,
-            ):
-                raise ValueError("attribution_entropy disagrees with sender weights")
+            expected_entropy = np.full(len(sender_count), np.nan, dtype=float)
+            observed_mask = sender_observed.to_numpy(dtype=bool)
+            expected_entropy[observed_mask] = -(
+                sender_term.to_numpy(dtype=float)[observed_mask]
+                + null_term[observed_mask]
+            ) / np.log(
+                sender_count.to_numpy(dtype=float)[observed_mask] + 1.0
+            )
+            observed_entropy = grouped["attribution_entropy"].first().to_numpy(
+                dtype=float
+            )
+            if not np.isclose(
+                observed_entropy[observed_mask],
+                expected_entropy[observed_mask],
+                rtol=1e-12,
+                atol=1e-12,
+            ).all():
+                raise ValueError(
+                    "attribution_entropy disagrees with sender weights"
+                )
 
 
 __all__ = [

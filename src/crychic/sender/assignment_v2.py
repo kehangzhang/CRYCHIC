@@ -74,7 +74,7 @@ def _canonical_table_digest(table: pd.DataFrame, columns: tuple[str, ...]) -> st
         for value in row:
             if pd.isna(value):
                 record.append(None)
-            elif isinstance(value, (float, np.floating)):
+            elif isinstance(value, float | np.floating):
                 record.append({"float_hex": float(value).hex()})
             elif isinstance(value, np.generic):
                 record.append(value.item())
@@ -437,54 +437,92 @@ def apply_sender_attribution_v2(
         functional, coupling_functional
     )
     output = table.copy(deep=True)
-    for _, indices in output.groupby(
+    n_rows = len(output)
+    senders = output["sender"].to_numpy(dtype=object)
+    receivers = output["receiver"].to_numpy(dtype=object)
+    interactions = output["interaction_id"].to_numpy(dtype=object)
+    detections = output["sender_detection_raw"].to_numpy(dtype=float)
+    parent_values = output[functional.spec.parent_activity_head].to_numpy(dtype=float)
+
+    coupling_prior = output["coupling_prior"].to_numpy(dtype=float, copy=True)
+    coupling_status = output["coupling_status"].to_numpy(dtype=object, copy=True)
+    coupling_reason = output["coupling_reason_code"].to_numpy(
+        dtype=object, copy=True
+    )
+    coupling_ids = output["coupling_functional_id"].to_numpy(
+        dtype=object, copy=True
+    )
+    coupling_terms = np.zeros(n_rows, dtype=float)
+    if coupling_functional is not None:
+        for index, (sender, receiver, interaction_id) in enumerate(
+            zip(senders, receivers, interactions, strict=True)
+        ):
+            coupling_record = coupling_by_key.get(
+                (str(sender), str(receiver), str(interaction_id))
+            )
+            coupling_ids[index] = coupling_functional.functional_id
+            if (
+                coupling_functional.status is EBShrunkenCouplingStatus.OBSERVED
+                and coupling_record is not None
+                and coupling_record.status is EBShrunkenCouplingStatus.OBSERVED
+                and coupling_record.shrunken_correlation is not None
+            ):
+                correlation = float(coupling_record.shrunken_correlation)
+                coupling_prior[index] = correlation
+                coupling_status[index] = "observed"
+                coupling_reason[index] = None
+                coupling_terms[index] = (
+                    coupling_functional.spec.attribution_coupling_weight * correlation
+                )
+            else:
+                coupling_prior[index] = np.nan
+                coupling_status[index] = "not_estimable"
+                coupling_reason[index] = (
+                    "coupling_record_missing"
+                    if coupling_record is None
+                    else coupling_record.reason_code
+                    or coupling_functional.reason_code
+                    or "coupling_not_estimable"
+                )
+
+    active_probabilities = output["active_probability"].to_numpy(
+        dtype=float, copy=True
+    )
+    occurrence_status = output["occurrence_status"].to_numpy(
+        dtype=object, copy=True
+    )
+    occurrence_reason = output["occurrence_reason_code"].to_numpy(
+        dtype=object, copy=True
+    )
+    occurrence_ids = np.full(n_rows, functional.functional_id, dtype=object)
+    sender_attribution = output["sender_attribution"].to_numpy(
+        dtype=float, copy=True
+    )
+    null_attribution = output["null_sender_attribution"].to_numpy(
+        dtype=float, copy=True
+    )
+    attribution_entropy = output["attribution_entropy"].to_numpy(
+        dtype=float, copy=True
+    )
+    attribution_status = output["attribution_status"].to_numpy(
+        dtype=object, copy=True
+    )
+    attribution_reason = output["attribution_reason_code"].to_numpy(
+        dtype=object, copy=True
+    )
+    attribution_ids = np.full(n_rows, attribution_application_id, dtype=object)
+
+    parent_groups = output.groupby(
         ["sample_id", "context_id", "fold_id", "receiver", "interaction_id"],
         observed=True,
         sort=False,
-    ).groups.items():
-        group_index = list(indices)
-        coupling_terms: dict[int, float] = {}
-        if coupling_functional is not None:
-            for index in group_index:
-                row = output.loc[index]
-                coupling_key = (
-                    str(row["sender"]),
-                    str(row["receiver"]),
-                    str(row["interaction_id"]),
-                )
-                coupling_record = coupling_by_key.get(coupling_key)
-                output.loc[index, "coupling_functional_id"] = (
-                    coupling_functional.functional_id
-                )
-                if (
-                    coupling_functional.status is EBShrunkenCouplingStatus.OBSERVED
-                    and coupling_record is not None
-                    and coupling_record.status is EBShrunkenCouplingStatus.OBSERVED
-                    and coupling_record.shrunken_correlation is not None
-                ):
-                    output.loc[index, "coupling_prior"] = (
-                        coupling_record.shrunken_correlation
-                    )
-                    output.loc[index, "coupling_status"] = "observed"
-                    output.loc[index, "coupling_reason_code"] = None
-                    coupling_terms[index] = (
-                        coupling_functional.spec.attribution_coupling_weight
-                        * coupling_record.shrunken_correlation
-                    )
-                else:
-                    output.loc[index, "coupling_prior"] = np.nan
-                    output.loc[index, "coupling_status"] = "not_estimable"
-                    output.loc[index, "coupling_reason_code"] = (
-                        "coupling_record_missing"
-                        if coupling_record is None
-                        else coupling_record.reason_code
-                        or coupling_functional.reason_code
-                        or "coupling_not_estimable"
-                    )
-        first = output.loc[group_index[0]]
-        parent_key = (str(first["receiver"]), str(first["interaction_id"]))
+    ).indices
+    for group_positions in parent_groups.values():
+        positions = np.asarray(group_positions, dtype=np.intp)
+        first = int(positions[0])
+        parent_key = (str(receivers[first]), str(interactions[first]))
         parent_calibration = parent_by_key.get(parent_key)
-        parent_value = first[functional.spec.parent_activity_head]
+        parent_value = parent_values[first]
         if (
             parent_calibration is None
             or parent_calibration.status is not SenderV2CalibrationStatus.OBSERVED
@@ -497,40 +535,33 @@ def apply_sender_attribution_v2(
                 if parent_calibration.status is SenderV2CalibrationStatus.NOT_ESTIMABLE
                 else "parent_activity_not_estimable"
             )
-            output.loc[group_index, "occurrence_status"] = "not_estimable"
-            output.loc[group_index, "occurrence_reason_code"] = reason
-            output.loc[group_index, "occurrence_functional_id"] = (
-                functional.functional_id
-            )
-            output.loc[group_index, "attribution_status"] = "not_estimable"
-            output.loc[group_index, "attribution_reason_code"] = reason
-            output.loc[group_index, "attribution_functional_id"] = (
-                attribution_application_id
-            )
+            occurrence_status[positions] = "not_estimable"
+            occurrence_reason[positions] = reason
+            attribution_status[positions] = "not_estimable"
+            attribution_reason[positions] = reason
             continue
         active_probability = _empirical_active_probability(
             float(parent_value),
             parent_calibration,
             pseudocount=functional.spec.ecdf_pseudocount,
         )
-        output.loc[group_index, "active_probability"] = active_probability
-        output.loc[group_index, "occurrence_status"] = "partial"
-        output.loc[group_index, "occurrence_reason_code"] = None
-        output.loc[group_index, "occurrence_functional_id"] = functional.functional_id
+        active_probabilities[positions] = active_probability
+        occurrence_status[positions] = "partial"
+        occurrence_reason[positions] = None
 
         valid_indices: list[int] = []
         logits: list[float] = []
         missing_reasons: dict[int, str] = {}
-        for index in group_index:
-            row = output.loc[index]
+        for raw_index in positions:
+            index = int(raw_index)
             detection_key = (
-                str(row["sender"]),
-                str(row["receiver"]),
-                str(row["interaction_id"]),
+                str(senders[index]),
+                str(receivers[index]),
+                str(interactions[index]),
             )
             calibration = detection_by_key.get(detection_key)
-            coupling_term = coupling_terms.get(index, 0.0)
-            if pd.isna(row["sender_detection_raw"]):
+            coupling_term = coupling_terms[index]
+            if pd.isna(detections[index]):
                 missing_reasons[index] = "sender_detection_not_estimable"
             elif calibration is None:
                 missing_reasons[index] = "sender_calibration_missing"
@@ -540,7 +571,7 @@ def apply_sender_attribution_v2(
                 assert calibration.center is not None
                 assert calibration.scale is not None
                 standardized = (
-                    (float(row["sender_detection_raw"]) - calibration.center)
+                    (float(detections[index]) - calibration.center)
                     / calibration.scale
                     / functional.spec.attribution_temperature
                 )
@@ -554,34 +585,42 @@ def apply_sender_attribution_v2(
                     )
                 )
                 valid_indices.append(index)
-        output.loc[group_index, "attribution_functional_id"] = (
-            attribution_application_id
-        )
         if not valid_indices:
-            output.loc[group_index, "attribution_status"] = "not_estimable"
-            output.loc[group_index, "attribution_reason_code"] = (
-                "no_estimable_sender_calibrations"
-            )
+            attribution_status[positions] = "not_estimable"
+            attribution_reason[positions] = "no_estimable_sender_calibrations"
             continue
         conditional_weights = _entmax15(np.asarray(logits, dtype=float))
         sender_weights = active_probability * conditional_weights
         null_weight = 1.0 - active_probability
-        output.loc[group_index, "null_sender_attribution"] = null_weight
+        null_attribution[positions] = null_weight
         probabilities = np.concatenate(([null_weight], sender_weights))
-        output.loc[group_index, "attribution_entropy"] = _normalized_entropy(
+        attribution_entropy[positions] = _normalized_entropy(
             probabilities
         )
         partial = bool(missing_reasons)
         for index, weight in zip(valid_indices, sender_weights, strict=True):
-            output.loc[index, "sender_attribution"] = float(weight)
-            output.loc[index, "attribution_status"] = (
-                "partial" if partial else "observed"
-            )
-            output.loc[index, "attribution_reason_code"] = None
+            sender_attribution[index] = float(weight)
+            attribution_status[index] = "partial" if partial else "observed"
+            attribution_reason[index] = None
         for index, reason in missing_reasons.items():
-            output.loc[index, "sender_attribution"] = np.nan
-            output.loc[index, "attribution_status"] = "not_estimable"
-            output.loc[index, "attribution_reason_code"] = reason
+            sender_attribution[index] = np.nan
+            attribution_status[index] = "not_estimable"
+            attribution_reason[index] = reason
+
+    output["coupling_prior"] = coupling_prior
+    output["coupling_status"] = coupling_status
+    output["coupling_reason_code"] = coupling_reason
+    output["coupling_functional_id"] = coupling_ids
+    output["active_probability"] = active_probabilities
+    output["occurrence_status"] = occurrence_status
+    output["occurrence_reason_code"] = occurrence_reason
+    output["occurrence_functional_id"] = occurrence_ids
+    output["sender_attribution"] = sender_attribution
+    output["null_sender_attribution"] = null_attribution
+    output["attribution_entropy"] = attribution_entropy
+    output["attribution_status"] = attribution_status
+    output["attribution_reason_code"] = attribution_reason
+    output["attribution_functional_id"] = attribution_ids
     return output.loc[:, score_table.columns].copy(deep=True)
 
 

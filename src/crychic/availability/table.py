@@ -515,76 +515,128 @@ def estimate_bundle_availability(
     state_rows = metadata.index[state_eligible]
     records: list[pd.DataFrame] = []
     interaction_fields = {
-        "interaction_id": [item.interaction_id for item in supported],
-        "source_interaction_id": [item.source_interaction_id for item in supported],
-        "ligand": [item.ligand_name for item in supported],
-        "receptor": [item.receptor_name for item in supported],
-        "pathway": [item.pathway for item in supported],
+        "interaction_id": np.asarray(
+            [item.interaction_id for item in supported], dtype=object
+        ),
+        "source_interaction_id": np.asarray(
+            [item.source_interaction_id for item in supported], dtype=object
+        ),
+        "ligand": np.asarray([item.ligand_name for item in supported], dtype=object),
+        "receptor": np.asarray(
+            [item.receptor_name for item in supported], dtype=object
+        ),
+        "pathway": np.asarray([item.pathway for item in supported], dtype=object),
     }
     for sample_id, sample_rows in metadata.loc[state_rows].groupby(
         "sample_id", sort=False, observed=True
     ):
         row_indices = sample_rows.index.to_numpy(dtype=int)
-        for sender_row in row_indices:
-            sender = metadata.loc[sender_row]
-            ligand = ligand_matrix[sender_row]
-            ligand_absolute = ligand_absolute_matrix[sender_row]
-            for receiver_row in row_indices:
-                receiver = metadata.loc[receiver_row]
-                receptor = receptor_matrix[receiver_row]
-                receptor_absolute = receptor_absolute_matrix[receiver_row]
-                state = ligand * receptor
-                absolute_lr_activity = 0.5 * (ligand_absolute + receptor_absolute)
-                sender_proportion = float(sender["cell_proportion"])
-                receiver_proportion = float(receiver["cell_proportion"])
-                sender_abundance_eligible = bool(sender["abundance_eligible"])
-                receiver_abundance_eligible = bool(receiver["abundance_eligible"])
-                ecosystem_eligible = (
-                    sender_abundance_eligible and receiver_abundance_eligible
+        n_cell_types = len(row_indices)
+        n_interactions = len(supported)
+        sender_rows = np.repeat(row_indices, n_cell_types * n_interactions)
+        receiver_rows = np.tile(
+            np.repeat(row_indices, n_interactions), n_cell_types
+        )
+        interaction_indices = np.tile(
+            np.arange(n_interactions, dtype=int), n_cell_types * n_cell_types
+        )
+        sender_metadata = metadata.loc[sender_rows]
+        receiver_metadata = metadata.loc[receiver_rows]
+        ligand = ligand_matrix[sender_rows, interaction_indices]
+        receptor = receptor_matrix[receiver_rows, interaction_indices]
+        ligand_absolute = ligand_absolute_matrix[sender_rows, interaction_indices]
+        receptor_absolute = receptor_absolute_matrix[
+            receiver_rows, interaction_indices
+        ]
+        state = ligand * receptor
+        absolute_lr_activity = 0.5 * (ligand_absolute + receptor_absolute)
+        sender_proportion = sender_metadata["cell_proportion"].to_numpy(dtype=float)
+        receiver_proportion = receiver_metadata["cell_proportion"].to_numpy(
+            dtype=float
+        )
+        sender_abundance = sender_metadata["abundance_eligible"].to_numpy(dtype=bool)
+        receiver_abundance = receiver_metadata["abundance_eligible"].to_numpy(
+            dtype=bool
+        )
+        ecosystem_eligible = sender_abundance & receiver_abundance
+        pair_factors = np.asarray(
+            [
+                math.sqrt(
+                    float(metadata.at[sender_row, "cell_proportion"])
+                    * float(metadata.at[receiver_row, "cell_proportion"])
                 )
-                if ecosystem_eligible:
-                    ecosystem = state * math.sqrt(
-                        sender_proportion * receiver_proportion
-                    )
-                    ecosystem_status = "observed"
-                    ecosystem_reason_code: str | None = None
-                else:
-                    ecosystem = np.full_like(state, np.nan)
-                    ecosystem_status = "abundance_not_estimable"
-                    if (
-                        not sender_abundance_eligible
-                        and not receiver_abundance_eligible
-                    ):
-                        ecosystem_reason_code = (
-                            "sender_and_receiver_abundance_not_eligible"
-                        )
-                    elif not sender_abundance_eligible:
-                        ecosystem_reason_code = "sender_abundance_not_eligible"
-                    else:
-                        ecosystem_reason_code = "receiver_abundance_not_eligible"
-                frame = pd.DataFrame(interaction_fields)
-                frame.insert(0, "receiver", receiver["cell_type"])
-                frame.insert(0, "sender", sender["cell_type"])
-                for key in reversed(context_keys):
-                    frame.insert(0, key, [_context_value(sender, key)] * len(frame))
-                frame.insert(0, "context_id", _context_id(sender, context_keys))
-                frame.insert(0, "subject_id", sender["subject_id"])
-                frame.insert(0, "sample_id", sample_id)
-                frame["ligand_availability"] = ligand
-                frame["receptor_availability"] = receptor
-                frame["ligand_absolute_evidence"] = ligand_absolute
-                frame["receptor_absolute_evidence"] = receptor_absolute
-                frame["absolute_lr_activity"] = absolute_lr_activity
-                frame["sender_proportion"] = sender_proportion
-                frame["receiver_proportion"] = receiver_proportion
-                frame["availability_state"] = state
-                frame["availability_ecosystem"] = ecosystem
-                frame["state_status"] = "observed"
-                frame["state_reason_code"] = None
-                frame["ecosystem_status"] = ecosystem_status
-                frame["ecosystem_reason_code"] = ecosystem_reason_code
-                frame["ecosystem_label"] = "capture_weighted_ecosystem_proxy"
-                records.append(frame)
+                for sender_row in row_indices
+                for receiver_row in row_indices
+            ],
+            dtype=float,
+        )
+        ecosystem = state * np.repeat(pair_factors, n_interactions)
+        ecosystem[~ecosystem_eligible] = np.nan
+        ecosystem_status = np.where(
+            ecosystem_eligible, "observed", "abundance_not_estimable"
+        )
+        ecosystem_reason = np.select(
+            [
+                ecosystem_eligible,
+                ~sender_abundance & ~receiver_abundance,
+                ~sender_abundance,
+            ],
+            [
+                None,
+                "sender_and_receiver_abundance_not_eligible",
+                "sender_abundance_not_eligible",
+            ],
+            default="receiver_abundance_not_eligible",
+        )
+        sender_context_ids = {
+            int(row_index): _context_id(metadata.loc[row_index], context_keys)
+            for row_index in row_indices
+        }
+        frame_data: dict[str, object] = {
+            "sample_id": np.full(len(sender_rows), sample_id, dtype=object),
+            "subject_id": sender_metadata["subject_id"].to_numpy(),
+            "context_id": np.asarray(
+                [sender_context_ids[int(index)] for index in sender_rows],
+                dtype=object,
+            ),
+        }
+        for key in context_keys:
+            sender_context_values = {
+                int(row_index): _context_value(metadata.loc[row_index], key)
+                for row_index in row_indices
+            }
+            frame_data[key] = np.asarray(
+                [sender_context_values[int(index)] for index in sender_rows]
+            )
+        frame_data.update(
+            {
+                "sender": sender_metadata["cell_type"].to_numpy(),
+                "receiver": receiver_metadata["cell_type"].to_numpy(),
+                **{
+                    column: values[interaction_indices]
+                    for column, values in interaction_fields.items()
+                },
+                "ligand_availability": ligand,
+                "receptor_availability": receptor,
+                "ligand_absolute_evidence": ligand_absolute,
+                "receptor_absolute_evidence": receptor_absolute,
+                "absolute_lr_activity": absolute_lr_activity,
+                "sender_proportion": sender_proportion,
+                "receiver_proportion": receiver_proportion,
+                "availability_state": state,
+                "availability_ecosystem": ecosystem,
+                "state_status": np.full(len(sender_rows), "observed", dtype=object),
+                "state_reason_code": np.full(len(sender_rows), None, dtype=object),
+                "ecosystem_status": ecosystem_status,
+                "ecosystem_reason_code": ecosystem_reason,
+                "ecosystem_label": np.full(
+                    len(sender_rows),
+                    "capture_weighted_ecosystem_proxy",
+                    dtype=object,
+                ),
+            }
+        )
+        records.append(pd.DataFrame(frame_data))
     sample_interactions = (
         pd.concat(records, ignore_index=True)
         if records

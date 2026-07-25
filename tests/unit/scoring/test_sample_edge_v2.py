@@ -62,6 +62,28 @@ def test_parent_summary_mismatch_is_rejected() -> None:
         SampleEdgeScoreV2(table=table, provenance=scores.provenance)
 
 
+def test_parent_cardinality_and_nullable_heads_are_checked_per_parent() -> None:
+    scores = sample_edge_scores()
+    invalid_count = scores.table.copy()
+    invalid_count["candidate_sender_count"] = 3
+    with pytest.raises(ValueError, match="candidate_sender_count"):
+        SampleEdgeScoreV2(table=invalid_count, provenance=scores.provenance)
+
+    invalid_head = scores.table.copy()
+    invalid_head.loc[0, "program_reason_code"] = "different_reason"
+    with pytest.raises(ValueError, match="constant within each parent"):
+        SampleEdgeScoreV2(table=invalid_head, provenance=scores.provenance)
+
+
+def test_attribution_entropy_mismatch_is_rejected() -> None:
+    scores = sample_edge_scores()
+    table = scores.table.copy()
+    table["attribution_entropy"] = 0.125
+
+    with pytest.raises(ValueError, match="attribution_entropy disagrees"):
+        SampleEdgeScoreV2(table=table, provenance=scores.provenance)
+
+
 def test_low_evidence_is_not_structural_impossibility() -> None:
     scores = sample_edge_scores()
     table = scores.table.copy()
