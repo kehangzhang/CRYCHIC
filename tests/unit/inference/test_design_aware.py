@@ -91,6 +91,46 @@ def test_independent_two_group_uses_raw_score_and_hc3() -> None:
     assert result["diagnostic_p_value"] < 0.001
 
 
+def test_independent_two_group_omits_invariant_continuous_nuisance() -> None:
+    table = _independent_two_group_table()
+    table["receiver_fraction"] = 0.2
+    spec = DifferentialDesignSpec(
+        design_kind=DifferentialDesignKind.INDEPENDENT_TWO_GROUP,
+        condition_column="condition",
+        condition_levels=("control", "treated"),
+        contrasts=(_contrast(),),
+        continuous_covariates=("receiver_fraction",),
+        minimum_subjects_per_level=4,
+    )
+
+    effect = fit_design_aware_differential(table, spec).effects.iloc[0]
+
+    assert effect["status"] == "observed"
+    assert effect["effect"] == pytest.approx(2.0, abs=1e-12)
+    assert effect["design_rank"] == 2
+
+
+def test_independent_two_group_keeps_condition_confounded_batch_non_estimable() -> None:
+    table = _independent_two_group_table()
+    table["batch"] = table["condition"].map(
+        {"control": "batch-a", "treated": "batch-b"}
+    )
+    spec = DifferentialDesignSpec(
+        design_kind=DifferentialDesignKind.INDEPENDENT_TWO_GROUP,
+        condition_column="condition",
+        condition_levels=("control", "treated"),
+        contrasts=(_contrast(),),
+        batch_columns=("batch",),
+        minimum_subjects_per_level=4,
+    )
+
+    effect = fit_design_aware_differential(table, spec).effects.iloc[0]
+
+    assert effect["status"] == "not_estimable"
+    assert effect["reason_code"] == "rank_deficient_or_ill_conditioned_design"
+    assert pd.isna(effect["effect"])
+
+
 def test_independent_multi_group_reports_contrasts_and_omnibus() -> None:
     offsets = {"A": 0.0, "B": 1.0, "C": 3.0}
     rows = [
@@ -269,6 +309,32 @@ def test_continuous_design_estimates_slope() -> None:
     assert effect["contrast_name"] == "slope:condition"
     assert effect["effect"] == pytest.approx(1.25, abs=0.005)
     assert effect["covariance_method"] == "hc3_diagnostic"
+
+
+def test_continuous_design_omits_invariant_continuous_nuisance() -> None:
+    residuals = np.tile(np.asarray([-0.1, 0.0, 0.1, 0.0]), 6)
+    rows = [
+        _row(
+            sample_id=f"dose-{index}",
+            subject_id=f"dose-subject-{index}",
+            condition=float(index),
+            score=2.0 + 1.25 * index + float(residuals[index]),
+            receiver_fraction=0.2,
+        )
+        for index in range(24)
+    ]
+    spec = DifferentialDesignSpec(
+        design_kind="continuous",
+        condition_column="condition",
+        continuous_covariates=("receiver_fraction",),
+        minimum_subjects_per_level=4,
+    )
+
+    effect = fit_design_aware_differential(pd.DataFrame(rows), spec).effects.iloc[0]
+
+    assert effect["status"] == "observed"
+    assert effect["effect"] == pytest.approx(1.25, abs=0.005)
+    assert effect["design_rank"] == 2
 
 
 def test_confounded_multi_cohort_is_typed_not_estimable() -> None:

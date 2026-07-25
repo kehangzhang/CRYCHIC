@@ -667,11 +667,9 @@ def _categorical_design(
         values = table[column].to_numpy(dtype=float)
         centered = values - float(values.mean())
         scale = float(np.std(centered, ddof=0))
-        if scale <= 0.0:
-            parts.append(np.zeros((len(table), 1)))
-        else:
+        if scale > 0.0:
             parts.append((centered / scale)[:, np.newaxis])
-        columns.append(f"continuous:{column}")
+            columns.append(f"continuous:{column}")
     categorical = [
         *spec.batch_columns,
         *spec.categorical_covariates,
@@ -699,12 +697,9 @@ def _continuous_design(
         values = table[column].to_numpy(dtype=float)
         centered = values - float(values.mean())
         scale = float(np.std(centered, ddof=0))
-        parts.append(
-            np.zeros((len(table), 1))
-            if scale <= 0.0
-            else (centered / scale)[:, np.newaxis]
-        )
-        columns.append(f"continuous:{column}")
+        if scale > 0.0:
+            parts.append((centered / scale)[:, np.newaxis])
+            columns.append(f"continuous:{column}")
     for column in (*spec.batch_columns, *spec.categorical_covariates):
         categorical_values = table[column].astype(str)
         for level in tuple(sorted(categorical_values.unique()))[1:]:
