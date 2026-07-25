@@ -37,10 +37,13 @@ from crychic.core import (
 )
 from crychic.design import balanced_contrast
 from crychic.inference import (
+    DifferentialContrastSpec,
+    DifferentialDesignSpec,
     FullPipelineEffectDistributionSpec,
     HypothesisDeclaration,
     HypothesisRole,
     SpecificityDirection,
+    TwoPartOccurrenceV2Spec,
     freeze_hypothesis_universe,
 )
 from crychic.resampling import SubjectFoldPlan
@@ -98,6 +101,7 @@ from crychic.workflow import (
     adapt_crossfit_active_edge_point_records,
     build_family_effect_oof_spec,
     build_frozen_family_effect_target,
+    fit_crossfit_two_part_occurrence_v2,
     freeze_crossfit_active_edge_universe,
     recommended_crossfit_spec,
     run_full_pipeline_resampling,
@@ -1357,6 +1361,31 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
     assert loaded.manifest["crossfit_id"] == result.crossfit_id
     assert sum(len(child.scores.table) for child in loaded.fold_artifacts) == len(
         scores
+    )
+    occurrence = fit_crossfit_two_part_occurrence_v2(
+        result,
+        TwoPartOccurrenceV2Spec(
+            design=DifferentialDesignSpec(
+                design_kind="independent_two_group",
+                condition_column="condition",
+                condition_levels=("control", "stim"),
+                contrasts=(
+                    DifferentialContrastSpec(
+                        name="stim_vs_control",
+                        weights=(("control", -1.0), ("stim", 1.0)),
+                    ),
+                ),
+                precision_weight_column=None,
+                minimum_subjects_per_level=4,
+            ),
+            activity_threshold_raw=1.0,
+        ),
+    )
+    assert occurrence.crossfit_id == result.crossfit_id
+    assert not occurrence.occurrence.effects.empty
+    assert occurrence.occurrence.effects["p_value"].notna().all()
+    assert occurrence.to_manifest()["observed_effects"] == len(
+        occurrence.occurrence.effects
     )
 
 

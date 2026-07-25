@@ -149,6 +149,10 @@ from .graph_fused_integrated import (
     build_graph_fused_integrated_lr_scores,
 )
 from .hypergraph_export import build_crossfit_communication_hypergraph
+from .occurrence_v2 import (
+    CrossFitTwoPartOccurrenceV2Result,
+    fit_crossfit_two_part_occurrence_v2,
+)
 from .persistence import (
     baseline_result_tables,
     baseline_scoring_collections,
@@ -231,6 +235,7 @@ __all__ = [
     "CrossFitResult",
     "CrossFitSampleEdgeV2Result",
     "CrossFitSpec",
+    "CrossFitTwoPartOccurrenceV2Result",
     "DirectionalCrossFitBinding",
     "DirectionalIntegratedLRCollection",
     "DirectionalIntegratedLRResult",
@@ -318,6 +323,7 @@ __all__ = [
     "fit_baseline",
     "fit_crossfit_family_effect",
     "fit_crossfit_family_omnibus",
+    "fit_crossfit_two_part_occurrence_v2",
     "fit_graph_fused_crossfit_registry",
     "fit_graph_fused_workflow",
     "fit_receiver_incremental_training_artifact",

@@ -115,13 +115,37 @@ constant across candidate senders for one sample, receiver, and interaction.
 M1 remains a separate measurement head: it does not multiply M0 intensity and
 is not itself a formal p/q result.
 
+## Two-part occurrence inference
+
+M4 is a post-cross-fit analysis of the concatenated held-out raw activity rows.
+It uses one globally pre-registered raw-activity threshold and transition scale;
+neither is estimated from condition labels, truth labels, or the evaluated
+event. Replicate samples are first collapsed to one equally weighted
+subject-context activity. Each resulting row records the fixed-threshold binary
+state, a bounded monotone working active probability, and raw conditional
+intensity only when the state is active. Missing measurements remain absent and
+are never recoded as zero.
+
+Independent pairwise contrasts use two-sided Fisher exact tests. Paired and
+unadjusted repeated contrasts use exact McNemar/binomial tests, including the
+zero-discordance null case. Designs requiring batch, cohort, or continuous
+covariate adjustment use logistic estimating equations with HC1 or
+subject-cluster sandwich covariance. Occurrence p-values are adjusted together
+with Benjamini-Hochberg and are formally scoped to the fixed-threshold OOF
+occurrence estimand. Active-only conditional-intensity effects remain a
+separate design-aware diagnostic channel until full-pipeline resampling in
+PR10; they do not borrow the occurrence p/q values.
+
 ## Inference boundary
 
-Analytic HC3/CR2 models provide point effects and diagnostics. Formal p-values,
-q-values, and confidence intervals require the declared design to be estimable
-and require full-pipeline subject-level resampling while nuisance learning is
-in scope. Penalized coefficients and post-hoc ranking heads never feed ordinary
-Wald inference.
+For continuous communication intensity, analytic HC3/CR2 models provide point
+effects and diagnostics. Formal p-values, q-values, and confidence intervals
+require the declared design to be estimable and require full-pipeline
+subject-level resampling while nuisance learning is in scope. The M4 exception
+is narrowly scoped to its pre-registered fixed-threshold binary occurrence
+estimand; its p/q values do not make the continuous intensity channel formal.
+Penalized coefficients and post-hoc ranking heads never feed ordinary Wald
+inference.
 
 The v7 design contract supports independent two-group and multi-group models,
 paired subject differences, repeated measurements with subject-cluster CR2,
