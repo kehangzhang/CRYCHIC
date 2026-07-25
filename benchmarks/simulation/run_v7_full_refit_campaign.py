@@ -1035,7 +1035,8 @@ def run_v7_full_refit_dataset(
                     name: _write_parquet(table, temporary / f"{name}.parquet")
                     for name, table in tables.items()
                 }
-                resampling_manifest = resampling.to_manifest()
+                # The finalizer just validated the complete immutable result tree.
+                resampling_manifest = resampling._to_manifest_prevalidated()
                 plans = resampling_manifest.pop("plans")
                 records = resampling_manifest.pop("records")
                 artifacts = {

@@ -77,7 +77,7 @@ def _name(value: object, *, field_name: str) -> str:
 
 
 def _finite(value: object, *, field_name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
+    if isinstance(value, bool | np.bool_):
         raise ValueError(f"{field_name} must be numeric")
     try:
         result = float(value)  # type: ignore[arg-type]
@@ -98,7 +98,7 @@ def _probability(value: object, *, field_name: str) -> float:
 def _is_missing_scalar(value: object) -> bool:
     if value is None or value is pd.NA or value is pd.NaT:
         return True
-    return isinstance(value, (float, np.floating)) and math.isnan(float(value))
+    return isinstance(value, float | np.floating) and math.isnan(float(value))
 
 
 def _optional(value: object) -> object | None:
@@ -112,11 +112,11 @@ def _canonical_table_digest(table: pd.DataFrame) -> str:
         for column, value in zip(table.columns, row, strict=True):
             if _is_missing_scalar(value):
                 record[str(column)] = None
-            elif isinstance(value, (float, np.floating)):
+            elif isinstance(value, float | np.floating):
                 record[str(column)] = {"float_hex": float(value).hex()}
-            elif isinstance(value, (int, np.integer)):
+            elif isinstance(value, int | np.integer):
                 record[str(column)] = int(value)
-            elif isinstance(value, (bool, np.bool_)):
+            elif isinstance(value, bool | np.bool_):
                 record[str(column)] = bool(value)
             else:
                 record[str(column)] = str(value)
@@ -397,9 +397,7 @@ def _ledger_continuous(
             "effect",
             "status",
         ],
-    ].rename(
-        columns={"effect": "resample_effect", "status": "resample_status"}
-    )
+    ].rename(columns={"effect": "resample_effect", "status": "resample_status"})
 
 
 def _point_occurrence(
@@ -563,6 +561,39 @@ def _observed_values(
     return cast(npt.NDArray[np.float64], values)
 
 
+def _index_observed_values(
+    ledger: pd.DataFrame,
+) -> dict[tuple[str, str, str], npt.NDArray[np.float64]]:
+    if ledger.empty:
+        return {}
+    key_columns = ["event_id", "contrast_name", "operation"]
+    if ledger.duplicated([*key_columns, "record_id"]).any():
+        raise ValueError("v7 resampling ledger has duplicate hypothesis records")
+    observed = ledger.loc[
+        ledger["resample_status"].eq("observed"),
+        [*key_columns, "resample_effect"],
+    ].copy()
+    if observed.empty:
+        return {}
+    observed["resample_effect"] = pd.to_numeric(
+        observed["resample_effect"],
+        errors="coerce",
+    )
+    if (
+        observed["resample_effect"].isna().any()
+        or np.isinf(observed["resample_effect"]).any()
+    ):
+        raise ValueError("observed v7 resample effects must be finite")
+    return {
+        tuple(map(str, key)): group["resample_effect"].to_numpy(dtype=float)
+        for key, group in observed.groupby(
+            key_columns,
+            observed=True,
+            sort=False,
+        )
+    }
+
+
 def _formal_status(
     *,
     point_observed: bool,
@@ -635,6 +666,8 @@ def _finalize_channel(
         operation: _operation_total(resampling, operation)
         for operation in V7FullPipelineOperation
     }
+    observed_values = _index_observed_values(ledger)
+    empty_values = np.asarray([], dtype=np.float64)
     alpha = 0.5 * (1.0 - spec.confidence_level)
     rows: list[dict[str, object]] = []
     point_records = cast(list[dict[str, object]], point.to_dict(orient="records"))
@@ -652,23 +685,29 @@ def _finalize_channel(
             if point_observed
             else None
         )
-        bootstrap = _observed_values(
-            ledger,
-            event_id=event_id,
-            contrast_name=contrast_name,
-            operation=V7FullPipelineOperation.SUBJECT_BOOTSTRAP,
+        bootstrap = observed_values.get(
+            (
+                event_id,
+                contrast_name,
+                V7FullPipelineOperation.SUBJECT_BOOTSTRAP.value,
+            ),
+            empty_values,
         )
-        permutation = _observed_values(
-            ledger,
-            event_id=event_id,
-            contrast_name=contrast_name,
-            operation=V7FullPipelineOperation.CONDITION_PERMUTATION,
+        permutation = observed_values.get(
+            (
+                event_id,
+                contrast_name,
+                V7FullPipelineOperation.CONDITION_PERMUTATION.value,
+            ),
+            empty_values,
         )
-        loso = _observed_values(
-            ledger,
-            event_id=event_id,
-            contrast_name=contrast_name,
-            operation=V7FullPipelineOperation.LEAVE_ONE_SUBJECT_OUT,
+        loso = observed_values.get(
+            (
+                event_id,
+                contrast_name,
+                V7FullPipelineOperation.LEAVE_ONE_SUBJECT_OUT.value,
+            ),
+            empty_values,
         )
         diagnostic_se = (
             float(np.std(bootstrap, ddof=1)) if len(bootstrap) >= 2 else None
@@ -701,9 +740,7 @@ def _finalize_channel(
             point_observed=point_observed,
             n_bootstrap_total=totals[V7FullPipelineOperation.SUBJECT_BOOTSTRAP],
             n_bootstrap_observed=len(bootstrap),
-            n_permutation_total=totals[
-                V7FullPipelineOperation.CONDITION_PERMUTATION
-            ],
+            n_permutation_total=totals[V7FullPipelineOperation.CONDITION_PERMUTATION],
             n_permutation_observed=len(permutation),
             n_loso_total=totals[V7FullPipelineOperation.LEAVE_ONE_SUBJECT_OUT],
             n_loso_observed=len(loso),
@@ -714,17 +751,13 @@ def _finalize_channel(
         rows.append(
             {
                 **point_row,
-                "n_bootstrap_total": totals[
-                    V7FullPipelineOperation.SUBJECT_BOOTSTRAP
-                ],
+                "n_bootstrap_total": totals[V7FullPipelineOperation.SUBJECT_BOOTSTRAP],
                 "n_bootstrap_observed": len(bootstrap),
                 "n_permutation_total": totals[
                     V7FullPipelineOperation.CONDITION_PERMUTATION
                 ],
                 "n_permutation_observed": len(permutation),
-                "n_loso_total": totals[
-                    V7FullPipelineOperation.LEAVE_ONE_SUBJECT_OUT
-                ],
+                "n_loso_total": totals[V7FullPipelineOperation.LEAVE_ONE_SUBJECT_OUT],
                 "n_loso_observed": len(loso),
                 "diagnostic_bootstrap_standard_error": diagnostic_se,
                 "diagnostic_ci_lower": diagnostic_lower,
@@ -829,10 +862,14 @@ class V7FullPipelineInferenceResult:
             if table["result_id"].duplicated().any():
                 raise ValueError(f"{field_name} result IDs must be unique")
             unreleased = ~table["formal_inference_allowed"]
-            if table.loc[
-                unreleased,
-                ["standard_error", "ci_lower", "ci_upper", "p_value", "q_value"],
-            ].notna().any(axis=None):
+            if (
+                table.loc[
+                    unreleased,
+                    ["standard_error", "ci_lower", "ci_upper", "p_value", "q_value"],
+                ]
+                .notna()
+                .any(axis=None)
+            ):
                 raise ValueError("unreleased v7 effects cannot expose formal fields")
             tables[field_name] = table.copy(deep=True)
         for field_name, table in tables.items():

@@ -1101,6 +1101,9 @@ class V7FullPipelineResampleRecord:
 
     def to_dict(self) -> dict[str, object]:
         self._require_intact()
+        return self._to_dict_prevalidated()
+
+    def _to_dict_prevalidated(self) -> dict[str, object]:
         return {
             "record_id": self.record_id,
             **self._identity_payload(),
@@ -1600,6 +1603,9 @@ class V7FullPipelineResamplingResult:
 
     def to_manifest(self) -> dict[str, object]:
         self._require_intact()
+        return self._to_manifest_prevalidated()
+
+    def _to_manifest_prevalidated(self) -> dict[str, object]:
         counts = {
             operation.value: sum(
                 record.operation is operation for record in self.records
@@ -1675,7 +1681,7 @@ class V7FullPipelineResamplingResult:
                 "requires_v7_resampling_finalizer_and_calibration"
             ),
             "plans": [_plan_dict(plan) for plan in self.plans],
-            "records": [record.to_dict() for record in self.records],
+            "records": [record._to_dict_prevalidated() for record in self.records],
         }
 
 

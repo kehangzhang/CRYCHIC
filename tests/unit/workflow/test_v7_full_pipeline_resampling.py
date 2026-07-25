@@ -43,7 +43,10 @@ from crychic.workflow.crossfit import (
     _run_v7_primary_crossfit,
 )
 from crychic.workflow.training import _sanitized_raw_input_snapshot
-from crychic.workflow.v7_full_pipeline_inference import _finalize_channel
+from crychic.workflow.v7_full_pipeline_inference import (
+    _finalize_channel,
+    _index_observed_values,
+)
 from crychic.workflow.v7_full_pipeline_resampling import (
     _plan_design_stratified_bootstraps,
     _require_hypothesis_axis_subset,
@@ -365,6 +368,7 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
         "calibration_gate_missing"
     }
     manifest = serial.to_manifest()
+    assert manifest == serial._to_manifest_prevalidated()
     assert manifest["full_pipeline_refit_per_resample"] is True
     assert manifest["crossfit_execution_profile"] == "v7_primary_m0_m5_v1"
     assert "family_common" in manifest["omitted_legacy_diagnostic_stages"]
@@ -433,6 +437,7 @@ def test_v7_finalizer_releases_only_complete_calibrated_distributions() -> None:
         ]
     )
     resampling = SimpleNamespace(records=records, result_id="resampling-result-1")
+    indexed = _index_observed_values(ledger)
 
     result = _finalize_channel(
         point,
@@ -449,6 +454,13 @@ def test_v7_finalizer_releases_only_complete_calibrated_distributions() -> None:
     assert result["q_value"] == pytest.approx(2.0 / 3.0)
     assert result["loso_max_abs_delta"] == pytest.approx(0.2)
     assert result["loso_sign_agreement"] == 1.0
+    assert indexed[
+        (
+            "edge-1",
+            "stim_vs_control",
+            V7FullPipelineOperation.SUBJECT_BOOTSTRAP.value,
+        )
+    ].tolist() == [1.0, 3.0]
 
     failing_metrics = _passing_calibration_metrics()
     failing_metrics.loc[0, "empirical_type_i"] = 0.10
