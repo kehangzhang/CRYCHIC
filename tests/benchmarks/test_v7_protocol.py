@@ -5,11 +5,15 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
 from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.v7_protocol import (
+    AMENDMENT_CONFIG,
+    AMENDMENT_SCHEMA_VERSION,
     DEFAULT_CONFIG,
     GENERATORS,
     INFERENCES,
+    M4_EXPERIMENT,
     PLAN_COLUMNS,
     REQUIRED_DGP_FAMILIES,
     expand_v7_benchmark_plan,
@@ -47,6 +51,53 @@ def test_frozen_v7_protocol_has_disjoint_complete_dgp_axes() -> None:
     assert protocol.replicate_count("null_calibration") == 1000
     assert protocol.config["generator_matrix"].keys() == set(GENERATORS)
     assert protocol.config["inference_matrix"].keys() == set(INFERENCES)
+
+
+def test_v2_amendment_authenticates_v1_and_adds_only_m4_experiment() -> None:
+    base = load_v7_benchmark_protocol(DEFAULT_CONFIG)
+    amended = load_v7_benchmark_protocol(AMENDMENT_CONFIG)
+
+    assert amended.source_schema_version == AMENDMENT_SCHEMA_VERSION
+    assert set(amended.config["experiments"]) == {
+        *base.config["experiments"],
+        M4_EXPERIMENT,
+    }
+    m4 = amended.config["experiments"][M4_EXPERIMENT]
+    assert m4["activity_head"] == "parent_mean_raw"
+    assert m4["activity_threshold_raw"] == 1.0
+    assert not m4["release_calibration_complete"]
+    manifest = amended.to_manifest()
+    assert manifest["schema_version"] == AMENDMENT_SCHEMA_VERSION
+    assert manifest["amendment"]["base_protocol_sha256"] == sha256_file(DEFAULT_CONFIG)
+    base_plan = expand_v7_benchmark_plan(
+        base,
+        phase="smoke",
+        profile="score_primary",
+        maximum_replicates=1,
+    )
+    amended_plan = expand_v7_benchmark_plan(
+        amended,
+        phase="smoke",
+        profile="score_primary",
+        maximum_replicates=1,
+    )
+    paired_columns = [
+        "phase",
+        "family_role",
+        "dgp_family",
+        "design_kind",
+        "replicate_index",
+        "seed",
+        "dataset_id",
+        "candidate_sender_count",
+        "cells_per_type",
+        "subjects_per_level",
+        "generator_id",
+        "inference_id",
+    ]
+    pd.testing.assert_frame_equal(
+        base_plan.loc[:, paired_columns], amended_plan.loc[:, paired_columns]
+    )
 
 
 def test_plan_expansion_pairs_generators_on_identical_datasets_and_seeds() -> None:

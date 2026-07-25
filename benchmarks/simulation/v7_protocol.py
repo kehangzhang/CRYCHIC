@@ -19,11 +19,17 @@ from benchmarks.adapters.common import json_safe, sha256_file
 from crychic.core import canonical_digest, stable_id
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-v1"
+AMENDMENT_SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-amendment-v2"
 PLAN_SCHEMA_VERSION = "crychic-suggest-next2-v7-run-plan-v2"
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs"
     / "suggest_next2_v7_benchmark_v1.json"
+)
+AMENDMENT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "suggest_next2_v7_benchmark_v2.json"
 )
 
 DESIGN_KINDS = (
@@ -46,6 +52,7 @@ EXPERIMENTS = (
     "E4_signed_program",
     "E5_hypergraph",
 )
+M4_EXPERIMENT = "E6_m4_occurrence"
 REQUIRED_DIAGNOSTICS = {
     "gate_attrition",
     "score_geometry",
@@ -402,7 +409,9 @@ def _validate_method_matrix(config: Mapping[str, Any]) -> None:
 
 def _validate_experiments(config: Mapping[str, Any]) -> None:
     experiments = _mapping(config.get("experiments"), field="experiments")
-    _exact_keys(experiments, set(EXPERIMENTS), field="experiments")
+    amended = "_amendment_provenance" in config
+    expected = {*EXPERIMENTS, *((M4_EXPERIMENT,) if amended else ())}
+    _exact_keys(experiments, expected, field="experiments")
     diagnostics = config.get("required_diagnostics")
     if not isinstance(diagnostics, list) or set(map(str, diagnostics)) != (
         REQUIRED_DIAGNOSTICS
@@ -414,6 +423,43 @@ def _validate_experiments(config: Mapping[str, Any]) -> None:
     e3 = _mapping(experiments["E3_sender_detection_attribution"], field="E3")
     if tuple(e3.get("candidate_counts", ())) != (2, 5, 10, 20):
         raise ValueError("E3 candidate counts must be 2/5/10/20")
+    if amended:
+        m4 = _mapping(experiments[M4_EXPERIMENT], field=M4_EXPERIMENT)
+        if (
+            m4.get("parameter_role") != "fixed_baseline_before_m4_development"
+            or m4.get("activity_head") != "parent_mean_raw"
+            or float(m4.get("activity_threshold_raw", math.nan)) != 1.0
+            or float(m4.get("probability_transition_scale", math.nan)) != 0.25
+        ):
+            raise ValueError("E6 M4 fixed baseline policy changed")
+        expected_methods = (
+            "raw_prevalence_difference",
+            "fisher_exact",
+            "dcst_protocol_compatible_exact",
+            "logistic_model",
+            "beta_binomial",
+            "crychic_m4_design_aware",
+        )
+        if tuple(m4.get("methods", ())) != expected_methods:
+            raise ValueError("E6 M4 method axis changed")
+        required_metrics = {
+            "estimable_fraction",
+            "occurrence_auprc",
+            "occurrence_auroc",
+            "prevalence_effect_rmse",
+            "prevalence_effect_bias",
+            "direction_accuracy",
+            "odds_ratio_bias",
+            "log_odds_rmse",
+            "subject_brier_score",
+            "calibration_intercept",
+            "calibration_slope",
+            "type1_error_alpha_0_05",
+            "fdr_at_q_0_10",
+            "power_at_q_0_10",
+        }
+        if set(map(str, m4.get("metrics", ()))) != required_metrics:
+            raise ValueError("E6 M4 metric axis changed")
 
 
 def _validate_release_gates(config: Mapping[str, Any]) -> None:
@@ -433,6 +479,7 @@ class V7BenchmarkProtocol:
     path: Path
     config: Mapping[str, Any]
     protocol_digest: str
+    source_schema_version: str = SCHEMA_VERSION
 
     @property
     def family_roles(self) -> Mapping[str, Mapping[str, Sequence[str]]]:
@@ -450,7 +497,7 @@ class V7BenchmarkProtocol:
 
     def to_manifest(self) -> dict[str, object]:
         return {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": self.source_schema_version,
             "protocol_path": str(self.path),
             "protocol_sha256": sha256_file(self.path),
             "protocol_digest": self.protocol_digest,
@@ -460,18 +507,61 @@ class V7BenchmarkProtocol:
             },
             "generators": list(GENERATORS),
             "inferences": list(INFERENCES),
+            "amendment": self.config.get("_amendment_provenance"),
         }
+
+
+def _resolve_protocol_config(
+    resolved: Path,
+) -> tuple[dict[str, Any], str]:
+    raw = _read_json(resolved)
+    schema = str(raw.get("schema_version", ""))
+    if schema == SCHEMA_VERSION:
+        if raw.get("status") != "preregistered_before_integrated_v7_campaign":
+            raise ValueError("v7 benchmark protocol status is not preregistered")
+        return raw, schema
+    if schema != AMENDMENT_SCHEMA_VERSION:
+        raise ValueError("v7 benchmark protocol schema is unsupported")
+    if raw.get("status") != "amended_after_smoke_before_development":
+        raise ValueError("v7 benchmark amendment status is unsupported")
+    base_record = _mapping(raw.get("base_protocol"), field="base_protocol")
+    if set(base_record) != {"filename", "sha256"}:
+        raise ValueError("base_protocol must contain filename and sha256")
+    filename = str(base_record["filename"])
+    if Path(filename).name != filename:
+        raise ValueError("base_protocol filename must be a local path component")
+    base_path = resolved.parent / filename
+    if sha256_file(base_path) != base_record["sha256"]:
+        raise ValueError("base_protocol checksum differs from the amendment")
+    base = _read_json(base_path)
+    if (
+        base.get("schema_version") != SCHEMA_VERSION
+        or base.get("status") != "preregistered_before_integrated_v7_campaign"
+    ):
+        raise ValueError("base_protocol is not the supported frozen v1 protocol")
+    experiment = _mapping(raw.get("experiment"), field="experiment")
+    if experiment.get("name") != M4_EXPERIMENT:
+        raise ValueError("v7 amendment must register E6_m4_occurrence")
+    merged = json.loads(json.dumps(base))
+    merged["minimum_estimator_commit"] = raw.get("minimum_estimator_commit")
+    merged["experiments"][M4_EXPERIMENT] = {
+        key: value for key, value in experiment.items() if key != "name"
+    }
+    merged["_amendment_provenance"] = {
+        "schema_version": schema,
+        "status": raw["status"],
+        "amendment_reason": raw.get("amendment_reason"),
+        "base_protocol_path": str(base_path.resolve()),
+        "base_protocol_sha256": str(base_record["sha256"]),
+    }
+    return merged, schema
 
 
 def load_v7_benchmark_protocol(path: Path = DEFAULT_CONFIG) -> V7BenchmarkProtocol:
     """Load the protocol and reject any change to its required experiment axes."""
 
     resolved = path.resolve()
-    config = _read_json(resolved)
-    if config.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("v7 benchmark protocol schema is unsupported")
-    if config.get("status") != "preregistered_before_integrated_v7_campaign":
-        raise ValueError("v7 benchmark protocol status is not preregistered")
+    config, source_schema = _resolve_protocol_config(resolved)
     commit = str(config.get("minimum_estimator_commit", ""))
     if len(commit) != 40 or any(
         character not in "0123456789abcdef" for character in commit
@@ -492,6 +582,7 @@ def load_v7_benchmark_protocol(path: Path = DEFAULT_CONFIG) -> V7BenchmarkProtoc
         path=resolved,
         config=config,
         protocol_digest=_canonical_config_digest(config),
+        source_schema_version=source_schema,
     )
 
 

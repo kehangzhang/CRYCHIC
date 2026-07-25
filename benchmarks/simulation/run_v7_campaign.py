@@ -40,8 +40,13 @@ from benchmarks.simulation.v7_integrated import (
     run_v7_integrated_matrix,
 )
 from benchmarks.simulation.v7_metrics import evaluate_v7_integrated_matrix
+from benchmarks.simulation.v7_occurrence_benchmark import (
+    run_v7_m4_occurrence_benchmark,
+)
 from benchmarks.simulation.v7_protocol import (
-    DEFAULT_CONFIG,
+    AMENDMENT_CONFIG as DEFAULT_CONFIG,
+)
+from benchmarks.simulation.v7_protocol import (
     PHASES,
     PROFILES,
     V7BenchmarkProtocol,
@@ -51,8 +56,8 @@ from benchmarks.simulation.v7_protocol import (
 from benchmarks.simulation.v7_sender_swaps import run_v7_e3_sender_swap
 from crychic.workflow import build_v7_diagnostics, run_subject_crossfit
 
-CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v3"
-DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v3"
+CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v4"
+DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v4"
 RUN_COLUMNS = (
     "dataset_id",
     "dgp_family",
@@ -91,6 +96,11 @@ DATASET_TABLES = (
     "score_geometry",
     "candidate_sender_bias",
     "resolution_performance",
+    "m4_subject_events",
+    "m4_effects",
+    "m4_aligned_effects",
+    "m4_baselines",
+    "m4_metrics",
     "e2_gate_stage_ledger",
     "e2_score_views",
     "e2_effects",
@@ -529,6 +539,16 @@ def run_v7_dataset(
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
                 )
+            with logger.stage("m4_occurrence_prevalence"):
+                m4 = run_v7_m4_occurrence_benchmark(
+                    crossfit,
+                    dataset_id=dataset_id,
+                    design=fixture.differential_design,
+                    sample_metadata=fixture.sample_metadata,
+                    truth=fixture.truth,
+                    dgp_family=fixture.dgp_family,
+                    design_kind=fixture.design_kind,
+                )
             with logger.stage("e2_hard_gate_component_swaps"):
                 e2 = run_v7_e2_component_swap(
                     crossfit,
@@ -586,6 +606,11 @@ def run_v7_dataset(
                     "score_geometry": diagnostics.score_geometry,
                     "candidate_sender_bias": diagnostics.candidate_sender_bias,
                     "resolution_performance": diagnostics.resolution_performance,
+                    "m4_subject_events": m4.subject_events,
+                    "m4_effects": m4.effects,
+                    "m4_aligned_effects": m4.aligned_effects,
+                    "m4_baselines": m4.baselines,
+                    "m4_metrics": m4.metrics,
                     "e2_gate_stage_ledger": e2.gate_stage_ledger,
                     "e2_score_views": e2.score_views,
                     "e2_effects": e2.effects,
@@ -625,6 +650,14 @@ def run_v7_dataset(
                 "crossfit_id": crossfit.crossfit_id,
                 "diagnostics": diagnostics.to_manifest(),
                 "experiments": {
+                    "E6_m4_occurrence": {
+                        **m4.to_manifest(),
+                        "fixed_threshold_formal_inference_allowed": True,
+                        "formal_inference_scope": (
+                            "fixed_threshold_oof_occurrence_only"
+                        ),
+                        "release_calibration_complete": False,
+                    },
                     "E2_hard_gate_attrition": {
                         "arms": sorted(e2.score_views["score_view"].unique()),
                         "inference": "I1",
@@ -666,6 +699,7 @@ def run_v7_dataset(
                             "pyarrow",
                             "scikit-learn",
                             "scipy",
+                            "statsmodels",
                         )
                     ),
                     "git": git_metadata(Path(__file__).resolve().parents[2]),
@@ -902,6 +936,42 @@ def _aggregate_campaign_metrics(
                 index=False,
                 compression="zstd",
             )
+
+    m4_parts = [pd.read_parquet(path / "m4_metrics.parquet") for path in completed]
+    if m4_parts:
+        m4_metrics = pd.concat(m4_parts, ignore_index=True)
+        m4_metrics.to_parquet(
+            output_root / "all_m4_metrics.parquet",
+            index=False,
+            compression="zstd",
+        )
+        m4_summary = (
+            m4_metrics.loc[m4_metrics["status"].eq("observed")]
+            .groupby(
+                [
+                    "dgp_family",
+                    "design_kind",
+                    "method",
+                    "contrast_name",
+                    "metric",
+                ],
+                observed=True,
+                sort=True,
+            )["value"]
+            .agg(["count", "mean", "std", "median"])
+            .reset_index()
+        )
+        m4_summary.to_csv(output_root / "m4_metric_summary.tsv", sep="\t", index=False)
+
+    m4_baseline_parts = [
+        pd.read_parquet(path / "m4_baselines.parquet") for path in completed
+    ]
+    if m4_baseline_parts:
+        pd.concat(m4_baseline_parts, ignore_index=True).to_parquet(
+            output_root / "all_m4_baselines.parquet",
+            index=False,
+            compression="zstd",
+        )
 
 
 def run_v7_campaign(

@@ -42,6 +42,7 @@ DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-e5-derived-dataset-v1"
 SUPPORTED_SOURCE_SCHEMAS = {
     "crychic-suggest-next2-v7-campaign-v2",
     "crychic-suggest-next2-v7-campaign-v3",
+    "crychic-suggest-next2-v7-campaign-v4",
 }
 RUN_COLUMNS = (
     "dataset_id",

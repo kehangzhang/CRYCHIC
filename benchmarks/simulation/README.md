@@ -126,8 +126,13 @@ The synthetic gate never switches the public default by itself.
 
 ## Suggest-next2 v7 integrated protocol
 
-The integrated v7 campaign is frozen in
+The integrated v7 axes and seeds are frozen in
 [`suggest_next2_v7_benchmark_v1.json`](../configs/suggest_next2_v7_benchmark_v1.json).
+The campaign runner uses the checksum-bound
+[`suggest_next2_v7_benchmark_v2.json`](../configs/suggest_next2_v7_benchmark_v2.json)
+amendment, which authenticates v1 and adds only the previously omitted E6 M4
+occurrence track. It does not change any v1 dataset, seed, scale, generator, or
+continuous-inference arm.
 It separates DGP families, not only seeds: six families are development-only,
 22 are locked family holdouts, and four are null-calibration families. The
 locked set includes receptor-only, program-only, inhibitory, generic-state,
@@ -185,3 +190,13 @@ M0-parent and signed-program effects only after separate I1 fits, and withholds
 an analytic SE because their covariance is unknown. `G5` leaves raw M0 sender
 detection unchanged and evaluates M1, M2 coupling, and conditional attribution
 as separate heads.
+
+E6 fits the fixed-threshold M4 head to exact OOF subject-event scores and keeps
+occurrence separate from continuous intensity. It persists raw prevalence,
+Fisher exact, a clearly labeled DCST protocol-compatible Fisher proxy,
+design-matched logistic, beta-binomial, and CRYCHIC M4 rows. The proxy is not an
+execution of the external DCST package. Beta-binomial is typed not-estimable
+when the fixture contains only one Bernoulli trial per subject, because its
+overdispersion is then unidentified. M4 p/q values are scoped to fixed-threshold
+OOF occurrence; release calibration remains false until complete-pipeline null
+resampling passes.

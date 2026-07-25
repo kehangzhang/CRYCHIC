@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+
 from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.run_v7_campaign import (
     DATASET_TABLES,
@@ -16,7 +17,10 @@ from benchmarks.simulation.run_v7_e5_derived_campaign import (
 )
 from benchmarks.simulation.run_v7_e5_derived_campaign import run_derived_campaign
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
-from benchmarks.simulation.v7_protocol import load_v7_benchmark_protocol
+from benchmarks.simulation.v7_protocol import (
+    AMENDMENT_SCHEMA_VERSION,
+    load_v7_benchmark_protocol,
+)
 
 
 def test_campaign_plan_unions_profiles_without_recomputing_datasets() -> None:
@@ -87,6 +91,7 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
     manifest_path = result / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["status"] == "completed"
+    assert manifest["protocol"]["schema_version"] == AMENDMENT_SCHEMA_VERSION
     assert manifest["formal_inference_allowed"] is False
     assert manifest["maximum_system_memory_fraction"] < 0.8
     cache = manifest["inference_fit_cache"]
@@ -97,7 +102,14 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "E2_hard_gate_attrition",
         "E3_sender_detection_attribution",
         "E5_hypergraph",
+        "E6_m4_occurrence",
     }
+    assert manifest["experiments"]["E6_m4_occurrence"][
+        "fixed_threshold_formal_inference_allowed"
+    ]
+    assert not manifest["experiments"]["E6_m4_occurrence"][
+        "release_calibration_complete"
+    ]
     assert set(manifest["outputs"]) == set(DATASET_TABLES)
     for record in manifest["outputs"].values():
         path = result / record["filename"]
@@ -115,6 +127,7 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "subject_crossfit",
         "integrated_score_inference_matrix",
         "truth_metrics",
+        "m4_occurrence_prevalence",
         "e2_hard_gate_component_swaps",
         "e3_sender_detection_attribution_swaps",
         "e5_hypergraph_topology_swaps",
@@ -128,10 +141,13 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "all_e5_metrics.parquet",
         "all_e5_fit_diagnostics.parquet",
         "all_e5_topology_diagnostics.parquet",
+        "all_m4_metrics.parquet",
+        "all_m4_baselines.parquet",
         "e2_metric_summary.tsv",
         "e3_metric_summary.tsv",
         "e3_sender_metric_summary.tsv",
         "e5_metric_summary.tsv",
+        "m4_metric_summary.tsv",
     ):
         assert (output / aggregate).is_file()
 
