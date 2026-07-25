@@ -2528,6 +2528,40 @@ def test_sanitized_snapshot_rejects_expression_or_metadata_mutation() -> None:
     )
 
 
+def test_sanitized_snapshot_binds_auxiliary_sample_metadata() -> None:
+    source = _adata()
+    source.obs["dose"] = source.obs["condition"].map(
+        {"control": 0.0, "stim": 1.0}
+    )
+    snapshot = training_module._sanitized_raw_input_snapshot(
+        source,
+        _config(),
+        auxiliary_sample_columns=("dose",),
+    )
+
+    assert "dose" in snapshot.adata.obs
+    changed = source.copy()
+    changed.obs["dose"] = changed.obs["dose"] + 1.0
+    changed_snapshot = training_module._sanitized_raw_input_snapshot(
+        changed,
+        _config(),
+        auxiliary_sample_columns=("dose",),
+    )
+    assert changed_snapshot.snapshot_id != snapshot.snapshot_id
+    assert changed_snapshot.identity.identity_id == snapshot.identity.identity_id
+
+    invalid = source.copy()
+    sample = str(invalid.obs["sample_id"].iloc[0])
+    indexes = invalid.obs.index[invalid.obs["sample_id"].astype(str).eq(sample)]
+    invalid.obs.loc[indexes[0], "dose"] = 2.0
+    with pytest.raises(ValueError, match="varies within sample"):
+        training_module._sanitized_raw_input_snapshot(
+            invalid,
+            _config(),
+            auxiliary_sample_columns=("dose",),
+        )
+
+
 def test_prepared_fold_derives_scope_digest_without_rehashing_cells(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

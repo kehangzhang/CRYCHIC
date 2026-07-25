@@ -19,7 +19,7 @@ from .v7_full_pipeline_resampling import (
     V7FullPipelineResamplingResult,
 )
 
-V7_FULL_PIPELINE_INFERENCE_VERSION = "v7_full_refit_inference_finalizer_v1"
+V7_FULL_PIPELINE_INFERENCE_VERSION = "v7_full_refit_inference_finalizer_v2"
 V7_FULL_PIPELINE_EFFECT_COLUMNS = (
     "event_id",
     "contrast_name",
@@ -408,28 +408,43 @@ def _point_occurrence(
     occurrence = resampling.point.occurrence
     if occurrence is None:
         return pd.DataFrame()
+    continuous = (
+        DifferentialDesignKind(resampling.point.spec.design.design_kind)
+        is DifferentialDesignKind.CONTINUOUS
+    )
+    source_column = "log_odds_ratio" if continuous else "prevalence_difference"
+    effect_scale = "log_odds" if continuous else "prevalence_difference"
     table = occurrence.occurrence.effects.loc[
         :,
         [
             "event_id",
             "contrast_name",
-            "prevalence_difference",
+            source_column,
             "status",
             "reason_code",
             "effect_id",
         ],
     ].copy()
+    numeric = pd.to_numeric(table[source_column], errors="coerce")
+    finite = numeric.notna() & np.isfinite(numeric)
+    table[source_column] = numeric.where(finite, np.nan)
+    table["status"] = np.where(finite, "observed", "not_estimable")
+    table["reason_code"] = table["reason_code"].where(~finite, None)
+    table.loc[
+        ~finite & table["reason_code"].isna(),
+        "reason_code",
+    ] = "occurrence_resampling_effect_not_estimable"
     table["point_standard_error_diagnostic"] = np.nan
     return cast(
         pd.DataFrame,
         table.rename(
             columns={
-                "prevalence_difference": "point_effect",
+                source_column: "point_effect",
                 "status": "point_status",
                 "reason_code": "point_reason_code",
                 "effect_id": "source_result_id",
             }
-        ).assign(channel="occurrence_prevalence"),
+        ).assign(channel=f"occurrence_{effect_scale}"),
     )
 
 
@@ -446,12 +461,12 @@ def _ledger_occurrence(
             "record_id",
             "event_id",
             "contrast_name",
-            "prevalence_difference",
+            "occurrence_effect",
             "status",
         ],
     ].rename(
         columns={
-            "prevalence_difference": "resample_effect",
+            "occurrence_effect": "resample_effect",
             "status": "resample_status",
         }
     )
@@ -860,7 +875,7 @@ class V7FullPipelineInferenceResult:
             ),
             "channel_rows": {
                 "continuous_raw": len(self.continuous_effects),
-                "occurrence_prevalence": len(self.occurrence_effects),
+                "occurrence_effect": len(self.occurrence_effects),
                 "hypergraph_posterior": len(self.hypergraph_effects),
             },
             "formal_rows": sum(

@@ -141,6 +141,12 @@ occurrence estimand. Active-only conditional-intensity effects remain a
 separate design-aware diagnostic channel until full-pipeline resampling in
 PR10; they do not borrow the occurrence p/q values.
 
+The PR10 occurrence resampling statistic follows the registered design:
+categorical contrasts use the subject-level prevalence difference, including
+when the analytic exact/logistic test is not estimable, while continuous
+designs use the fitted exposure log-odds slope because no two-group prevalence
+difference exists. Compact resampling records bind this effect scale explicitly.
+
 ## Uncertainty-aware hypergraph shrinkage
 
 M5 v2 consumes one locked design-aware contrast with a raw edge effect and
@@ -183,14 +189,18 @@ repeated bootstraps draw complete subject trajectories. Condition permutations
 use the frozen exchangeability map. Multi-cohort permutations are restricted
 within cohort. Continuous designs jointly permute the scoring context and the
 registered exposure column, rather than relabeling the context while leaving
-the exposure fixed. Complete three-or-more-context trajectories remain
-fail-closed unless the caller explicitly registers the reviewed complete
-within-subject permutation; this prevents ordered longitudinal visits from
-being treated as exchangeable by default. LOSO removes all cells and samples
-of one subject before rerunning fold planning. A resample that can no longer
-form an estimable fold is a typed failed record; it is not omitted from
-completeness counts. The result identity and manifest bind the exchangeability
-map ID and the exact context, stratum, and immutable-covariate columns.
+the exposure fixed. Sample-level fields needed only by the differential design
+are retained as auxiliary snapshot metadata: they are required to be constant
+within sample and are bound by the snapshot metadata digest, but they are not
+added to the M0/M1/M2 nuisance design. Complete three-or-more-context
+trajectories remain fail-closed unless the caller explicitly registers the
+reviewed complete within-subject permutation; this prevents ordered
+longitudinal visits from being treated as exchangeable by default. LOSO removes
+all cells and samples of one subject before rerunning fold planning. A resample
+that can no longer form an estimable fold is a typed failed record; it is not
+omitted from completeness counts. The result identity and manifest bind the
+exchangeability map ID and the exact context, stratum, and immutable-covariate
+columns.
 
 The finalizer keeps three multiplicity scopes separate: continuous raw effect,
 fixed-threshold occurrence prevalence difference, and M5 posterior effect.

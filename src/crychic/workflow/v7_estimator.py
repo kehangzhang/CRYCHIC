@@ -13,12 +13,10 @@ from crychic.inference import (
     DesignAwareHypergraphShrinkageV2Result,
     DifferentialDesignKind,
     DifferentialDesignSpec,
-    TwoPartOccurrenceV2Result,
     TwoPartOccurrenceV2Spec,
     build_sample_edge_differential_input,
     fit_design_aware_differential,
     fit_design_aware_hypergraph_shrinkage_v2,
-    fit_two_part_occurrence_v2,
 )
 from crychic.scoring import (
     FrozenHypergraphPrior,
@@ -26,7 +24,10 @@ from crychic.scoring import (
 )
 
 from .crossfit import CrossFitArtifacts
-from .occurrence_v2 import CrossFitTwoPartOccurrenceV2Result
+from .occurrence_v2 import (
+    CrossFitTwoPartOccurrenceV2Result,
+    fit_crossfit_two_part_occurrence_v2,
+)
 
 V7_CROSSFIT_ESTIMATOR_VERSION = "unified_sample_level_crossfit_estimator_v7"
 _SCHEMA_VERSION = "1.0.0"
@@ -509,28 +510,13 @@ def fit_crossfit_v7_estimator(
 
     occurrence: CrossFitTwoPartOccurrenceV2Result | None = None
     if spec.occurrence_spec is not None:
-        occurrence_input, occurrence_provenance, occurrence_metadata_digest = (
-            _build_oof_input(
-                crossfit,
-                score_head=spec.occurrence_spec.activity_head,
-                design=spec.design,
-                sample_metadata=sample_metadata,
-            )
-        )
-        if (
-            occurrence_provenance != provenance_ids
-            or occurrence_metadata_digest != metadata_digest
-        ):
-            raise ValueError("M4 and continuous v7 inputs have different lineage")
-        occurrence_result: TwoPartOccurrenceV2Result = fit_two_part_occurrence_v2(
-            occurrence_input,
+        occurrence = fit_crossfit_two_part_occurrence_v2(
+            crossfit,
             spec.occurrence_spec,
+            sample_metadata=sample_metadata,
         )
-        occurrence = CrossFitTwoPartOccurrenceV2Result(
-            crossfit_id=crossfit.crossfit_id,
-            occurrence=occurrence_result,
-            fold_score_provenance_ids=provenance_ids,
-        )
+        if occurrence.fold_score_provenance_ids != provenance_ids:
+            raise ValueError("M4 and continuous v7 inputs have different lineage")
 
     hypergraph: DesignAwareHypergraphShrinkageV2Result | None = None
     if spec.hypergraph_spec is not None:

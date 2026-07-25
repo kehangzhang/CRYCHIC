@@ -163,7 +163,8 @@ _COMPACT_CONTINUOUS_COLUMNS = (
 _COMPACT_OCCURRENCE_COLUMNS = (
     "event_id",
     "contrast_name",
-    "prevalence_difference",
+    "occurrence_effect",
+    "occurrence_effect_scale",
     "status",
     "reason_code",
     "effect_id",
@@ -380,12 +381,43 @@ def _plan_loso(
     )
 
 
-def _normalized_sample_metadata(
+def _sample_metadata_with_invariant_columns(
     adata: AnnData,
     config: CrychicConfig,
 ) -> pd.DataFrame:
     validated = validate_anndata(adata, _input_schema(config))
     metadata = validated.report.sample_metadata.copy(deep=True)
+    source = adata.obs.copy(deep=False)
+    grouped = source.groupby(config.sample_key, observed=True, sort=False)
+    invariant_columns = [
+        str(column)
+        for column in source.columns
+        if column != config.sample_key
+        and grouped[column].nunique(dropna=False).le(1).all()
+    ]
+    extras = [
+        column for column in invariant_columns if column not in metadata.columns
+    ]
+    if extras:
+        sample_rows = source.loc[:, [config.sample_key, *extras]].drop_duplicates(
+            config.sample_key,
+            keep="first",
+        )
+        metadata = metadata.merge(
+            sample_rows,
+            on=config.sample_key,
+            how="left",
+            validate="one_to_one",
+            sort=False,
+        )
+    return cast(pd.DataFrame, metadata)
+
+
+def _normalize_sample_metadata(
+    metadata: pd.DataFrame,
+    config: CrychicConfig,
+) -> pd.DataFrame:
+    metadata = metadata.copy(deep=True)
     rename: dict[str, str] = {}
     if config.sample_key != "sample_id":
         rename[config.sample_key] = "sample_id"
@@ -401,6 +433,47 @@ def _normalized_sample_metadata(
                 for _, row in metadata.iterrows()
             ]
     return cast(pd.DataFrame, metadata)
+
+
+def _normalized_sample_metadata(
+    adata: AnnData,
+    config: CrychicConfig,
+) -> pd.DataFrame:
+    return _normalize_sample_metadata(
+        _sample_metadata_with_invariant_columns(adata, config),
+        config,
+    )
+
+
+def _design_auxiliary_sample_columns(
+    adata: AnnData,
+    config: CrychicConfig,
+    estimator_spec: V7EstimatorSpec,
+) -> tuple[str, ...]:
+    design = estimator_spec.design
+    candidates = {
+        design.condition_column,
+        *design.batch_columns,
+        *design.continuous_covariates,
+        *design.categorical_covariates,
+    }
+    if design.cohort_column is not None:
+        candidates.add(design.cohort_column)
+    declared = {
+        config.sample_key,
+        config.subject_key,
+        config.cell_type_key,
+        *config.context_keys,
+        *config.covariates,
+    }
+    auxiliary = tuple(sorted(candidates.difference(declared)))
+    missing = set(auxiliary).difference(adata.obs.columns)
+    if missing:
+        raise ValueError(
+            "v7 full-refit input is missing sample-level design fields: "
+            f"{sorted(missing)}"
+        )
+    return auxiliary
 
 
 def _materialize_loso(
@@ -497,7 +570,8 @@ def _estimator_hypothesis_axes(
         )
     }
     if estimator.occurrence is not None:
-        axes["occurrence_prevalence"] = tuple(
+        scale = _occurrence_effect_scale(estimator.spec)
+        axes[f"occurrence_{scale}"] = tuple(
             sorted(
                 (str(row.event_id), str(row.contrast_name))
                 for row in estimator.occurrence.occurrence.effects.itertuples(
@@ -516,6 +590,52 @@ def _estimator_hypothesis_axes(
         if len(keys) != len(set(keys)):
             raise ValueError(f"v7 {channel} hypothesis axis contains duplicates")
     return tuple(sorted(axes.items()))
+
+
+def _occurrence_effect_scale(spec: V7EstimatorSpec) -> str:
+    return (
+        "log_odds"
+        if DifferentialDesignKind(spec.design.design_kind)
+        is DifferentialDesignKind.CONTINUOUS
+        else "prevalence_difference"
+    )
+
+
+def _compact_occurrence_effects(
+    estimator: CrossFitV7EstimatorResult,
+) -> pd.DataFrame:
+    occurrence = estimator.occurrence
+    if occurrence is None:
+        return pd.DataFrame(columns=_COMPACT_OCCURRENCE_COLUMNS)
+    scale = _occurrence_effect_scale(estimator.spec)
+    source_column = (
+        "log_odds_ratio" if scale == "log_odds" else "prevalence_difference"
+    )
+    table = occurrence.occurrence.effects.loc[
+        :,
+        [
+            "event_id",
+            "contrast_name",
+            source_column,
+            "status",
+            "reason_code",
+            "effect_id",
+        ],
+    ].copy()
+    numeric = pd.to_numeric(table[source_column], errors="coerce")
+    finite = numeric.notna() & np.isfinite(numeric)
+    table["occurrence_effect"] = numeric.where(finite, np.nan)
+    table["occurrence_effect_scale"] = scale
+    table["status"] = np.where(finite, "observed", "not_estimable")
+    table["reason_code"] = table["reason_code"].where(
+        ~finite,
+        None,
+    )
+    table.loc[
+        ~finite & table["reason_code"].isna(),
+        "reason_code",
+    ] = "occurrence_resampling_effect_not_estimable"
+    return table.loc[:, list(_COMPACT_OCCURRENCE_COLUMNS)]
 
 
 def _require_axes_subset(
@@ -612,6 +732,13 @@ class V7CompactEstimatorSnapshot:
             if not table.empty and table.duplicated(list(key_columns)).any():
                 raise ValueError(f"{field_name} contains duplicate effect keys")
             tables[field_name] = table.copy(deep=True)
+        occurrence_table = tables["occurrence_effects"]
+        if not occurrence_table.empty:
+            scales = set(occurrence_table["occurrence_effect_scale"].astype(str))
+            if scales not in ({"prevalence_difference"}, {"log_odds"}):
+                raise ValueError(
+                    "occurrence_effects must declare one supported effect scale"
+                )
         if not tables["occurrence_effects"].empty and occurrence_id is None:
             raise ValueError("compact occurrence effects require result lineage")
         if not tables["hypergraph_effects"].empty and hypergraph_fit_id is None:
@@ -661,14 +788,7 @@ class V7CompactEstimatorSnapshot:
         estimator: CrossFitV7EstimatorResult,
     ) -> V7CompactEstimatorSnapshot:
         estimator._require_intact()
-        occurrence = (
-            pd.DataFrame(columns=_COMPACT_OCCURRENCE_COLUMNS)
-            if estimator.occurrence is None
-            else estimator.occurrence.occurrence.effects.loc[
-                :,
-                list(_COMPACT_OCCURRENCE_COLUMNS),
-            ]
-        )
+        occurrence = _compact_occurrence_effects(estimator)
         hypergraph = (
             pd.DataFrame(columns=_COMPACT_HYPERGRAPH_COLUMNS)
             if estimator.hypergraph is None
@@ -755,7 +875,12 @@ def _snapshot_hypothesis_axes(
         )
     }
     if snapshot.occurrence_result_id is not None:
-        axes["occurrence_prevalence"] = tuple(
+        scales = tuple(
+            sorted(snapshot.occurrence_effects["occurrence_effect_scale"].unique())
+        )
+        if len(scales) != 1:
+            raise ValueError("compact occurrence snapshot must use one effect scale")
+        axes[f"occurrence_{scales[0]}"] = tuple(
             sorted(
                 (str(row.event_id), str(row.contrast_name))
                 for row in snapshot.occurrence_effects.itertuples(index=False)
@@ -968,6 +1093,7 @@ def _execute_plan(
     source_receiver_universe: FrozenReceiverUniverse,
     hypergraph_prior: FrozenHypergraphPrior | None,
     point_hypothesis_axes: V7HypothesisAxes,
+    auxiliary_sample_columns: tuple[str, ...],
     plan: V7ResamplingPlan,
     *,
     source_snapshot_id: str,
@@ -1030,6 +1156,7 @@ def _execute_plan(
         child_snapshot = _sanitized_raw_input_snapshot(
             materialized.adata,
             child_config,
+            auxiliary_sample_columns=auxiliary_sample_columns,
         )
         child = _run_subject_crossfit(
             child_snapshot,
@@ -1485,10 +1612,22 @@ def run_v7_full_pipeline_resampling(
     if not isinstance(run_loso, bool):
         raise TypeError("run_loso must be boolean")
     requested_jobs = _positive_count(n_jobs, field_name="n_jobs", allow_zero=False)
-    snapshot = _sanitized_raw_input_snapshot(adata, config)
+    auxiliary_sample_columns = _design_auxiliary_sample_columns(
+        adata,
+        config,
+        estimator_spec,
+    )
+    snapshot = _sanitized_raw_input_snapshot(
+        adata,
+        config,
+        auxiliary_sample_columns=auxiliary_sample_columns,
+    )
     snapshot._require_intact()
-    validated = validate_anndata(snapshot.adata, _input_schema(config))
-    normalized_metadata = _normalized_sample_metadata(snapshot.adata, config)
+    source_metadata = _sample_metadata_with_invariant_columns(
+        snapshot.adata,
+        config,
+    )
+    normalized_metadata = _normalize_sample_metadata(source_metadata, config)
     resolved_strata = tuple(
         crossfit_spec.strata_keys if strata_keys is None else strata_keys
     )
@@ -1506,7 +1645,7 @@ def run_v7_full_pipeline_resampling(
         sorted({*supplied_immutable, *resolved_permutation_strata})
     )
     exchangeability = build_exchangeability_map(
-        validated.report.sample_metadata,
+        source_metadata,
         sample_key=config.sample_key,
         subject_key=config.subject_key,
         context_keys=permutation_context_keys,
@@ -1583,6 +1722,7 @@ def run_v7_full_pipeline_resampling(
         point_crossfit.receiver_universe,
         hypergraph_prior,
         _estimator_hypothesis_axes(point),
+        auxiliary_sample_columns,
         source_snapshot_id=snapshot.snapshot_id,
     )
     if effective_jobs == 1:

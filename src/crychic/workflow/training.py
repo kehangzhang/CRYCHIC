@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from typing import Any, TypeAlias, cast
@@ -613,16 +613,77 @@ def _copy_matrix(matrix: Any) -> Any:
     return np.asarray(matrix).copy()
 
 
-def _sanitize_validated_input(validated: ValidatedInput) -> AnnData:
+def _auxiliary_sample_columns(
+    validated: ValidatedInput,
+    values: Sequence[str],
+) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise TypeError("auxiliary_sample_columns must be a sequence, not a string")
+    columns = tuple(sorted(values))
+    if len(columns) != len(set(columns)) or any(
+        not isinstance(column, str)
+        or not column
+        or column != column.strip()
+        for column in columns
+    ):
+        raise ValueError(
+            "auxiliary_sample_columns must contain unique canonical names"
+        )
+    schema = validated.schema
+    declared = {
+        schema.sample_key,
+        schema.subject_key,
+        schema.cell_type_key,
+        *schema.context_keys,
+        *schema.covariates,
+    }
+    overlap = declared.intersection(columns)
+    if overlap:
+        raise ValueError(
+            "auxiliary_sample_columns duplicate declared input fields: "
+            f"{sorted(overlap)}"
+        )
+    missing = set(columns).difference(validated.adata.obs.columns)
+    if missing:
+        raise ValueError(
+            f"auxiliary sample metadata is missing fields: {sorted(missing)}"
+        )
+    grouped = validated.adata.obs.groupby(
+        schema.sample_key,
+        observed=True,
+        sort=False,
+    )
+    for column in columns:
+        values_for_column = validated.adata.obs[column]
+        if values_for_column.isna().any():
+            raise ValueError(
+                f"auxiliary sample metadata {column!r} contains missing values"
+            )
+        if grouped[column].nunique(dropna=False).ne(1).any():
+            raise ValueError(
+                f"auxiliary sample metadata {column!r} varies within sample"
+            )
+        for value in values_for_column:
+            canonical_json(_plain_metadata_value(value))
+    return columns
+
+
+def _sanitize_validated_input(
+    validated: ValidatedInput,
+    *,
+    auxiliary_sample_columns: Sequence[str] = (),
+) -> AnnData:
     """Copy only declared input fields and the selected expression matrix."""
 
     schema = validated.schema
+    auxiliary = _auxiliary_sample_columns(validated, auxiliary_sample_columns)
     required_obs = [
         schema.sample_key,
         schema.subject_key,
         schema.cell_type_key,
         *schema.context_keys,
         *schema.covariates,
+        *auxiliary,
     ]
     obs = validated.adata.obs.loc[:, required_obs].copy(deep=True)
     var = pd.DataFrame(index=validated.adata.var_names.copy())
@@ -1074,6 +1135,8 @@ def _matrix_is_read_only(matrix: Any) -> bool:
 def _sanitized_raw_input_snapshot(
     adata: AnnData,
     config: CrychicConfig,
+    *,
+    auxiliary_sample_columns: Sequence[str] = (),
 ) -> SanitizedRawInputSnapshot:
     """Copy declared raw input and bind its producer-owned subject manifest."""
 
@@ -1083,7 +1146,10 @@ def _sanitized_raw_input_snapshot(
             "subject cross-fitting requires raw counts; normalized-only input "
             "cannot certify train-only preprocessing"
         )
-    sanitized = _sanitize_validated_input(caller_view)
+    sanitized = _sanitize_validated_input(
+        caller_view,
+        auxiliary_sample_columns=auxiliary_sample_columns,
+    )
     validated = validate_anndata(sanitized, _input_schema(config))
     if validated.report.duplicate_genes:
         raise ValueError("fold training does not support duplicate gene identifiers")
