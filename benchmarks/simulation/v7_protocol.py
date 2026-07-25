@@ -19,7 +19,7 @@ from benchmarks.adapters.common import json_safe, sha256_file
 from crychic.core import canonical_digest, stable_id
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-benchmark-protocol-v1"
-PLAN_SCHEMA_VERSION = "crychic-suggest-next2-v7-run-plan-v1"
+PLAN_SCHEMA_VERSION = "crychic-suggest-next2-v7-run-plan-v2"
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs"
@@ -101,6 +101,9 @@ PLAN_COLUMNS = (
     "replicate_index",
     "seed",
     "dataset_id",
+    "candidate_sender_count",
+    "cells_per_type",
+    "subjects_per_level",
     "generator_id",
     "inference_id",
     "run_id",
@@ -183,6 +186,126 @@ def _validate_seed_policy(config: Mapping[str, Any]) -> None:
         raise ValueError("seed namespaces must be canonical non-empty strings")
     if len(values) != len(set(values)):
         raise ValueError("seed namespaces must be disjoint across phases")
+
+
+def _validate_dgp_generation(config: Mapping[str, Any]) -> None:
+    generation = _mapping(config.get("dgp_generation"), field="dgp_generation")
+    _exact_keys(
+        generation,
+        {
+            "candidate_sender_default",
+            "candidate_cardinality_cycle",
+            "fixed_subject_cell_count_cycle",
+            "cells_per_type_by_phase",
+            "subjects_per_level_by_phase",
+            "legacy_g1_tuning",
+        },
+        field="dgp_generation",
+    )
+    if generation["candidate_sender_default"] != 5:
+        raise ValueError("candidate_sender_default must remain 5")
+    if tuple(generation["candidate_cardinality_cycle"]) != (2, 5, 10, 20):
+        raise ValueError("candidate_cardinality_cycle must remain 2/5/10/20")
+    if tuple(generation["fixed_subject_cell_count_cycle"]) != (1, 2, 4, 8):
+        raise ValueError("fixed_subject_cell_count_cycle must remain 1/2/4/8")
+    for field_name, expected in (
+        (
+            "cells_per_type_by_phase",
+            {"smoke": 2, "development": 4, "locked": 4, "null_calibration": 2},
+        ),
+        (
+            "subjects_per_level_by_phase",
+            {phase: 8 for phase in PHASES},
+        ),
+    ):
+        values = _mapping(generation[field_name], field=f"dgp_generation.{field_name}")
+        _exact_keys(values, set(PHASES), field=f"dgp_generation.{field_name}")
+        observed = {
+            phase: _positive_integer(
+                values[phase], field=f"dgp_generation.{field_name}.{phase}"
+            )
+            for phase in PHASES
+        }
+        if observed != expected:
+            raise ValueError(f"dgp_generation.{field_name} changed")
+    tuning = _mapping(
+        generation["legacy_g1_tuning"],
+        field="dgp_generation.legacy_g1_tuning",
+    )
+    _exact_keys(
+        tuning,
+        {
+            "lambda1_fractions",
+            "lambda2_fractions",
+            "inner_allowed_n_splits",
+            "minimum_inner_train_subjects_per_context",
+            "minimum_inner_validation_subjects_per_context",
+            "root_seed",
+        },
+        field="dgp_generation.legacy_g1_tuning",
+    )
+    expected_tuning = {
+        "lambda1_fractions": [1.0, 0.1],
+        "lambda2_fractions": [0.0],
+        "inner_allowed_n_splits": [2],
+        "minimum_inner_train_subjects_per_context": 1,
+        "minimum_inner_validation_subjects_per_context": 1,
+        "root_seed": "dataset_seed",
+    }
+    if dict(tuning) != expected_tuning:
+        raise ValueError("legacy G1 tuning policy changed")
+
+
+@dataclass(frozen=True, slots=True)
+class V7DGPScale:
+    """Frozen generated-data scale for one planned replicate."""
+
+    candidate_sender_count: int
+    cells_per_type: int
+    subjects_per_level: int
+
+
+def resolve_v7_dgp_scale(
+    protocol: V7BenchmarkProtocol,
+    *,
+    phase: str,
+    dgp_family: str,
+    replicate_index: int,
+) -> V7DGPScale:
+    """Resolve cardinality and cell/subject scales from the frozen protocol."""
+
+    if phase not in PHASES:
+        raise ValueError(f"phase must be one of {list(PHASES)}")
+    replicate = _positive_integer(replicate_index, field="replicate_index")
+    generation = _mapping(protocol.config["dgp_generation"], field="dgp_generation")
+    candidate_cycle = tuple(map(int, generation["candidate_cardinality_cycle"]))
+    cell_cycle = tuple(map(int, generation["fixed_subject_cell_count_cycle"]))
+    candidate_count = (
+        candidate_cycle[(replicate - 1) % len(candidate_cycle)]
+        if dgp_family == "candidate_cardinality"
+        else int(generation["candidate_sender_default"])
+    )
+    cells = (
+        cell_cycle[(replicate - 1) % len(cell_cycle)]
+        if dgp_family == "fixed_subject_increasing_cell_null"
+        else int(
+            _mapping(
+                generation["cells_per_type_by_phase"],
+                field="dgp_generation.cells_per_type_by_phase",
+            )[phase]
+        )
+    )
+    subjects = int(
+        _mapping(
+            generation["subjects_per_level_by_phase"],
+            field="dgp_generation.subjects_per_level_by_phase",
+        )[phase]
+    )
+    return V7DGPScale(
+        candidate_sender_count=candidate_count,
+        cells_per_type=cells,
+        subjects_per_level=subjects,
+    )
 
 
 def _validate_dgp_families(config: Mapping[str, Any]) -> None:
@@ -355,6 +478,7 @@ def load_v7_benchmark_protocol(path: Path = DEFAULT_CONFIG) -> V7BenchmarkProtoc
     ):
         raise ValueError("minimum_estimator_commit must be a full lowercase Git hash")
     _validate_execution_tiers(config)
+    _validate_dgp_generation(config)
     _validate_seed_policy(config)
     _validate_dgp_families(config)
     _validate_method_matrix(config)
@@ -446,6 +570,12 @@ def expand_v7_benchmark_plan(
                 if dataset_id in dataset_keys or seed in dataset_keys.values():
                     raise RuntimeError("v7 dataset ID or seed collision")
                 dataset_keys[dataset_id] = seed
+                scale = resolve_v7_dgp_scale(
+                    protocol,
+                    phase=phase,
+                    dgp_family=family,
+                    replicate_index=replicate_index,
+                )
                 for generator_id in generators:
                     for inference_id in inferences:
                         run_id = stable_id(
@@ -470,6 +600,11 @@ def expand_v7_benchmark_plan(
                                 "replicate_index": replicate_index,
                                 "seed": seed,
                                 "dataset_id": dataset_id,
+                                "candidate_sender_count": (
+                                    scale.candidate_sender_count
+                                ),
+                                "cells_per_type": scale.cells_per_type,
+                                "subjects_per_level": scale.subjects_per_level,
                                 "generator_id": generator_id,
                                 "inference_id": inference_id,
                                 "run_id": run_id,

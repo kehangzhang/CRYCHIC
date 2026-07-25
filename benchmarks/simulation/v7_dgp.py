@@ -13,6 +13,7 @@ from anndata import AnnData
 from scipy import sparse
 
 from benchmarks.simulation.v7_protocol import DESIGN_KINDS, REQUIRED_DGP_FAMILIES
+from crychic.attribution import PenaltyTuningSpec
 from crychic.core import CrychicConfig, canonical_digest, stable_id
 from crychic.design import ContrastSpec, balanced_contrast
 from crychic.inference import DifferentialContrastSpec, DifferentialDesignSpec
@@ -865,6 +866,14 @@ def _crossfit_spec(
         allowed_n_splits=(2,),
         min_train_subjects_per_context=2,
         min_test_subjects_per_context=1,
+        penalty_tuning_spec=PenaltyTuningSpec(
+            lambda1_fractions=(1.0, 0.1),
+            lambda2_fractions=(0.0,),
+            inner_allowed_n_splits=(2,),
+            min_inner_train_subjects_per_context=1,
+            min_inner_validation_subjects_per_context=1,
+            root_seed=seed,
+        ),
         absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
         sender_attribution_v2_spec=SenderAttributionV2Spec(
             minimum_calibration_subjects=4

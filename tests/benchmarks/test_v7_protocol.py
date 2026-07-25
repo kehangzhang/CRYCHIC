@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.v7_protocol import (
     DEFAULT_CONFIG,
@@ -15,6 +14,7 @@ from benchmarks.simulation.v7_protocol import (
     REQUIRED_DGP_FAMILIES,
     expand_v7_benchmark_plan,
     load_v7_benchmark_protocol,
+    resolve_v7_dgp_scale,
     write_v7_benchmark_plan,
 )
 
@@ -66,6 +66,9 @@ def test_plan_expansion_pairs_generators_on_identical_datasets_and_seeds() -> No
     assert set(primary["inference_id"]) == {"I1"}
     grouped = primary.groupby("dataset_id", observed=True)
     assert grouped["seed"].nunique().eq(1).all()
+    assert grouped["candidate_sender_count"].nunique().eq(1).all()
+    assert grouped["cells_per_type"].nunique().eq(1).all()
+    assert grouped["subjects_per_level"].nunique().eq(1).all()
     assert grouped.size().eq(len(GENERATORS)).all()
     datasets = primary.loc[:, ["dataset_id", "seed"]].drop_duplicates()
     assert datasets["seed"].is_unique
@@ -107,6 +110,38 @@ def test_smoke_covers_every_family_without_changing_family_role() -> None:
     }
     assert plan["dataset_id"].nunique() == 45
     assert len(plan) == 45 * len(INFERENCES)
+
+
+def test_dgp_scale_cycles_only_on_preregistered_stress_families() -> None:
+    protocol = load_v7_benchmark_protocol()
+    cardinalities = [
+        resolve_v7_dgp_scale(
+            protocol,
+            phase="smoke",
+            dgp_family="candidate_cardinality",
+            replicate_index=index,
+        ).candidate_sender_count
+        for index in range(1, 9)
+    ]
+    assert cardinalities == [2, 5, 10, 20, 2, 5, 10, 20]
+    cell_counts = [
+        resolve_v7_dgp_scale(
+            protocol,
+            phase="null_calibration",
+            dgp_family="fixed_subject_increasing_cell_null",
+            replicate_index=index,
+        ).cells_per_type
+        for index in range(1, 9)
+    ]
+    assert cell_counts == [1, 2, 4, 8, 1, 2, 4, 8]
+    default = resolve_v7_dgp_scale(
+        protocol,
+        phase="locked",
+        dgp_family="ligand_only",
+        replicate_index=7,
+    )
+    assert (default.candidate_sender_count, default.cells_per_type) == (5, 4)
+    assert default.subjects_per_level == 8
 
 
 def test_protocol_digest_and_plan_ignore_json_object_order(tmp_path: Path) -> None:

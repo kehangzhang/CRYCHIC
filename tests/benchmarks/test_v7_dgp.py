@@ -5,13 +5,13 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-
 from benchmarks.simulation.v7_dgp import (
     CANDIDATE_SENDER_COUNTS,
     INTERACTIONS,
     generate_v7_dgp,
 )
 from benchmarks.simulation.v7_protocol import load_v7_benchmark_protocol
+
 from crychic.workflow import (
     V7EstimatorSpec,
     build_v7_diagnostics,
@@ -209,7 +209,9 @@ def test_raw_dgp_runs_current_crossfit_estimator_and_diagnostics() -> None:
     assert set(scores["out_of_fold"]) == {True}
 
     with warnings.catch_warnings():
-        warnings.simplefilter("error", pd.errors.SettingWithCopyWarning)
+        setting_with_copy = getattr(pd.errors, "SettingWithCopyWarning", None)
+        if setting_with_copy is not None:
+            warnings.simplefilter("error", setting_with_copy)
         estimator = fit_crossfit_v7_estimator(
             crossfit,
             V7EstimatorSpec(
@@ -271,3 +273,23 @@ def test_generation_is_seed_deterministic_and_content_bound() -> None:
     assert first.raw_input_digest != changed.raw_input_digest
     assert (first.adata.layers["counts"] != second.adata.layers["counts"]).nnz == 0
     pd.testing.assert_frame_equal(first.truth, second.truth)
+
+
+def test_dgp_freezes_the_preregistered_legacy_g1_tuning_grid() -> None:
+    fixture = generate_v7_dgp(
+        dataset_id="legacy-grid",
+        dgp_family="expression_joint",
+        design_kind="independent_two_group",
+        seed=91,
+        candidate_sender_count=2,
+        cells_per_type=1,
+        subjects_per_level=4,
+    )
+    tuning = fixture.crossfit_spec.penalty_tuning_spec
+    assert tuning is not None
+    assert tuning.lambda1_fractions == (1.0, 0.1)
+    assert tuning.lambda2_fractions == (0.0,)
+    assert tuning.inner_allowed_n_splits == (2,)
+    assert tuning.min_inner_train_subjects_per_context == 1
+    assert tuning.min_inner_validation_subjects_per_context == 1
+    assert tuning.root_seed == fixture.seed

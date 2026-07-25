@@ -18,6 +18,31 @@
     "record_stage_wall_time": true,
     "thread_oversubscription_forbidden": true
   },
+  "dgp_generation": {
+    "candidate_sender_default": 5,
+    "candidate_cardinality_cycle": [2, 5, 10, 20],
+    "fixed_subject_cell_count_cycle": [1, 2, 4, 8],
+    "cells_per_type_by_phase": {
+      "smoke": 2,
+      "development": 4,
+      "locked": 4,
+      "null_calibration": 2
+    },
+    "subjects_per_level_by_phase": {
+      "smoke": 8,
+      "development": 8,
+      "locked": 8,
+      "null_calibration": 8
+    },
+    "legacy_g1_tuning": {
+      "lambda1_fractions": [1.0, 0.1],
+      "lambda2_fractions": [0.0],
+      "inner_allowed_n_splits": [2],
+      "minimum_inner_train_subjects_per_context": 1,
+      "minimum_inner_validation_subjects_per_context": 1,
+      "root_seed": "dataset_seed"
+    }
+  },
   "seed_policy": {
     "algorithm": "sha256_namespace_family_design_replicate_first_31_bits_nonzero",
     "namespaces": {
