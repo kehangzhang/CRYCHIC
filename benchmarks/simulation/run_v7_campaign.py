@@ -269,6 +269,7 @@ def build_v7_campaign_plan(
     profiles: Sequence[str],
     maximum_replicates: int | None = None,
     maximum_datasets: int | None = None,
+    dgp_families: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Union profiles while retaining every profile-specific run identity."""
 
@@ -292,6 +293,17 @@ def build_v7_campaign_plan(
     dataset_order = plan.loc[:, list(_DATASET_PLAN_COLUMNS)].drop_duplicates()
     if dataset_order["dataset_id"].duplicated().any():
         raise RuntimeError("campaign profiles disagree on dataset generation fields")
+    if dgp_families is not None:
+        selected_families = tuple(dict.fromkeys(map(str, dgp_families)))
+        available = set(plan["dgp_family"].astype(str))
+        if not selected_families or not set(selected_families).issubset(available):
+            raise ValueError(
+                "dgp_families must be a non-empty subset of the protocol axis"
+            )
+        plan = plan.loc[plan["dgp_family"].isin(selected_families)].copy()
+        dataset_order = dataset_order.loc[
+            dataset_order["dgp_family"].isin(selected_families)
+        ].copy()
     if maximum_datasets is not None:
         if (
             isinstance(maximum_datasets, bool)
@@ -835,6 +847,7 @@ def _write_campaign_state(
         "status": status,
         "phase": phase,
         "profiles": list(profiles),
+        "dgp_families": sorted(plan["dgp_family"].astype(str).unique()),
         "started_utc": started_utc,
         "updated_utc": _utc_now(),
         "protocol": protocol.to_manifest(),
@@ -982,6 +995,7 @@ def run_v7_campaign(
     output_root: Path,
     maximum_replicates: int | None = None,
     maximum_datasets: int | None = None,
+    dgp_families: Sequence[str] | None = None,
     jobs: int = 0,
     overwrite: bool = False,
     allow_dirty: bool = False,
@@ -1006,6 +1020,7 @@ def run_v7_campaign(
         profiles=profiles,
         maximum_replicates=maximum_replicates,
         maximum_datasets=maximum_datasets,
+        dgp_families=dgp_families,
     )
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "datasets").mkdir(exist_ok=True)
@@ -1189,6 +1204,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--maximum-replicates", type=int)
     parser.add_argument("--maximum-datasets", type=int)
     parser.add_argument(
+        "--dgp-family",
+        action="append",
+        dest="dgp_families",
+        help="diagnostic subset; repeat for multiple frozen DGP families",
+    )
+    parser.add_argument(
         "--jobs",
         type=int,
         default=0,
@@ -1210,6 +1231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_root=arguments.output_dir,
         maximum_replicates=arguments.maximum_replicates,
         maximum_datasets=arguments.maximum_datasets,
+        dgp_families=arguments.dgp_families,
         jobs=arguments.jobs,
         overwrite=arguments.overwrite,
         allow_dirty=arguments.allow_dirty,

@@ -172,6 +172,11 @@ uv run --extra benchmark python -m benchmarks.simulation.run_v7_campaign \
   --output-dir benchmark_work/suggest_next2_v7/smoke
 ```
 
+For an estimand-specific diagnostic subset, repeat `--dgp-family` with names
+already present in the frozen protocol. This filters rows only after the full
+plan and seeds are resolved; it cannot introduce a new family or alter a run
+identity.
+
 The runner first completes one single-core pilot, then derives process-level
 parallelism from the pilot peak RSS, host CPU count, and the frozen 80% system
 memory ceiling. Every worker is limited to one numerical-library thread, so

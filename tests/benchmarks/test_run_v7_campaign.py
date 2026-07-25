@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.run_v7_campaign import (
@@ -47,6 +48,30 @@ def test_campaign_plan_unions_profiles_without_recomputing_datasets() -> None:
         )
         assert len(unique_arms) == 8
         assert ("G3", "I1") in unique_arms
+
+
+def test_campaign_plan_filters_only_frozen_family_rows() -> None:
+    protocol = load_v7_benchmark_protocol()
+    plan = build_v7_campaign_plan(
+        protocol,
+        phase="smoke",
+        profiles=("score_primary", "inference_crossover"),
+        maximum_replicates=1,
+        dgp_families=("occurrence_heterogeneity",),
+    )
+
+    assert set(plan["dgp_family"]) == {"occurrence_heterogeneity"}
+    assert set(plan["design_kind"]) == {"independent_two_group", "paired"}
+    assert plan["dataset_id"].nunique() == 2
+    assert len(plan) == 18
+    with pytest.raises(ValueError, match="subset of the protocol axis"):
+        build_v7_campaign_plan(
+            protocol,
+            phase="smoke",
+            profiles=("score_primary",),
+            maximum_replicates=1,
+            dgp_families=("not_registered",),
+        )
 
 
 def test_continuous_truth_maps_only_for_the_descriptive_crossfit_diagnostic() -> None:
