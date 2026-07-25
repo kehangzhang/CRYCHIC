@@ -11,6 +11,10 @@ from benchmarks.simulation.run_v7_campaign import (
     build_v7_diagnostic_truth,
     run_v7_campaign,
 )
+from benchmarks.simulation.run_v7_e5_derived_campaign import (
+    OUTPUT_TABLES as E5_DERIVED_TABLES,
+)
+from benchmarks.simulation.run_v7_e5_derived_campaign import run_derived_campaign
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
 from benchmarks.simulation.v7_protocol import load_v7_benchmark_protocol
 
@@ -88,6 +92,7 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
     assert set(manifest["experiments"]) == {
         "E2_hard_gate_attrition",
         "E3_sender_detection_attribution",
+        "E5_hypergraph",
     }
     assert set(manifest["outputs"]) == set(DATASET_TABLES)
     for record in manifest["outputs"].values():
@@ -108,6 +113,7 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "truth_metrics",
         "e2_hard_gate_component_swaps",
         "e3_sender_detection_attribution_swaps",
+        "e5_hypergraph_topology_swaps",
         "v7_diagnostics",
         "persist_outputs",
     } == completed_stages
@@ -115,11 +121,43 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "all_e2_metrics.parquet",
         "all_e3_metrics.parquet",
         "all_e3_sender_metrics.parquet",
+        "all_e5_metrics.parquet",
+        "all_e5_fit_diagnostics.parquet",
+        "all_e5_topology_diagnostics.parquet",
         "e2_metric_summary.tsv",
         "e3_metric_summary.tsv",
         "e3_sender_metric_summary.tsv",
+        "e5_metric_summary.tsv",
     ):
         assert (output / aggregate).is_file()
+
+    derived_output = tmp_path / "e5-derived"
+    derived = run_derived_campaign(output, derived_output, jobs=1)
+    assert derived["status"] == "completed"
+    derived_runs = pd.read_csv(derived_output / "runs.tsv", sep="\t")
+    assert derived_runs["status"].tolist() == ["completed"]
+    derived_result = Path(derived_runs.loc[0, "result_directory"])
+    derived_manifest_path = derived_result / "manifest.json"
+    derived_manifest = json.loads(derived_manifest_path.read_text(encoding="utf-8"))
+    assert set(derived_manifest["outputs"]) == set(E5_DERIVED_TABLES)
+    assert not derived_manifest["formal_inference_allowed"]
+    derived_events = [
+        json.loads(line)
+        for line in (derived_result / "run.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert {
+        event["stage"] for event in derived_events if event["event"] == "completed"
+    } == {
+        "read_authenticated_source",
+        "e5_hypergraph_topology_swaps",
+        "persist_outputs",
+    }
+    derived_before = derived_manifest_path.stat().st_mtime_ns
+    derived_resumed = run_derived_campaign(output, derived_output, jobs=1)
+    assert derived_resumed["status"] == "completed"
+    assert derived_manifest_path.stat().st_mtime_ns == derived_before
 
     before = manifest_path.stat().st_mtime_ns
     resumed = run_v7_campaign(

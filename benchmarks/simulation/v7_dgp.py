@@ -346,6 +346,14 @@ def _resource_bundle(dgp_family: str) -> ResourceBundle:
     )
 
 
+def build_v7_dgp_resource(dgp_family: str) -> ResourceBundle:
+    """Build the frozen outcome-blind resource without simulating expression."""
+
+    if dgp_family not in REQUIRED_DGP_FAMILIES:
+        raise ValueError("dgp_family is not registered")
+    return _resource_bundle(dgp_family)
+
+
 def _target_prior(dgp_family: str) -> TargetPrior:
     target_ids = ("T_ACT", "T_ALT", "T_INH", "T_WEAK")
     target_index = {target: index for index, target in enumerate(target_ids)}
@@ -1150,5 +1158,6 @@ __all__ = [
     "SCHEMA_VERSION",
     "TRUTH_COLUMNS",
     "V7DGPFixture",
+    "build_v7_dgp_resource",
     "generate_v7_dgp",
 ]

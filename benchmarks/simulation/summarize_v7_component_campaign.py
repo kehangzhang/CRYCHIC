@@ -21,6 +21,10 @@ from benchmarks.adapters.common import json_safe, sha256_file, write_json
 from benchmarks.simulation.run_v7_campaign import CAMPAIGN_SCHEMA_VERSION
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-component-report-v1"
+_SUPPORTED_CAMPAIGN_SCHEMAS = {
+    "crychic-suggest-next2-v7-campaign-v2",
+    CAMPAIGN_SCHEMA_VERSION,
+}
 _KEY_METRICS = (
     "event_auprc",
     "event_auroc",
@@ -457,8 +461,8 @@ def summarize(
     campaign = campaign_dir.resolve()
     manifest_path = campaign / "campaign_manifest.json"
     manifest = _read_json(manifest_path)
-    if manifest.get("schema_version") != CAMPAIGN_SCHEMA_VERSION:
-        raise ValueError("campaign schema is not the component-enabled v2 contract")
+    if manifest.get("schema_version") not in _SUPPORTED_CAMPAIGN_SCHEMAS:
+        raise ValueError("campaign schema is not a supported component contract")
     if manifest.get("status") != "completed" or manifest.get("failed_datasets") != 0:
         raise ValueError("component report requires a failure-free campaign")
     if manifest.get("planned_datasets") != 900:

@@ -13,6 +13,14 @@ from benchmarks.simulation.v7_component_swaps import (
     run_v7_e2_component_swap,
 )
 from benchmarks.simulation.v7_dgp import V7DGPFixture, generate_v7_dgp
+from benchmarks.simulation.v7_hypergraph_swaps import (
+    E5_ARMS,
+    E5_EDGE_COLUMNS,
+    E5_FIT_COLUMNS,
+    E5_METRICS,
+    E5_TOPOLOGY_COLUMNS,
+    run_v7_e5_hypergraph_swap,
+)
 from benchmarks.simulation.v7_integrated import (
     EFFECT_COLUMNS,
     SCORE_VIEW_COLUMNS,
@@ -121,9 +129,7 @@ def test_score_matrix_covers_frozen_generators_and_keeps_estimands_separate(
         "sender_attribution_with_m2",
         "coupling_prior_annotation",
     }.issubset(set(g5["score_view"]))
-    assert set(
-        g5.loc[g5["primary_view"], "score_view"]
-    ) == {"primary_sender_detection"}
+    assert set(g5.loc[g5["primary_view"], "score_view"]) == {"primary_sender_detection"}
 
 
 def test_g0_g2_frozen_formulas_report_constant_scale_equivalence(
@@ -160,11 +166,14 @@ def test_inference_matrix_runs_i0_i1_i2_and_withholds_formal_fields(
     assert not effects["formal_inference_allowed"].any()
     assert effects["p_value"].isna().all()
     assert effects["q_value"].isna().all()
-    assert effects.loc[
-        effects["generator_id"].eq("G3")
-        & effects["inference_id"].eq("I0"),
-        "covariance_method",
-    ].str.contains("raw_paired_difference").any()
+    assert (
+        effects.loc[
+            effects["generator_id"].eq("G3") & effects["inference_id"].eq("I0"),
+            "covariance_method",
+        ]
+        .str.contains("raw_paired_difference")
+        .any()
+    )
     moderated = effects.loc[
         effects["generator_id"].eq("G3")
         & effects["inference_id"].eq("I2")
@@ -204,6 +213,56 @@ def test_g4_is_post_effect_fixed_blend_and_g5_does_not_change_raw_intensity(
     pd.testing.assert_frame_equal(g3, g5)
 
 
+def test_e5_runs_every_topology_arm_on_one_outcome_blind_event_universe(
+    prepared: _Prepared,
+    integrated: V7IntegratedMatrixResult,
+) -> None:
+    result = run_v7_e5_hypergraph_swap(
+        integrated.effects,
+        resource=prepared.fixture.resource,
+        truth=prepared.fixture.truth,
+        dataset_id=prepared.fixture.dataset_id,
+        dgp_family=prepared.fixture.dgp_family,
+        design_kind=prepared.fixture.design_kind,
+        root_seed=prepared.fixture.seed,
+    )
+
+    assert tuple(result.edge_estimates.columns) == E5_EDGE_COLUMNS
+    assert tuple(result.fit_diagnostics.columns) == E5_FIT_COLUMNS
+    assert tuple(result.topology_diagnostics.columns) == E5_TOPOLOGY_COLUMNS
+    assert set(result.edge_estimates["score_view"]) == set(E5_ARMS)
+    assert set(result.metrics["metric"]) == set(E5_METRICS)
+    assert not result.edge_estimates["formal_inference_allowed"].any()
+    assert result.topology_diagnostics["outcome_blind"].all()
+    event_counts = result.edge_estimates.groupby(
+        ["contrast_name", "score_view"], observed=True
+    )["event_id"].nunique()
+    assert event_counts.nunique() == 1
+
+    raw = result.edge_estimates.loc[result.edge_estimates["score_view"].eq("no_prior")]
+    observed = raw["status"].eq("observed")
+    assert raw.loc[observed, "posterior_effect"].equals(raw.loc[observed, "raw_effect"])
+    assert raw.loc[observed, "posterior_standard_error"].equals(
+        raw.loc[observed, "raw_standard_error"]
+    )
+    tensor = result.fit_diagnostics.loc[
+        result.fit_diagnostics["score_view"].eq("tensor_factorization")
+    ]
+    assert tensor["tensor_rank"].eq(2).all()
+    assert tensor["converged"].all()
+    degree_matched = result.topology_diagnostics.loc[
+        result.topology_diagnostics["score_view"].isin(
+            {
+                "degree_matched_permuted_hypergraph",
+                "rewired_10pct",
+                "rewired_25pct",
+                "rewired_50pct",
+            }
+        )
+    ]
+    assert degree_matched["degree_profiles_equal"].astype(bool).all()
+
+
 def test_metrics_align_each_estimand_and_never_convert_unknown_truth_to_negative(
     prepared: _Prepared,
     integrated: V7IntegratedMatrixResult,
@@ -229,13 +288,9 @@ def test_metrics_align_each_estimand_and_never_convert_unknown_truth_to_negative
         "score_tie_fraction",
         "score_na_fraction",
     }.issubset(set(metrics["metric"]))
-    combined = aligned.loc[
-        aligned["score_view"].eq("primary_fixed_effect_z_blend")
-    ]
+    combined = aligned.loc[aligned["score_view"].eq("primary_fixed_effect_z_blend")]
     assert not combined.empty
-    assert set(combined["truth_effect_kind"]) == {
-        "fixed_parent_program_z_blend"
-    }
+    assert set(combined["truth_effect_kind"]) == {"fixed_parent_program_z_blend"}
     program = aligned.loc[aligned["estimand"].eq("signed_receiver_program")]
     assert not program.empty
     assert set(program["truth_effect_kind"]) == {"program_effect"}
@@ -256,9 +311,9 @@ def test_metrics_align_each_estimand_and_never_convert_unknown_truth_to_negative
 
     unknown_truth = prepared.fixture.truth.copy(deep=True)
     target = unknown_truth.index[0]
-    unknown_truth["truth_causal_sender"] = unknown_truth[
-        "truth_causal_sender"
-    ].astype("boolean")
+    unknown_truth["truth_causal_sender"] = unknown_truth["truth_causal_sender"].astype(
+        "boolean"
+    )
     unknown_truth.loc[target, "truth_causal_sender"] = pd.NA
     unknown_aligned = align_v7_effect_truth(integrated.effects, unknown_truth)
     truth_row = unknown_truth.loc[target]
@@ -361,9 +416,7 @@ def test_e2_runs_every_arm_through_i1_without_formal_fields(
     assert set(result.effects["inference_id"]) == {"I1"}
     assert not result.effects["formal_inference_allowed"].any()
     assert result.effects[["p_value", "q_value"]].isna().all(axis=None)
-    assert {"event_auprc", "effect_spearman"}.issubset(
-        set(result.metrics["metric"])
-    )
+    assert {"event_auprc", "effect_spearman"}.issubset(set(result.metrics["metric"]))
 
 
 def test_e3_builds_detection_legacy_null_sender_and_m2_on_one_oof_axis(
@@ -403,15 +456,11 @@ def test_e3_builds_detection_legacy_null_sender_and_m2_on_one_oof_axis(
     assert observed_entropy.between(0.0, 1.0).all()
 
     parent_means = (
-        auxiliary.loc[
-            auxiliary["score_view"].isin([E3_NULL_SENDER_ARM, E3_M2_ARM])
-        ]
+        auxiliary.loc[auxiliary["score_view"].isin([E3_NULL_SENDER_ARM, E3_M2_ARM])]
         .groupby("score_view", observed=True)["parent_score"]
         .mean()
     )
-    assert parent_means[E3_NULL_SENDER_ARM] == pytest.approx(
-        parent_means[E3_M2_ARM]
-    )
+    assert parent_means[E3_NULL_SENDER_ARM] == pytest.approx(parent_means[E3_M2_ARM])
 
 
 def test_e3_runs_matched_i1_and_emits_all_sender_metrics(

@@ -34,6 +34,7 @@ from benchmarks.adapters.common import (
 )
 from benchmarks.simulation.v7_component_swaps import run_v7_e2_component_swap
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
+from benchmarks.simulation.v7_hypergraph_swaps import run_v7_e5_hypergraph_swap
 from benchmarks.simulation.v7_integrated import run_v7_integrated_matrix
 from benchmarks.simulation.v7_metrics import evaluate_v7_integrated_matrix
 from benchmarks.simulation.v7_protocol import (
@@ -47,8 +48,8 @@ from benchmarks.simulation.v7_protocol import (
 from benchmarks.simulation.v7_sender_swaps import run_v7_e3_sender_swap
 from crychic.workflow import build_v7_diagnostics, run_subject_crossfit
 
-CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v2"
-DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v2"
+CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v3"
+DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v3"
 RUN_COLUMNS = (
     "dataset_id",
     "dgp_family",
@@ -98,6 +99,10 @@ DATASET_TABLES = (
     "e3_aligned_effects",
     "e3_metrics",
     "e3_sender_metrics",
+    "e5_edge_estimates",
+    "e5_metrics",
+    "e5_fit_diagnostics",
+    "e5_topology_diagnostics",
 )
 _THREAD_ENVIRONMENT = {
     "OMP_NUM_THREADS": "1",
@@ -460,8 +465,10 @@ def run_v7_dataset(
         raise FileExistsError(
             f"incomplete or corrupt dataset output exists: {final}; pass overwrite"
         )
-    temporary = output_root / "datasets" / (
-        f".{dataset_id}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    temporary = (
+        output_root
+        / "datasets"
+        / (f".{dataset_id}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}")
     )
     temporary.mkdir(parents=True, exist_ok=False)
     logger = _DatasetLogger(temporary / "run.jsonl", dataset_id=dataset_id)
@@ -488,9 +495,7 @@ def run_v7_dataset(
                     dgp_family=str(dataset_plan["dgp_family"]),
                     design_kind=str(dataset_plan["design_kind"]),
                     seed=int(dataset_plan["seed"]),
-                    candidate_sender_count=int(
-                        dataset_plan["candidate_sender_count"]
-                    ),
+                    candidate_sender_count=int(dataset_plan["candidate_sender_count"]),
                     cells_per_type=int(dataset_plan["cells_per_type"]),
                     subjects_per_level=int(dataset_plan["subjects_per_level"]),
                 )
@@ -538,9 +543,17 @@ def run_v7_dataset(
                     truth=fixture.truth,
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
-                    candidate_sender_count=int(
-                        dataset_plan["candidate_sender_count"]
-                    ),
+                    candidate_sender_count=int(dataset_plan["candidate_sender_count"]),
+                )
+            with logger.stage("e5_hypergraph_topology_swaps"):
+                e5 = run_v7_e5_hypergraph_swap(
+                    integrated.effects,
+                    resource=fixture.resource,
+                    truth=fixture.truth,
+                    dataset_id=dataset_id,
+                    dgp_family=fixture.dgp_family,
+                    design_kind=fixture.design_kind,
+                    root_seed=int(dataset_plan["seed"]),
                 )
             with logger.stage("v7_diagnostics"):
                 diagnostics = build_v7_diagnostics(
@@ -576,6 +589,10 @@ def run_v7_dataset(
                     "e3_aligned_effects": e3.aligned_effects,
                     "e3_metrics": e3.metrics,
                     "e3_sender_metrics": e3.sender_metrics,
+                    "e5_edge_estimates": e5.edge_estimates,
+                    "e5_metrics": e5.metrics,
+                    "e5_fit_diagnostics": e5.fit_diagnostics,
+                    "e5_topology_diagnostics": e5.topology_diagnostics,
                 }
                 outputs = {
                     name: _write_parquet(table, temporary / f"{name}.parquet")
@@ -611,6 +628,13 @@ def run_v7_dataset(
                             dataset_plan["candidate_sender_count"]
                         ),
                         "inference": "I1",
+                        "formal_inference_allowed": False,
+                    },
+                    "E5_hypergraph": {
+                        "arms": sorted(e5.edge_estimates["score_view"].unique()),
+                        "source_generator": "G3",
+                        "source_inference": "I1",
+                        "topology_source": "outcome_blind_resource_annotations",
                         "formal_inference_allowed": False,
                     },
                 },
@@ -801,6 +825,7 @@ def _aggregate_campaign_metrics(
         ("metrics", "all_dataset_metrics", "metric_summary"),
         ("e2_metrics", "all_e2_metrics", "e2_metric_summary"),
         ("e3_metrics", "all_e3_metrics", "e3_metric_summary"),
+        ("e5_metrics", "all_e5_metrics", "e5_metric_summary"),
     ):
         parts = [pd.read_parquet(path / f"{source_name}.parquet") for path in completed]
         if not parts:
@@ -833,33 +858,41 @@ def _aggregate_campaign_metrics(
     sender_parts = [
         pd.read_parquet(path / "e3_sender_metrics.parquet") for path in completed
     ]
-    if not sender_parts:
-        return
-    sender_metrics = pd.concat(sender_parts, ignore_index=True)
-    sender_metrics.to_parquet(
-        output_root / "all_e3_sender_metrics.parquet",
-        index=False,
-        compression="zstd",
-    )
-    sender_summary = (
-        sender_metrics.loc[sender_metrics["status"].eq("observed")]
-        .groupby(
-            [
-                "dgp_family",
-                "design_kind",
-                "score_view",
-                "candidate_sender_count",
-                "metric",
-            ],
-            observed=True,
-            sort=True,
-        )["value"]
-        .agg(["count", "mean", "std", "median"])
-        .reset_index()
-    )
-    sender_summary.to_csv(
-        output_root / "e3_sender_metric_summary.tsv", sep="\t", index=False
-    )
+    if sender_parts:
+        sender_metrics = pd.concat(sender_parts, ignore_index=True)
+        sender_metrics.to_parquet(
+            output_root / "all_e3_sender_metrics.parquet",
+            index=False,
+            compression="zstd",
+        )
+        sender_summary = (
+            sender_metrics.loc[sender_metrics["status"].eq("observed")]
+            .groupby(
+                [
+                    "dgp_family",
+                    "design_kind",
+                    "score_view",
+                    "candidate_sender_count",
+                    "metric",
+                ],
+                observed=True,
+                sort=True,
+            )["value"]
+            .agg(["count", "mean", "std", "median"])
+            .reset_index()
+        )
+        sender_summary.to_csv(
+            output_root / "e3_sender_metric_summary.tsv", sep="\t", index=False
+        )
+
+    for source_name in ("e5_fit_diagnostics", "e5_topology_diagnostics"):
+        parts = [pd.read_parquet(path / f"{source_name}.parquet") for path in completed]
+        if parts:
+            pd.concat(parts, ignore_index=True).to_parquet(
+                output_root / f"all_{source_name}.parquet",
+                index=False,
+                compression="zstd",
+            )
 
 
 def run_v7_campaign(
