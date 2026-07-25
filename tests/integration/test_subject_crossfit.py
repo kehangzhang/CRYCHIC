@@ -98,10 +98,12 @@ from crychic.workflow import (
     FullPipelineResamplingStatus,
     RepeatedCrossFitDiagnostics,
     RepeatedCrossFitSpec,
+    V7EstimatorSpec,
     adapt_crossfit_active_edge_point_records,
     build_family_effect_oof_spec,
     build_frozen_family_effect_target,
     fit_crossfit_two_part_occurrence_v2,
+    fit_crossfit_v7_estimator,
     freeze_crossfit_active_edge_universe,
     recommended_crossfit_spec,
     run_full_pipeline_resampling,
@@ -1387,6 +1389,35 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
     assert occurrence.to_manifest()["observed_effects"] == len(
         occurrence.occurrence.effects
     )
+    unified_design = DifferentialDesignSpec(
+        design_kind="independent_two_group",
+        condition_column="condition",
+        condition_levels=("control", "stim"),
+        contrasts=(
+            DifferentialContrastSpec(
+                name="stim_vs_control",
+                weights=(("control", -1.0), ("stim", 1.0)),
+            ),
+        ),
+        precision_weight_column=None,
+        minimum_subjects_per_level=4,
+    )
+    unified = fit_crossfit_v7_estimator(
+        result,
+        V7EstimatorSpec(
+            design=unified_design,
+            score_head="program_signed",
+            occurrence_spec=TwoPartOccurrenceV2Spec(
+                design=unified_design,
+                activity_threshold_raw=1.0,
+            ),
+        ),
+    )
+    assert unified.crossfit_id == result.crossfit_id
+    assert not unified.differential.effects.empty
+    assert unified.occurrence is not None
+    assert unified.hypergraph is None
+    assert not unified.to_manifest()["formal_inference_allowed"]
 
 
 def test_m2_coupling_is_fitted_on_paired_training_contrasts() -> None:

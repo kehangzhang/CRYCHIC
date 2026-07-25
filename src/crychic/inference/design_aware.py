@@ -73,6 +73,7 @@ _SAMPLE_EDGE_HEADS = {
     "parent_peak_raw",
     "parent_total_raw",
     "parent_mean_raw",
+    "program_signed",
 }
 
 
@@ -1206,6 +1207,28 @@ def build_sample_edge_differential_input(
             ["observed", "low_evidence"],
             default="structural_impossible",
         )
+        if score_head == "program_signed":
+            program_consistency = table.groupby(
+                parent_key,
+                observed=True,
+                sort=False,
+            ).agg(
+                program_value_count=(
+                    "program_signed",
+                    lambda values: values.nunique(dropna=False),
+                ),
+                program_status_count=(
+                    "program_status",
+                    lambda values: values.nunique(dropna=False),
+                ),
+            )
+            if (
+                program_consistency["program_value_count"].gt(1).any()
+                or program_consistency["program_status_count"].gt(1).any()
+            ):
+                raise ValueError(
+                    "program_signed must be sender-invariant within each parent event"
+                )
         table = table.drop_duplicates(
             ["sample_id", "context_id", "fold_id", *identity_columns]
         )
@@ -1229,6 +1252,18 @@ def build_sample_edge_differential_input(
     if score_head == "sender_detection_raw":
         table["score_status"] = np.where(
             table["score"].notna(), table["status"], "not_estimable"
+        )
+    elif score_head == "program_signed":
+        table["score_status"] = table["program_status"].map(
+            {
+                "observed": "observed",
+                "partial": "low_evidence",
+                "not_estimable": "not_estimable",
+                "not_computed": "not_estimable",
+            }
+        )
+        table["score_status"] = np.where(
+            table["score"].notna(), table["score_status"], "not_estimable"
         )
     else:
         table["score_status"] = np.where(

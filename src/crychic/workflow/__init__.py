@@ -208,10 +208,17 @@ from .signature_export import (
     export_crossfit_layered_signatures,
 )
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
+from .v7_estimator import (
+    V7_CROSSFIT_ESTIMATOR_VERSION,
+    CrossFitV7EstimatorResult,
+    V7EstimatorSpec,
+    fit_crossfit_v7_estimator,
+)
 
 __all__ = [
     "CROSSFIT_SAMPLE_EDGE_V2_ARTIFACT_KIND",
     "CROSSFIT_SAMPLE_EDGE_V2_SCHEMA_VERSION",
+    "V7_CROSSFIT_ESTIMATOR_VERSION",
     "ActiveNullPlanRequest",
     "ActiveNullRerunRecord",
     "ActiveNullRerunResult",
@@ -236,6 +243,7 @@ __all__ = [
     "CrossFitSampleEdgeV2Result",
     "CrossFitSpec",
     "CrossFitTwoPartOccurrenceV2Result",
+    "CrossFitV7EstimatorResult",
     "DirectionalCrossFitBinding",
     "DirectionalIntegratedLRCollection",
     "DirectionalIntegratedLRResult",
@@ -294,6 +302,7 @@ __all__ = [
     "StagePlan",
     "TrainingArtifactApplication",
     "TrainingArtifacts",
+    "V7EstimatorSpec",
     "adapt_crossfit_active_edge_point_records",
     "adapt_crossfit_active_edge_records_against_universe",
     "aligned_full_pipeline_resamples",
@@ -324,6 +333,7 @@ __all__ = [
     "fit_crossfit_family_effect",
     "fit_crossfit_family_omnibus",
     "fit_crossfit_two_part_occurrence_v2",
+    "fit_crossfit_v7_estimator",
     "fit_graph_fused_crossfit_registry",
     "fit_graph_fused_workflow",
     "fit_receiver_incremental_training_artifact",

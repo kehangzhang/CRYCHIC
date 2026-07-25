@@ -389,3 +389,25 @@ def test_sample_edge_adapter_uses_parent_measurement_status() -> None:
     assert parent.iloc[0]["score_status"] == "observed"
     assert len(sender) == 2
     assert set(sender["score_status"]) == {"not_estimable", "observed"}
+
+
+def test_sample_edge_adapter_preserves_signed_program_and_its_status() -> None:
+    original = sample_edge_scores()
+    table = original.table.copy(deep=True)
+    table["program_unaligned_raw"] = 0.75
+    table["program_direction"] = "attenuation"
+    table["program_signed"] = -0.75
+    table["program_status"] = "partial"
+    table["program_reason_code"] = None
+    table["program_functional_id"] = "signed-program-functional-v2"
+    scores = SampleEdgeScoreV2(table=table, provenance=original.provenance)
+
+    program = build_sample_edge_differential_input(
+        scores,
+        score_head="program_signed",
+    )
+
+    assert len(program) == 1
+    assert program.iloc[0]["score"] == -0.75
+    assert program.iloc[0]["score_status"] == "low_evidence"
+    assert "sender" not in program.columns
