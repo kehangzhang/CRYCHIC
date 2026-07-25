@@ -122,6 +122,10 @@ def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert not manifest["formal_inference_allowed"]
     assert manifest["formal_inference_reason"] == "calibration_gate_missing"
+    assert manifest["resampling_request"]["resample_backend"] == "thread"
+    assert manifest["resampling"]["execution_backend"] == (
+        "bounded_shared_snapshot_thread_pool_v1"
+    )
     assert manifest["resampling"]["permutation_context_keys"] == [
         "condition",
         "dose",
@@ -182,4 +186,15 @@ def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(
             n_permutations=1,
             run_loso=False,
             resample_jobs=2,
+        )
+    with pytest.raises(FileExistsError, match="different protocol or resampling"):
+        run_v7_full_refit_dataset(
+            protocol_path=AMENDMENT_CONFIG,
+            dataset_plan=_continuous_plan(),
+            output_root=output,
+            n_bootstraps=1,
+            n_permutations=1,
+            run_loso=False,
+            resample_jobs=2,
+            resample_backend="process",
         )

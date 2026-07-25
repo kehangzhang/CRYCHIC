@@ -53,6 +53,7 @@ from crychic.scoring import (
 )
 from crychic.workflow import (
     V7EstimatorSpec,
+    V7FullPipelineExecutionBackend,
     V7FullPipelineResampleRecord,
     V7FullPipelineResamplingResult,
     finalize_v7_full_pipeline_inference,
@@ -672,6 +673,9 @@ def run_v7_full_refit_dataset(
     n_permutations: int,
     run_loso: bool,
     resample_jobs: int = 1,
+    resample_backend: V7FullPipelineExecutionBackend | str = (
+        V7FullPipelineExecutionBackend.THREAD
+    ),
     maximum_memory_fraction: float = 0.8,
     overwrite: bool = False,
     frozen_config_manifest: Mapping[str, object] | None = None,
@@ -690,6 +694,10 @@ def run_v7_full_refit_dataset(
         or resample_jobs < 1
     ):
         raise ValueError("resample_jobs must be a positive integer")
+    try:
+        backend = V7FullPipelineExecutionBackend(resample_backend)
+    except (TypeError, ValueError) as error:
+        raise ValueError("resample_backend must be 'thread' or 'process'") from error
     protocol = load_v7_benchmark_protocol(protocol_path)
     dataset_id = _safe_dataset_id(dataset_plan["dataset_id"])
     final = output_root / "datasets" / dataset_id
@@ -703,6 +711,8 @@ def run_v7_full_refit_dataset(
             or int(existing_request.get("n_bootstraps", -1)) != bootstraps
             or int(existing_request.get("n_permutations", -1)) != permutations
             or bool(existing_request.get("run_loso")) != run_loso
+            or int(existing_request.get("resample_jobs", -1)) != resample_jobs
+            or str(existing_request.get("resample_backend", "thread")) != backend.value
             or existing_protocol.get("protocol_digest") != protocol.protocol_digest
             or existing.get("frozen_campaign_config")
             != (
@@ -742,6 +752,7 @@ def run_v7_full_refit_dataset(
             "n_permutations": permutations,
             "run_loso": run_loso,
             "resample_jobs": resample_jobs,
+            "resample_backend": backend.value,
             "calibration_gate_supplied": False,
             "formal_minimum_bootstraps": 1_000,
             "formal_minimum_permutations": 1_000,
@@ -815,6 +826,7 @@ def run_v7_full_refit_dataset(
                         dataset_id,
                     ),
                     n_jobs=resample_jobs,
+                    execution_backend=backend,
                     progress_callback=progress,
                 )
             with logger.stage("full_refit_inference_finalizer"):
@@ -963,6 +975,7 @@ def _worker(payload: Mapping[str, object]) -> dict[str, object]:
         n_permutations=int(payload["n_permutations"]),
         run_loso=bool(payload["run_loso"]),
         resample_jobs=int(payload["resample_jobs"]),
+        resample_backend=str(payload["resample_backend"]),
         maximum_memory_fraction=float(payload["maximum_memory_fraction"]),
         overwrite=bool(payload["overwrite"]),
         frozen_config_manifest=payload.get("frozen_config_manifest"),  # type: ignore[arg-type]
@@ -979,6 +992,7 @@ def _payload(
     n_permutations: int,
     run_loso: bool,
     resample_jobs: int,
+    resample_backend: str,
     maximum_memory_fraction: float,
     overwrite: bool,
     frozen_config_manifest: Mapping[str, object] | None,
@@ -991,6 +1005,7 @@ def _payload(
         "n_permutations": n_permutations,
         "run_loso": run_loso,
         "resample_jobs": resample_jobs,
+        "resample_backend": resample_backend,
         "maximum_memory_fraction": maximum_memory_fraction,
         "overwrite": overwrite,
         "frozen_config_manifest": (
@@ -1026,6 +1041,7 @@ def _write_campaign_state(
     n_permutations: int,
     run_loso: bool,
     resample_jobs: int,
+    resample_backend: str,
     effective_jobs: int,
     started_utc: str,
     status: str,
@@ -1053,6 +1069,7 @@ def _write_campaign_state(
                 "n_permutations": n_permutations,
                 "run_loso": run_loso,
                 "resample_jobs": resample_jobs,
+                "resample_backend": resample_backend,
             },
             "effective_dataset_jobs": effective_jobs,
             "maximum_memory_fraction": 0.8,
@@ -1112,6 +1129,9 @@ def run_v7_full_refit_campaign(
     dataset_id_suffix: str | None = None,
     jobs: int = 0,
     resample_jobs: int = 1,
+    resample_backend: V7FullPipelineExecutionBackend | str = (
+        V7FullPipelineExecutionBackend.THREAD
+    ),
     overwrite: bool = False,
     allow_dirty: bool = False,
     frozen_config: V7FullRefitFrozenConfig | None = None,
@@ -1122,6 +1142,10 @@ def run_v7_full_refit_campaign(
         raise ValueError(f"phase must be one of {list(PHASES)}")
     if isinstance(jobs, bool) or not isinstance(jobs, int) or jobs < 0:
         raise ValueError("jobs must be zero (auto) or a positive integer")
+    try:
+        backend = V7FullPipelineExecutionBackend(resample_backend)
+    except (TypeError, ValueError) as error:
+        raise ValueError("resample_backend must be 'thread' or 'process'") from error
     protocol = load_v7_benchmark_protocol(protocol_path)
     maximum_memory_fraction = float(
         protocol.config["execution"]["maximum_memory_fraction"]
@@ -1160,6 +1184,7 @@ def run_v7_full_refit_campaign(
             n_permutations=n_permutations,
             run_loso=run_loso,
             resample_jobs=resample_jobs,
+            resample_backend=backend.value,
             maximum_memory_fraction=maximum_memory_fraction,
             overwrite=overwrite,
             frozen_config_manifest=frozen_config_manifest,
@@ -1199,6 +1224,7 @@ def run_v7_full_refit_campaign(
         n_permutations=n_permutations,
         run_loso=run_loso,
         resample_jobs=resample_jobs,
+        resample_backend=backend.value,
         effective_jobs=effective_jobs,
         started_utc=started_utc,
         status="running",
@@ -1233,6 +1259,7 @@ def run_v7_full_refit_campaign(
                             n_permutations=n_permutations,
                             run_loso=run_loso,
                             resample_jobs=resample_jobs,
+                            resample_backend=backend.value,
                             maximum_memory_fraction=maximum_memory_fraction,
                             overwrite=overwrite,
                             frozen_config_manifest=frozen_config_manifest,
@@ -1301,6 +1328,7 @@ def run_v7_full_refit_campaign(
                         n_permutations=n_permutations,
                         run_loso=run_loso,
                         resample_jobs=resample_jobs,
+                        resample_backend=backend.value,
                         effective_jobs=effective_jobs,
                         started_utc=started_utc,
                         status="running",
@@ -1321,6 +1349,7 @@ def run_v7_full_refit_campaign(
         n_permutations=n_permutations,
         run_loso=run_loso,
         resample_jobs=resample_jobs,
+        resample_backend=backend.value,
         effective_jobs=effective_jobs,
         started_utc=started_utc,
         status=final_status,
@@ -1373,6 +1402,7 @@ def run_v7_full_refit_campaign_from_config(
         ),
         jobs=int(execution["dataset_jobs"]),
         resample_jobs=int(execution["resample_jobs"]),
+        resample_backend=str(execution.get("resample_backend", "thread")),
         overwrite=overwrite,
         allow_dirty=allow_dirty,
         frozen_config=frozen,
@@ -1399,6 +1429,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--jobs", type=int, default=0)
     parser.add_argument("--resample-jobs", type=int, default=1)
+    parser.add_argument(
+        "--resample-backend",
+        choices=tuple(value.value for value in V7FullPipelineExecutionBackend),
+        default=V7FullPipelineExecutionBackend.THREAD.value,
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--allow-dirty", action="store_true")
     return parser
@@ -1422,7 +1457,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(
                 "--campaign-config cannot be combined with scientific overrides"
             )
-        if arguments.jobs != 0 or arguments.resample_jobs != 1:
+        if (
+            arguments.jobs != 0
+            or arguments.resample_jobs != 1
+            or arguments.resample_backend != V7FullPipelineExecutionBackend.THREAD.value
+        ):
             raise SystemExit(
                 "--campaign-config cannot override frozen parallelism settings"
             )
@@ -1454,6 +1493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             design_kinds=arguments.design_kinds,
             jobs=arguments.jobs,
             resample_jobs=arguments.resample_jobs,
+            resample_backend=arguments.resample_backend,
             overwrite=arguments.overwrite,
             allow_dirty=arguments.allow_dirty,
         )

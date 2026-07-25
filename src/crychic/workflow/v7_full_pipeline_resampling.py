@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
+from multiprocessing.reduction import ForkingPickler
+from types import MappingProxyType
 from typing import TypeAlias, cast
 
 import numpy as np
@@ -38,7 +41,12 @@ from crychic.resampling import (
 from crychic.resources import ResourceBundle, TargetPrior
 from crychic.scoring import FrozenHypergraphPrior
 
-from .crossfit import CrossFitArtifacts, CrossFitSpec, _run_subject_crossfit
+from .crossfit import (
+    CrossFitArtifacts,
+    CrossFitSpec,
+    _reduce_mapping_proxy,
+    _run_subject_crossfit,
+)
 from .full_pipeline_resampling import (
     _materialize_context_permutation,
     _materialize_subject_bootstrap,
@@ -63,6 +71,10 @@ V7_FULL_PIPELINE_RESAMPLING_VERSION = "v7_full_refit_bootstrap_permutation_loso_
 _SCHEMA_VERSION = "2.0.0"
 _LOSO_POLICY = "remove_complete_subject_block_then_refit_v1"
 _BOOTSTRAP_POLICY = "design_stratified_complete_subject_block_with_replacement_v1"
+_SERIAL_BACKEND = "serial_v1"
+_THREAD_BACKEND = "bounded_shared_snapshot_thread_pool_v1"
+_PROCESS_BACKEND = "bounded_initialized_spawn_process_pool_v1"
+_PROCESS_SNAPSHOT_POLICY = "serialize_read_only_snapshot_once_per_spawn_worker_v1"
 _RERUN_STAGES = (
     "fold_split",
     "availability_fitting",
@@ -83,6 +95,13 @@ class V7FullPipelineOperation(StrEnum):
     SUBJECT_BOOTSTRAP = "subject_bootstrap"
     CONDITION_PERMUTATION = "condition_permutation"
     LEAVE_ONE_SUBJECT_OUT = "leave_one_subject_out"
+
+
+class V7FullPipelineExecutionBackend(StrEnum):
+    """Explicit non-scientific executor for independent full refits."""
+
+    THREAD = "thread"
+    PROCESS = "process"
 
 
 class V7FullPipelineResampleStatus(StrEnum):
@@ -176,6 +195,25 @@ _COMPACT_HYPERGRAPH_COLUMNS = (
     "reason_code",
     "shrinkage_record_id",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _V7ProcessExecutionContext:
+    source: AnnData
+    config: CrychicConfig
+    resource_bundle: ResourceBundle
+    target_prior: TargetPrior
+    crossfit_spec: CrossFitSpec
+    estimator_spec: V7EstimatorSpec
+    exchangeability: ExchangeabilityMap
+    source_receiver_universe: FrozenReceiverUniverse
+    hypergraph_prior: FrozenHypergraphPrior | None
+    point_hypothesis_axes: V7HypothesisAxes
+    auxiliary_sample_columns: tuple[str, ...]
+    source_snapshot_id: str
+
+
+_PROCESS_EXECUTION_CONTEXT: _V7ProcessExecutionContext | None = None
 
 
 def _name(value: object, *, field_name: str) -> str:
@@ -395,9 +433,7 @@ def _sample_metadata_with_invariant_columns(
         if column != config.sample_key
         and grouped[column].nunique(dropna=False).le(1).all()
     ]
-    extras = [
-        column for column in invariant_columns if column not in metadata.columns
-    ]
+    extras = [column for column in invariant_columns if column not in metadata.columns]
     if extras:
         sample_rows = source.loc[:, [config.sample_key, *extras]].drop_duplicates(
             config.sample_key,
@@ -608,9 +644,7 @@ def _compact_occurrence_effects(
     if occurrence is None:
         return pd.DataFrame(columns=_COMPACT_OCCURRENCE_COLUMNS)
     scale = _occurrence_effect_scale(estimator.spec)
-    source_column = (
-        "log_odds_ratio" if scale == "log_odds" else "prevalence_difference"
-    )
+    source_column = "log_odds_ratio" if scale == "log_odds" else "prevalence_difference"
     table = occurrence.occurrence.effects.loc[
         :,
         [
@@ -1228,6 +1262,39 @@ def _execute_plan(
         )
 
 
+def _register_process_reducers() -> None:
+    ForkingPickler.register(MappingProxyType, _reduce_mapping_proxy)
+
+
+def _initialize_v7_process_worker(context: _V7ProcessExecutionContext) -> None:
+    _register_process_reducers()
+    global _PROCESS_EXECUTION_CONTEXT
+    _PROCESS_EXECUTION_CONTEXT = context
+
+
+def _execute_process_plan(
+    plan: V7ResamplingPlan,
+) -> V7FullPipelineResampleRecord:
+    context = _PROCESS_EXECUTION_CONTEXT
+    if context is None:  # pragma: no cover - process initializer contract
+        raise RuntimeError("v7 process worker was not initialized")
+    return _execute_plan(
+        context.source,
+        context.config,
+        context.resource_bundle,
+        context.target_prior,
+        context.crossfit_spec,
+        context.estimator_spec,
+        context.exchangeability,
+        context.source_receiver_universe,
+        context.hypergraph_prior,
+        context.point_hypothesis_axes,
+        context.auxiliary_sample_columns,
+        plan,
+        source_snapshot_id=context.source_snapshot_id,
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class V7FullPipelineResamplingResult:
     """Point estimator plus exact small outputs from every requested full refit."""
@@ -1249,6 +1316,7 @@ class V7FullPipelineResamplingResult:
     root_seed_lineage: SeedLineage
     requested_n_jobs: int
     effective_n_jobs: int
+    requested_execution_backend: V7FullPipelineExecutionBackend | str
     hypothesis_axis_id: str = field(init=False)
     result_id: str = field(init=False)
     execution_id: str = field(init=False)
@@ -1340,6 +1408,14 @@ class V7FullPipelineResamplingResult:
         )
         if effective > min(requested, len(plans)):
             raise ValueError("effective_n_jobs exceeds the requested or useful count")
+        try:
+            requested_backend = V7FullPipelineExecutionBackend(
+                self.requested_execution_backend
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "requested_execution_backend must be 'thread' or 'process'"
+            ) from error
         scientific_payload = {
             **identifiers,
             "hypothesis_axis_id": hypothesis_axis_id,
@@ -1373,6 +1449,11 @@ class V7FullPipelineResamplingResult:
         object.__setattr__(self, "hypothesis_axis_id", hypothesis_axis_id)
         object.__setattr__(
             self,
+            "requested_execution_backend",
+            requested_backend,
+        )
+        object.__setattr__(
+            self,
             "result_id",
             stable_id(
                 "v7_full_pipeline_resampling_result",
@@ -1387,12 +1468,23 @@ class V7FullPipelineResamplingResult:
                 "v7_full_pipeline_resampling_execution",
                 {
                     "effective_n_jobs": effective,
+                    "execution_backend": self.execution_backend,
                     "requested_n_jobs": requested,
                     "result_id": self.result_id,
                 },
                 schema_version=_SCHEMA_VERSION,
             ),
         )
+
+    @property
+    def execution_backend(self) -> str:
+        """Return the runtime executor without changing scientific identity."""
+
+        if self.effective_n_jobs == 1:
+            return _SERIAL_BACKEND
+        if self.requested_execution_backend is V7FullPipelineExecutionBackend.PROCESS:
+            return _PROCESS_BACKEND
+        return _THREAD_BACKEND
 
     @property
     def successful_records(self) -> tuple[V7FullPipelineResampleRecord, ...]:
@@ -1424,6 +1516,7 @@ class V7FullPipelineResamplingResult:
             root_seed_lineage=self.root_seed_lineage,
             requested_n_jobs=self.requested_n_jobs,
             effective_n_jobs=self.effective_n_jobs,
+            requested_execution_backend=self.requested_execution_backend,
         )
         if (
             repeated.hypothesis_axis_id != self.hypothesis_axis_id
@@ -1551,6 +1644,13 @@ class V7FullPipelineResamplingResult:
             "root_seed_lineage": self.root_seed_lineage.to_dict(),
             "requested_n_jobs": self.requested_n_jobs,
             "effective_n_jobs": self.effective_n_jobs,
+            "requested_execution_backend": self.requested_execution_backend.value,
+            "execution_backend": self.execution_backend,
+            "process_snapshot_policy": (
+                _PROCESS_SNAPSHOT_POLICY
+                if self.execution_backend == _PROCESS_BACKEND
+                else None
+            ),
             "plan_counts": counts,
             "successful_counts": succeeded,
             "bootstrap_policy": _BOOTSTRAP_POLICY,
@@ -1587,6 +1687,9 @@ def run_v7_full_pipeline_resampling(
     ) = None,
     seed_lineage: SeedLineage | None = None,
     n_jobs: int = 1,
+    execution_backend: V7FullPipelineExecutionBackend | str = (
+        V7FullPipelineExecutionBackend.THREAD
+    ),
     progress_callback: (
         Callable[[V7FullPipelineResampleRecord, int, int], None] | None
     ) = None,
@@ -1615,6 +1718,10 @@ def run_v7_full_pipeline_resampling(
     if not isinstance(run_loso, bool):
         raise TypeError("run_loso must be boolean")
     requested_jobs = _positive_count(n_jobs, field_name="n_jobs", allow_zero=False)
+    try:
+        requested_backend = V7FullPipelineExecutionBackend(execution_backend)
+    except (TypeError, ValueError) as error:
+        raise ValueError("execution_backend must be 'thread' or 'process'") from error
     if progress_callback is not None and not callable(progress_callback):
         raise TypeError("progress_callback must be callable or None")
     auxiliary_sample_columns = _design_auxiliary_sample_columns(
@@ -1739,7 +1846,7 @@ def run_v7_full_pipeline_resampling(
             if progress_callback is not None:
                 progress_callback(record, completed, total_plans)
         records = tuple(serial_records)
-    else:
+    elif requested_backend is V7FullPipelineExecutionBackend.THREAD:
         with ThreadPoolExecutor(
             max_workers=effective_jobs,
             thread_name_prefix="crychic-v7-full-refit",
@@ -1748,9 +1855,7 @@ def run_v7_full_pipeline_resampling(
                 executor.submit(execute, plan=plan): index
                 for index, plan in enumerate(plans)
             }
-            ordered: list[V7FullPipelineResampleRecord | None] = [
-                None
-            ] * total_plans
+            ordered: list[V7FullPipelineResampleRecord | None] = [None] * total_plans
             completed = 0
             for future in as_completed(pending):
                 record = future.result()
@@ -1760,6 +1865,44 @@ def run_v7_full_pipeline_resampling(
                     progress_callback(record, completed, total_plans)
             if any(record is None for record in ordered):  # pragma: no cover
                 raise RuntimeError("v7 full-refit executor lost a planned record")
+            records = tuple(cast(V7FullPipelineResampleRecord, row) for row in ordered)
+    else:
+        _register_process_reducers()
+        process_context = _V7ProcessExecutionContext(
+            source=snapshot.adata,
+            config=config,
+            resource_bundle=resource_bundle,
+            target_prior=target_prior,
+            crossfit_spec=crossfit_spec,
+            estimator_spec=estimator_spec,
+            exchangeability=exchangeability,
+            source_receiver_universe=point_crossfit.receiver_universe,
+            hypergraph_prior=hypergraph_prior,
+            point_hypothesis_axes=_estimator_hypothesis_axes(point),
+            auxiliary_sample_columns=auxiliary_sample_columns,
+            source_snapshot_id=snapshot.snapshot_id,
+        )
+        spawn_context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=effective_jobs,
+            mp_context=spawn_context,
+            initializer=_initialize_v7_process_worker,
+            initargs=(process_context,),
+        ) as executor:
+            pending = {
+                executor.submit(_execute_process_plan, plan): index
+                for index, plan in enumerate(plans)
+            }
+            ordered: list[V7FullPipelineResampleRecord | None] = [None] * total_plans
+            completed = 0
+            for future in as_completed(pending):
+                record = future.result()
+                ordered[pending[future]] = record
+                completed += 1
+                if progress_callback is not None:
+                    progress_callback(record, completed, total_plans)
+            if any(record is None for record in ordered):  # pragma: no cover
+                raise RuntimeError("v7 process executor lost a planned record")
             records = tuple(cast(V7FullPipelineResampleRecord, row) for row in ordered)
     return V7FullPipelineResamplingResult(
         point=point,
@@ -1779,11 +1922,13 @@ def run_v7_full_pipeline_resampling(
         root_seed_lineage=lineage,
         requested_n_jobs=requested_jobs,
         effective_n_jobs=effective_jobs,
+        requested_execution_backend=requested_backend,
     )
 
 
 __all__ = [
     "V7_FULL_PIPELINE_RESAMPLING_VERSION",
+    "V7FullPipelineExecutionBackend",
     "V7FullPipelineOperation",
     "V7FullPipelineResampleRecord",
     "V7FullPipelineResampleStatus",

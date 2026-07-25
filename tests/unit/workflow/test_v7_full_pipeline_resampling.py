@@ -29,6 +29,7 @@ from crychic.scoring import (
 )
 from crychic.workflow import (
     V7EstimatorSpec,
+    V7FullPipelineExecutionBackend,
     V7FullPipelineInferenceSpec,
     V7FullPipelineOperation,
     V7FullPipelineResampleStatus,
@@ -234,17 +235,38 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
         ),
         **arguments,
     )
+    process_progress: list[tuple[str, int, int]] = []
+    process = run_v7_full_pipeline_resampling(
+        _five_subject_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        n_jobs=3,
+        execution_backend=V7FullPipelineExecutionBackend.PROCESS,
+        progress_callback=lambda record, completed, total: process_progress.append(
+            (record.record_id, completed, total)
+        ),
+        **arguments,
+    )
 
-    assert serial.result_id == parallel.result_id
+    assert serial.result_id == parallel.result_id == process.result_id
     assert serial.execution_id != parallel.execution_id
+    assert parallel.execution_id != process.execution_id
     assert tuple(record.record_id for record in serial.records) == tuple(
         record.record_id for record in parallel.records
+    )
+    assert tuple(record.record_id for record in serial.records) == tuple(
+        record.record_id for record in process.records
     )
     assert len(progress) == len(parallel.records)
     assert sorted(completed for _, completed, _ in progress) == list(
         range(1, len(parallel.records) + 1)
     )
     assert {total for _, _, total in progress} == {len(parallel.records)}
+    assert sorted(completed for _, completed, _ in process_progress) == list(
+        range(1, len(process.records) + 1)
+    )
+    assert {total for _, _, total in process_progress} == {len(process.records)}
     assert len(serial.records) == 7
     assert {record.operation for record in serial.records} == {
         V7FullPipelineOperation.SUBJECT_BOOTSTRAP,
@@ -284,6 +306,10 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
     assert manifest["large_crossfit_children_retained"] is False
     assert manifest["resample_retention_policy"] == "minimal_effect_tables_only_v1"
     assert manifest["hypothesis_axis_id"] == serial.hypothesis_axis_id
+    assert manifest["execution_backend"] == "serial_v1"
+    assert process.to_manifest()["execution_backend"] == (
+        "bounded_initialized_spawn_process_pool_v1"
+    )
     assert manifest["permutation_context_keys"] == ["condition"]
     assert (
         "hypergraph_shrinkage_v2_fitting"

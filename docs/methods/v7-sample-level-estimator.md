@@ -183,6 +183,18 @@ the minimal continuous, occurrence, and M5 effect columns; M4 subject-event
 tables, omnibus diagnostics, fold models, and matrices are released at the end
 of each worker.
 
+`execution_backend="thread"` remains the compatibility default. The explicit
+`"process"` backend uses a persistent safe-spawn pool: the sanitized source,
+frozen resources, estimator specification, exchangeability map, and point
+hypothesis axis are serialized once when each worker is initialized, while
+individual tasks transmit only one small resampling plan and return one compact
+record. Completed records are restored to frozen plan order. Backend and worker
+count enter execution metadata but not the scientific result identity; serial,
+thread, and process runs with the same inputs, plans, and seed lineage must have
+identical result and record IDs. Process memory can approach the worker count
+times one full child fit, so callers must also cap BLAS/OpenMP threads and bound
+workers by the campaign memory policy.
+
 Independent-group bootstraps draw complete subjects with replacement within
 condition and declared immutable strata, preserving group sizes. Paired and
 repeated bootstraps draw complete subject trajectories. Condition permutations

@@ -125,6 +125,7 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "V7EstimatorSpec",
         "V7CompactEstimatorSnapshot",
         "V7FullPipelineCalibrationGate",
+        "V7FullPipelineExecutionBackend",
         "V7FullPipelineInferenceResult",
         "V7FullPipelineInferenceSpec",
         "V7FullPipelineResamplingResult",

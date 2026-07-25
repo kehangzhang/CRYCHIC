@@ -240,6 +240,7 @@ from .v7_full_pipeline_inference import (
 from .v7_full_pipeline_resampling import (
     V7_FULL_PIPELINE_RESAMPLING_VERSION,
     V7CompactEstimatorSnapshot,
+    V7FullPipelineExecutionBackend,
     V7FullPipelineOperation,
     V7FullPipelineResampleRecord,
     V7FullPipelineResampleStatus,
@@ -350,6 +351,7 @@ __all__ = [
     "V7DiagnosticsSpec",
     "V7EstimatorSpec",
     "V7FullPipelineCalibrationGate",
+    "V7FullPipelineExecutionBackend",
     "V7FullPipelineInferenceResult",
     "V7FullPipelineInferenceSpec",
     "V7FullPipelineOperation",
