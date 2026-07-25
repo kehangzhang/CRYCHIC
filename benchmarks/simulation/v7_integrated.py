@@ -8,6 +8,7 @@ always withheld until a complete-pipeline subject resampling campaign exists.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -187,16 +188,14 @@ def _view_frame(
     if "out_of_fold" not in table:
         table["out_of_fold"] = True
     result = table.loc[:, list(SCORE_VIEW_COLUMNS)].copy()
-    if not result["score_status"].isin(
-        {*_USABLE_SCORE_STATUSES, "not_estimable"}
-    ).all():
+    if (
+        not result["score_status"]
+        .isin({*_USABLE_SCORE_STATUSES, "not_estimable"})
+        .all()
+    ):
         raise ValueError(f"{generator_id}/{score_view} has invalid score statuses")
-    if result.duplicated(
-        ["contrast_scope", "event_id", "sample_id"]
-    ).any():
-        raise ValueError(
-            f"{generator_id}/{score_view} has duplicate sample-event rows"
-        )
+    if result.duplicated(["contrast_scope", "event_id", "sample_id"]).any():
+        raise ValueError(f"{generator_id}/{score_view} has duplicate sample-event rows")
     return result
 
 
@@ -821,11 +820,15 @@ def _paired_contrast(
     contrast: DifferentialContrastSpec,
 ) -> tuple[float | None, float | None, float | None, int, str | None]:
     levels = tuple(level for level, weight in contrast.weights if weight != 0.0)
-    matrix = table.pivot(
-        index=design.subject_column,
-        columns=design.condition_column,
-        values="score",
-    ).reindex(columns=levels).dropna()
+    matrix = (
+        table.pivot(
+            index=design.subject_column,
+            columns=design.condition_column,
+            values="score",
+        )
+        .reindex(columns=levels)
+        .dropna()
+    )
     n_subjects = len(matrix)
     if n_subjects < design.minimum_subjects_per_level:
         return None, None, None, n_subjects, "insufficient_complete_pairs"
@@ -925,6 +928,7 @@ def _moderated_prior(variances: np.ndarray, dfs: np.ndarray) -> tuple[float, flo
     if not math.isfinite(extra) or extra <= 1.0e-8:
         prior_df = 1_000_000.0
     else:
+
         def objective(value: float) -> float:
             return float(polygamma(1, value / 2.0) - extra)
 
@@ -964,12 +968,15 @@ def _moderate_i1(i1: pd.DataFrame) -> pd.DataFrame:
         if len(eligible_index) < 4:
             result.loc[index, "status"] = "not_estimable"
             result.loc[index, "reason_code"] = "fewer_than_four_moderation_events"
-            result.loc[index, [
-                "standard_error",
-                "statistic",
-                "ranking_score",
-                "diagnostic_p_value",
-            ]] = np.nan
+            result.loc[
+                index,
+                [
+                    "standard_error",
+                    "statistic",
+                    "ranking_score",
+                    "diagnostic_p_value",
+                ],
+            ] = np.nan
             continue
         variances = np.square(se.loc[eligible_index].to_numpy(dtype=float))
         dfs = df.loc[eligible_index].to_numpy(dtype=float)
@@ -1076,6 +1083,65 @@ def _fit_one_view(
     return i1 if inference_id == "I1" else _moderate_i1(i1)
 
 
+def _fit_cache_key(
+    table: pd.DataFrame,
+    *,
+    design: DifferentialDesignSpec,
+    base_inference_id: str,
+) -> str:
+    columns = [
+        "contrast_scope",
+        "event_id",
+        "sample_id",
+        "subject_id",
+        "condition",
+        "sender",
+        "receiver",
+        "interaction_id",
+        "score",
+        "score_status",
+        "reliability_weight",
+        "out_of_fold",
+    ]
+    ordered = table.loc[:, columns].sort_values(
+        ["contrast_scope", "event_id", "sample_id"],
+        kind="stable",
+        ignore_index=True,
+    )
+    row_hashes = pd.util.hash_pandas_object(
+        ordered,
+        index=False,
+        categorize=True,
+    ).to_numpy(dtype=np.uint64)
+    digest = hashlib.sha256()
+    digest.update(design.spec_id.encode("ascii"))
+    digest.update(base_inference_id.encode("ascii"))
+    digest.update(str(ordered.shape).encode("ascii"))
+    digest.update(row_hashes.tobytes())
+    return digest.hexdigest()
+
+
+def _relabel_cached_effects(
+    effects: pd.DataFrame,
+    *,
+    table: pd.DataFrame,
+    inference_id: str,
+) -> pd.DataFrame:
+    group = table.iloc[0]
+    result = effects.copy(deep=True)
+    for column in (
+        "dataset_id",
+        "generator_id",
+        "score_view",
+        "estimand",
+        "resolution",
+        "contrast_scope",
+    ):
+        result[column] = str(group[column])
+    result["inference_id"] = inference_id
+    return result.loc[:, list(EFFECT_COLUMNS)]
+
+
 def _zscore(values: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(values, errors="coerce").astype(float)
     finite = numeric[np.isfinite(numeric)]
@@ -1122,9 +1188,9 @@ def _g4_combined_effects(effects: pd.DataFrame) -> pd.DataFrame:
     combined_parts: list[pd.DataFrame] = []
     for _, local in merged.groupby("contrast_name", observed=True, sort=False):
         local = local.copy()
-        observed = local["status_m0"].eq("observed") & local[
-            "status_program"
-        ].eq("observed")
+        observed = local["status_m0"].eq("observed") & local["status_program"].eq(
+            "observed"
+        )
         local["effect"] = _zscore(local["effect_m0"]) + 0.25 * _zscore(
             local["effect_program"]
         )
@@ -1181,6 +1247,7 @@ def run_v7_inference_matrix(
     if any(inference not in {"I0", "I1", "I2"} for _, inference in requested):
         raise ValueError("arms contain an unknown inference")
     frames: list[pd.DataFrame] = []
+    fit_cache: dict[str, pd.DataFrame] = {}
     grouping = [
         "dataset_id",
         "generator_id",
@@ -1194,14 +1261,28 @@ def run_v7_inference_matrix(
         if selected.empty:
             raise ValueError(f"generator {generator_id} has no score views")
         for _, view in selected.groupby(grouping, observed=True, sort=True):
-            frames.append(
-                _fit_one_view(
+            base_inference_id = "I0" if inference_id == "I0" else "I1"
+            cache_key = _fit_cache_key(
+                view,
+                design=design,
+                base_inference_id=base_inference_id,
+            )
+            base = fit_cache.get(cache_key)
+            if base is None:
+                base = _fit_one_view(
                     view,
                     design=design,
                     sample_metadata=sample_metadata,
-                    inference_id=inference_id,
+                    inference_id=base_inference_id,
                 )
-            )
+                fit_cache[cache_key] = base
+            else:
+                base = _relabel_cached_effects(
+                    base,
+                    table=view,
+                    inference_id=base_inference_id,
+                )
+            frames.append(base if inference_id != "I2" else _moderate_i1(base))
     result = pd.concat(frames, ignore_index=True).loc[:, list(EFFECT_COLUMNS)]
     combined = _g4_combined_effects(result)
     if not combined.empty:
@@ -1246,9 +1327,7 @@ def g0_g2_equivalence_diagnostic(score_views: pd.DataFrame) -> dict[str, object]
         "paired_finite_rows": int(finite.sum()),
         "expected_scale": _G0_LOG2_REFERENCE_SCALE,
         "maximum_absolute_scale_residual": maximum,
-        "equivalent_within_1e_12": bool(
-            math.isfinite(maximum) and maximum <= 1.0e-12
-        ),
+        "equivalent_within_1e_12": bool(math.isfinite(maximum) and maximum <= 1.0e-12),
     }
 
 

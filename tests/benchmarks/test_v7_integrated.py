@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import benchmarks.simulation.v7_integrated as v7_integrated_module
 import pandas as pd
 import pytest
 from benchmarks.simulation.v7_component_swaps import (
@@ -182,6 +183,48 @@ def test_inference_matrix_runs_i0_i1_i2_and_withholds_formal_fields(
     assert not moderated.empty
     assert moderated["prior_df"].notna().all()
     assert moderated["prior_variance"].gt(0.0).all()
+
+
+def test_inference_matrix_exact_cache_preserves_uncached_effects(
+    prepared: _Prepared,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arms = (("G3", "I1"), ("G3", "I2"), ("G4", "I1"), ("G5", "I1"))
+    original = v7_integrated_module._fit_one_view
+    calls = 0
+
+    def counted(*args: object, **kwargs: object) -> pd.DataFrame:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(v7_integrated_module, "_fit_one_view", counted)
+    cached = run_v7_integrated_matrix(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+        design=prepared.fixture.differential_design,
+        sample_metadata=prepared.fixture.sample_metadata,
+        arms=arms,
+    ).effects
+
+    assert calls == 5
+    unique_key = 0
+
+    def disable_cache(*args: object, **kwargs: object) -> str:
+        nonlocal unique_key
+        unique_key += 1
+        return f"uncached-{unique_key}"
+
+    monkeypatch.setattr(v7_integrated_module, "_fit_cache_key", disable_cache)
+    uncached = run_v7_integrated_matrix(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+        design=prepared.fixture.differential_design,
+        sample_metadata=prepared.fixture.sample_metadata,
+        arms=arms,
+    ).effects
+
+    pd.testing.assert_frame_equal(cached, uncached)
 
 
 def test_g4_is_post_effect_fixed_blend_and_g5_does_not_change_raw_intensity(
