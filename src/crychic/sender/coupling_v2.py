@@ -73,6 +73,7 @@ class EBShrunkenCouplingV2Spec:
 
     numerical_covariates: tuple[str, ...] = ()
     categorical_covariates: tuple[str, ...] = ()
+    contrast_name: str | None = None
     minimum_subjects: int = 8
     minimum_observed_edges_for_eb: int = 4
     maximum_condition_number: float = 1.0e8
@@ -90,6 +91,9 @@ class EBShrunkenCouplingV2Spec:
         )
         if set(numerical).intersection(categorical):
             raise ValueError("coupling numerical and categorical covariates overlap")
+        contrast_name = self.contrast_name
+        if contrast_name is not None:
+            contrast_name = _name(contrast_name, field_name="contrast_name")
         for field_name, minimum in (
             ("minimum_subjects", 4),
             ("minimum_observed_edges_for_eb", 2),
@@ -124,6 +128,7 @@ class EBShrunkenCouplingV2Spec:
             raise ValueError(f"schema_version must be {_SCHEMA_VERSION!r}")
         object.__setattr__(self, "numerical_covariates", numerical)
         object.__setattr__(self, "categorical_covariates", categorical)
+        object.__setattr__(self, "contrast_name", contrast_name)
         object.__setattr__(self, "maximum_condition_number", condition)
         object.__setattr__(self, "residual_norm_tolerance", tolerance)
         object.__setattr__(self, "correlation_clip", correlation_clip)
@@ -139,7 +144,7 @@ class EBShrunkenCouplingV2Spec:
         )
 
     def _identity_payload(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "attribution_coupling_weight": self.attribution_coupling_weight,
             "categorical_covariates": list(self.categorical_covariates),
             "correlation_clip": self.correlation_clip,
@@ -152,6 +157,9 @@ class EBShrunkenCouplingV2Spec:
             "tau2_estimator": self.tau2_estimator,
             "version": EB_SHRUNKEN_COUPLING_V2_VERSION,
         }
+        if self.contrast_name is not None:
+            result["contrast_name"] = self.contrast_name
+        return result
 
     def to_dict(self) -> dict[str, object]:
         return {"spec_id": self.spec_id, **self._identity_payload()}
@@ -291,6 +299,9 @@ class EBShrunkenCouplingFunctionalV2:
     spec: EBShrunkenCouplingV2Spec
     status: EBShrunkenCouplingStatus | str
     reason_code: str | None
+    contrast_id: str | None = None
+    contrast_name: str | None = None
+    contrast_weights: tuple[tuple[str, float], ...] = ()
     formal_inference_allowed: bool = False
     functional_id: str = field(init=False)
 
@@ -340,10 +351,49 @@ class EBShrunkenCouplingFunctionalV2:
             raise ValueError("unavailable EB functional requires a reason")
         if self.formal_inference_allowed is not False:
             raise ValueError("coupling prior cannot claim formal inference")
+        contrast_id = self.contrast_id
+        contrast_name = self.contrast_name
+        contrast_weights = tuple(
+            (
+                _name(context_id, field_name="contrast_context_id"),
+                _finite(weight, field_name="contrast_weight"),
+            )
+            for context_id, weight in self.contrast_weights
+        )
+        if (contrast_id is None) != (contrast_name is None):
+            raise ValueError("coupling contrast ID and name must coexist")
+        if contrast_id is None:
+            if contrast_weights:
+                raise ValueError("unidentified coupling contrast cannot carry weights")
+        else:
+            contrast_id = _name(contrast_id, field_name="contrast_id")
+            contrast_name = _name(contrast_name, field_name="contrast_name")
+            if (
+                len(contrast_weights) < 2
+                or len({item[0] for item in contrast_weights}) != len(contrast_weights)
+                or any(weight == 0.0 for _, weight in contrast_weights)
+                or not math.isclose(
+                    sum(weight for _, weight in contrast_weights),
+                    0.0,
+                    abs_tol=1.0e-12,
+                )
+            ):
+                raise ValueError(
+                    "coupling contrast weights must be unique and balanced"
+                )
+            contrast_weights = tuple(sorted(contrast_weights))
+            if (
+                self.spec.contrast_name is not None
+                and contrast_name != self.spec.contrast_name
+            ):
+                raise ValueError("coupling functional contrast differs from its spec")
         object.__setattr__(self, "training_subject_ids", subjects)
         object.__setattr__(self, "tau2", tau2)
         object.__setattr__(self, "records", records)
         object.__setattr__(self, "status", status)
+        object.__setattr__(self, "contrast_id", contrast_id)
+        object.__setattr__(self, "contrast_name", contrast_name)
+        object.__setattr__(self, "contrast_weights", contrast_weights)
         object.__setattr__(
             self,
             "functional_id",
@@ -355,7 +405,7 @@ class EBShrunkenCouplingFunctionalV2:
         )
 
     def _identity_payload(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "fold_id": self.fold_id,
             "formal_inference_allowed": self.formal_inference_allowed,
             "input_digest": self.input_digest,
@@ -370,6 +420,15 @@ class EBShrunkenCouplingFunctionalV2:
             "training_subject_ids": list(self.training_subject_ids),
             "version": EB_SHRUNKEN_COUPLING_V2_VERSION,
         }
+        if self.contrast_id is not None:
+            result.update(
+                {
+                    "contrast_id": self.contrast_id,
+                    "contrast_name": self.contrast_name,
+                    "contrast_weights": [list(item) for item in self.contrast_weights],
+                }
+            )
+        return result
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -438,12 +497,17 @@ def fit_eb_shrunken_coupling_v2(
     sender_activity_transform_id: str,
     receiver_program_functional_id: str,
     spec: EBShrunkenCouplingV2Spec | None = None,
+    contrast_id: str | None = None,
+    contrast_name: str | None = None,
+    contrast_weights: Sequence[tuple[str, float]] = (),
 ) -> EBShrunkenCouplingFunctionalV2:
     """Fit residual correlations and shrink Fisher-z values across candidate edges."""
 
     resolved = spec or EBShrunkenCouplingV2Spec()
     if not isinstance(resolved, EBShrunkenCouplingV2Spec):
         raise TypeError("spec must be EBShrunkenCouplingV2Spec or None")
+    if resolved.contrast_name is not None and contrast_name != resolved.contrast_name:
+        raise ValueError("contrast_name must match the frozen coupling spec")
     fold = _name(fold_id, field_name="fold_id")
     subjects = _names(training_subject_ids, field_name="training_subject_ids")
     required = {
@@ -471,6 +535,16 @@ def fit_eb_shrunken_coupling_v2(
     observed_subjects = tuple(sorted(table["subject_id"].unique()))
     if observed_subjects != subjects:
         raise ValueError("coupling rows must exactly cover training_subject_ids")
+    incomplete_edges = [
+        tuple(str(value) for value in key)
+        for key, group in table.groupby(list(_KEY), observed=True, sort=True)
+        if tuple(sorted(group["subject_id"].unique())) != subjects
+    ]
+    if incomplete_edges:
+        raise ValueError(
+            "each coupling edge must explicitly cover every training subject: "
+            f"{incomplete_edges[:3]}"
+        )
     digest_columns = (
         "subject_id",
         *_KEY,
@@ -574,6 +648,9 @@ def fit_eb_shrunken_coupling_v2(
             else EBShrunkenCouplingStatus.NOT_ESTIMABLE
         ),
         reason_code=(None if eb_estimable else "insufficient_observed_edges_for_eb"),
+        contrast_id=contrast_id,
+        contrast_name=contrast_name,
+        contrast_weights=tuple(contrast_weights),
     )
 
 

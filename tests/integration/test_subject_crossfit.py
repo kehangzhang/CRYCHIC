@@ -80,7 +80,10 @@ from crychic.scoring import (
 from crychic.sender import (
     CommonSenderApplication,
     ContrastCommonSenderParameters,
+    EBShrunkenCouplingStatus,
+    EBShrunkenCouplingV2Spec,
     SenderAttributionV2Spec,
+    sender_attribution_v2_application_id,
 )
 from crychic.workflow import (
     CrossFitArtifacts,
@@ -336,6 +339,68 @@ def _independent_adata(n_subjects_per_context: int = 4) -> AnnData:
     return adata
 
 
+def _m2_paired_adata(n_subjects: int = 16) -> AnnData:
+    genes = ("BG1", "BG2", "L1", "L2", "R1", "R2", "T1", "T2")
+    rows: list[list[int]] = []
+    metadata: list[dict[str, str]] = []
+    obs_names: list[str] = []
+    for subject_index in range(n_subjects):
+        subject = f"m2-{subject_index:02d}"
+        ligand_one_shift = 4 + (subject_index * 7) % 17
+        ligand_two_shift = 3 + (subject_index * 5) % 13
+        for condition in ("control", "stim"):
+            stimulated = condition == "stim"
+            sample = f"sample-{subject}-{condition}"
+            profiles = (
+                (
+                    "Sender",
+                    [
+                        400,
+                        300,
+                        20 + stimulated * ligand_one_shift,
+                        15 + stimulated * ligand_two_shift,
+                        1,
+                        1,
+                        2,
+                        2,
+                    ],
+                ),
+                (
+                    "Receiver",
+                    [
+                        450,
+                        350,
+                        1,
+                        1,
+                        65,
+                        55,
+                        10 + stimulated * (2 * ligand_one_shift),
+                        8 + stimulated * (2 * ligand_two_shift),
+                    ],
+                ),
+            )
+            for cell_type, profile in profiles:
+                for cell_index in range(3):
+                    rows.append(profile)
+                    metadata.append(
+                        {
+                            "sample_id": sample,
+                            "subject_id": subject,
+                            "cell_type": cell_type,
+                            "condition": condition,
+                        }
+                    )
+                    obs_names.append(f"{subject}-{condition}-{cell_type}-{cell_index}")
+    counts = sparse.csr_matrix(np.asarray(rows, dtype=np.int64))
+    adata = AnnData(
+        X=sparse.csr_matrix(counts.shape, dtype=np.float64),
+        obs=pd.DataFrame(metadata, index=obs_names),
+        var=pd.DataFrame(index=genes),
+    )
+    adata.layers["counts"] = counts
+    return adata
+
+
 def _mixed_adata(*, n_paired: int = 8, n_single_per_context: int = 4) -> AnnData:
     genes = ("L1", "R1", "L2", "R2", "T1", "T2")
     rows: list[list[int]] = []
@@ -525,6 +590,34 @@ def test_directional_crossfit_spec_is_order_invariant_and_opt_in() -> None:
             training_spec=replace(base.training_spec, sender_contrasts=None),
             allowed_n_splits=(2,),
         )
+
+
+def test_m2_requires_an_explicit_choice_when_multiple_contrasts_exist() -> None:
+    multiple = _directional_spec()
+    common = {
+        "absolute_activity_v2_spec": AbsoluteActivityV2Spec(),
+        "sender_attribution_v2_spec": SenderAttributionV2Spec(
+            minimum_calibration_subjects=4
+        ),
+        "signed_program_v2_spec": SignedProgramV2Spec(),
+    }
+    with pytest.raises(ValueError, match="exactly one contrast"):
+        replace(
+            multiple,
+            **common,
+            eb_shrunken_coupling_v2_spec=EBShrunkenCouplingV2Spec(),
+        )
+
+    selected = replace(
+        multiple,
+        **common,
+        eb_shrunken_coupling_v2_spec=EBShrunkenCouplingV2Spec(
+            contrast_name="stim_vs_control"
+        ),
+    )
+
+    assert selected.eb_shrunken_coupling_v2_spec is not None
+    assert selected.eb_shrunken_coupling_v2_spec.contrast_name == "stim_vs_control"
 
 
 def test_directional_crossfit_emits_exact_typed_binding_registry(
@@ -1161,6 +1254,11 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
         )
     with pytest.raises(ValueError, match="requires absolute_activity_v2_spec"):
         replace(legacy, signed_program_v2_spec=SignedProgramV2Spec())
+    with pytest.raises(ValueError, match="requires sender attribution"):
+        replace(
+            legacy,
+            eb_shrunken_coupling_v2_spec=EBShrunkenCouplingV2Spec(),
+        )
     v7_spec = replace(
         legacy,
         absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
@@ -1171,11 +1269,16 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
             minimum_training_samples=4,
             minimum_training_subjects=3,
         ),
+        eb_shrunken_coupling_v2_spec=EBShrunkenCouplingV2Spec(
+            minimum_subjects=4,
+            minimum_observed_edges_for_eb=2,
+        ),
     )
 
     assert "absolute_activity_v2_spec" not in legacy.to_dict()
     assert "sender_attribution_v2_spec" not in legacy.to_dict()
     assert "signed_program_v2_spec" not in legacy.to_dict()
+    assert "eb_shrunken_coupling_v2_spec" not in legacy.to_dict()
     assert v7_spec.spec_id != legacy.spec_id
     result = run_subject_crossfit(
         _independent_adata(),
@@ -1205,10 +1308,12 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
         fold_scores = fold.sample_edge_scores_v2
         sender_functional = fold.sender_attribution_v2_functional
         program_functional = fold.signed_program_v2_functional
+        coupling_functional = fold.eb_shrunken_coupling_v2_functional
         assert transform is not None
         assert fold_scores is not None
         assert sender_functional is not None
         assert program_functional is not None
+        assert coupling_functional is not None
         assert transform.spec.spec_id == v7_spec.absolute_activity_v2_spec.spec_id
         assert not set(transform.training_subject_ids).intersection(
             fold_scores.provenance.application_subject_ids
@@ -1219,7 +1324,7 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
             fold_scores.provenance.provenance_id
         }
         assert set(fold_scores.table["attribution_functional_id"]) == {
-            sender_functional.functional_id
+            sender_attribution_v2_application_id(sender_functional, coupling_functional)
         }
         assert set(fold_scores.table["occurrence_functional_id"]) == {
             sender_functional.functional_id
@@ -1230,6 +1335,11 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
         assert not fold_scores.table["attribution_status"].eq("not_computed").any()
         assert not fold_scores.table["program_status"].eq("not_computed").any()
         assert fold_scores.table["program_signed"].notna().any()
+        assert set(fold_scores.table["coupling_functional_id"]) == {
+            coupling_functional.functional_id
+        }
+        assert not fold_scores.table["coupling_status"].eq("not_computed").any()
+        assert coupling_functional.status is EBShrunkenCouplingStatus.NOT_ESTIMABLE
     manifest = result.to_manifest()
     assert manifest["absolute_activity_v2_stage_connected"] is True
     assert manifest["absolute_activity_v2_score_rows"] == len(scores)
@@ -1238,6 +1348,8 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
     assert manifest["sender_attribution_v2_formal_inference_eligible"] is False
     assert manifest["signed_program_v2_stage_connected"] is True
     assert manifest["signed_program_v2_formal_inference_eligible"] is False
+    assert manifest["eb_shrunken_coupling_v2_stage_connected"] is True
+    assert manifest["eb_shrunken_coupling_v2_formal_inference_eligible"] is False
     persisted = write_crossfit_sample_edge_v2_result(
         result, tmp_path / "sample-edge-v2"
     )
@@ -1246,6 +1358,50 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
     assert sum(len(child.scores.table) for child in loaded.fold_artifacts) == len(
         scores
     )
+
+
+def test_m2_coupling_is_fitted_on_paired_training_contrasts() -> None:
+    base = _spec()
+    spec = replace(
+        base,
+        training_spec=replace(base.training_spec, max_interactions=2),
+        absolute_activity_v2_spec=AbsoluteActivityV2Spec(),
+        sender_attribution_v2_spec=SenderAttributionV2Spec(
+            minimum_calibration_subjects=4
+        ),
+        signed_program_v2_spec=SignedProgramV2Spec(
+            minimum_training_samples=8,
+            minimum_training_subjects=6,
+        ),
+        eb_shrunken_coupling_v2_spec=EBShrunkenCouplingV2Spec(
+            minimum_subjects=6,
+            minimum_observed_edges_for_eb=2,
+        ),
+    )
+
+    result = run_subject_crossfit(
+        _m2_paired_adata(),
+        _config(),
+        _bundle(),
+        _prior(),
+        spec=spec,
+    )
+
+    for fold in result.folds:
+        coupling = fold.eb_shrunken_coupling_v2_functional
+        scores = fold.sample_edge_scores_v2
+        assert coupling is not None
+        assert scores is not None
+        assert coupling.status is EBShrunkenCouplingStatus.OBSERVED
+        assert (
+            sum(
+                record.status is EBShrunkenCouplingStatus.OBSERVED
+                for record in coupling.records
+            )
+            >= 2
+        )
+        assert scores.table["coupling_prior"].notna().any()
+        assert scores.table["sender_detection_raw"].notna().any()
 
 
 def _persistable_spec() -> CrossFitSpec:

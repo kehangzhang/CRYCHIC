@@ -50,6 +50,10 @@ from .coupling import (
     ResidualizedSenderCoupling,
     fit_residualized_sender_coupling,
 )
+from .coupling_inputs_v2 import (
+    build_coupling_subject_effects_v2,
+    coupling_contrast_weights_v2,
+)
 from .coupling_v2 import (
     EB_SHRUNKEN_COUPLING_V2_VERSION,
     EBShrunkenCouplingFunctionalV2,
@@ -97,6 +101,8 @@ __all__ = [
     "apply_contrast_common_sender_functional",
     "apply_sender_attribution_v2",
     "assign_senders",
+    "build_coupling_subject_effects_v2",
+    "coupling_contrast_weights_v2",
     "fit_contrast_common_sender_functional",
     "fit_eb_shrunken_coupling_v2",
     "fit_residualized_sender_coupling",

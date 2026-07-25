@@ -135,6 +135,7 @@ from crychic.scoring import (
     apply_receiver_program_training_artifact,
     apply_signed_program_v2_to_sample_edges,
     build_absolute_activity_v2_training_table,
+    build_signed_program_v2_training_table,
     family_common_edge_evidence_digest,
     family_common_sender_application_digest,
     fit_absolute_activity_v2_transform,
@@ -155,13 +156,19 @@ from crychic.sender import (
     COMMON_SENDER_APPLICATION_COLUMNS,
     CommonSenderApplication,
     ContrastCommonSenderFunctional,
+    EBShrunkenCouplingFunctionalV2,
+    EBShrunkenCouplingV2Spec,
     SenderAttributionFunctionalV2,
     SenderAttributionV2Spec,
     SenderContrastSupportStatus,
     apply_contrast_common_sender_functional,
     apply_sender_attribution_v2,
+    build_coupling_subject_effects_v2,
+    coupling_contrast_weights_v2,
+    fit_eb_shrunken_coupling_v2,
     fit_sender_attribution_v2,
     interaction_ligand_contrast_gates,
+    sender_attribution_v2_application_id,
 )
 
 from .application import (
@@ -562,6 +569,7 @@ class CrossFitSpec:
     absolute_activity_v2_spec: AbsoluteActivityV2Spec | None = None
     sender_attribution_v2_spec: SenderAttributionV2Spec | None = None
     signed_program_v2_spec: SignedProgramV2Spec | None = None
+    eb_shrunken_coupling_v2_spec: EBShrunkenCouplingV2Spec | None = None
     schema_version: str = "1.0.0"
     spec_id: str = field(init=False)
     repeat_id: str = field(init=False)
@@ -696,6 +704,7 @@ class CrossFitSpec:
         absolute_activity_v2_spec = self.absolute_activity_v2_spec
         sender_attribution_v2_spec = self.sender_attribution_v2_spec
         signed_program_v2_spec = self.signed_program_v2_spec
+        eb_shrunken_coupling_v2_spec = self.eb_shrunken_coupling_v2_spec
         autonomous_use_scope = self.autonomous_program_use_scope
         if not isinstance(autonomous_use_scope, str) or autonomous_use_scope not in {
             "algorithm_diagnostic",
@@ -752,6 +761,34 @@ class CrossFitSpec:
             raise ValueError(
                 "signed_program_v2_spec requires absolute_activity_v2_spec"
             )
+        if eb_shrunken_coupling_v2_spec is not None and not isinstance(
+            eb_shrunken_coupling_v2_spec, EBShrunkenCouplingV2Spec
+        ):
+            raise TypeError(
+                "eb_shrunken_coupling_v2_spec must be EBShrunkenCouplingV2Spec or None"
+            )
+        if eb_shrunken_coupling_v2_spec is not None:
+            if sender_attribution_v2_spec is None or signed_program_v2_spec is None:
+                raise ValueError(
+                    "eb_shrunken_coupling_v2_spec requires sender attribution "
+                    "and signed M1 specs"
+                )
+            coupling_contrast_name = eb_shrunken_coupling_v2_spec.contrast_name
+            coupling_contrasts = (
+                contrasts
+                if coupling_contrast_name is None
+                else tuple(
+                    contrast
+                    for contrast in contrasts
+                    if contrast.name == coupling_contrast_name
+                )
+            )
+            if len(coupling_contrasts) != 1:
+                raise ValueError(
+                    "M2 requires exactly one contrast or an unambiguous contrast_name"
+                )
+            if not coupling_contrasts[0].estimable:
+                raise ValueError("M2 requires an estimable declared contrast")
         tuning_spec = self.penalty_tuning_spec
         if tuning_spec is not None:
             if not isinstance(tuning_spec, PenaltyTuningSpec):
@@ -805,6 +842,10 @@ class CrossFitSpec:
             )
         if signed_program_v2_spec is not None:
             payload["signed_program_v2_spec_id"] = signed_program_v2_spec.spec_id
+        if eb_shrunken_coupling_v2_spec is not None:
+            payload["eb_shrunken_coupling_v2_spec_id"] = (
+                eb_shrunken_coupling_v2_spec.spec_id
+            )
         if autonomous_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
             payload["autonomous_program_use_scope"] = autonomous_use_scope
         if tuning_spec is not None:
@@ -832,6 +873,11 @@ class CrossFitSpec:
             self, "sender_attribution_v2_spec", sender_attribution_v2_spec
         )
         object.__setattr__(self, "signed_program_v2_spec", signed_program_v2_spec)
+        object.__setattr__(
+            self,
+            "eb_shrunken_coupling_v2_spec",
+            eb_shrunken_coupling_v2_spec,
+        )
         object.__setattr__(
             self,
             "autonomous_program_use_scope",
@@ -905,6 +951,10 @@ class CrossFitSpec:
             )
         if self.signed_program_v2_spec is not None:
             result["signed_program_v2_spec"] = self.signed_program_v2_spec.to_dict()
+        if self.eb_shrunken_coupling_v2_spec is not None:
+            result["eb_shrunken_coupling_v2_spec"] = (
+                self.eb_shrunken_coupling_v2_spec.to_dict()
+            )
         if self.outer_fold_partition_seed is not None:
             result["outer_fold_partition_seed"] = self.outer_fold_partition_seed
         if self.autonomous_program_use_scope != _DEFAULT_AUTONOMOUS_PROGRAM_USE_SCOPE:
@@ -937,6 +987,7 @@ class CrossFitSpec:
                 absolute_activity_v2_spec=self.absolute_activity_v2_spec,
                 sender_attribution_v2_spec=self.sender_attribution_v2_spec,
                 signed_program_v2_spec=self.signed_program_v2_spec,
+                eb_shrunken_coupling_v2_spec=self.eb_shrunken_coupling_v2_spec,
                 schema_version=self.schema_version,
             )
             valid = (
@@ -987,6 +1038,16 @@ class CrossFitSpec:
                 )
                 and (
                     None
+                    if self.eb_shrunken_coupling_v2_spec is None
+                    else self.eb_shrunken_coupling_v2_spec.spec_id
+                )
+                == (
+                    None
+                    if repeated.eb_shrunken_coupling_v2_spec is None
+                    else repeated.eb_shrunken_coupling_v2_spec.spec_id
+                )
+                and (
+                    None
                     if self.latent_nuisance_spec is None
                     else self.latent_nuisance_spec.spec_id
                 )
@@ -1022,6 +1083,24 @@ class CrossFitSpec:
                 field="spec_id",
                 remediation="Rebuild CrossFitSpec from the declared policy",
             )
+
+
+def _m2_contrast(spec: CrossFitSpec) -> ContrastSpec:
+    coupling_spec = spec.eb_shrunken_coupling_v2_spec
+    if coupling_spec is None:
+        raise ValueError("cross-fit has no M2 coupling specification")
+    matches = (
+        spec.contrasts
+        if coupling_spec.contrast_name is None
+        else tuple(
+            contrast
+            for contrast in spec.contrasts
+            if contrast.name == coupling_spec.contrast_name
+        )
+    )
+    if len(matches) != 1:  # pragma: no cover - CrossFitSpec enforces this
+        raise RuntimeError("cross-fit M2 contrast resolution is ambiguous")
+    return matches[0]
 
 
 def _outer_fold_partition_lineage(
@@ -1439,6 +1518,7 @@ class CrossFitFoldArtifacts:
     sample_edge_scores_v2: SampleEdgeScoreV2 | None = None
     sender_attribution_v2_functional: SenderAttributionFunctionalV2 | None = None
     signed_program_v2_functional: SignedProgramFunctionalV2 | None = None
+    eb_shrunken_coupling_v2_functional: EBShrunkenCouplingFunctionalV2 | None = None
     directional_response_bindings: tuple[DirectionalCrossFitBinding, ...] = ()
     cross_receiver_common_functionals: tuple[
         CrossReceiverCommonScoringFunctional, ...
@@ -1465,6 +1545,7 @@ class CrossFitFoldArtifacts:
         activity_scores = self.sample_edge_scores_v2
         sender_functional = self.sender_attribution_v2_functional
         signed_program_functional = self.signed_program_v2_functional
+        coupling_functional = self.eb_shrunken_coupling_v2_functional
         if (activity_transform is None) != (activity_scores is None):
             raise ValueError(
                 "absolute-activity transform and sample-edge scores must coexist"
@@ -1554,12 +1635,14 @@ class CrossFitFoldArtifacts:
                 raise ValueError(
                     "sender v2 functional does not match fold training lineage"
                 )
-            functional_ids = {sender_functional.functional_id}
+            attribution_functional_id = sender_attribution_v2_application_id(
+                sender_functional, coupling_functional
+            )
             if (
                 set(activity_scores.table["attribution_functional_id"].dropna())
-                != functional_ids
+                != {attribution_functional_id}
                 or set(activity_scores.table["occurrence_functional_id"].dropna())
-                != functional_ids
+                != {sender_functional.functional_id}
                 or activity_scores.table["attribution_status"].eq("not_computed").any()
                 or activity_scores.table["occurrence_status"].eq("not_computed").any()
             ):
@@ -1591,11 +1674,50 @@ class CrossFitFoldArtifacts:
                 raise ValueError(
                     "sample-edge program head does not match signed M1 functional"
                 )
+        if coupling_functional is not None:
+            if not isinstance(coupling_functional, EBShrunkenCouplingFunctionalV2):
+                raise TypeError(
+                    "eb_shrunken_coupling_v2_functional must be "
+                    "EBShrunkenCouplingFunctionalV2"
+                )
+            if (
+                activity_transform is None
+                or activity_scores is None
+                or sender_functional is None
+                or signed_program_functional is None
+            ):
+                raise ValueError("M2 coupling requires M0, M1, and sender v2 artifacts")
+            if (
+                coupling_functional.fold_id != self.fold_id
+                or coupling_functional.training_subject_ids
+                != self.training.training_subject_ids
+                or coupling_functional.training_input_digest
+                != self.training.training_input_digest
+                or coupling_functional.sender_activity_transform_id
+                != activity_transform.transform_manifest_id
+                or coupling_functional.receiver_program_functional_id
+                != signed_program_functional.functional_id
+                or coupling_functional.contrast_id is None
+            ):
+                raise ValueError("M2 coupling functional does not match fold lineage")
+            if (
+                set(activity_scores.table["coupling_functional_id"].dropna())
+                != {coupling_functional.functional_id}
+                or activity_scores.table["coupling_status"].eq("not_computed").any()
+            ):
+                raise ValueError(
+                    "sample-edge coupling head does not match M2 functional"
+                )
         object.__setattr__(self, "absolute_activity_v2_transform", activity_transform)
         object.__setattr__(self, "sample_edge_scores_v2", activity_scores)
         object.__setattr__(self, "sender_attribution_v2_functional", sender_functional)
         object.__setattr__(
             self, "signed_program_v2_functional", signed_program_functional
+        )
+        object.__setattr__(
+            self,
+            "eb_shrunken_coupling_v2_functional",
+            coupling_functional,
         )
         support_records = tuple(self.receiver_training_support)
         if not support_records or any(
@@ -2631,6 +2753,7 @@ class CrossFitArtifacts:
             configured_activity = self.spec.absolute_activity_v2_spec
             configured_sender = self.spec.sender_attribution_v2_spec
             configured_program = self.spec.signed_program_v2_spec
+            configured_coupling = self.spec.eb_shrunken_coupling_v2_spec
             if configured_activity is None:
                 if (
                     item.absolute_activity_v2_transform is not None
@@ -2676,6 +2799,23 @@ class CrossFitArtifacts:
                 raise ValueError(
                     "configured cross-fit requires exact signed M1 functional per fold"
                 )
+            if configured_coupling is None:
+                if item.eb_shrunken_coupling_v2_functional is not None:
+                    raise ValueError(
+                        "unconfigured cross-fit cannot contain M2 coupling artifacts"
+                    )
+            else:
+                coupling = item.eb_shrunken_coupling_v2_functional
+                contrast = _m2_contrast(self.spec)
+                if (
+                    coupling is None
+                    or coupling.spec.spec_id != configured_coupling.spec_id
+                    or coupling.contrast_id != _contrast_id(contrast)
+                    or coupling.contrast_name != contrast.name
+                ):
+                    raise ValueError(
+                        "configured cross-fit requires exact M2 functional per fold"
+                    )
         by_id = {fold.fold_id: fold for fold in self.fold_plan.folds}
         if len(folds) != len(by_id) or {item.fold_id for item in folds} != set(by_id):
             raise ValueError(
@@ -3254,6 +3394,15 @@ class CrossFitArtifacts:
                                 if item.signed_program_v2_functional is not None
                                 else {}
                             ),
+                            **(
+                                {
+                                    "eb_shrunken_coupling_v2_functional_id": (
+                                        item.eb_shrunken_coupling_v2_functional.functional_id
+                                    )
+                                }
+                                if item.eb_shrunken_coupling_v2_functional is not None
+                                else {}
+                            ),
                         }
                         if item.absolute_activity_v2_transform is not None
                         and item.sample_edge_scores_v2 is not None
@@ -3689,6 +3838,32 @@ class CrossFitArtifacts:
                         if self.spec.signed_program_v2_spec is not None
                         else {}
                     ),
+                    **(
+                        {
+                            "eb_shrunken_coupling_v2_stage_connected": True,
+                            "eb_shrunken_coupling_v2_functional_ids": [
+                                fold.eb_shrunken_coupling_v2_functional.functional_id
+                                for fold in self.folds
+                                if fold.eb_shrunken_coupling_v2_functional is not None
+                            ],
+                            "eb_shrunken_coupling_v2_contrast": (
+                                _m2_contrast(self.spec).to_dict()
+                            ),
+                            "eb_shrunken_coupling_v2_status_counts": {
+                                status: sum(
+                                    fold.eb_shrunken_coupling_v2_functional.status.value
+                                    == status
+                                    for fold in self.folds
+                                    if fold.eb_shrunken_coupling_v2_functional
+                                    is not None
+                                )
+                                for status in ("observed", "not_estimable")
+                            },
+                            "eb_shrunken_coupling_v2_formal_inference_eligible": False,
+                        }
+                        if self.spec.eb_shrunken_coupling_v2_spec is not None
+                        else {}
+                    ),
                 }
                 if self.spec.absolute_activity_v2_spec is not None
                 else {}
@@ -3886,6 +4061,15 @@ class CrossFitArtifacts:
                                     )
                                 }
                                 if item.signed_program_v2_functional is not None
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "eb_shrunken_coupling_v2_functional": (
+                                        item.eb_shrunken_coupling_v2_functional.to_dict()
+                                    )
+                                }
+                                if item.eb_shrunken_coupling_v2_functional is not None
                                 else {}
                             ),
                         }
@@ -6214,6 +6398,7 @@ def _run_crossfit_fold(
         sample_edge_scores_v2 = None
         sender_attribution_v2_functional = None
         signed_program_v2_functional = None
+        eb_shrunken_coupling_v2_functional = None
     else:
         signed_program_v2_spec = spec.signed_program_v2_spec
         signed_program_definitions_v2: tuple[SignedProgramDefinitionV2, ...] | None
@@ -6282,16 +6467,75 @@ def _run_crossfit_fold(
                 sample_edge_scores_v2,
             )
             _fold_stage_completed(fold.fold_id, "signed_program_v2", stage_started)
-        if spec.sender_attribution_v2_spec is None:
-            sender_attribution_v2_functional = None
-        else:
-            stage_started = _fold_stage_started(fold.fold_id, "sender_attribution_v2")
+        if (
+            spec.sender_attribution_v2_spec is not None
+            or spec.eb_shrunken_coupling_v2_spec is not None
+        ):
             training_activity_v2 = build_absolute_activity_v2_training_table(
                 absolute_activity_v2_transform,
                 training_aggregate,
                 training_result.training_availability,
                 condition_columns=tuple(config.context_keys),
             )
+        else:
+            training_activity_v2 = None
+        if spec.eb_shrunken_coupling_v2_spec is None:
+            eb_shrunken_coupling_v2_functional = None
+        else:
+            if (
+                signed_program_v2_functional is None or training_activity_v2 is None
+            ):  # pragma: no cover - CrossFitSpec enforces dependencies
+                raise RuntimeError("M2 training dependencies were not initialized")
+            stage_started = _fold_stage_started(fold.fold_id, "eb_shrunken_coupling_v2")
+            training_program_v2 = build_signed_program_v2_training_table(
+                signed_program_v2_functional,
+                absolute_activity_v2_transform,
+                training_aggregate,
+            )
+            coupling_contrast = _m2_contrast(spec)
+            coupling_subject_effects = build_coupling_subject_effects_v2(
+                training_activity_v2,
+                training_program_v2,
+                training_metadata,
+                contrast=coupling_contrast,
+                context_keys=tuple(config.context_keys),
+                training_subject_ids=training.training_subject_ids,
+                sample_key=config.sample_key,
+                subject_key=config.subject_key,
+                numerical_covariates=(
+                    spec.eb_shrunken_coupling_v2_spec.numerical_covariates
+                ),
+                categorical_covariates=(
+                    spec.eb_shrunken_coupling_v2_spec.categorical_covariates
+                ),
+            )
+            eb_shrunken_coupling_v2_functional = fit_eb_shrunken_coupling_v2(
+                coupling_subject_effects,
+                fold_id=fold.fold_id,
+                training_subject_ids=training.training_subject_ids,
+                training_input_digest=training.training_input_digest,
+                sender_activity_transform_id=(
+                    absolute_activity_v2_transform.transform_manifest_id
+                ),
+                receiver_program_functional_id=(
+                    signed_program_v2_functional.functional_id
+                ),
+                spec=spec.eb_shrunken_coupling_v2_spec,
+                contrast_id=_contrast_id(coupling_contrast),
+                contrast_name=coupling_contrast.name,
+                contrast_weights=coupling_contrast_weights_v2(
+                    coupling_contrast, tuple(config.context_keys)
+                ),
+            )
+            _fold_stage_completed(
+                fold.fold_id, "eb_shrunken_coupling_v2", stage_started
+            )
+        if spec.sender_attribution_v2_spec is None:
+            sender_attribution_v2_functional = None
+        else:
+            if training_activity_v2 is None:  # pragma: no cover - narrowed
+                raise RuntimeError("sender v2 training activity was not initialized")
+            stage_started = _fold_stage_started(fold.fold_id, "sender_attribution_v2")
             sender_attribution_v2_functional = fit_sender_attribution_v2(
                 training_activity_v2,
                 fold_id=fold.fold_id,
@@ -6308,6 +6552,7 @@ def _run_crossfit_fold(
                 activity_transform_id=(
                     absolute_activity_v2_transform.transform_manifest_id
                 ),
+                coupling_functional=eb_shrunken_coupling_v2_functional,
             )
             sample_edge_scores_v2 = SampleEdgeScoreV2(
                 table=attributed_table,
@@ -6477,6 +6722,7 @@ def _run_crossfit_fold(
         sample_edge_scores_v2=sample_edge_scores_v2,
         sender_attribution_v2_functional=sender_attribution_v2_functional,
         signed_program_v2_functional=signed_program_v2_functional,
+        eb_shrunken_coupling_v2_functional=(eb_shrunken_coupling_v2_functional),
         directional_response_bindings=directional_response_bindings,
         cross_receiver_common_functionals=cross_receiver_common_functionals,
         cross_receiver_common_applications=cross_receiver_common_applications,

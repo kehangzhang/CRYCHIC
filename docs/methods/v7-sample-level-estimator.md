@@ -83,6 +83,15 @@ missing or weak coupling record contributes zero to the logit, remains visibly
 not estimable in the coupling head, and cannot filter an otherwise measurable
 sender.
 
+The cross-fit implementation binds M2 to exactly one pre-registered contrast.
+Runs with multiple contrasts must name that contrast explicitly. Each candidate
+edge retains one row for every training subject; a subject missing any required
+within-subject context has NA contrasts. Consequently, paired and repeated
+designs are estimable when replication permits, while a purely independent
+group comparison is explicitly marked not estimable rather than being turned
+into a synthetic paired effect. The contrast ID and context-ID weights are part
+of the coupling functional lineage.
+
 ## Signed receiver mechanism head
 
 M1 is fitted inside each outer training fold and applied unchanged to held-out

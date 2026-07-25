@@ -36,6 +36,7 @@ ABSOLUTE_ACTIVITY_V2_CALIBRATION_COLUMNS = (
     "sender",
     "receiver",
     "interaction_id",
+    "ligand_activity_raw",
     "sender_detection_raw",
     "parent_peak_raw",
     "parent_total_raw",
