@@ -1382,6 +1382,11 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
             ),
             activity_threshold_raw=1.0,
         ),
+        sample_metadata=(
+            scores.loc[:, ["sample_id", "subject_id", "condition"]]
+            .drop_duplicates(ignore_index=True)
+            .assign(unused_annotation="retained-outside-m4-design")
+        ),
     )
     assert occurrence.crossfit_id == result.crossfit_id
     assert not occurrence.occurrence.effects.empty

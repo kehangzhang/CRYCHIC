@@ -99,11 +99,54 @@ def fit_crossfit_two_part_occurrence_v2(
             build_sample_edge_two_part_input(
                 scores,
                 spec=spec,
-                sample_metadata=sample_metadata,
             )
         )
     activity = pd.concat(parts, ignore_index=True)
     design = spec.design
+    required_metadata = {
+        design.sample_column,
+        design.subject_column,
+        design.condition_column,
+        *design.batch_columns,
+        *design.continuous_covariates,
+        *design.categorical_covariates,
+    }
+    if design.cohort_column is not None:
+        required_metadata.add(design.cohort_column)
+    if design.precision_weight_column is not None:
+        required_metadata.add(design.precision_weight_column)
+    missing_metadata = tuple(
+        sorted(required_metadata.difference(activity.columns))
+    )
+    if missing_metadata:
+        if sample_metadata is None:
+            raise ValueError(
+                "cross-fit M4 requires sample metadata columns: "
+                f"{list(missing_metadata)}"
+            )
+        if not isinstance(sample_metadata, pd.DataFrame):
+            raise TypeError("sample_metadata must be a pandas DataFrame or None")
+        sample_column = design.sample_column
+        required_input = {sample_column, *missing_metadata}
+        absent = required_input.difference(sample_metadata.columns)
+        if absent:
+            raise ValueError(
+                f"sample_metadata is missing M4 fields: {sorted(absent)}"
+            )
+        metadata = sample_metadata.loc[:, [sample_column, *missing_metadata]].copy()
+        if metadata[sample_column].isna().any() or metadata[
+            sample_column
+        ].duplicated().any():
+            raise ValueError(
+                "sample_metadata requires unique non-missing sample IDs"
+            )
+        activity = activity.merge(
+            metadata,
+            on=sample_column,
+            how="left",
+            validate="many_to_one",
+            sort=False,
+        )
     if activity.duplicated(["event_id", design.sample_column]).any():
         raise ValueError("cross-fit M4 rows overlap across outer folds")
     observed_samples = set(activity["sample_id"].astype(str))
