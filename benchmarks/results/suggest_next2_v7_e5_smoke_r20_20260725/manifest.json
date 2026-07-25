@@ -1,0 +1,83 @@
+{
+  "acceptance": {
+    "checks": {
+      "all_degree_matched_controls_preserve_degrees": true,
+      "all_estimable_structural_fits_converged": true,
+      "m5_full_exact_ap_gain_vs_no_prior_ci_positive": false,
+      "m5_full_exact_ap_gain_vs_permuted_ci_positive": false,
+      "m5_full_mse_gain_vs_no_prior_ci_positive": true,
+      "m5_full_mse_gain_vs_permuted_ci_positive": false,
+      "m5_locked_conditional_ci_coverage_between_0_92_and_0_97": false,
+      "m5_rewired25_mse_gain_vs_permuted_ci_positive": false
+    },
+    "claim_boundary": "hypergraph representation and descriptive shrinkage only; topology estimation and calibrated interval claims are not released",
+    "estimates": {
+      "locked_full_conditional_ci_coverage": 0.030952380952380953,
+      "locked_full_minus_permuted_exact_ap_gain": 0.05831059846086696,
+      "locked_full_minus_permuted_mse_gain": 0.003377653432616555,
+      "locked_full_minus_raw_exact_ap_gain": -0.042997593608677144,
+      "locked_full_minus_raw_mse_gain": 0.011875340063782021,
+      "locked_rewired25_minus_permuted_mse_gain": 0.0009043961238877792
+    },
+    "formal_inference_allowed": false,
+    "status": "SMOKE_COMPLETE_WITH_RELEASE_GAPS"
+  },
+  "completed_datasets": 900,
+  "created_utc": "2026-07-25T06:35:12.367251+00:00",
+  "failed_datasets": 0,
+  "files": {
+    "README.md": {
+      "bytes": 1496,
+      "sha256": "db68c82d2bb7e2692cc2bb9d6458c9a83d4396a3bb1ceaf0f36c07560bd1147a"
+    },
+    "acceptance.json": {
+      "bytes": 1142,
+      "sha256": "f81b7b9524ccd9583df9ccdda4cec4f9cadf32b3937f9e90144d293d1c7c767d"
+    },
+    "dgp_method_summary.tsv": {
+      "bytes": 308339,
+      "sha256": "da14b30cd79dbe68fac395dcd921b6d85f5e61f25050ac22d3328f0dcc6fc8f1"
+    },
+    "locked_method_ranks.tsv": {
+      "bytes": 6344,
+      "sha256": "6182f9412b92ed3f6a8e37cdeb96dd00b2e48b77f564e9577b395263f16c22c9"
+    },
+    "locked_paired_comparisons.tsv": {
+      "bytes": 6388,
+      "sha256": "95204b96e0ec4ec4d30a5be5479773ccb7495d567d73f9a77ba4bfe53b8c2afa"
+    },
+    "runtime_candidate_cardinality.tsv": {
+      "bytes": 435,
+      "sha256": "9b73d5b02121d2bdafcabb1fd8f0b3e97404234c32fd984e34716c8c697ab22b"
+    },
+    "runtime_stage_summary.tsv": {
+      "bytes": 407,
+      "sha256": "f80718fe279cf1868d686402d2278a6dfddedecdf9f2178753da1f19ec71ed26"
+    },
+    "scope_method_summary.tsv": {
+      "bytes": 35640,
+      "sha256": "83465142ad325ca9a1ff59a459eef5e9fc5d93e805216c74ce660fe484b110fe"
+    }
+  },
+  "formal_inference_allowed": false,
+  "maximum_system_memory_fraction": 0.4662002503661581,
+  "planned_datasets": 900,
+  "schema_version": "crychic-suggest-next2-v7-e5-smoke-report-v1",
+  "source_aggregates": {
+    "fits": {
+      "filename": "all_e5_fit_diagnostics.parquet",
+      "sha256": "60dd36c974eceaee16223567fcd856f6fd41007a518e0df9bbe7c4ab55642640"
+    },
+    "metrics": {
+      "filename": "all_e5_metrics.parquet",
+      "sha256": "033ffb0f859fbc1205ae79124eceaae6cceaf4bc090e8d61598f5424657975ac"
+    },
+    "topologies": {
+      "filename": "all_e5_topology_diagnostics.parquet",
+      "sha256": "dbc29d392433f9cbd0f632e82fc728e7f2251cdc06fe04eff678693beb6997aa"
+    }
+  },
+  "source_campaign": "e5_derived_smoke_r20_20260725",
+  "source_campaign_manifest_sha256": "65828aa7cbda187123badc6ecc977f3f46e221c559e5ef03cc597f47e764a13d",
+  "source_estimator_commit": "8fc7d0c50953e7272c559c6f1dd062c0ef4c9d8a"
+}

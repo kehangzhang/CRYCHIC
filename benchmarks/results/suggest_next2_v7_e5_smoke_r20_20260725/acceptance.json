@@ -1,0 +1,23 @@
+{
+  "checks": {
+    "all_degree_matched_controls_preserve_degrees": true,
+    "all_estimable_structural_fits_converged": true,
+    "m5_full_exact_ap_gain_vs_no_prior_ci_positive": false,
+    "m5_full_exact_ap_gain_vs_permuted_ci_positive": false,
+    "m5_full_mse_gain_vs_no_prior_ci_positive": true,
+    "m5_full_mse_gain_vs_permuted_ci_positive": false,
+    "m5_locked_conditional_ci_coverage_between_0_92_and_0_97": false,
+    "m5_rewired25_mse_gain_vs_permuted_ci_positive": false
+  },
+  "claim_boundary": "hypergraph representation and descriptive shrinkage only; topology estimation and calibrated interval claims are not released",
+  "estimates": {
+    "locked_full_conditional_ci_coverage": 0.030952380952380953,
+    "locked_full_minus_permuted_exact_ap_gain": 0.05831059846086696,
+    "locked_full_minus_permuted_mse_gain": 0.003377653432616555,
+    "locked_full_minus_raw_exact_ap_gain": -0.042997593608677144,
+    "locked_full_minus_raw_mse_gain": 0.011875340063782021,
+    "locked_rewired25_minus_permuted_mse_gain": 0.0009043961238877792
+  },
+  "formal_inference_allowed": false,
+  "status": "SMOKE_COMPLETE_WITH_RELEASE_GAPS"
+}
