@@ -22,7 +22,7 @@ from .design_aware import (
     fit_design_aware_differential,
 )
 
-TWO_PART_OCCURRENCE_VERSION = "fixed_threshold_design_aware_m4_v2"
+TWO_PART_OCCURRENCE_VERSION = "fold_fitted_state_design_aware_m4_v3"
 TWO_PART_OCCURRENCE_EFFECT_COLUMNS = (
     "event_id",
     "contrast_name",
@@ -53,6 +53,9 @@ TWO_PART_OCCURRENCE_EFFECT_COLUMNS = (
     "observed_fraction",
     "activity_head",
     "activity_threshold_raw",
+    "occurrence_state_source",
+    "active_probability_threshold",
+    "active_probability_mapping",
     "status",
     "reason_code",
     "formal_inference_allowed",
@@ -63,7 +66,9 @@ TWO_PART_OCCURRENCE_EFFECT_COLUMNS = (
     "effect_id",
 )
 _USABLE_STATUSES = {"observed", "low_evidence", "structural_impossible"}
-_SCHEMA_VERSION = "2.0.0"
+_SCHEMA_VERSION = "3.0.0"
+_RAW_PROBABILITY_MAPPING = "raw_logistic_transition_v1"
+_ECDF_PROBABILITY_MAPPING = "upper_tail_excess_v1"
 
 
 def _name(value: object, *, field_name: str) -> str:
@@ -73,7 +78,7 @@ def _name(value: object, *, field_name: str) -> str:
 
 
 def _finite(value: object, *, field_name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
+    if isinstance(value, bool | np.bool_):
         raise ValueError(f"{field_name} must be numeric")
     try:
         result = float(value)  # type: ignore[arg-type]
@@ -86,12 +91,15 @@ def _finite(value: object, *, field_name: str) -> float:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TwoPartOccurrenceV2Spec:
-    """Frozen activity threshold and design for the M4 occurrence channel."""
+    """Frozen state rule and design for the M4 occurrence channel."""
 
     design: DifferentialDesignSpec
     activity_head: str = "parent_mean_raw"
     activity_threshold_raw: float = 1.0
     probability_transition_scale: float = 0.25
+    occurrence_state_source: str = "raw_activity_threshold"
+    active_probability_threshold: float = 0.8
+    active_probability_mapping: str | None = None
     minimum_discordant_pairs: int = 0
     fdr_scope: str = "global_event_contrast_bh"
     schema_version: str = _SCHEMA_VERSION
@@ -117,6 +125,34 @@ class TwoPartOccurrenceV2Spec:
         )
         if transition <= 0.0:
             raise ValueError("probability_transition_scale must be positive")
+        if self.occurrence_state_source not in {
+            "raw_activity_threshold",
+            "fold_fitted_parent_ecdf",
+        }:
+            raise ValueError("occurrence_state_source is unsupported")
+        probability_threshold = _finite(
+            self.active_probability_threshold,
+            field_name="active_probability_threshold",
+        )
+        if not 0.0 < probability_threshold < 1.0:
+            raise ValueError("active_probability_threshold must lie in (0, 1)")
+        expected_mapping = (
+            _ECDF_PROBABILITY_MAPPING
+            if self.occurrence_state_source == "fold_fitted_parent_ecdf"
+            else _RAW_PROBABILITY_MAPPING
+        )
+        probability_mapping = (
+            expected_mapping
+            if self.active_probability_mapping is None
+            else _name(
+                self.active_probability_mapping,
+                field_name="active_probability_mapping",
+            )
+        )
+        if probability_mapping != expected_mapping:
+            raise ValueError(
+                "active_probability_mapping does not match occurrence_state_source"
+            )
         minimum = self.minimum_discordant_pairs
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
             raise ValueError("minimum_discordant_pairs must be an integer >= 0")
@@ -127,6 +163,8 @@ class TwoPartOccurrenceV2Spec:
         object.__setattr__(self, "activity_head", activity_head)
         object.__setattr__(self, "activity_threshold_raw", threshold)
         object.__setattr__(self, "probability_transition_scale", transition)
+        object.__setattr__(self, "active_probability_threshold", probability_threshold)
+        object.__setattr__(self, "active_probability_mapping", probability_mapping)
         object.__setattr__(
             self,
             "spec_id",
@@ -141,9 +179,12 @@ class TwoPartOccurrenceV2Spec:
         return {
             "activity_head": self.activity_head,
             "activity_threshold_raw": self.activity_threshold_raw,
+            "active_probability_mapping": self.active_probability_mapping,
+            "active_probability_threshold": self.active_probability_threshold,
             "design_spec_id": self.design.spec_id,
             "fdr_scope": self.fdr_scope,
             "minimum_discordant_pairs": self.minimum_discordant_pairs,
+            "occurrence_state_source": self.occurrence_state_source,
             "probability_transition_scale": self.probability_transition_scale,
             "schema_version": self.schema_version,
             "version": TWO_PART_OCCURRENCE_VERSION,
@@ -238,7 +279,7 @@ def build_sample_edge_two_part_input(
 
     if not isinstance(spec, TwoPartOccurrenceV2Spec):
         raise TypeError("spec must be TwoPartOccurrenceV2Spec")
-    return cast(
+    activity = cast(
         pd.DataFrame,
         build_sample_edge_differential_input(
             scores,
@@ -246,6 +287,74 @@ def build_sample_edge_two_part_input(
             sample_metadata=sample_metadata,
         ),
     )
+    if spec.occurrence_state_source == "raw_activity_threshold":
+        return activity
+    source = scores.table
+    parent_key = [
+        "sample_id",
+        "context_id",
+        "fold_id",
+        "receiver",
+        "interaction_id",
+    ]
+    join_key = ["sample_id", "fold_id", "receiver", "interaction_id"]
+    status = source["occurrence_status"].astype(str)
+    if (
+        status.eq("not_computed").any()
+        or source["occurrence_functional_id"].isna().any()
+    ):
+        raise ValueError(
+            "fold-fitted M4 requires an applied parent occurrence functional"
+        )
+    consistency = source.groupby(parent_key, observed=True, sort=False).agg(
+        probability_values=(
+            "active_probability",
+            lambda values: values.nunique(dropna=False),
+        ),
+        status_values=(
+            "occurrence_status",
+            lambda values: values.nunique(dropna=False),
+        ),
+        functional_values=(
+            "occurrence_functional_id",
+            lambda values: values.nunique(dropna=False),
+        ),
+    )
+    if consistency.ne(1).any(axis=None):
+        raise ValueError("fold-fitted occurrence fields must be parent-invariant")
+    probability = (
+        source.drop_duplicates(parent_key)
+        .loc[
+            :,
+            [
+                *join_key,
+                "active_probability",
+                "occurrence_status",
+                "occurrence_functional_id",
+            ],
+        ]
+        .rename(
+            columns={
+                "active_probability": "fold_fitted_parent_ecdf",
+                "occurrence_status": "fold_fitted_occurrence_status",
+                "occurrence_functional_id": "fold_fitted_occurrence_functional_id",
+            }
+        )
+    )
+    if probability.duplicated(join_key).any():
+        raise ValueError(
+            "fold-fitted M4 requires one context per sample and parent event"
+        )
+    result = activity.merge(
+        probability,
+        on=join_key,
+        how="left",
+        validate="one_to_one",
+        sort=False,
+    )
+    if len(result) != len(activity):
+        raise RuntimeError("fold-fitted occurrence merge changed the M4 event axis")
+    return result
 
 
 def _input_columns(spec: TwoPartOccurrenceV2Spec) -> tuple[str, ...]:
@@ -266,6 +375,14 @@ def _input_columns(spec: TwoPartOccurrenceV2Spec) -> tuple[str, ...]:
         result.append(design.cohort_column)
     if design.precision_weight_column is not None:
         result.append(design.precision_weight_column)
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        result.extend(
+            [
+                "fold_fitted_parent_ecdf",
+                "fold_fitted_occurrence_status",
+                "fold_fitted_occurrence_functional_id",
+            ]
+        )
     return tuple(result)
 
 
@@ -293,6 +410,13 @@ def _validate_input(
         string_columns.add(design.condition_column)
     if design.cohort_column is not None:
         string_columns.add(design.cohort_column)
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        string_columns.update(
+            {
+                "fold_fitted_occurrence_status",
+                "fold_fitted_occurrence_functional_id",
+            }
+        )
     for column in string_columns:
         if table[column].isna().any():
             raise ValueError(f"{column} cannot contain missing values")
@@ -306,6 +430,10 @@ def _validate_input(
         raise ValueError("activity_table requires one row per event and sample")
     if not set(table["score_status"]).issubset({*_USABLE_STATUSES, "not_estimable"}):
         raise ValueError("activity_table has unsupported score_status values")
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf" and not set(
+        table["fold_fitted_occurrence_status"]
+    ).issubset({"observed", "partial", "not_estimable"}):
+        raise ValueError("fold-fitted occurrence status is unsupported")
     if (
         not table["out_of_fold"]
         .map(lambda value: type(value) in {bool, np.bool_})
@@ -314,6 +442,8 @@ def _validate_input(
     ):
         raise ValueError("M4 requires boolean out-of-fold rows")
     numeric_columns = ["score", *design.continuous_covariates]
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        numeric_columns.append("fold_fitted_parent_ecdf")
     if design.design_kind is DifferentialDesignKind.CONTINUOUS:
         numeric_columns.append(design.condition_column)
     if design.precision_weight_column is not None:
@@ -324,6 +454,10 @@ def _validate_input(
         if invalid.any() or np.isinf(numeric.dropna()).any():
             raise ValueError(f"{column} must contain finite numbers or NA")
         table[column] = numeric.astype(float)
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        probability = table["fold_fitted_parent_ecdf"].dropna()
+        if not probability.between(0.0, 1.0).all():
+            raise ValueError("fold_fitted_parent_ecdf must lie in [0, 1]")
     roles = [
         design.subject_column,
         design.condition_column,
@@ -352,7 +486,7 @@ def _event_digest(event: pd.DataFrame, spec: TwoPartOccurrenceV2Spec) -> str:
         for value in row:
             if pd.isna(value):
                 record.append(None)
-            elif isinstance(value, (float, np.floating)):
+            elif isinstance(value, float | np.floating):
                 record.append({"float_hex": float(value).hex()})
             elif isinstance(value, np.generic):
                 record.append(value.item())
@@ -375,6 +509,15 @@ def _subject_context_rows(
         & score.notna()
         & np.isfinite(score)
     )
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        fold_probability = pd.to_numeric(
+            event["fold_fitted_parent_ecdf"], errors="coerce"
+        )
+        usable &= (
+            event["fold_fitted_occurrence_status"].isin({"observed", "partial"})
+            & fold_probability.notna()
+            & np.isfinite(fold_probability)
+        )
     for column in design.continuous_covariates:
         values = pd.to_numeric(event[column], errors="coerce")
         usable &= values.notna() & np.isfinite(values)
@@ -384,8 +527,15 @@ def _subject_context_rows(
     observed_fraction = float(usable.mean())
     source = event.loc[usable].copy()
     source["activity_raw"] = score.loc[usable].astype(float)
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        source["fold_fitted_parent_ecdf"] = fold_probability.loc[usable].astype(float)
     if source.empty:
-        return source, observed_fraction, "no_complete_activity_measurements"
+        reason = (
+            "no_complete_fold_fitted_occurrence_measurements"
+            if spec.occurrence_state_source == "fold_fitted_parent_ecdf"
+            else "no_complete_activity_measurements"
+        )
+        return source, observed_fraction, reason
     group_columns = [design.subject_column, design.condition_column]
     categorical = [
         *design.batch_columns,
@@ -401,6 +551,8 @@ def _subject_context_rows(
                 f"{column}_varies_within_subject_context",
             )
     aggregation: dict[str, str] = {"activity_raw": "mean"}
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        aggregation["fold_fitted_parent_ecdf"] = "mean"
     aggregation.update({column: "mean" for column in design.continuous_covariates})
     aggregation.update({column: "first" for column in categorical})
     if design.precision_weight_column is not None:
@@ -429,13 +581,23 @@ def _subject_context_rows(
         ].itertuples(index=False, name=None)
     ]
     grouped["event_id"] = str(event["event_id"].iloc[0])
-    grouped["occurrence_state"] = grouped["activity_raw"].gt(
-        spec.activity_threshold_raw
-    )
-    grouped["active_probability"] = expit(
-        (grouped["activity_raw"] - spec.activity_threshold_raw)
-        / spec.probability_transition_scale
-    )
+    if spec.occurrence_state_source == "fold_fitted_parent_ecdf":
+        fold_probability = grouped["fold_fitted_parent_ecdf"]
+        threshold = spec.active_probability_threshold
+        grouped["occurrence_state"] = fold_probability.gt(threshold)
+        grouped["active_probability"] = np.clip(
+            (fold_probability - threshold) / (1.0 - threshold),
+            0.0,
+            1.0,
+        )
+    else:
+        grouped["occurrence_state"] = grouped["activity_raw"].gt(
+            spec.activity_threshold_raw
+        )
+        grouped["active_probability"] = expit(
+            (grouped["activity_raw"] - spec.activity_threshold_raw)
+            / spec.probability_transition_scale
+        )
     grouped["conditional_intensity"] = grouped["activity_raw"].where(
         grouped["occurrence_state"]
     )
@@ -458,6 +620,81 @@ def _pair_levels(
     ):
         return None
     return negative[0][0], positive[0][0]
+
+
+def _descriptive_pair_summary(
+    table: pd.DataFrame,
+    *,
+    design: DifferentialDesignSpec,
+    reference: str,
+    target: str,
+) -> dict[str, object] | None:
+    if design.design_kind in {
+        DifferentialDesignKind.PAIRED,
+        DifferentialDesignKind.REPEATED,
+    }:
+        matrix = table.pivot(
+            index=design.subject_column,
+            columns=design.condition_column,
+            values="occurrence_state",
+        ).reindex(columns=[reference, target])
+        complete = matrix.dropna().astype(bool)
+        if len(complete) < design.minimum_subjects_per_level:
+            return None
+        reference_values = complete[reference]
+        target_values = complete[target]
+        complete_pairs = len(complete)
+    else:
+        subject_conditions = table.groupby(design.subject_column, observed=True)[
+            design.condition_column
+        ].nunique()
+        if (subject_conditions > 1).any():
+            return None
+        reference_values = table.loc[
+            table[design.condition_column].astype(str).eq(reference),
+            "occurrence_state",
+        ].astype(bool)
+        target_values = table.loc[
+            table[design.condition_column].astype(str).eq(target),
+            "occurrence_state",
+        ].astype(bool)
+        if (
+            min(len(reference_values), len(target_values))
+            < design.minimum_subjects_per_level
+        ):
+            return None
+        complete_pairs = 0
+    reference_occurrences = int(reference_values.sum())
+    target_occurrences = int(target_values.sum())
+    cells = (
+        np.asarray(
+            [
+                [target_occurrences, len(target_values) - target_occurrences],
+                [reference_occurrences, len(reference_values) - reference_occurrences],
+            ],
+            dtype=float,
+        )
+        + 0.5
+    )
+    log_or = float(math.log(cells[0, 0] * cells[1, 1] / (cells[0, 1] * cells[1, 0])))
+    return {
+        "reference_subjects": len(reference_values),
+        "target_subjects": len(target_values),
+        "complete_pairs": complete_pairs,
+        "reference_occurrences": reference_occurrences,
+        "target_occurrences": target_occurrences,
+        "reference_prevalence": float(reference_values.mean()),
+        "target_prevalence": float(target_values.mean()),
+        "prevalence_difference": float(target_values.mean() - reference_values.mean()),
+        "odds_ratio": math.exp(float(np.clip(log_or, -700.0, 700.0))),
+        "log_odds_ratio": log_or,
+        "standard_error": None,
+        "statistic": None,
+        "p_value": None,
+        "ci_lower": None,
+        "ci_upper": None,
+        "occurrence_method": "descriptive_prevalence_formal_not_estimable",
+    }
 
 
 def _wald_summary(
@@ -824,7 +1061,7 @@ def _identity_value(value: object) -> object:
         value is None
         or value is pd.NA
         or value is pd.NaT
-        or (isinstance(value, (float, np.floating)) and math.isnan(float(value)))
+        or (isinstance(value, float | np.floating) and math.isnan(float(value)))
     ):
         return None
     if isinstance(value, np.generic):
@@ -969,7 +1206,17 @@ def fit_two_part_occurrence_v2(
                     if contrast is not None and levels is None
                     else "occurrence_design_not_estimable"
                 )
-                summary = {
+                descriptive = (
+                    None
+                    if levels is None
+                    else _descriptive_pair_summary(
+                        event_subjects,
+                        design=spec.design,
+                        reference=levels[0],
+                        target=levels[1],
+                    )
+                )
+                summary = descriptive or {
                     "reference_subjects": 0,
                     "target_subjects": 0,
                     "complete_pairs": 0,
@@ -1012,11 +1259,18 @@ def fit_two_part_occurrence_v2(
                 "observed_fraction": observed_fraction_by_event[event_id],
                 "activity_head": spec.activity_head,
                 "activity_threshold_raw": spec.activity_threshold_raw,
+                "occurrence_state_source": spec.occurrence_state_source,
+                "active_probability_threshold": spec.active_probability_threshold,
+                "active_probability_mapping": spec.active_probability_mapping,
                 "status": status,
                 "reason_code": None if status == "observed" else reason,
                 "formal_inference_allowed": status == "observed",
                 "formal_inference_scope": (
-                    "fixed_threshold_oof_occurrence_only"
+                    (
+                        "fold_fitted_parent_ecdf_threshold_oof_occurrence_only"
+                        if spec.occurrence_state_source == "fold_fitted_parent_ecdf"
+                        else "raw_activity_fixed_threshold_oof_occurrence_only"
+                    )
                     if status == "observed"
                     else "not_estimable"
                 ),

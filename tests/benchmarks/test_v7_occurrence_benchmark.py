@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
 from benchmarks.simulation.v7_occurrence_benchmark import (
     BETA_BINOMIAL_METHOD,
@@ -8,6 +10,7 @@ from benchmarks.simulation.v7_occurrence_benchmark import (
     M4_ALIGNED_EFFECT_COLUMNS,
     M4_BASELINE_COLUMNS,
     M4_EFFECT_COLUMNS,
+    M4_METHOD,
     M4_METHODS,
     M4_METRIC_COLUMNS,
     M4_SUBJECT_EVENT_COLUMNS,
@@ -94,3 +97,104 @@ def test_v7_m4_benchmark_preserves_unknown_truth_and_typed_comparators() -> None
     manifest = result.to_manifest()
     assert manifest["dcst_scope"].startswith("protocol-compatible")
     assert manifest["occurrence"]["crossfit_id"] == crossfit.crossfit_id
+
+    fold_fitted = run_v7_m4_occurrence_benchmark(
+        crossfit,
+        dataset_id=fixture.dataset_id,
+        design=fixture.differential_design,
+        sample_metadata=fixture.sample_metadata,
+        truth=fixture.truth,
+        dgp_family=fixture.dgp_family,
+        design_kind=fixture.design_kind,
+        occurrence_state_source="fold_fitted_parent_ecdf",
+        active_probability_threshold=0.8,
+    )
+    comparator_methods = set(M4_METHODS).difference({M4_METHOD})
+    comparator_columns = [
+        "method",
+        "event_id",
+        "contrast_name",
+        "prevalence_effect",
+        "log_odds_ratio",
+        "ranking_score",
+        "p_value",
+        "q_value",
+        "status",
+        "reason_code",
+        "formal_inference_allowed",
+    ]
+    pd.testing.assert_frame_equal(
+        result.baselines.loc[
+            result.baselines["method"].isin(comparator_methods), comparator_columns
+        ].reset_index(drop=True),
+        fold_fitted.baselines.loc[
+            fold_fitted.baselines["method"].isin(comparator_methods),
+            comparator_columns,
+        ].reset_index(drop=True),
+    )
+    pd.testing.assert_series_equal(
+        result.subject_events["raw_leave_one_out_prevalence"],
+        fold_fitted.subject_events["raw_leave_one_out_prevalence"],
+    )
+    raw_brier = result.metrics.loc[
+        result.metrics["method"].eq("crychic_m4_working_probability")
+        & result.metrics["metric"].eq("subject_brier_score"),
+        "value",
+    ].iloc[0]
+    fold_brier = fold_fitted.metrics.loc[
+        fold_fitted.metrics["method"].eq("crychic_m4_working_probability")
+        & fold_fitted.metrics["metric"].eq("subject_brier_score"),
+        "value",
+    ].iloc[0]
+    assert fold_brier < raw_brier
+    known_ids = set(
+        fold_fitted.aligned_effects.loc[
+            fold_fitted.aligned_effects["truth_known"], "event_id"
+        ]
+    )
+    optimized = fold_fitted.baselines.loc[
+        fold_fitted.baselines["method"].eq(M4_METHOD)
+        & fold_fitted.baselines["event_id"].isin(known_ids)
+    ]
+    assert optimized["status"].isin({"observed", "descriptive"}).all()
+    optimized_ap = fold_fitted.metrics.loc[
+        fold_fitted.metrics["method"].eq(M4_METHOD)
+        & fold_fitted.metrics["metric"].eq("occurrence_auprc")
+    ].iloc[0]
+    assert optimized_ap["status"] == "observed"
+
+
+def test_v7_m4_benchmark_accepts_continuous_design_metadata() -> None:
+    fixture = generate_v7_dgp(
+        dataset_id="v7-m4-continuous",
+        dgp_family="global_null",
+        design_kind="continuous",
+        seed=54321,
+        candidate_sender_count=2,
+        cells_per_type=1,
+        subjects_per_level=4,
+    )
+    crossfit = run_subject_crossfit(
+        fixture.adata,
+        fixture.config,
+        fixture.resource,
+        fixture.target_prior,
+        spec=fixture.crossfit_spec,
+        n_jobs=1,
+    )
+
+    result = run_v7_m4_occurrence_benchmark(
+        crossfit,
+        dataset_id=fixture.dataset_id,
+        design=fixture.differential_design,
+        sample_metadata=fixture.sample_metadata,
+        truth=fixture.truth,
+        dgp_family=fixture.dgp_family,
+        design_kind=fixture.design_kind,
+        occurrence_state_source="fold_fitted_parent_ecdf",
+    )
+
+    assert set(result.effects["contrast_name"]) == {"slope:dose"}
+    assert result.subject_events["condition"].isin({"A", "B"}).all()
+    assert result.subject_events["raw_leave_one_out_prevalence"].isna().all()
+    assert result.subject_events["truth_state_known"].any()

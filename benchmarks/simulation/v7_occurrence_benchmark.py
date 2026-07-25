@@ -26,7 +26,7 @@ from crychic.workflow import (
     fit_crossfit_two_part_occurrence_v2,
 )
 
-SCHEMA_VERSION = "crychic-suggest-next2-v7-m4-occurrence-benchmark-v1"
+SCHEMA_VERSION = "crychic-suggest-next2-v7-m4-occurrence-benchmark-v2"
 M4_METHOD = "crychic_m4_design_aware"
 RAW_METHOD = "raw_prevalence_difference"
 FISHER_METHOD = "fisher_exact"
@@ -237,12 +237,14 @@ def _event_universe(
 
 def _decorate_subject_events(
     subject_events: pd.DataFrame,
+    raw_comparator_subject_events: pd.DataFrame,
     parent_truth: pd.DataFrame,
     sample_metadata: pd.DataFrame,
     *,
     dataset_id: str,
     dgp_family: str,
     design_kind: str,
+    condition_column: str,
 ) -> pd.DataFrame:
     identity = parent_truth.loc[
         :, ["event_id", "receiver", "interaction_id"]
@@ -261,19 +263,25 @@ def _decorate_subject_events(
         )
         .reset_index()
     )
-    metadata_required = {"subject_id", "condition", "responder"}
+    metadata_required = {
+        "subject_id",
+        "condition",
+        condition_column,
+        "responder",
+    }
     missing = metadata_required.difference(sample_metadata.columns)
     if missing:
         raise ValueError(f"M4 sample metadata is missing fields: {sorted(missing)}")
     metadata = sample_metadata.loc[:, sorted(metadata_required)].copy()
-    if metadata.duplicated(["subject_id", "condition"]).any():
-        raise ValueError("M4 metadata requires one row per subject and condition")
+    metadata_keys = ["subject_id", condition_column]
+    if metadata.duplicated(metadata_keys).any():
+        raise ValueError("M4 metadata requires one row per subject and design context")
     result = (
         subject_events.merge(identity, on="event_id", validate="many_to_one")
         .merge(event_truth, on="event_id", validate="many_to_one")
         .merge(
             metadata,
-            on=["subject_id", "condition"],
+            on=metadata_keys,
             how="left",
             validate="many_to_one",
         )
@@ -295,18 +303,33 @@ def _decorate_subject_events(
     result["truth_occurrence_state"] = pd.array(
         truth_state.where(truth_known, pd.NA), dtype="boolean"
     )
-    observed = result["measurement_status"].eq("observed")
-    state = result["occurrence_state"].astype(bool)
-    group = ["event_id", "condition"]
-    count = observed.groupby([result[column] for column in group]).transform("sum")
-    total = (
-        state.where(observed, False)
-        .groupby([result[column] for column in group])
+    raw = raw_comparator_subject_events.copy(deep=True)
+    raw_observed = raw["measurement_status"].eq("observed")
+    raw_state = raw["occurrence_state"].astype(bool)
+    raw_group = ["event_id", condition_column]
+    raw_count = raw_observed.groupby([raw[column] for column in raw_group]).transform(
+        "sum"
+    )
+    raw_total = (
+        raw_state.where(raw_observed, False)
+        .groupby([raw[column] for column in raw_group])
         .transform("sum")
     )
-    result["raw_leave_one_out_prevalence"] = (
-        (total - state.astype(int)) / (count - 1)
-    ).where(observed & count.gt(1))
+    raw["raw_leave_one_out_prevalence"] = (
+        (raw_total - raw_state.astype(int)) / (raw_count - 1)
+    ).where(raw_observed & raw_count.gt(1))
+    raw_prediction = raw.loc[
+        :, ["event_id", "sample_id", "raw_leave_one_out_prevalence"]
+    ]
+    if raw_prediction.duplicated(["event_id", "sample_id"]).any():
+        raise ValueError("raw M4 comparator requires one subject-context row per event")
+    result = result.merge(
+        raw_prediction,
+        on=["event_id", "sample_id"],
+        how="left",
+        validate="one_to_one",
+        sort=False,
+    )
     result.insert(0, "design_kind", design_kind)
     result.insert(0, "dgp_family", dgp_family)
     result.insert(0, "dataset_id", dataset_id)
@@ -515,8 +538,11 @@ def _logistic_rows(
             ]
             if len(prevalence) != 1:
                 continue
+            prevalence_value = pd.to_numeric(prevalence, errors="coerce").iloc[0]
             result[(str(event_id), contrast_name)] = {
-                "prevalence_effect": float(prevalence.iloc[0]),
+                "prevalence_effect": (
+                    None if pd.isna(prevalence_value) else float(prevalence_value)
+                ),
                 "log_odds_ratio": estimate,
                 "ranking_score": -math.log10(max(p_value, 1.0e-300)),
                 "p_value": p_value,
@@ -611,15 +637,22 @@ def _raw_prevalence_summary(
 
 def _baseline_table(
     effects: pd.DataFrame,
-    subject_events: pd.DataFrame,
+    raw_comparator_effects: pd.DataFrame,
+    raw_comparator_subject_events: pd.DataFrame,
     design: DifferentialDesignSpec,
 ) -> pd.DataFrame:
-    logistic = _logistic_rows(subject_events, effects, design)
+    logistic = _logistic_rows(
+        raw_comparator_subject_events,
+        raw_comparator_effects,
+        design,
+    )
     rows: list[dict[str, object]] = []
     for effect in effects.itertuples(index=False):
         observed = str(effect.status) == "observed"
-        event_subjects = subject_events.loc[
-            subject_events["event_id"].astype(str).eq(str(effect.event_id))
+        event_subjects = raw_comparator_subject_events.loc[
+            raw_comparator_subject_events["event_id"]
+            .astype(str)
+            .eq(str(effect.event_id))
         ]
         raw = _raw_prevalence_summary(
             event_subjects,
@@ -685,7 +718,11 @@ def _baseline_table(
             )
 
         if observed:
-            prevalence = float(effect.prevalence_difference)
+            prevalence = (
+                None
+                if pd.isna(effect.prevalence_difference)
+                else float(effect.prevalence_difference)
+            )
             log_odds = float(effect.log_odds_ratio)
             p_value = float(effect.p_value)
             append(
@@ -693,9 +730,24 @@ def _baseline_table(
                 str(effect.occurrence_method),
                 prevalence_effect=prevalence,
                 log_odds_ratio=log_odds,
-                ranking_score=-math.log10(max(p_value, 1.0e-300)),
+                ranking_score=(
+                    -math.log10(max(p_value, 1.0e-300))
+                    if prevalence is None
+                    else abs(prevalence)
+                ),
                 p_value=p_value,
                 formal=bool(effect.formal_inference_allowed),
+            )
+        elif pd.notna(effect.prevalence_difference) and pd.notna(effect.log_odds_ratio):
+            prevalence = float(effect.prevalence_difference)
+            append(
+                M4_METHOD,
+                str(effect.occurrence_method),
+                prevalence_effect=prevalence,
+                log_odds_ratio=float(effect.log_odds_ratio),
+                ranking_score=abs(prevalence),
+                status="descriptive",
+                reason_code=str(effect.reason_code),
             )
         else:
             reason = str(effect.reason_code)
@@ -748,7 +800,11 @@ def _baseline_table(
             append(
                 LOGISTIC_METHOD,
                 str(logistic_row["method_scope"]),
-                prevalence_effect=float(logistic_row["prevalence_effect"]),
+                prevalence_effect=(
+                    None
+                    if logistic_row["prevalence_effect"] is None
+                    else float(logistic_row["prevalence_effect"])
+                ),
                 log_odds_ratio=float(logistic_row["log_odds_ratio"]),
                 ranking_score=float(logistic_row["ranking_score"]),
                 p_value=float(logistic_row["p_value"]),
@@ -824,8 +880,8 @@ def _effect_metrics(
         labels = pd.to_numeric(table["truth_occurrence_effect"], errors="coerce").ne(
             0.0
         )
-        observed = table["status"].eq("observed")
-        usable = known & observed
+        effect_available = table["status"].isin({"observed", "descriptive"})
+        usable = known & effect_available
         n_observed = int(usable.sum())
         n_positive = int((known & labels).sum())
         n_negative = int((known & ~labels).sum())
@@ -833,7 +889,7 @@ def _effect_metrics(
             _metric_row(
                 first,
                 metric="estimable_fraction",
-                value=float(observed.mean()),
+                value=float(effect_available.mean()),
                 reason_code=None,
                 n_observed=n_observed,
                 n_positive=n_positive,
@@ -913,8 +969,8 @@ def _effect_metrics(
             )
         p_value = pd.to_numeric(table["p_value"], errors="coerce")
         q_value = pd.to_numeric(table["q_value"], errors="coerce")
-        null = usable & ~labels & p_value.notna() & np.isfinite(p_value)
-        calls_valid = usable & q_value.notna() & np.isfinite(q_value)
+        null = known & ~labels & p_value.notna() & np.isfinite(p_value)
+        calls_valid = known & q_value.notna() & np.isfinite(q_value)
         calls = calls_valid & q_value.le(0.10)
         type1 = float(p_value.loc[null].lt(0.05).mean()) if null.any() else None
         fdr = (
@@ -1049,13 +1105,17 @@ class V7M4OccurrenceBenchmarkResult:
 
     def to_manifest(self) -> dict[str, object]:
         observed = self.baselines["status"].eq("observed")
+        descriptive = self.baselines["status"].eq("descriptive")
         return {
             "schema_version": SCHEMA_VERSION,
             "methods": list(M4_METHODS),
             "subject_event_rows": len(self.subject_events),
             "effect_rows": len(self.effects),
             "observed_method_rows": int(observed.sum()),
-            "not_estimable_method_rows": int((~observed).sum()),
+            "descriptive_method_rows": int(descriptive.sum()),
+            "not_estimable_method_rows": int(
+                self.baselines["status"].eq("not_estimable").sum()
+            ),
             "occurrence": dict(self.occurrence_manifest),
             "dcst_scope": "protocol-compatible Fisher proxy, not the external package",
             "beta_binomial_scope": (
@@ -1077,6 +1137,9 @@ def run_v7_m4_occurrence_benchmark(
     activity_head: str = "parent_mean_raw",
     activity_threshold_raw: float = 1.0,
     probability_transition_scale: float = 0.25,
+    occurrence_state_source: str = "raw_activity_threshold",
+    active_probability_threshold: float = 0.8,
+    active_probability_mapping: str | None = None,
 ) -> V7M4OccurrenceBenchmarkResult:
     """Run the fixed M4 head and honest estimand-matched comparator panel."""
 
@@ -1088,12 +1151,29 @@ def run_v7_m4_occurrence_benchmark(
         activity_head=activity_head,
         activity_threshold_raw=activity_threshold_raw,
         probability_transition_scale=probability_transition_scale,
+        occurrence_state_source=occurrence_state_source,
+        active_probability_threshold=active_probability_threshold,
+        active_probability_mapping=active_probability_mapping,
     )
     fitted = fit_crossfit_two_part_occurrence_v2(
         crossfit,
         spec,
         sample_metadata=sample_metadata,
     )
+    if spec.occurrence_state_source == "raw_activity_threshold":
+        raw_comparator = fitted
+    else:
+        raw_comparator = fit_crossfit_two_part_occurrence_v2(
+            crossfit,
+            TwoPartOccurrenceV2Spec(
+                design=design,
+                activity_head=activity_head,
+                activity_threshold_raw=activity_threshold_raw,
+                probability_transition_scale=probability_transition_scale,
+                occurrence_state_source="raw_activity_threshold",
+            ),
+            sample_metadata=sample_metadata,
+        )
     parent_truth = _parent_truth(
         truth,
         activity_head=spec.activity_head,
@@ -1101,11 +1181,13 @@ def run_v7_m4_occurrence_benchmark(
     )
     subject_events = _decorate_subject_events(
         fitted.occurrence.subject_events,
+        raw_comparator.occurrence.subject_events,
         parent_truth,
         sample_metadata,
         dataset_id=dataset,
         dgp_family=family,
         design_kind=design_name,
+        condition_column=design.condition_column,
     )
     effects, aligned = _decorate_effects(
         fitted.occurrence.effects,
@@ -1114,7 +1196,12 @@ def run_v7_m4_occurrence_benchmark(
         dgp_family=family,
         design_kind=design_name,
     )
-    baselines = _baseline_table(effects, fitted.occurrence.subject_events, design)
+    baselines = _baseline_table(
+        effects,
+        raw_comparator.occurrence.effects,
+        raw_comparator.occurrence.subject_events,
+        design,
+    )
     metric_rows = [
         *_effect_metrics(baselines, aligned),
         *_calibration_metrics(subject_events),
@@ -1132,7 +1219,11 @@ def run_v7_m4_occurrence_benchmark(
         aligned_effects=aligned,
         baselines=baselines,
         metrics=metrics,
-        occurrence_manifest=fitted.to_manifest(),
+        occurrence_manifest={
+            **fitted.to_manifest(),
+            "raw_comparator_result_id": raw_comparator.result_id,
+            "raw_comparator_state_source": "raw_activity_threshold",
+        },
     )
 
 

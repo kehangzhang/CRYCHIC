@@ -56,8 +56,8 @@ from benchmarks.simulation.v7_protocol import (
 from benchmarks.simulation.v7_sender_swaps import run_v7_e3_sender_swap
 from crychic.workflow import build_v7_diagnostics, run_subject_crossfit
 
-CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v4"
-DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v4"
+CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v5"
+DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v5"
 RUN_COLUMNS = (
     "dataset_id",
     "dgp_family",
@@ -481,6 +481,12 @@ def run_v7_dataset(
 
     started = time.monotonic()
     protocol = load_v7_benchmark_protocol(protocol_path)
+    experiments = protocol.config["experiments"]
+    if not isinstance(experiments, Mapping):
+        raise TypeError("protocol experiments must be a mapping")
+    m4_config = experiments.get("E6_m4_occurrence")
+    if not isinstance(m4_config, Mapping):
+        raise ValueError("campaign protocol must configure E6_m4_occurrence")
     dataset_id = _safe_dataset_id(dataset_plan["dataset_id"])
     final = output_root / "datasets" / dataset_id
     existing = _validate_completed_dataset(final)
@@ -560,6 +566,25 @@ def run_v7_dataset(
                     truth=fixture.truth,
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
+                    activity_head=str(m4_config["activity_head"]),
+                    activity_threshold_raw=float(m4_config["activity_threshold_raw"]),
+                    probability_transition_scale=float(
+                        m4_config["probability_transition_scale"]
+                    ),
+                    occurrence_state_source=str(
+                        m4_config.get(
+                            "occurrence_state_source",
+                            "raw_activity_threshold",
+                        )
+                    ),
+                    active_probability_threshold=float(
+                        m4_config.get("active_probability_threshold", 0.8)
+                    ),
+                    active_probability_mapping=(
+                        None
+                        if m4_config.get("active_probability_mapping") is None
+                        else str(m4_config["active_probability_mapping"])
+                    ),
                 )
             with logger.stage("e2_hard_gate_component_swaps"):
                 e2 = run_v7_e2_component_swap(
@@ -665,10 +690,12 @@ def run_v7_dataset(
                     "E6_m4_occurrence": {
                         **m4.to_manifest(),
                         "fixed_threshold_formal_inference_allowed": True,
-                        "formal_inference_scope": (
-                            "fixed_threshold_oof_occurrence_only"
+                        "formal_inference_scope": m4.occurrence_manifest[
+                            "formal_inference_scope"
+                        ],
+                        "release_calibration_complete": bool(
+                            m4_config.get("release_calibration_complete", False)
                         ),
-                        "release_calibration_complete": False,
                     },
                     "E2_hard_gate_attrition": {
                         "arms": sorted(e2.score_views["score_view"].unique()),

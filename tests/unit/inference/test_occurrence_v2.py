@@ -99,7 +99,11 @@ def test_independent_two_group_uses_fisher_and_formal_bh() -> None:
     assert effect["p_value"] < 0.001
     assert effect["q_value"] == pytest.approx(effect["p_value"])
     assert bool(effect["formal_inference_allowed"])
-    assert effect["formal_inference_scope"] == "fixed_threshold_oof_occurrence_only"
+    assert (
+        effect["formal_inference_scope"]
+        == "raw_activity_fixed_threshold_oof_occurrence_only"
+    )
+    assert effect["active_probability_mapping"] == "raw_logistic_transition_v1"
     assert result.subject_events["active_probability"].between(0.0, 1.0).all()
     assert result.spec.to_dict()["version"] == TWO_PART_OCCURRENCE_VERSION
 
@@ -264,6 +268,39 @@ def test_multicohort_adjustment_uses_logistic_hc1_sandwich() -> None:
     assert effect["target_prevalence"] > effect["reference_prevalence"]
 
 
+def test_nonestimable_adjusted_null_retains_descriptive_prevalence() -> None:
+    rows = [
+        _row(
+            event_id="e1",
+            sample_id=f"{condition}-{index}",
+            subject_id=f"{condition}-{index}",
+            condition=condition,
+            active=False,
+            age=30.0 + index,
+        )
+        for condition in ("control", "treated")
+        for index in range(8)
+    ]
+    spec = TwoPartOccurrenceV2Spec(
+        design=_design(
+            "independent_two_group",
+            continuous_covariates=("age",),
+        ),
+        activity_threshold_raw=1.0,
+    )
+
+    effect = fit_two_part_occurrence_v2(pd.DataFrame(rows), spec).effects.iloc[0]
+
+    assert effect["status"] == "not_estimable"
+    assert effect["occurrence_method"] == "descriptive_prevalence_formal_not_estimable"
+    assert effect["reference_occurrences"] == 0
+    assert effect["target_occurrences"] == 0
+    assert effect["prevalence_difference"] == 0.0
+    assert pd.isna(effect["p_value"])
+    assert pd.isna(effect["q_value"])
+    assert not bool(effect["formal_inference_allowed"])
+
+
 def test_missing_measurement_is_excluded_instead_of_becoming_absence() -> None:
     rows = [
         _row(
@@ -328,3 +365,64 @@ def test_result_is_row_order_deterministic_and_adapter_uses_configured_head() ->
     projected = build_sample_edge_two_part_input(sample_edge_scores(), spec=spec)
     assert projected["score"].unique().tolist() == [1.5]
     assert projected["event_id"].nunique() == 1
+
+
+def test_fold_fitted_parent_ecdf_separates_state_from_raw_intensity() -> None:
+    rows = [
+        {
+            **_row(
+                event_id="e1",
+                sample_id=f"{condition}-{index}",
+                subject_id=f"{condition}-{index}",
+                condition=condition,
+                active=True,
+            ),
+            "fold_fitted_parent_ecdf": 0.5 if condition == "control" else 0.9,
+            "fold_fitted_occurrence_status": "partial",
+            "fold_fitted_occurrence_functional_id": "fold-parent-ecdf-1",
+        }
+        for condition in ("control", "treated")
+        for index in range(8)
+    ]
+    spec = TwoPartOccurrenceV2Spec(
+        design=_design("independent_two_group"),
+        occurrence_state_source="fold_fitted_parent_ecdf",
+        active_probability_threshold=0.8,
+    )
+
+    result = fit_two_part_occurrence_v2(pd.DataFrame(rows), spec)
+    subjects = result.subject_events
+    effect = result.effects.iloc[0]
+
+    assert not subjects.loc[
+        subjects["condition"].eq("control"), "occurrence_state"
+    ].any()
+    assert subjects.loc[subjects["condition"].eq("treated"), "occurrence_state"].all()
+    assert (
+        subjects.loc[subjects["condition"].eq("control"), "active_probability"]
+        .eq(0.0)
+        .all()
+    )
+    assert (
+        subjects.loc[subjects["condition"].eq("treated"), "active_probability"]
+        .eq(0.5)
+        .all()
+    )
+    assert (
+        subjects.loc[subjects["condition"].eq("control"), "conditional_intensity"]
+        .isna()
+        .all()
+    )
+    assert (
+        subjects.loc[subjects["condition"].eq("treated"), "conditional_intensity"]
+        .notna()
+        .all()
+    )
+    assert effect["occurrence_state_source"] == "fold_fitted_parent_ecdf"
+    assert effect["active_probability_mapping"] == "upper_tail_excess_v1"
+    assert (
+        effect["formal_inference_scope"]
+        == "fold_fitted_parent_ecdf_threshold_oof_occurrence_only"
+    )
+    assert effect["prevalence_difference"] == 1.0
+    assert effect["p_value"] < 0.001

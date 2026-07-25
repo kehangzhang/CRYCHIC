@@ -60,6 +60,7 @@ class CrossFitTwoPartOccurrenceV2Result:
         )
 
     def to_manifest(self) -> dict[str, object]:
+        state_source = self.occurrence.spec.occurrence_state_source
         return {
             "result_id": self.result_id,
             "crossfit_id": self.crossfit_id,
@@ -70,7 +71,11 @@ class CrossFitTwoPartOccurrenceV2Result:
             "observed_effects": int(
                 self.occurrence.effects["status"].eq("observed").sum()
             ),
-            "formal_inference_scope": "fixed_threshold_oof_occurrence_only",
+            "formal_inference_scope": (
+                "fold_fitted_parent_ecdf_threshold_oof_occurrence_only"
+                if state_source == "fold_fitted_parent_ecdf"
+                else "raw_activity_fixed_threshold_oof_occurrence_only"
+            ),
             "conditional_intensity_formal_inference_allowed": False,
         }
 
@@ -115,9 +120,7 @@ def fit_crossfit_two_part_occurrence_v2(
         required_metadata.add(design.cohort_column)
     if design.precision_weight_column is not None:
         required_metadata.add(design.precision_weight_column)
-    missing_metadata = tuple(
-        sorted(required_metadata.difference(activity.columns))
-    )
+    missing_metadata = tuple(sorted(required_metadata.difference(activity.columns)))
     if missing_metadata:
         if sample_metadata is None:
             raise ValueError(
@@ -130,16 +133,13 @@ def fit_crossfit_two_part_occurrence_v2(
         required_input = {sample_column, *missing_metadata}
         absent = required_input.difference(sample_metadata.columns)
         if absent:
-            raise ValueError(
-                f"sample_metadata is missing M4 fields: {sorted(absent)}"
-            )
+            raise ValueError(f"sample_metadata is missing M4 fields: {sorted(absent)}")
         metadata = sample_metadata.loc[:, [sample_column, *missing_metadata]].copy()
-        if metadata[sample_column].isna().any() or metadata[
-            sample_column
-        ].duplicated().any():
-            raise ValueError(
-                "sample_metadata requires unique non-missing sample IDs"
-            )
+        if (
+            metadata[sample_column].isna().any()
+            or metadata[sample_column].duplicated().any()
+        ):
+            raise ValueError("sample_metadata requires unique non-missing sample IDs")
         activity = activity.merge(
             metadata,
             on=sample_column,

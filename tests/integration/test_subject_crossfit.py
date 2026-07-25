@@ -1394,6 +1394,45 @@ def test_absolute_activity_v2_is_opt_in_and_emits_exact_heldout_rows(
     assert occurrence.to_manifest()["observed_effects"] == len(
         occurrence.occurrence.effects
     )
+    fold_fitted_occurrence = fit_crossfit_two_part_occurrence_v2(
+        result,
+        TwoPartOccurrenceV2Spec(
+            design=DifferentialDesignSpec(
+                design_kind="independent_two_group",
+                condition_column="condition",
+                condition_levels=("control", "stim"),
+                contrasts=(
+                    DifferentialContrastSpec(
+                        name="stim_vs_control",
+                        weights=(("control", -1.0), ("stim", 1.0)),
+                    ),
+                ),
+                precision_weight_column=None,
+                minimum_subjects_per_level=4,
+            ),
+            occurrence_state_source="fold_fitted_parent_ecdf",
+            active_probability_threshold=0.8,
+        ),
+        sample_metadata=scores.loc[
+            :, ["sample_id", "subject_id", "condition"]
+        ].drop_duplicates(ignore_index=True),
+    )
+    assert (
+        fold_fitted_occurrence.occurrence.subject_events["active_probability"]
+        .between(0.0, 1.0)
+        .all()
+    )
+    assert (
+        fold_fitted_occurrence.occurrence.subject_events["occurrence_state"].nunique()
+        == 2
+    )
+    assert set(
+        fold_fitted_occurrence.occurrence.effects["occurrence_state_source"]
+    ) == {"fold_fitted_parent_ecdf"}
+    assert (
+        fold_fitted_occurrence.to_manifest()["formal_inference_scope"]
+        == "fold_fitted_parent_ecdf_threshold_oof_occurrence_only"
+    )
     unified_design = DifferentialDesignSpec(
         design_kind="independent_two_group",
         condition_column="condition",
