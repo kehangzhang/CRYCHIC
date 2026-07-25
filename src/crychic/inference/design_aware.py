@@ -104,7 +104,7 @@ def _names(
 
 
 def _finite(value: object, *, field_name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
+    if isinstance(value, bool | np.bool_):
         raise ValueError(f"{field_name} must be numeric")
     try:
         result = float(value)  # type: ignore[arg-type]
@@ -496,7 +496,7 @@ def _event_digest(table: pd.DataFrame, spec: DifferentialDesignSpec) -> str:
         for value in row:
             if pd.isna(value):
                 record.append(None)
-            elif isinstance(value, (float, np.floating)):
+            elif isinstance(value, float | np.floating):
                 record.append({"float_hex": float(value).hex()})
             elif isinstance(value, np.generic):
                 record.append(value.item())
@@ -1231,7 +1231,7 @@ def build_sample_edge_differential_input(
                 )
         table = table.drop_duplicates(
             ["sample_id", "context_id", "fold_id", *identity_columns]
-        )
+        ).copy()
     table["event_id"] = [
         stable_id(
             "sample_edge_differential_event",
