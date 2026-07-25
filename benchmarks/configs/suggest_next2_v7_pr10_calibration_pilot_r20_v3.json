@@ -1,0 +1,79 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v3",
+  "status": "execution_only_amendment_after_performance_diagnosis_without_scientific_parameter_change",
+  "base_protocol": {
+    "filename": "suggest_next2_v7_benchmark_v3.json",
+    "sha256": "89ca902e09e4828ba910f8641e613b764fed72bfdcc2efcedc7419c670e1aae5"
+  },
+  "supersedes_frozen_config": {
+    "filename": "suggest_next2_v7_pr10_calibration_pilot_r20_v2.json",
+    "sha256": "63f3796377b03e103ad9615ee163909e20e002d48a7e5837502d3a858257b3db",
+    "reason": "execution_only_pruning_of_unconsumed_legacy_diagnostics_after_multigroup_runtime_diagnosis"
+  },
+  "minimum_runner_commit": "974ada86c9ad02afb480591639ddbfbe3835ac16",
+  "experiment": {
+    "name": "PR10_global_null_calibration_pilot_r20_v3",
+    "publication_role": "calibration_precision_and_runtime_pilot_only",
+    "phase": "null_calibration",
+    "dgp_families": ["global_null"],
+    "design_kinds": [
+      "independent_two_group",
+      "independent_multi_group",
+      "paired",
+      "repeated",
+      "multi_cohort",
+      "continuous"
+    ],
+    "maximum_replicates": 20,
+    "maximum_datasets": 120,
+    "subjects_per_level_override": 12,
+    "dataset_id_suffix": "n12_pr10_calpilot_r20v3",
+    "n_bootstraps": 99,
+    "n_permutations": 99,
+    "run_loso": true,
+    "full_pipeline_refit_per_resample": true,
+    "expected_resamples_per_dataset_by_design": {
+      "independent_two_group": 222,
+      "independent_multi_group": 234,
+      "paired": 210,
+      "repeated": 210,
+      "multi_cohort": 222,
+      "continuous": 222
+    },
+    "primary_endpoint": "channel_design_global_null_type1_fdr_coverage_with_uncertainty",
+    "pass_rule": "report_estimates_and_intervals_without_release_decision",
+    "release_thresholds_evaluated": false
+  },
+  "execution": {
+    "maximum_memory_fraction": 0.8,
+    "dataset_jobs": 0,
+    "resample_jobs": 64,
+    "resample_backend": "process",
+    "thread_oversubscription_forbidden": true,
+    "crossfit_execution_profile": "v7_primary_m0_m5_v1",
+    "peak_rss_poll_seconds": 2.0,
+    "worker_selection": "v2_cpu_memory_policy_retained_after_v7_primary_serial_benchmark"
+  },
+  "selection_provenance": {
+    "performance_commit": "974ada86c9ad02afb480591639ddbfbe3835ac16",
+    "diagnostic_design": "independent_multi_group",
+    "diagnostic_replicate_index": 3,
+    "diagnostic_seed": 1178079459,
+    "old_full_fold_seconds": 259.0,
+    "v7_primary_fold_seconds": 42.8,
+    "v7_primary_one_bootstrap_elapsed_seconds": 344.73422702774405,
+    "scientific_equivalence_tables": 11,
+    "scientific_equivalence_max_abs_difference": 0.0,
+    "v2_continuous_metrics_inspected": true,
+    "statistical_parameter_changes_after_metric_inspection": false,
+    "locked_or_real_data_used": false
+  },
+  "release_policy": {
+    "calibration_gate_supplied": false,
+    "formal_inference_allowed": false,
+    "formal_minimum_bootstraps": 1000,
+    "formal_minimum_permutations": 1000,
+    "formal_minimum_null_replicates_per_scenario": 1000,
+    "pilot_result_cannot_release_p_or_q": true
+  }
+}

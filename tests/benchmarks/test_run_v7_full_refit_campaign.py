@@ -131,6 +131,20 @@ def test_pr10_m4_loso_n12_config_authenticates_and_overrides_plan() -> None:
             },
             "n12_pr10_calpilot_r20v2",
         ),
+        (
+            "suggest_next2_v7_pr10_calibration_pilot_r20_v3.json",
+            20,
+            120,
+            {
+                "independent_two_group": 222,
+                "independent_multi_group": 234,
+                "paired": 210,
+                "repeated": 210,
+                "multi_cohort": 222,
+                "continuous": 222,
+            },
+            "n12_pr10_calpilot_r20v3",
+        ),
     ),
 )
 def test_pr10_calibration_configs_freeze_n12_process_plans(
@@ -165,6 +179,9 @@ def test_pr10_calibration_configs_freeze_n12_process_plans(
     assert experiment["expected_resamples_per_dataset_by_design"] == resamples
     assert execution["resample_jobs"] == 64
     assert execution["resample_backend"] == "process"
+    if filename.endswith("r20_v3.json"):
+        assert execution["crossfit_execution_profile"] == "v7_primary_m0_m5_v1"
+        assert execution["peak_rss_poll_seconds"] == 2.0
 
 
 @pytest.mark.parametrize(
@@ -189,6 +206,22 @@ def test_pr10_calibration_config_authenticates_superseded_checksum(
         "suggest_next2_v7_benchmark_v3.json",
         "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
         "suggest_next2_v7_pr10_calibration_integration_r2_v2.json",
+    )
+    for filename in filenames:
+        (tmp_path / filename).write_bytes((source / filename).read_bytes())
+    superseded = tmp_path / filenames[1]
+    superseded.write_bytes(superseded.read_bytes() + b"\n")
+
+    with pytest.raises(ValueError, match="superseded.*checksum differs"):
+        load_v7_full_refit_frozen_config(tmp_path / filenames[2])
+
+
+def test_pr10_performance_config_authenticates_v2_checksum(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2] / "benchmarks" / "configs"
+    filenames = (
+        "suggest_next2_v7_benchmark_v3.json",
+        "suggest_next2_v7_pr10_calibration_pilot_r20_v2.json",
+        "suggest_next2_v7_pr10_calibration_pilot_r20_v3.json",
     )
     for filename in filenames:
         (tmp_path / filename).write_bytes((source / filename).read_bytes())

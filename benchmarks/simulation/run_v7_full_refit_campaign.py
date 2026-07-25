@@ -70,6 +70,9 @@ CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION = (
 CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION = (
     "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v2"
 )
+CALIBRATION_PILOT_PERFORMANCE_CONFIG_SCHEMA_VERSION = (
+    "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v3"
+)
 _CALIBRATION_CONFIG_PROFILES = {
     CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION: {
         "status": "amended_after_v1_plan_count_mismatch_before_metric_inspection",
@@ -132,6 +135,44 @@ _CALIBRATION_CONFIG_PROFILES = {
             "reason": (
                 "subjects_per_level_is_not_the_loso_count_for_independent_"
                 "multigroup_cohort_or_continuous_designs"
+            ),
+        },
+    },
+    CALIBRATION_PILOT_PERFORMANCE_CONFIG_SCHEMA_VERSION: {
+        "status": (
+            "execution_only_amendment_after_performance_diagnosis_"
+            "without_scientific_parameter_change"
+        ),
+        "name": "PR10_global_null_calibration_pilot_r20_v3",
+        "publication_role": "calibration_precision_and_runtime_pilot_only",
+        "maximum_replicates": 20,
+        "maximum_datasets": 120,
+        "dataset_id_suffix": "n12_pr10_calpilot_r20v3",
+        "n_bootstraps": 99,
+        "n_permutations": 99,
+        "expected_resamples_per_dataset_by_design": {
+            "independent_two_group": 222,
+            "independent_multi_group": 234,
+            "paired": 210,
+            "repeated": 210,
+            "multi_cohort": 222,
+            "continuous": 222,
+        },
+        "primary_endpoint": (
+            "channel_design_global_null_type1_fdr_coverage_with_uncertainty"
+        ),
+        "pass_rule": "report_estimates_and_intervals_without_release_decision",
+        "release_guard": "pilot_result_cannot_release_p_or_q",
+        "crossfit_execution_profile": "v7_primary_m0_m5_v1",
+        "peak_rss_poll_seconds": 2.0,
+        "supersedes_frozen_config": {
+            "filename": "suggest_next2_v7_pr10_calibration_pilot_r20_v2.json",
+            "sha256": (
+                "63f3796377b03e103ad9615ee163909e20e002d48a7e5837502d3a858257b3db"
+            ),
+            "reason": (
+                "execution_only_pruning_of_unconsumed_legacy_diagnostics_"
+                "after_multigroup_runtime_diagnosis"
             ),
         },
     },
@@ -463,6 +504,17 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
         or execution.get("thread_oversubscription_forbidden") is not True
     ):
         raise ValueError("PR10 execution policy changed")
+    expected_crossfit_profile = (
+        None
+        if calibration_profile is None
+        else calibration_profile.get("crossfit_execution_profile")
+    )
+    if expected_crossfit_profile is not None and (
+        execution.get("crossfit_execution_profile") != expected_crossfit_profile
+        or float(execution.get("peak_rss_poll_seconds", 0.0))
+        != calibration_profile["peak_rss_poll_seconds"]
+    ):
+        raise ValueError("PR10 v7-primary execution amendment changed")
     if (
         release.get("calibration_gate_supplied") is not False
         or release.get("formal_inference_allowed") is not False
