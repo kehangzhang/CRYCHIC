@@ -6,6 +6,7 @@ import pytest
 from benchmarks.simulation.summarize_v7_full_refit_calibration import (
     DATASET_METRIC_COLUMNS,
     _dataset_channel_metrics,
+    _expected_resamples_by_design,
     _scenario_metrics,
     _wilson_interval,
 )
@@ -73,3 +74,21 @@ def test_wilson_interval_validates_counts_and_contains_observed_rate() -> None:
     assert lower < 0.05 < upper
     with pytest.raises(ValueError, match="Wilson counts"):
         _wilson_interval(2, 1)
+
+
+def test_expected_resamples_are_design_specific_and_strict() -> None:
+    experiment: dict[str, object] = {
+        "design_kinds": ["paired", "continuous"],
+        "expected_resamples_per_dataset_by_design": {
+            "paired": 50,
+            "continuous": 62,
+        },
+    }
+
+    assert _expected_resamples_by_design(experiment) == {
+        "paired": 50,
+        "continuous": 62,
+    }
+    experiment["expected_resamples_per_dataset_by_design"] = 50
+    with pytest.raises(ValueError, match="per-design"):
+        _expected_resamples_by_design(experiment)

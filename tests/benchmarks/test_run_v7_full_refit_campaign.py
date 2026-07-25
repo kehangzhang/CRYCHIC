@@ -104,18 +104,32 @@ def test_pr10_m4_loso_n12_config_authenticates_and_overrides_plan() -> None:
     ("filename", "replicates", "datasets", "resamples", "suffix"),
     (
         (
-            "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
+            "suggest_next2_v7_pr10_calibration_integration_r2_v2.json",
             2,
             12,
-            50,
-            "n12_pr10_calint_r2",
+            {
+                "independent_two_group": 62,
+                "independent_multi_group": 74,
+                "paired": 50,
+                "repeated": 50,
+                "multi_cohort": 62,
+                "continuous": 62,
+            },
+            "n12_pr10_calint_r2v2",
         ),
         (
-            "suggest_next2_v7_pr10_calibration_pilot_r20_v1.json",
+            "suggest_next2_v7_pr10_calibration_pilot_r20_v2.json",
             20,
             120,
-            210,
-            "n12_pr10_calpilot_r20",
+            {
+                "independent_two_group": 222,
+                "independent_multi_group": 234,
+                "paired": 210,
+                "repeated": 210,
+                "multi_cohort": 222,
+                "continuous": 222,
+            },
+            "n12_pr10_calpilot_r20v2",
         ),
     ),
 )
@@ -123,7 +137,7 @@ def test_pr10_calibration_configs_freeze_n12_process_plans(
     filename: str,
     replicates: int,
     datasets: int,
-    resamples: int,
+    resamples: dict[str, int],
     suffix: str,
 ) -> None:
     path = Path(__file__).resolve().parents[2] / "benchmarks" / "configs" / filename
@@ -148,9 +162,41 @@ def test_pr10_calibration_configs_freeze_n12_process_plans(
     assert plan.groupby("design_kind").size().eq(replicates).all()
     assert plan["subjects_per_level"].eq(12).all()
     assert plan["dataset_id"].str.endswith(f"_{suffix}").all()
-    assert int(experiment["expected_resamples_per_dataset"]) == resamples
+    assert experiment["expected_resamples_per_dataset_by_design"] == resamples
     assert execution["resample_jobs"] == 64
     assert execution["resample_backend"] == "process"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
+        "suggest_next2_v7_pr10_calibration_pilot_r20_v1.json",
+    ),
+)
+def test_superseded_pr10_calibration_configs_are_rejected(filename: str) -> None:
+    path = Path(__file__).resolve().parents[2] / "benchmarks" / "configs" / filename
+
+    with pytest.raises(ValueError, match="schema is unsupported"):
+        load_v7_full_refit_frozen_config(path)
+
+
+def test_pr10_calibration_config_authenticates_superseded_checksum(
+    tmp_path: Path,
+) -> None:
+    source = Path(__file__).resolve().parents[2] / "benchmarks" / "configs"
+    filenames = (
+        "suggest_next2_v7_benchmark_v3.json",
+        "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
+        "suggest_next2_v7_pr10_calibration_integration_r2_v2.json",
+    )
+    for filename in filenames:
+        (tmp_path / filename).write_bytes((source / filename).read_bytes())
+    superseded = tmp_path / filenames[1]
+    superseded.write_bytes(superseded.read_bytes() + b"\n")
+
+    with pytest.raises(ValueError, match="superseded.*checksum differs"):
+        load_v7_full_refit_frozen_config(tmp_path / filenames[2])
 
 
 def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(

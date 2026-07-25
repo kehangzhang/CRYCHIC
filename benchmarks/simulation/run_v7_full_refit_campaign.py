@@ -65,45 +65,75 @@ DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-dataset-v1"
 FROZEN_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-smoke-v1"
 M4_LOSO_SCALE_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-m4-loso-n12-v1"
 CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION = (
-    "crychic-suggest-next2-v7-pr10-calibration-integration-r2-v1"
+    "crychic-suggest-next2-v7-pr10-calibration-integration-r2-v2"
 )
 CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION = (
-    "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v1"
+    "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v2"
 )
 _CALIBRATION_CONFIG_PROFILES = {
     CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION: {
-        "status": (
-            "preregistered_after_process_regression_before_calibration_integration"
-        ),
-        "name": "PR10_global_null_calibration_integration_r2",
+        "status": "amended_after_v1_plan_count_mismatch_before_metric_inspection",
+        "name": "PR10_global_null_calibration_integration_r2_v2",
         "publication_role": "calibration_pipeline_integration_only",
         "maximum_replicates": 2,
         "maximum_datasets": 12,
-        "dataset_id_suffix": "n12_pr10_calint_r2",
+        "dataset_id_suffix": "n12_pr10_calint_r2v2",
         "n_bootstraps": 19,
         "n_permutations": 19,
-        "expected_resamples_per_dataset": 50,
+        "expected_resamples_per_dataset_by_design": {
+            "independent_two_group": 62,
+            "independent_multi_group": 74,
+            "paired": 50,
+            "repeated": 50,
+            "multi_cohort": 62,
+            "continuous": 62,
+        },
         "primary_endpoint": "calibration_pipeline_and_summary_schema_completeness",
         "pass_rule": ("all_datasets_and_resamples_complete_with_typed_channel_metrics"),
         "release_guard": "integration_result_cannot_release_p_or_q",
+        "supersedes_frozen_config": {
+            "filename": "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
+            "sha256": (
+                "d95f5292a43b8b96d503c7b74adc72f570d8c1a041cfd4403424c4aa6e4cdb5a"
+            ),
+            "reason": (
+                "subjects_per_level_is_not_the_loso_count_for_independent_"
+                "multigroup_cohort_or_continuous_designs"
+            ),
+        },
     },
     CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION: {
-        "status": (
-            "preregistered_alongside_integration_before_calibration_metrics_inspection"
-        ),
-        "name": "PR10_global_null_calibration_pilot_r20",
+        "status": "amended_alongside_integration_v2_before_metric_inspection",
+        "name": "PR10_global_null_calibration_pilot_r20_v2",
         "publication_role": "calibration_precision_and_runtime_pilot_only",
         "maximum_replicates": 20,
         "maximum_datasets": 120,
-        "dataset_id_suffix": "n12_pr10_calpilot_r20",
+        "dataset_id_suffix": "n12_pr10_calpilot_r20v2",
         "n_bootstraps": 99,
         "n_permutations": 99,
-        "expected_resamples_per_dataset": 210,
+        "expected_resamples_per_dataset_by_design": {
+            "independent_two_group": 222,
+            "independent_multi_group": 234,
+            "paired": 210,
+            "repeated": 210,
+            "multi_cohort": 222,
+            "continuous": 222,
+        },
         "primary_endpoint": (
             "channel_design_global_null_type1_fdr_coverage_with_uncertainty"
         ),
         "pass_rule": "report_estimates_and_intervals_without_release_decision",
         "release_guard": "pilot_result_cannot_release_p_or_q",
+        "supersedes_frozen_config": {
+            "filename": "suggest_next2_v7_pr10_calibration_pilot_r20_v1.json",
+            "sha256": (
+                "c10556e0528cbafa0a4fe73c6fcec310d9b74770b2e7a1483703f22869357bf4"
+            ),
+            "reason": (
+                "subjects_per_level_is_not_the_loso_count_for_independent_"
+                "multigroup_cohort_or_continuous_designs"
+            ),
+        },
     },
 }
 _TOPOLOGY_VIEWS = ("sender", "ligand", "receptor", "receiver", "pathway")
@@ -369,14 +399,28 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
             != calibration_profile["n_bootstraps"]
             or int(experiment.get("n_permutations", 0))
             != calibration_profile["n_permutations"]
-            or int(experiment.get("expected_resamples_per_dataset", 0))
-            != calibration_profile["expected_resamples_per_dataset"]
+            or experiment.get("expected_resamples_per_dataset_by_design")
+            != calibration_profile["expected_resamples_per_dataset_by_design"]
             or experiment.get("primary_endpoint")
             != calibration_profile["primary_endpoint"]
             or experiment.get("pass_rule") != calibration_profile["pass_rule"]
             or experiment.get("release_thresholds_evaluated") is not False
         ):
             raise ValueError("PR10 global-null calibration profile changed")
+        superseded = raw.get("supersedes_frozen_config")
+        expected_superseded = calibration_profile["supersedes_frozen_config"]
+        if superseded != expected_superseded:
+            raise ValueError("PR10 superseded calibration config provenance changed")
+        assert isinstance(expected_superseded, dict)
+        superseded_filename = str(expected_superseded["filename"])
+        if Path(superseded_filename).name != superseded_filename:
+            raise ValueError("PR10 superseded config filename must be local")
+        superseded_path = resolved.parent / superseded_filename
+        if (
+            not superseded_path.is_file()
+            or sha256_file(superseded_path) != expected_superseded["sha256"]
+        ):
+            raise ValueError("PR10 superseded calibration config checksum differs")
     elif (
         experiment.get("phase") != "smoke"
         or int(experiment.get("maximum_replicates", 0)) != 1

@@ -98,6 +98,25 @@ def _finite_numeric(values: pd.Series) -> pd.Series:
     return numeric.where(np.isfinite(numeric), np.nan)
 
 
+def _expected_resamples_by_design(
+    experiment: Mapping[str, object],
+) -> dict[str, int]:
+    designs = experiment.get("design_kinds")
+    raw = experiment.get("expected_resamples_per_dataset_by_design")
+    if not isinstance(designs, list) or not isinstance(raw, Mapping):
+        raise ValueError("frozen calibration config lacks per-design resample counts")
+    design_names = tuple(map(str, designs))
+    if len(set(design_names)) != len(design_names) or set(raw) != set(design_names):
+        raise ValueError("per-design resample count keys differ from design_kinds")
+    expected: dict[str, int] = {}
+    for design in design_names:
+        value = raw[design]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("per-design resample counts must be positive integers")
+        expected[design] = value
+    return expected
+
+
 def _wilson_interval(successes: int, total: int) -> tuple[float, float]:
     if (
         isinstance(successes, bool)
@@ -308,7 +327,7 @@ def summarize_v7_full_refit_calibration(
         raise ValueError("calibration summarizer currently requires global_null only")
     expected_bootstraps = int(experiment["n_bootstraps"])
     expected_permutations = int(experiment["n_permutations"])
-    expected_resamples = int(experiment["expected_resamples_per_dataset"])
+    expected_resamples = _expected_resamples_by_design(experiment)
     if (
         int(request.get("n_bootstraps", -1)) != expected_bootstraps
         or int(request.get("n_permutations", -1)) != expected_permutations
@@ -322,7 +341,11 @@ def summarize_v7_full_refit_calibration(
         raise ValueError("every calibration dataset must be completed")
     if not runs["dgp_family"].eq("global_null").all():
         raise ValueError("calibration runs contain a non-global-null family")
-    if not runs["planned_resamples"].eq(expected_resamples).all():
+    expected_run_resamples = runs["design_kind"].map(expected_resamples)
+    if (
+        expected_run_resamples.isna().any()
+        or not runs["planned_resamples"].eq(expected_run_resamples).all()
+    ):
         raise ValueError("calibration run has an unexpected resample count")
     records: list[dict[str, object]] = []
     dataset_manifest_hashes: dict[str, str] = {}
@@ -412,6 +435,7 @@ def summarize_v7_full_refit_calibration(
         "datasets": len(runs),
         "scenario_rows": len(scenario_metrics),
         "channels": list(CHANNEL_TABLES),
+        "expected_resamples_per_dataset_by_design": expected_resamples,
         "formal_rows": int(dataset_metrics["formal_rows"].sum()),
         "all_distributions_complete": bool(
             dataset_metrics["distribution_complete_fraction"].eq(1.0).all()
