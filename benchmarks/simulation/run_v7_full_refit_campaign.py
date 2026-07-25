@@ -1112,11 +1112,14 @@ def run_v7_full_refit_campaign(
     )
     records.append(first)
     durations.append(float(first["elapsed_seconds"]))
-    effective_jobs = _auto_worker_count(
-        pilot_peak_rss_bytes=max(1, int(first["peak_process_tree_rss_bytes"])),
-        maximum_memory_fraction=maximum_memory_fraction,
-        requested_jobs=jobs,
-        resample_jobs=resample_jobs,
+    effective_jobs = min(
+        max(1, len(plans) - 1),
+        _auto_worker_count(
+            pilot_peak_rss_bytes=max(1, int(first["peak_process_tree_rss_bytes"])),
+            maximum_memory_fraction=maximum_memory_fraction,
+            requested_jobs=jobs,
+            resample_jobs=resample_jobs,
+        ),
     )
     print(
         json.dumps(
