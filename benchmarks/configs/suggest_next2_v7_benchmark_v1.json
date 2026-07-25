@@ -1,0 +1,296 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-benchmark-protocol-v1",
+  "status": "preregistered_before_integrated_v7_campaign",
+  "minimum_estimator_commit": "e4dcd85464d055ead7544a27c90c775faf25da61",
+  "estimand_policy": {
+    "inferential_unit": "biological_subject",
+    "cells_are_repeated_observations": true,
+    "structural_absence_is_missing_not_zero": true,
+    "score_fitted_before_condition_effect": true,
+    "formal_inference_requires_full_pipeline_resampling": true,
+    "unknown_truth_is_not_negative": true
+  },
+  "execution": {
+    "maximum_memory_fraction": 0.8,
+    "one_core_profile_required": true,
+    "best_practical_profile_required": true,
+    "record_process_tree_peak_rss": true,
+    "record_stage_wall_time": true,
+    "thread_oversubscription_forbidden": true
+  },
+  "seed_policy": {
+    "algorithm": "sha256_namespace_family_design_replicate_first_31_bits_nonzero",
+    "namespaces": {
+      "smoke": "crychic:v7:smoke:frozen-20260725",
+      "development": "crychic:v7:development:frozen-20260725",
+      "locked": "crychic:v7:locked:frozen-20260725",
+      "null_calibration": "crychic:v7:null-calibration:frozen-20260725"
+    }
+  },
+  "execution_tiers": {
+    "smoke": {
+      "replicates_per_family_design": 20,
+      "full_pipeline": false,
+      "publication_role": "regression_only"
+    },
+    "development": {
+      "replicates_per_family_design": 100,
+      "full_pipeline": true,
+      "publication_role": "parameter_selection_only"
+    },
+    "locked": {
+      "replicates_per_family_design": 250,
+      "full_pipeline": true,
+      "publication_role": "independent_family_holdout"
+    },
+    "null_calibration": {
+      "replicates_per_family_design": 1000,
+      "full_pipeline": true,
+      "publication_role": "formal_release_calibration"
+    }
+  },
+  "design_kinds": [
+    "independent_two_group",
+    "independent_multi_group",
+    "paired",
+    "repeated",
+    "multi_cohort",
+    "continuous"
+  ],
+  "dgp_families": {
+    "development": {
+      "expression_joint": ["independent_two_group", "independent_multi_group"],
+      "occurrence_heterogeneity": ["independent_two_group", "paired"],
+      "sender_decoy": ["paired"],
+      "candidate_cardinality": ["paired"],
+      "complex_and": ["independent_two_group"],
+      "graph_smooth": ["independent_multi_group"]
+    },
+    "locked": {
+      "ligand_only": ["independent_two_group"],
+      "receptor_only": ["independent_two_group"],
+      "program_only": ["paired"],
+      "inhibitory_program": ["paired"],
+      "multi_sender": ["paired"],
+      "alternative_or": ["independent_two_group"],
+      "spatial_range": ["independent_multi_group"],
+      "hypergraph_weak_effects": ["independent_multi_group"],
+      "prior_corruption": ["independent_multi_group"],
+      "generic_state_null": ["paired"],
+      "batch_context_confounding_null": ["independent_two_group", "multi_cohort"],
+      "composition_only_null": ["independent_two_group"],
+      "receiver_autonomous_null": ["paired"],
+      "abundance_only_null": ["independent_two_group"],
+      "topology_jump": ["repeated"],
+      "wrong_topology": ["independent_multi_group"],
+      "disconnected_graph": ["independent_multi_group"],
+      "collinear_lr": ["paired"],
+      "structural_absence": ["paired"],
+      "annotation_perturbation": ["independent_two_group"],
+      "prior_replacement": ["independent_multi_group"],
+      "context_correlated_sampling_missingness": ["repeated"]
+    },
+    "null_calibration": {
+      "global_null": [
+        "independent_two_group",
+        "independent_multi_group",
+        "paired",
+        "repeated",
+        "multi_cohort",
+        "continuous"
+      ],
+      "scoring_functional_null": [
+        "independent_two_group",
+        "paired",
+        "repeated"
+      ],
+      "fixed_subject_increasing_cell_null": [
+        "independent_two_group",
+        "paired"
+      ],
+      "legal_condition_permutation_null": [
+        "independent_two_group",
+        "paired",
+        "repeated"
+      ]
+    }
+  },
+  "generator_matrix": {
+    "G0": {
+      "name": "simple_log_geometric_lr",
+      "score_grain": "sender_lr_receiver_child",
+      "outcome_agnostic": true,
+      "formula": "0.5*(log2(size_factor_normalized_ligand+1)+log2(size_factor_normalized_receptor+1))",
+      "condition_gate": false
+    },
+    "G1": {
+      "name": "legacy_family_common_v2",
+      "score_grain": "sender_lr_receiver_child",
+      "outcome_agnostic": false,
+      "formula": "frozen_legacy_family_first_mechanistic_ligand_contrast_gated_softmin_v2",
+      "condition_gate": true
+    },
+    "G2": {
+      "name": "m0_v1_log_reference_additive",
+      "score_grain": "sender_lr_receiver_child",
+      "outcome_agnostic": true,
+      "formula": "0.5*(clip(log1p(CPM_ligand)/log1p(1e6),0,1)+clip(log1p(CPM_receptor)/log1p(1e6),0,1))",
+      "condition_gate": false
+    },
+    "G3": {
+      "name": "m0_v2_sample_comparable_activity",
+      "score_grain": "sender_lr_receiver_child_and_lr_receiver_parent",
+      "outcome_agnostic": true,
+      "formula": "fold_fitted_log2_size_factor_activity_geometric_mean",
+      "bottleneck_lambda": 0.0,
+      "condition_gate": false
+    },
+    "G4": {
+      "name": "m0_v2_plus_signed_program",
+      "score_grain": "lr_receiver_parent",
+      "outcome_agnostic": true,
+      "formula": "z_m0_parent_mean_effect+0.25*z_program_signed_effect",
+      "program_weight": 0.25,
+      "condition_gate": false
+    },
+    "G5": {
+      "name": "m0_v2_signed_program_shrunken_coupling",
+      "score_grain": "sender_lr_receiver_child",
+      "outcome_agnostic": true,
+      "formula": "nonconserving_m0_detection_with_m1_separate_and_m2_only_in_attribution_logit",
+      "program_weight": 0.25,
+      "attribution_coupling_weight": 0.25,
+      "condition_gate": false
+    }
+  },
+  "inference_matrix": {
+    "I0": {
+      "name": "raw_group_difference_welch_diagnostic",
+      "formal_inference_eligible": false
+    },
+    "I1": {
+      "name": "sample_level_design_aware_hc3_cr2",
+      "formal_inference_eligible": false,
+      "formal_fields_withheld_until_resampling": true
+    },
+    "I2": {
+      "name": "empirical_bayes_moderated_linear_model",
+      "formal_inference_eligible": false,
+      "formal_fields_withheld_until_resampling": true
+    }
+  },
+  "plan_profiles": {
+    "score_primary": {
+      "generators": ["G0", "G1", "G2", "G3", "G4", "G5"],
+      "inferences": ["I1"],
+      "pairing": "same_dataset_seed_and_candidate_universe"
+    },
+    "inference_crossover": {
+      "generators": ["G3"],
+      "inferences": ["I0", "I1", "I2"],
+      "pairing": "same_G3_score_table"
+    }
+  },
+  "experiments": {
+    "E1_m0_integration": {
+      "arms": ["G0-I1", "G1-I1", "G2-I1", "G3-I1"],
+      "datasets": ["development:expression_joint", "real:Kuppe", "real:MS_locked"],
+      "metrics": [
+        "event_auprc",
+        "event_auroc",
+        "effect_spearman",
+        "direction_accuracy",
+        "continuous_des",
+        "native_des",
+        "candidate_count_bias",
+        "zero_fraction",
+        "tie_fraction",
+        "na_fraction"
+      ]
+    },
+    "E2_hard_gate_attrition": {
+      "base_arm": "G3-I1",
+      "annotation_arms": [
+        "receptor_eligibility_annotation",
+        "ligand_contrast_annotation",
+        "family_selection_annotation",
+        "downstream_support_annotation"
+      ],
+      "hard_gate_arms": [
+        "receptor_eligibility_gate",
+        "ligand_contrast_gate",
+        "family_selection_gate",
+        "downstream_support_gate"
+      ],
+      "metrics": ["gate_attrition", "event_auprc", "effect_spearman", "continuous_des"]
+    },
+    "E3_sender_detection_attribution": {
+      "arms": [
+        "nonconserving_sender_detection",
+        "legacy_softmax_assignment",
+        "null_sender_attribution",
+        "null_sender_attribution_plus_m2"
+      ],
+      "candidate_counts": [2, 5, 10, 20],
+      "metrics": [
+        "sender_auprc",
+        "sender_auroc",
+        "top1_sender_accuracy",
+        "false_positive_rate",
+        "max_attribution",
+        "attribution_entropy",
+        "parent_score"
+      ]
+    },
+    "E4_signed_program": {
+      "arms": ["G3-I1", "G4-I1"],
+      "required_families": ["program_only", "inhibitory_program", "generic_state_null"],
+      "metrics": ["event_auprc", "effect_spearman", "direction_accuracy", "false_positive_rate"]
+    },
+    "E5_hypergraph": {
+      "run_after": ["E1_m0_integration", "E3_sender_detection_attribution", "E4_signed_program"],
+      "arms": [
+        "no_prior",
+        "ligand_only_prior",
+        "receptor_only_prior",
+        "pathway_only_prior",
+        "full_hypergraph",
+        "degree_matched_permuted_hypergraph",
+        "rewired_10pct",
+        "rewired_25pct",
+        "rewired_50pct",
+        "pairwise_clique_expansion",
+        "tensor_factorization"
+      ],
+      "metrics": [
+        "effect_mse",
+        "effect_spearman",
+        "direction_accuracy",
+        "ci_coverage",
+        "weak_signal_power",
+        "exact_hyperedge_ap",
+        "topology_permutation_advantage"
+      ]
+    }
+  },
+  "required_diagnostics": [
+    "gate_attrition",
+    "score_geometry",
+    "candidate_sender_bias",
+    "parent_vs_sender_resolution",
+    "full_pipeline_bootstrap",
+    "full_pipeline_condition_permutation",
+    "full_pipeline_leave_one_subject_out"
+  ],
+  "release_gates": {
+    "m0_effect_spearman_minimum": 0.6,
+    "m0_maximum_auprc_regression_vs_G0": 0.02,
+    "m1_direction_accuracy_minimum": 0.85,
+    "m2_top1_sender_accuracy_minimum": 0.8,
+    "m4_maximum_ap_gap_vs_raw_or_dcst": 0.01,
+    "type1_interval": [0.035, 0.065],
+    "fdr_maximum_at_q_0_10": 0.12,
+    "coverage95_interval": [0.92, 0.97],
+    "m5_full_minus_permuted_paired_ci_lower_exclusive": 0.0
+  }
+}

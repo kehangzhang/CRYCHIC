@@ -123,3 +123,37 @@ nonpublication test-only and cannot be promoted to an independent holdout.
 Published historical lightweight results and exact artifact hashes are
 in [`benchmarks/results/g1_5_v2_summary.json`](../results/g1_5_v2_summary.json).
 The synthetic gate never switches the public default by itself.
+
+## Suggest-next2 v7 integrated protocol
+
+The integrated v7 campaign is frozen in
+[`suggest_next2_v7_benchmark_v1.json`](../configs/suggest_next2_v7_benchmark_v1.json).
+It separates DGP families, not only seeds: six families are development-only,
+22 are locked family holdouts, and four are null-calibration families. The
+locked set includes receptor-only, program-only, inhibitory, generic-state,
+batch/composition null, multi-sender, topology-corruption, structural-absence,
+and missingness mechanisms that are absent from the old component-specific
+fixtures.
+
+Validate the protocol and write a checksum-bound plan before generating data:
+
+```bash
+uv run --extra benchmark python -m benchmarks.simulation.v7_protocol \
+  --phase smoke \
+  --profile score_primary \
+  --output-dir benchmark_work/suggest_next2_v7/plans/smoke_score_primary
+```
+
+Use `--profile score_primary` for `G0--G5` under the same design-aware `I1`
+engine. Use `--profile inference_crossover` for the same frozen `G3` table
+under `I0--I2`. This prevents simultaneous score-generator and inference
+changes. `--maximum-replicates` may reduce a phase only for local diagnostics;
+it cannot exceed or redefine the frozen tier.
+
+The full registered sizes are 800 development, 5,750 locked, and 14,000 null
+calibration datasets before method arms. The null tier contains 1,000 complete
+pipeline replicates for every registered family/design pair. These counts are
+intentional release evidence targets, not claims that those campaigns have
+already run. A plan manifest is `planned_not_executed` until a separate runner
+has checksum-bound every generated fixture, method result, failure, timing,
+and peak process-tree RSS record.
