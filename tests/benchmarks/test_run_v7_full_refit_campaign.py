@@ -72,6 +72,34 @@ def test_pr10_smoke_config_authenticates_the_m4_protocol() -> None:
     ]
 
 
+def test_pr10_m4_loso_n12_config_authenticates_and_overrides_plan() -> None:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmarks"
+        / "configs"
+        / "suggest_next2_v7_pr10_m4_loso_n12_v1.json"
+    )
+    frozen = load_v7_full_refit_frozen_config(path)
+    experiment = frozen.config["experiment"]
+    assert isinstance(experiment, dict)
+
+    plan = build_v7_full_refit_plan(
+        load_v7_benchmark_protocol(frozen.protocol_path),
+        phase=str(experiment["phase"]),
+        maximum_replicates=int(experiment["maximum_replicates"]),
+        maximum_datasets=int(experiment["maximum_datasets"]),
+        dgp_families=tuple(map(str, experiment["dgp_families"])),
+        design_kinds=tuple(map(str, experiment["design_kinds"])),
+        subjects_per_level_override=int(experiment["subjects_per_level_override"]),
+        dataset_id_suffix=str(experiment["dataset_id_suffix"]),
+    )
+
+    assert frozen.to_manifest()["schema_version"] == frozen.config["schema_version"]
+    assert plan["design_kind"].tolist() == ["paired", "repeated"]
+    assert plan["subjects_per_level"].tolist() == [12, 12]
+    assert plan["dataset_id"].str.endswith("_n12_pr10").all()
+
+
 def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(
     tmp_path: Path,
 ) -> None:

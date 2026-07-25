@@ -62,6 +62,7 @@ from crychic.workflow import (
 CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-campaign-v1"
 DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-dataset-v1"
 FROZEN_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-smoke-v1"
+M4_LOSO_SCALE_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-m4-loso-n12-v1"
 _TOPOLOGY_VIEWS = ("sender", "ligand", "receptor", "receiver", "pathway")
 _DATASET_PLAN_COLUMNS = (
     "phase",
@@ -258,7 +259,7 @@ class V7FullRefitFrozenConfig:
 
     def to_manifest(self) -> dict[str, object]:
         return {
-            "schema_version": FROZEN_CONFIG_SCHEMA_VERSION,
+            "schema_version": self.config["schema_version"],
             "config_path": str(self.path),
             "config_sha256": sha256_file(self.path),
             "config_digest": self.config_digest,
@@ -269,18 +270,18 @@ class V7FullRefitFrozenConfig:
 
 
 def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
-    """Load the exact first PR10 smoke profile and authenticate its base."""
+    """Load an authenticated PR10 integration or estimability profile."""
 
     resolved = path.resolve()
     raw: object = json.loads(resolved.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("PR10 frozen config must contain one JSON object")
-    if (
-        raw.get("schema_version") != FROZEN_CONFIG_SCHEMA_VERSION
-        or raw.get("status")
-        != "preregistered_after_runner_validation_before_six_design_smoke"
-    ):
-        raise ValueError("PR10 frozen config schema or status is unsupported")
+    schema_version = raw.get("schema_version")
+    if schema_version not in {
+        FROZEN_CONFIG_SCHEMA_VERSION,
+        M4_LOSO_SCALE_CONFIG_SCHEMA_VERSION,
+    }:
+        raise ValueError("PR10 frozen config schema is unsupported")
     base = raw.get("base_protocol")
     if not isinstance(base, dict) or set(base) != {"filename", "sha256"}:
         raise ValueError("PR10 base_protocol must contain filename and sha256")
@@ -298,22 +299,42 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
     assert isinstance(experiment, dict)
     assert isinstance(execution, dict)
     assert isinstance(release, dict)
-    expected_designs = list(DESIGN_KINDS)
-    if (
-        experiment.get("name") != "PR10_full_refit_six_design_smoke"
+    common_experiment = (
+        experiment.get("phase") == "smoke"
+        and experiment.get("dgp_families") == ["global_null"]
+        and int(experiment.get("maximum_replicates", 0)) == 1
+        and int(experiment.get("n_bootstraps", 0)) == 2
+        and int(experiment.get("n_permutations", 0)) == 2
+        and experiment.get("run_loso") is True
+        and experiment.get("full_pipeline_refit_per_resample") is True
+    )
+    if not common_experiment:
+        raise ValueError("PR10 common experiment axis changed")
+    if schema_version == FROZEN_CONFIG_SCHEMA_VERSION:
+        if (
+            raw.get("status")
+            != "preregistered_after_runner_validation_before_six_design_smoke"
+            or experiment.get("name") != "PR10_full_refit_six_design_smoke"
+            or experiment.get("publication_role")
+            != "integration_and_runtime_diagnostic_only"
+            or experiment.get("design_kinds") != list(DESIGN_KINDS)
+            or int(experiment.get("maximum_datasets", 0)) != 6
+        ):
+            raise ValueError("PR10 six-design smoke axis changed")
+    elif (
+        raw.get("status") != "preregistered_after_n8_smoke_before_n12_scale_check"
+        or experiment.get("name") != "PR10_m4_loso_n12_scale_check"
         or experiment.get("publication_role")
-        != "integration_and_runtime_diagnostic_only"
-        or experiment.get("phase") != "smoke"
-        or experiment.get("dgp_families") != ["global_null"]
-        or experiment.get("design_kinds") != expected_designs
-        or int(experiment.get("maximum_replicates", 0)) != 1
-        or int(experiment.get("maximum_datasets", 0)) != 6
-        or int(experiment.get("n_bootstraps", 0)) != 2
-        or int(experiment.get("n_permutations", 0)) != 2
-        or experiment.get("run_loso") is not True
-        or experiment.get("full_pipeline_refit_per_resample") is not True
+        != "development_estimability_diagnostic_only"
+        or experiment.get("design_kinds") != ["paired", "repeated"]
+        or int(experiment.get("maximum_datasets", 0)) != 2
+        or int(experiment.get("subjects_per_level_override", 0)) != 12
+        or experiment.get("dataset_id_suffix") != "n12_pr10"
+        or experiment.get("primary_endpoint") != "m4_loso_hypothesis_completeness"
+        or experiment.get("pass_rule")
+        != "all_point_observed_m4_rows_have_complete_loso_distribution"
     ):
-        raise ValueError("PR10 six-design smoke axis changed")
+        raise ValueError("PR10 M4 LOSO n=12 scale-check axis changed")
     if (
         float(execution.get("maximum_memory_fraction", 0.0)) != 0.8
         or int(execution.get("dataset_jobs", -1)) != 0
@@ -327,7 +348,14 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
         or int(release.get("formal_minimum_bootstraps", 0)) != 1_000
         or int(release.get("formal_minimum_permutations", 0)) != 1_000
     ):
-        raise ValueError("PR10 smoke release boundary changed")
+        raise ValueError("PR10 release boundary changed")
+    release_guard = (
+        "smoke_result_cannot_release_p_or_q"
+        if schema_version == FROZEN_CONFIG_SCHEMA_VERSION
+        else "scale_check_cannot_release_p_or_q"
+    )
+    if release.get(release_guard) is not True:
+        raise ValueError("PR10 diagnostic p/q release guard changed")
     commit = str(raw.get("minimum_runner_commit", ""))
     if len(commit) != 40 or any(value not in "0123456789abcdef" for value in commit):
         raise ValueError("minimum_runner_commit must be a full lowercase Git hash")
@@ -365,6 +393,8 @@ def build_v7_full_refit_plan(
     maximum_datasets: int | None = None,
     dgp_families: Sequence[str] | None = None,
     design_kinds: Sequence[str] | None = None,
+    subjects_per_level_override: int | None = None,
+    dataset_id_suffix: str | None = None,
 ) -> pd.DataFrame:
     """Select unique raw datasets from the frozen paired method plan."""
 
@@ -398,6 +428,27 @@ def build_v7_full_refit_plan(
         plan = plan.head(maximum_datasets).copy()
     if plan.empty:
         raise ValueError("full-refit filters selected no frozen datasets")
+    if subjects_per_level_override is not None:
+        if (
+            isinstance(subjects_per_level_override, bool)
+            or not isinstance(subjects_per_level_override, int)
+            or subjects_per_level_override < 4
+        ):
+            raise ValueError("subjects_per_level_override must be an integer >= 4")
+        plan.loc[:, "subjects_per_level"] = subjects_per_level_override
+    if dataset_id_suffix is not None:
+        suffix = _safe_dataset_id(dataset_id_suffix)
+        if not suffix.isascii() or any(
+            not (character.isalnum() or character in "._-") for character in suffix
+        ):
+            raise ValueError(
+                "dataset_id_suffix must contain only ASCII alphanumerics, ., _, or -"
+            )
+        plan.loc[:, "dataset_id"] = plan["dataset_id"].map(
+            lambda value: _safe_dataset_id(f"{value}_{suffix}")
+        )
+        if plan["dataset_id"].duplicated().any():
+            raise RuntimeError("full-refit override produced duplicate dataset IDs")
     return plan.reset_index(drop=True)
 
 
@@ -1057,6 +1108,8 @@ def run_v7_full_refit_campaign(
     maximum_datasets: int | None = None,
     dgp_families: Sequence[str] | None = None,
     design_kinds: Sequence[str] | None = None,
+    subjects_per_level_override: int | None = None,
+    dataset_id_suffix: str | None = None,
     jobs: int = 0,
     resample_jobs: int = 1,
     overwrite: bool = False,
@@ -1084,6 +1137,8 @@ def run_v7_full_refit_campaign(
         maximum_datasets=maximum_datasets,
         dgp_families=dgp_families,
         design_kinds=design_kinds,
+        subjects_per_level_override=subjects_per_level_override,
+        dataset_id_suffix=dataset_id_suffix,
     )
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "datasets").mkdir(exist_ok=True)
@@ -1288,7 +1343,7 @@ def run_v7_full_refit_campaign_from_config(
     overwrite: bool = False,
     allow_dirty: bool = False,
 ) -> dict[str, object]:
-    """Execute the checksum-bound six-design PR10 smoke without overrides."""
+    """Execute a checksum-bound PR10 diagnostic without CLI overrides."""
 
     frozen = load_v7_full_refit_frozen_config(config_path)
     experiment = frozen.config["experiment"]
@@ -1306,6 +1361,16 @@ def run_v7_full_refit_campaign_from_config(
         maximum_datasets=int(experiment["maximum_datasets"]),
         dgp_families=tuple(map(str, experiment["dgp_families"])),
         design_kinds=tuple(map(str, experiment["design_kinds"])),
+        subjects_per_level_override=(
+            None
+            if "subjects_per_level_override" not in experiment
+            else int(experiment["subjects_per_level_override"])
+        ),
+        dataset_id_suffix=(
+            None
+            if "dataset_id_suffix" not in experiment
+            else str(experiment["dataset_id_suffix"])
+        ),
         jobs=int(execution["dataset_jobs"]),
         resample_jobs=int(execution["resample_jobs"]),
         overwrite=overwrite,

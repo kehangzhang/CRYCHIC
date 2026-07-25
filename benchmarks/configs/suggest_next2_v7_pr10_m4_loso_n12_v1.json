@@ -1,0 +1,49 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-pr10-m4-loso-n12-v1",
+  "status": "preregistered_after_n8_smoke_before_n12_scale_check",
+  "base_protocol": {
+    "filename": "suggest_next2_v7_benchmark_v3.json",
+    "sha256": "89ca902e09e4828ba910f8641e613b764fed72bfdcc2efcedc7419c670e1aae5"
+  },
+  "minimum_runner_commit": "11982380079a66d6d07a09a1bdba707fd6d67cac",
+  "experiment": {
+    "name": "PR10_m4_loso_n12_scale_check",
+    "publication_role": "development_estimability_diagnostic_only",
+    "phase": "smoke",
+    "dgp_families": ["global_null"],
+    "design_kinds": ["paired", "repeated"],
+    "maximum_replicates": 1,
+    "maximum_datasets": 2,
+    "subjects_per_level_override": 12,
+    "dataset_id_suffix": "n12_pr10",
+    "n_bootstraps": 2,
+    "n_permutations": 2,
+    "run_loso": true,
+    "full_pipeline_refit_per_resample": true,
+    "primary_endpoint": "m4_loso_hypothesis_completeness",
+    "expected_minimum_training_subjects_after_loso_two_fold": 5,
+    "pass_rule": "all_point_observed_m4_rows_have_complete_loso_distribution"
+  },
+  "execution": {
+    "maximum_memory_fraction": 0.8,
+    "dataset_jobs": 0,
+    "resample_jobs": 1,
+    "thread_oversubscription_forbidden": true
+  },
+  "selection_provenance": {
+    "source_campaign": "/media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/pr10_six_design_smoke_v1_20260726",
+    "source_campaign_manifest_sha256": "34e06edd33428b6160a2275a8036302ad5ef13fdcc6a80e2b7778a5dd0e9d962",
+    "observed_n8_reason_code": "occurrence_design_not_estimable",
+    "n8_complete_trajectories_after_loso": 7,
+    "n8_minimum_two_fold_training_subjects": 3,
+    "m4_minimum_fold_calibration_subjects": 4,
+    "locked_or_real_data_used": false
+  },
+  "release_policy": {
+    "calibration_gate_supplied": false,
+    "formal_inference_allowed": false,
+    "formal_minimum_bootstraps": 1000,
+    "formal_minimum_permutations": 1000,
+    "scale_check_cannot_release_p_or_q": true
+  }
+}
