@@ -85,6 +85,10 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
     assert manifest["status"] == "completed"
     assert manifest["formal_inference_allowed"] is False
     assert manifest["maximum_system_memory_fraction"] < 0.8
+    assert set(manifest["experiments"]) == {
+        "E2_hard_gate_attrition",
+        "E3_sender_detection_attribution",
+    }
     assert set(manifest["outputs"]) == set(DATASET_TABLES)
     for record in manifest["outputs"].values():
         path = result / record["filename"]
@@ -102,9 +106,20 @@ def test_one_dataset_campaign_persists_checksums_logs_and_resumes(
         "subject_crossfit",
         "integrated_score_inference_matrix",
         "truth_metrics",
+        "e2_hard_gate_component_swaps",
+        "e3_sender_detection_attribution_swaps",
         "v7_diagnostics",
         "persist_outputs",
     } == completed_stages
+    for aggregate in (
+        "all_e2_metrics.parquet",
+        "all_e3_metrics.parquet",
+        "all_e3_sender_metrics.parquet",
+        "e2_metric_summary.tsv",
+        "e3_metric_summary.tsv",
+        "e3_sender_metric_summary.tsv",
+    ):
+        assert (output / aggregate).is_file()
 
     before = manifest_path.stat().st_mtime_ns
     resumed = run_v7_campaign(

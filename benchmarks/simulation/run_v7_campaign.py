@@ -32,6 +32,7 @@ from benchmarks.adapters.common import (
     sha256_file,
     write_json,
 )
+from benchmarks.simulation.v7_component_swaps import run_v7_e2_component_swap
 from benchmarks.simulation.v7_dgp import generate_v7_dgp
 from benchmarks.simulation.v7_integrated import run_v7_integrated_matrix
 from benchmarks.simulation.v7_metrics import evaluate_v7_integrated_matrix
@@ -43,10 +44,11 @@ from benchmarks.simulation.v7_protocol import (
     expand_v7_benchmark_plan,
     load_v7_benchmark_protocol,
 )
+from benchmarks.simulation.v7_sender_swaps import run_v7_e3_sender_swap
 from crychic.workflow import build_v7_diagnostics, run_subject_crossfit
 
-CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v1"
-DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v1"
+CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-campaign-v2"
+DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-dataset-result-v2"
 RUN_COLUMNS = (
     "dataset_id",
     "dgp_family",
@@ -85,6 +87,17 @@ DATASET_TABLES = (
     "score_geometry",
     "candidate_sender_bias",
     "resolution_performance",
+    "e2_gate_stage_ledger",
+    "e2_score_views",
+    "e2_effects",
+    "e2_aligned_effects",
+    "e2_metrics",
+    "e3_score_views",
+    "e3_auxiliary",
+    "e3_effects",
+    "e3_aligned_effects",
+    "e3_metrics",
+    "e3_sender_metrics",
 )
 _THREAD_ENVIRONMENT = {
     "OMP_NUM_THREADS": "1",
@@ -328,7 +341,11 @@ def _validate_completed_dataset(path: Path) -> dict[str, object] | None:
         value: object = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(value, dict) or value.get("status") != "completed":
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != DATASET_SCHEMA_VERSION
+        or value.get("status") != "completed"
+    ):
         return None
     outputs = value.get("outputs")
     if not isinstance(outputs, dict):
@@ -502,6 +519,29 @@ def run_v7_dataset(
                     dgp_family=fixture.dgp_family,
                     design_kind=fixture.design_kind,
                 )
+            with logger.stage("e2_hard_gate_component_swaps"):
+                e2 = run_v7_e2_component_swap(
+                    crossfit,
+                    dataset_id=dataset_id,
+                    design=fixture.differential_design,
+                    sample_metadata=fixture.sample_metadata,
+                    truth=fixture.truth,
+                    dgp_family=fixture.dgp_family,
+                    design_kind=fixture.design_kind,
+                )
+            with logger.stage("e3_sender_detection_attribution_swaps"):
+                e3 = run_v7_e3_sender_swap(
+                    crossfit,
+                    dataset_id=dataset_id,
+                    design=fixture.differential_design,
+                    sample_metadata=fixture.sample_metadata,
+                    truth=fixture.truth,
+                    dgp_family=fixture.dgp_family,
+                    design_kind=fixture.design_kind,
+                    candidate_sender_count=int(
+                        dataset_plan["candidate_sender_count"]
+                    ),
+                )
             with logger.stage("v7_diagnostics"):
                 diagnostics = build_v7_diagnostics(
                     crossfit,
@@ -525,6 +565,17 @@ def run_v7_dataset(
                     "score_geometry": diagnostics.score_geometry,
                     "candidate_sender_bias": diagnostics.candidate_sender_bias,
                     "resolution_performance": diagnostics.resolution_performance,
+                    "e2_gate_stage_ledger": e2.gate_stage_ledger,
+                    "e2_score_views": e2.score_views,
+                    "e2_effects": e2.effects,
+                    "e2_aligned_effects": e2.aligned_effects,
+                    "e2_metrics": e2.metrics,
+                    "e3_score_views": e3.score_views,
+                    "e3_auxiliary": e3.auxiliary,
+                    "e3_effects": e3.effects,
+                    "e3_aligned_effects": e3.aligned_effects,
+                    "e3_metrics": e3.metrics,
+                    "e3_sender_metrics": e3.sender_metrics,
                 }
                 outputs = {
                     name: _write_parquet(table, temporary / f"{name}.parquet")
@@ -548,6 +599,21 @@ def run_v7_dataset(
                 "fixture": fixture.to_manifest(),
                 "crossfit_id": crossfit.crossfit_id,
                 "diagnostics": diagnostics.to_manifest(),
+                "experiments": {
+                    "E2_hard_gate_attrition": {
+                        "arms": sorted(e2.score_views["score_view"].unique()),
+                        "inference": "I1",
+                        "formal_inference_allowed": False,
+                    },
+                    "E3_sender_detection_attribution": {
+                        "arms": sorted(e3.score_views["score_view"].unique()),
+                        "candidate_sender_count": int(
+                            dataset_plan["candidate_sender_count"]
+                        ),
+                        "inference": "I1",
+                        "formal_inference_allowed": False,
+                    },
+                },
                 "g0_g2_equivalence": dict(integrated.equivalence_diagnostic),
                 "outputs": outputs,
                 "runtime": {
@@ -726,29 +792,63 @@ def _aggregate_campaign_metrics(
     output_root: Path,
     records: Sequence[Mapping[str, object]],
 ) -> None:
-    parts: list[pd.DataFrame] = []
-    for record in records:
-        if record["status"] != "completed":
+    completed = [
+        Path(str(record["result_directory"]))
+        for record in records
+        if record["status"] == "completed"
+    ]
+    for source_name, aggregate_name, summary_name in (
+        ("metrics", "all_dataset_metrics", "metric_summary"),
+        ("e2_metrics", "all_e2_metrics", "e2_metric_summary"),
+        ("e3_metrics", "all_e3_metrics", "e3_metric_summary"),
+    ):
+        parts = [pd.read_parquet(path / f"{source_name}.parquet") for path in completed]
+        if not parts:
             continue
-        path = Path(str(record["result_directory"])) / "metrics.parquet"
-        parts.append(pd.read_parquet(path))
-    if not parts:
+        metrics = pd.concat(parts, ignore_index=True)
+        metrics.to_parquet(
+            output_root / f"{aggregate_name}.parquet",
+            index=False,
+            compression="zstd",
+        )
+        numeric = metrics.loc[metrics["status"].eq("observed")].copy()
+        summary = (
+            numeric.groupby(
+                [
+                    "dgp_family",
+                    "design_kind",
+                    "generator_id",
+                    "score_view",
+                    "inference_id",
+                    "metric",
+                ],
+                observed=True,
+                sort=True,
+            )["value"]
+            .agg(["count", "mean", "std", "median"])
+            .reset_index()
+        )
+        summary.to_csv(output_root / f"{summary_name}.tsv", sep="\t", index=False)
+
+    sender_parts = [
+        pd.read_parquet(path / "e3_sender_metrics.parquet") for path in completed
+    ]
+    if not sender_parts:
         return
-    metrics = pd.concat(parts, ignore_index=True)
-    metrics.to_parquet(
-        output_root / "all_dataset_metrics.parquet",
+    sender_metrics = pd.concat(sender_parts, ignore_index=True)
+    sender_metrics.to_parquet(
+        output_root / "all_e3_sender_metrics.parquet",
         index=False,
         compression="zstd",
     )
-    numeric = metrics.loc[metrics["status"].eq("observed")].copy()
-    summary = (
-        numeric.groupby(
+    sender_summary = (
+        sender_metrics.loc[sender_metrics["status"].eq("observed")]
+        .groupby(
             [
                 "dgp_family",
                 "design_kind",
-                "generator_id",
                 "score_view",
-                "inference_id",
+                "candidate_sender_count",
                 "metric",
             ],
             observed=True,
@@ -757,7 +857,9 @@ def _aggregate_campaign_metrics(
         .agg(["count", "mean", "std", "median"])
         .reset_index()
     )
-    summary.to_csv(output_root / "metric_summary.tsv", sep="\t", index=False)
+    sender_summary.to_csv(
+        output_root / "e3_sender_metric_summary.tsv", sep="\t", index=False
+    )
 
 
 def run_v7_campaign(
