@@ -27,6 +27,16 @@ from benchmarks.simulation.v7_metrics import (
     align_v7_effect_truth,
     evaluate_v7_integrated_matrix,
 )
+from benchmarks.simulation.v7_sender_swaps import (
+    E3_ARMS,
+    E3_DETECTION_ARM,
+    E3_LEGACY_ARM,
+    E3_M2_ARM,
+    E3_METRICS,
+    E3_NULL_SENDER_ARM,
+    build_e3_sender_swap_score_views,
+    run_v7_e3_sender_swap,
+)
 
 from crychic.workflow import CrossFitArtifacts, run_subject_crossfit
 
@@ -354,3 +364,79 @@ def test_e2_runs_every_arm_through_i1_without_formal_fields(
     assert {"event_auprc", "effect_spearman"}.issubset(
         set(result.metrics["metric"])
     )
+
+
+def test_e3_builds_detection_legacy_null_sender_and_m2_on_one_oof_axis(
+    prepared: _Prepared,
+) -> None:
+    scores, auxiliary = build_e3_sender_swap_score_views(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+    )
+
+    assert set(scores["score_view"]) == set(E3_ARMS)
+    main = build_v7_score_views(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+    )
+    key = ["event_id", "fold_id", "sample_id"]
+    expected_detection = main.loc[
+        main["generator_id"].eq("G3")
+        & main["score_view"].eq("primary_sender_detection"),
+        [*key, "score", "score_status"],
+    ].sort_values(key, ignore_index=True)
+    observed_detection = scores.loc[
+        scores["score_view"].eq(E3_DETECTION_ARM),
+        [*key, "score", "score_status"],
+    ].sort_values(key, ignore_index=True)
+    pd.testing.assert_frame_equal(expected_detection, observed_detection)
+
+    legacy = scores.loc[scores["score_view"].eq(E3_LEGACY_ARM), "score"].dropna()
+    assert legacy.between(0.0, 1.0).all()
+    attribution = scores.loc[
+        scores["score_view"].isin([E3_NULL_SENDER_ARM, E3_M2_ARM]), "score"
+    ].dropna()
+    assert attribution.between(0.0, 1.0).all()
+    observed_entropy = pd.to_numeric(
+        auxiliary["attribution_entropy"], errors="coerce"
+    ).dropna()
+    assert observed_entropy.between(0.0, 1.0).all()
+
+    parent_means = (
+        auxiliary.loc[
+            auxiliary["score_view"].isin([E3_NULL_SENDER_ARM, E3_M2_ARM])
+        ]
+        .groupby("score_view", observed=True)["parent_score"]
+        .mean()
+    )
+    assert parent_means[E3_NULL_SENDER_ARM] == pytest.approx(
+        parent_means[E3_M2_ARM]
+    )
+
+
+def test_e3_runs_matched_i1_and_emits_all_sender_metrics(
+    prepared: _Prepared,
+) -> None:
+    result = run_v7_e3_sender_swap(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+        design=prepared.fixture.differential_design,
+        sample_metadata=prepared.fixture.sample_metadata,
+        truth=prepared.fixture.truth,
+        dgp_family=prepared.fixture.dgp_family,
+        design_kind=prepared.fixture.design_kind,
+        candidate_sender_count=2,
+    )
+
+    assert set(result.effects["score_view"]) == set(E3_ARMS)
+    assert set(result.effects["inference_id"]) == {"I1"}
+    assert not result.effects["formal_inference_allowed"].any()
+    assert result.effects[["p_value", "q_value"]].isna().all(axis=None)
+    assert set(result.sender_metrics["metric"]) == set(E3_METRICS)
+    assert set(result.sender_metrics["candidate_sender_count"]) == {2}
+    assert set(result.sender_metrics["score_view"]) == set(E3_ARMS)
+    detection_attribution = result.sender_metrics.loc[
+        result.sender_metrics["score_view"].eq(E3_DETECTION_ARM)
+        & result.sender_metrics["metric"].eq("mean_max_attribution")
+    ]
+    assert detection_attribution["status"].eq("not_estimable").all()
