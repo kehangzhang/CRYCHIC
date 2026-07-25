@@ -1,0 +1,122 @@
+{
+  "acceptance": {
+    "checks": {
+      "e2_annotation_arms_exact": true,
+      "e2_downstream_hard_gate_harms_auprc": true,
+      "m0_auprc_regression_within_0_02": true,
+      "m0_effect_spearman_at_least_0_60": false,
+      "m1_direction_accuracy_at_least_0_85": true,
+      "m1_generic_state_diagnostic_fpr_not_above_0_05": true,
+      "m2_top1_at_least_0_80_at_every_candidate_count": false
+    },
+    "estimates": {
+      "g0_i1_event_auprc": 0.6444400446136092,
+      "g3_i1_effect_spearman": 0.5913022403958627,
+      "g3_i1_event_auprc": 0.6381570524994281,
+      "g3_minus_g0_event_auprc": -0.006282992114181041,
+      "m1_generic_state_diagnostic_fpr": 0.0,
+      "m1_program_direction_accuracy": 0.975,
+      "m2_minimum_candidate_count_top1": 0.2
+    },
+    "not_evaluated": [
+      "Kuppe and locked MS real-data endpoints",
+      "M4 formal occurrence calibration",
+      "E5 integrated topology controls",
+      "full-pipeline 1000-replicate null calibration",
+      "development and locked family holdouts"
+    ],
+    "status": "SMOKE_COMPLETE_WITH_RELEASE_GAPS"
+  },
+  "annotation_equality": {
+    "downstream_support_annotation": {
+      "equal_rows": 16060,
+      "exact": true,
+      "rows": 16060
+    },
+    "family_selection_annotation": {
+      "equal_rows": 16060,
+      "exact": true,
+      "rows": 16060
+    },
+    "ligand_contrast_annotation": {
+      "equal_rows": 16060,
+      "exact": true,
+      "rows": 16060
+    },
+    "receptor_eligibility_annotation": {
+      "equal_rows": 16060,
+      "exact": true,
+      "rows": 16060
+    }
+  },
+  "completed_datasets": 900,
+  "created_utc": "2026-07-25T05:38:17.910183+00:00",
+  "failed_datasets": 0,
+  "files": {
+    "README.md": {
+      "bytes": 1780,
+      "sha256": "8ce9f75eba8effeed7b89a62528b2385fd1d0c2bd8f39e0aab8528923fd6e6ef"
+    },
+    "acceptance.json": {
+      "bytes": 1014,
+      "sha256": "3311b3e5159e84775032ea693832d4ff6396f431121da1fc49d1838c8708de0c"
+    },
+    "e2_arm_summary.tsv": {
+      "bytes": 12884,
+      "sha256": "1a8293529dd68ae49584eac047c4995d36ced5a79c706214ba8a84a118f7487a"
+    },
+    "e2_paired_deltas.tsv": {
+      "bytes": 4994,
+      "sha256": "7a609b5f02c2ae1fc2339a7c1e9d74e499c9bb5014fd8be3742d553503de979f"
+    },
+    "e3_candidate_cardinality.tsv": {
+      "bytes": 10630,
+      "sha256": "79bf320989d784f0f8e16134709f8533226b862414b7cb0b663e5abf2a7c5f73"
+    },
+    "e3_m2_paired_deltas.tsv": {
+      "bytes": 5884,
+      "sha256": "4d1077ab7f20595854657e2bc1b74a9d69686d94bd8fd73f3bdd2f59414d4027"
+    },
+    "e3_sender_decoy.tsv": {
+      "bytes": 2778,
+      "sha256": "2e756d8e61953baf4b62001580c2e5babc1142775c134de5073244f38872d4d6"
+    },
+    "main_score_summary.tsv": {
+      "bytes": 4407,
+      "sha256": "2079bb7bf6e8032c636bea7fcd8539fe7abf20383c28d292efd72e6db449d917"
+    },
+    "runtime_candidate_cardinality.tsv": {
+      "bytes": 433,
+      "sha256": "cac1a667e70699fb52c49fd39a76a1bbbe72bb647b25377222e1b3646923109f"
+    },
+    "runtime_stage_candidate_cardinality.tsv": {
+      "bytes": 3908,
+      "sha256": "9c33fe2087ee10a471c61707c5a6dfa2acd2e1bd97977f9535754d4e4a6c0907"
+    }
+  },
+  "formal_inference_allowed": false,
+  "planned_datasets": 900,
+  "schema_version": "crychic-suggest-next2-v7-component-report-v1",
+  "source_aggregates": {
+    "e2": {
+      "filename": "all_e2_metrics.parquet",
+      "sha256": "0950bbc8efefa456a60624edd8c9a1739fd06a97d319a528b7fc00c101470308"
+    },
+    "e3": {
+      "filename": "all_e3_sender_metrics.parquet",
+      "sha256": "a4b3e4860c0b0b06c674bb28fee2a05c4061af206cb99223c7c6a75d7956fe7f"
+    },
+    "main": {
+      "filename": "all_dataset_metrics.parquet",
+      "sha256": "7c831d67feff8378287d4aae02a42444a46d0c1e70e8d080c9902eb9ae6f7c6c"
+    },
+    "plan": {
+      "filename": "run_plan.tsv",
+      "sha256": "06bd5f825016363e372a6f0f00e22ffb95c0f1e628e20e81c1d9cef11ea61827"
+    }
+  },
+  "source_campaign": "integrated_smoke_r20_components_20260725",
+  "source_campaign_manifest_sha256": "bc7666b47889c7a568c2cd18d77ab3600bba21c22623d0e1afb1523c4ad08ada",
+  "source_estimator_commit": "c7a9593ba6b8f75636f4ada494f30e26e638c64c",
+  "source_protocol_digest": "417a272acc476d6474645ac6bdad3d5b31cdeb19a812a5115530a27068f8b36b"
+}

@@ -1,0 +1,28 @@
+{
+  "checks": {
+    "e2_annotation_arms_exact": true,
+    "e2_downstream_hard_gate_harms_auprc": true,
+    "m0_auprc_regression_within_0_02": true,
+    "m0_effect_spearman_at_least_0_60": false,
+    "m1_direction_accuracy_at_least_0_85": true,
+    "m1_generic_state_diagnostic_fpr_not_above_0_05": true,
+    "m2_top1_at_least_0_80_at_every_candidate_count": false
+  },
+  "estimates": {
+    "g0_i1_event_auprc": 0.6444400446136092,
+    "g3_i1_effect_spearman": 0.5913022403958627,
+    "g3_i1_event_auprc": 0.6381570524994281,
+    "g3_minus_g0_event_auprc": -0.006282992114181041,
+    "m1_generic_state_diagnostic_fpr": 0.0,
+    "m1_program_direction_accuracy": 0.975,
+    "m2_minimum_candidate_count_top1": 0.2
+  },
+  "not_evaluated": [
+    "Kuppe and locked MS real-data endpoints",
+    "M4 formal occurrence calibration",
+    "E5 integrated topology controls",
+    "full-pipeline 1000-replicate null calibration",
+    "development and locked family holdouts"
+  ],
+  "status": "SMOKE_COMPLETE_WITH_RELEASE_GAPS"
+}
