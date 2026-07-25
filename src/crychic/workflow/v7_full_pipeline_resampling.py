@@ -28,6 +28,7 @@ from crychic.data import validate_anndata
 from crychic.inference import DifferentialDesignKind
 from crychic.resampling import (
     BootstrapSubjectDraw,
+    ContextPermutationOperation,
     ContextPermutationPlan,
     ExchangeabilityMap,
     SubjectBootstrapPlan,
@@ -58,8 +59,8 @@ from .v7_estimator import (
     fit_crossfit_v7_estimator,
 )
 
-V7_FULL_PIPELINE_RESAMPLING_VERSION = "v7_full_refit_bootstrap_permutation_loso_v1"
-_SCHEMA_VERSION = "1.0.0"
+V7_FULL_PIPELINE_RESAMPLING_VERSION = "v7_full_refit_bootstrap_permutation_loso_v2"
+_SCHEMA_VERSION = "2.0.0"
 _LOSO_POLICY = "remove_complete_subject_block_then_refit_v1"
 _BOOTSTRAP_POLICY = "design_stratified_complete_subject_block_with_replacement_v1"
 _RERUN_STAGES = (
@@ -150,9 +151,7 @@ class V7LeaveOneSubjectOutPlan:
 V7ResamplingPlan: TypeAlias = (
     SubjectBootstrapPlan | ContextPermutationPlan | V7LeaveOneSubjectOutPlan
 )
-V7HypothesisAxes: TypeAlias = tuple[
-    tuple[str, tuple[tuple[str, str], ...]], ...
-]
+V7HypothesisAxes: TypeAlias = tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
 _COMPACT_CONTINUOUS_COLUMNS = (
     "event_id",
     "contrast_name",
@@ -190,6 +189,17 @@ def _positive_count(value: int, *, field_name: str, allow_zero: bool) -> int:
         comparison = ">= 0" if allow_zero else ">= 1"
         raise ValueError(f"{field_name} must be an integer {comparison}")
     return value
+
+
+def _canonical_names(values: Sequence[str], *, field_name: str) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise TypeError(f"{field_name} must be a sequence, not a string")
+    result = tuple(sorted(values))
+    if any(_name(value, field_name=field_name) != value for value in result):
+        raise ValueError(f"{field_name} contains a non-canonical name")
+    if len(result) != len(set(result)):
+        raise ValueError(f"{field_name} must contain unique names")
+    return result
 
 
 def _plain(value: object) -> Hashable:
@@ -471,9 +481,7 @@ def _stage_lineage(
     if estimator.occurrence is not None:
         stages["two_part_occurrence_v2_fitting"] = (estimator.occurrence.result_id,)
     if estimator.hypergraph is not None:
-        stages["hypergraph_shrinkage_v2_fitting"] = (
-            estimator.hypergraph.fit.fit_id,
-        )
+        stages["hypergraph_shrinkage_v2_fitting"] = (estimator.hypergraph.fit.fit_id,)
     return tuple(sorted(stages.items()))
 
 
@@ -1107,6 +1115,10 @@ class V7FullPipelineResamplingResult:
     estimator_spec_id: str
     resource_bundle_content_id: str
     target_prior_content_id: str
+    exchangeability_id: str
+    permutation_context_keys: tuple[str, ...]
+    permutation_strata_keys: tuple[str, ...]
+    permutation_immutable_covariates: tuple[str, ...]
     root_seed_lineage: SeedLineage
     requested_n_jobs: int
     effective_n_jobs: int
@@ -1140,8 +1152,25 @@ class V7FullPipelineResamplingResult:
                 "estimator_spec_id",
                 "resource_bundle_content_id",
                 "target_prior_content_id",
+                "exchangeability_id",
             )
         }
+        permutation_context_keys = _canonical_names(
+            self.permutation_context_keys,
+            field_name="permutation_context_keys",
+        )
+        permutation_strata_keys = _canonical_names(
+            self.permutation_strata_keys,
+            field_name="permutation_strata_keys",
+        )
+        permutation_immutable_covariates = _canonical_names(
+            self.permutation_immutable_covariates,
+            field_name="permutation_immutable_covariates",
+        )
+        if not permutation_context_keys:
+            raise ValueError("permutation_context_keys cannot be empty")
+        if set(permutation_strata_keys).difference(permutation_immutable_covariates):
+            raise ValueError("permutation strata must be declared immutable covariates")
         if self.point.spec.spec_id != identifiers["estimator_spec_id"]:
             raise ValueError("point estimator spec differs from resampling spec")
         point_axes = _estimator_hypothesis_axes(self.point)
@@ -1188,6 +1217,9 @@ class V7FullPipelineResamplingResult:
             **identifiers,
             "hypothesis_axis_id": hypothesis_axis_id,
             "point_estimator_id": self.point.estimator_id,
+            "permutation_context_keys": list(permutation_context_keys),
+            "permutation_strata_keys": list(permutation_strata_keys),
+            "permutation_immutable_covariates": list(permutation_immutable_covariates),
             "record_ids": [record.record_id for record in records],
             "root_seed_lineage": self.root_seed_lineage.to_dict(),
             "version": V7_FULL_PIPELINE_RESAMPLING_VERSION,
@@ -1196,6 +1228,21 @@ class V7FullPipelineResamplingResult:
             object.__setattr__(self, field_name, value)
         object.__setattr__(self, "plans", plans)
         object.__setattr__(self, "records", records)
+        object.__setattr__(
+            self,
+            "permutation_context_keys",
+            permutation_context_keys,
+        )
+        object.__setattr__(
+            self,
+            "permutation_strata_keys",
+            permutation_strata_keys,
+        )
+        object.__setattr__(
+            self,
+            "permutation_immutable_covariates",
+            permutation_immutable_covariates,
+        )
         object.__setattr__(self, "hypothesis_axis_id", hypothesis_axis_id)
         object.__setattr__(
             self,
@@ -1243,6 +1290,10 @@ class V7FullPipelineResamplingResult:
             estimator_spec_id=self.estimator_spec_id,
             resource_bundle_content_id=self.resource_bundle_content_id,
             target_prior_content_id=self.target_prior_content_id,
+            exchangeability_id=self.exchangeability_id,
+            permutation_context_keys=self.permutation_context_keys,
+            permutation_strata_keys=self.permutation_strata_keys,
+            permutation_immutable_covariates=(self.permutation_immutable_covariates),
             root_seed_lineage=self.root_seed_lineage,
             requested_n_jobs=self.requested_n_jobs,
             effective_n_jobs=self.effective_n_jobs,
@@ -1364,6 +1415,12 @@ class V7FullPipelineResamplingResult:
             "hypothesis_axis_id": self.hypothesis_axis_id,
             "resource_bundle_content_id": self.resource_bundle_content_id,
             "target_prior_content_id": self.target_prior_content_id,
+            "exchangeability_id": self.exchangeability_id,
+            "permutation_context_keys": list(self.permutation_context_keys),
+            "permutation_strata_keys": list(self.permutation_strata_keys),
+            "permutation_immutable_covariates": list(
+                self.permutation_immutable_covariates
+            ),
             "root_seed_lineage": self.root_seed_lineage.to_dict(),
             "requested_n_jobs": self.requested_n_jobs,
             "effective_n_jobs": self.effective_n_jobs,
@@ -1398,6 +1455,9 @@ def run_v7_full_pipeline_resampling(
     run_loso: bool = True,
     strata_keys: Sequence[str] | None = None,
     immutable_covariates: Sequence[str] | None = None,
+    multi_context_permutation_operation: (
+        ContextPermutationOperation | str | None
+    ) = None,
     seed_lineage: SeedLineage | None = None,
     n_jobs: int = 1,
 ) -> V7FullPipelineResamplingResult:
@@ -1432,16 +1492,27 @@ def run_v7_full_pipeline_resampling(
     resolved_strata = tuple(
         crossfit_spec.strata_keys if strata_keys is None else strata_keys
     )
-    resolved_immutable = tuple(
+    permutation_context_keys = tuple(
+        sorted({*config.context_keys, estimator_spec.design.condition_column})
+    )
+    permutation_strata_keys = set(resolved_strata)
+    if estimator_spec.design.cohort_column is not None:
+        permutation_strata_keys.add(estimator_spec.design.cohort_column)
+    resolved_permutation_strata = tuple(sorted(permutation_strata_keys))
+    supplied_immutable = (
         resolved_strata if immutable_covariates is None else immutable_covariates
+    )
+    resolved_immutable = tuple(
+        sorted({*supplied_immutable, *resolved_permutation_strata})
     )
     exchangeability = build_exchangeability_map(
         validated.report.sample_metadata,
         sample_key=config.sample_key,
         subject_key=config.subject_key,
-        context_keys=config.context_keys,
-        strata_keys=resolved_strata,
+        context_keys=permutation_context_keys,
+        strata_keys=resolved_permutation_strata,
         immutable_covariates=resolved_immutable,
+        multi_context_operation=multi_context_permutation_operation,
     )
     lineage = (
         SeedLineage(config.random_seed).derive(
@@ -1533,6 +1604,10 @@ def run_v7_full_pipeline_resampling(
         estimator_spec_id=estimator_spec.spec_id,
         resource_bundle_content_id=_resource_bundle_content_id(resource_bundle),
         target_prior_content_id=_target_prior_content_id(target_prior),
+        exchangeability_id=exchangeability.exchangeability_id,
+        permutation_context_keys=permutation_context_keys,
+        permutation_strata_keys=resolved_permutation_strata,
+        permutation_immutable_covariates=resolved_immutable,
         root_seed_lineage=lineage,
         requested_n_jobs=requested_jobs,
         effective_n_jobs=effective_jobs,

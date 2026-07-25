@@ -19,6 +19,7 @@ class ExchangeabilityDesign(StrEnum):
 
     INDEPENDENT = "independent_subject_context_labels_v1"
     PAIRED_BINARY = "paired_binary_within_subject_contexts_v1"
+    REPEATED_COMPLETE = "repeated_complete_within_subject_contexts_v1"
 
 
 class ContextPermutationOperation(StrEnum):
@@ -28,6 +29,9 @@ class ContextPermutationOperation(StrEnum):
         "between_subject_context_label_permutation_within_stratum_v1"
     )
     WITHIN_SUBJECT_BINARY_SWAP = "within_subject_binary_context_swap_v1"
+    WITHIN_SUBJECT_COMPLETE_PERMUTATION = (
+        "within_subject_complete_context_permutation_v1"
+    )
 
 
 def _names(
@@ -91,9 +95,18 @@ class ExchangeabilityMap:
     def __post_init__(self) -> None:
         design = ExchangeabilityDesign(self.design)
         operation = ContextPermutationOperation(self.operation)
-        if (design is ExchangeabilityDesign.INDEPENDENT) != (
-            operation is ContextPermutationOperation.BETWEEN_SUBJECT_WITHIN_STRATUM
-        ):
+        expected_operation = {
+            ExchangeabilityDesign.INDEPENDENT: (
+                ContextPermutationOperation.BETWEEN_SUBJECT_WITHIN_STRATUM
+            ),
+            ExchangeabilityDesign.PAIRED_BINARY: (
+                ContextPermutationOperation.WITHIN_SUBJECT_BINARY_SWAP
+            ),
+            ExchangeabilityDesign.REPEATED_COMPLETE: (
+                ContextPermutationOperation.WITHIN_SUBJECT_COMPLETE_PERMUTATION
+            ),
+        }[design]
+        if operation is not expected_operation:
             raise ValueError("exchangeability design and operation do not match")
         object.__setattr__(self, "design", design)
         object.__setattr__(self, "operation", operation)
@@ -164,6 +177,7 @@ def build_exchangeability_map(
     context_keys: Sequence[str],
     strata_keys: Sequence[str] = (),
     immutable_covariates: Sequence[str] = (),
+    multi_context_operation: ContextPermutationOperation | str | None = None,
 ) -> ExchangeabilityMap:
     """Audit metadata and freeze the legal subject-block null operation."""
 
@@ -182,6 +196,19 @@ def build_exchangeability_map(
             )
         )
     )
+    declared_multi_context_operation = (
+        None
+        if multi_context_operation is None
+        else ContextPermutationOperation(multi_context_operation)
+    )
+    if declared_multi_context_operation not in {
+        None,
+        ContextPermutationOperation.WITHIN_SUBJECT_COMPLETE_PERMUTATION,
+    }:
+        raise ValueError(
+            "multi_context_operation must declare the complete within-subject "
+            "permutation or remain None"
+        )
     if set(strata).difference(immutable):
         raise ValueError("strata_keys must be declared immutable_covariates")
     required = {sample_key, subject_key, *contexts, *strata, *immutable}
@@ -204,10 +231,7 @@ def build_exchangeability_map(
     sample_ids = tuple(str(value) for value in table[sample_key])
     subject_ids_by_row = tuple(str(value) for value in table[subject_key])
     sample_contexts = tuple(
-        tuple(
-            (key, _scalar(row[key], field_name=key))
-            for key in sorted(contexts)
-        )
+        tuple((key, _scalar(row[key], field_name=key)) for key in sorted(contexts))
         for _, row in table.iterrows()
     )
     context_nodes = tuple(sorted(set(sample_contexts), key=_context_key))
@@ -241,8 +265,7 @@ def build_exchangeability_map(
                 )
         subject_strata.append(
             tuple(
-                _scalar(table.iloc[indexes[0]][key], field_name=key)
-                for key in strata
+                _scalar(table.iloc[indexes[0]][key], field_name=key) for key in strata
             )
         )
         subject_context_sets.append(
@@ -270,15 +293,26 @@ def build_exchangeability_map(
                 remediation="Use coarser valid strata or add subject replication",
             )
     elif all(values == frozenset(context_nodes) for values in subject_context_sets):
-        if len(context_nodes) != 2:
-            raise ContractError(
-                "Multi-context within-subject permutation requires an explicit map",
-                code="multi_context_exchangeability_not_declared",
-                field="context_keys",
-                remediation="Declare factor-specific legal operations before testing",
-            )
-        design = ExchangeabilityDesign.PAIRED_BINARY
-        operation = ContextPermutationOperation.WITHIN_SUBJECT_BINARY_SWAP
+        if len(context_nodes) == 2:
+            if declared_multi_context_operation is not None:
+                raise ValueError(
+                    "multi_context_operation is only valid with three or more contexts"
+                )
+            design = ExchangeabilityDesign.PAIRED_BINARY
+            operation = ContextPermutationOperation.WITHIN_SUBJECT_BINARY_SWAP
+        else:
+            if declared_multi_context_operation is None:
+                raise ContractError(
+                    "Multi-context within-subject permutation requires an explicit map",
+                    code="multi_context_exchangeability_not_declared",
+                    field="context_keys",
+                    remediation=(
+                        "Declare the reviewed complete within-subject operation only "
+                        "when every context label is exchangeable under the null"
+                    ),
+                )
+            design = ExchangeabilityDesign.REPEATED_COMPLETE
+            operation = declared_multi_context_operation
     else:
         raise ContractError(
             "Mixed paired/unpaired context allocation has no reviewed permutation",
@@ -376,9 +410,7 @@ class ContextPermutationPlan:
             "resample_index": self.resample_index,
             "operation": self.operation.value,
             "sample_ids": list(self.sample_ids),
-            "permuted_contexts": [
-                dict(context) for context in self.permuted_contexts
-            ],
+            "permuted_contexts": [dict(context) for context in self.permuted_contexts],
             "changed_subject_ids": list(self.changed_subject_ids),
             "seed_lineage": self.seed_lineage.to_dict(),
             "resampling_unit": "subject_block",
@@ -450,7 +482,7 @@ def plan_context_permutations(
                         changed.add(subject)
                     for row_index in rows_by_subject[subject]:
                         permuted[row_index] = label
-        else:
+        elif exchangeability.design is ExchangeabilityDesign.PAIRED_BINARY:
             left, right = exchangeability.context_nodes
             for subject in exchangeability.subject_ids:
                 if rng.getrandbits(1):
@@ -458,6 +490,19 @@ def plan_context_permutations(
                     for row_index in rows_by_subject[subject]:
                         current = exchangeability.sample_contexts[row_index]
                         permuted[row_index] = right if current == left else left
+        else:
+            for subject in exchangeability.subject_ids:
+                shuffled = list(exchangeability.context_nodes)
+                rng.shuffle(shuffled)
+                mapping = dict(
+                    zip(exchangeability.context_nodes, shuffled, strict=True)
+                )
+                if any(source != target for source, target in mapping.items()):
+                    changed.add(subject)
+                for row_index in rows_by_subject[subject]:
+                    permuted[row_index] = mapping[
+                        exchangeability.sample_contexts[row_index]
+                    ]
         payload = {
             "exchangeability_id": exchangeability.exchangeability_id,
             "resample_index": resample_index,
@@ -519,9 +564,7 @@ def apply_context_permutation(
             field=exchangeability.sample_key,
             remediation="Use the same sample blocks used to construct the map",
         )
-    context_by_sample = dict(
-        zip(plan.sample_ids, plan.permuted_contexts, strict=True)
-    )
+    context_by_sample = dict(zip(plan.sample_ids, plan.permuted_contexts, strict=True))
     result = metadata.copy(deep=True)
     sample_values = result[exchangeability.sample_key].astype(str)
     for context_key in exchangeability.context_keys:

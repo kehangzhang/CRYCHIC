@@ -75,6 +75,16 @@ def _paired_design() -> DifferentialDesignSpec:
     )
 
 
+def _continuous_design() -> DifferentialDesignSpec:
+    return DifferentialDesignSpec(
+        design_kind="continuous",
+        condition_column="dose",
+        continuous_covariates=("receiver_fraction",),
+        precision_weight_column=None,
+        minimum_subjects_per_level=4,
+    )
+
+
 def _five_subject_adata() -> AnnData:
     rows: list[list[int]] = []
     metadata: list[dict[str, str]] = []
@@ -170,6 +180,19 @@ def test_independent_bootstrap_is_stratified_by_condition() -> None:
         assert draw_conditions.count("stim") == 3
 
 
+def test_continuous_m5_accepts_the_registered_slope_contrast() -> None:
+    spec = V7EstimatorSpec(
+        design=_continuous_design(),
+        score_head="sender_detection_raw",
+        hypergraph_spec=UncertaintyAwareHypergraphShrinkageV2Spec(
+            minimum_observed_edges=3
+        ),
+        hypergraph_contrast_name="slope:dose",
+    )
+
+    assert spec.hypergraph_contrast_name == "slope:dose"
+
+
 def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() -> None:
     crossfit_spec = replace(
         _spec(),
@@ -252,9 +275,11 @@ def test_v7_full_refits_are_parallel_deterministic_and_cover_all_operations() ->
     assert manifest["large_crossfit_children_retained"] is False
     assert manifest["resample_retention_policy"] == "minimal_effect_tables_only_v1"
     assert manifest["hypothesis_axis_id"] == serial.hypothesis_axis_id
-    assert "hypergraph_shrinkage_v2_fitting" not in manifest[
-        "configured_rerun_stages_observed"
-    ]
+    assert manifest["permutation_context_keys"] == ["condition"]
+    assert (
+        "hypergraph_shrinkage_v2_fitting"
+        not in manifest["configured_rerun_stages_observed"]
+    )
     tampered = serial.records[0].estimator
     assert tampered is not None
     tampered.continuous_effects.loc[0, "effect"] += 1.0
@@ -329,9 +354,7 @@ def test_v7_finalizer_releases_only_complete_calibrated_distributions() -> None:
     failing_metrics.loc[0, "empirical_type_i"] = 0.10
     failed_gate = evaluate_v7_full_pipeline_calibration(failing_metrics)
     assert not failed_gate.passed
-    assert failed_gate.failure_reasons == (
-        "empirical_type_i_outside_0_035_0_065",
-    )
+    assert failed_gate.failure_reasons == ("empirical_type_i_outside_0_035_0_065",)
 
 
 def test_v7_full_refit_reestimates_m5_and_accepts_structural_zero_se() -> None:

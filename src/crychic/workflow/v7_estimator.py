@@ -11,6 +11,7 @@ from crychic.core import canonical_digest, stable_id
 from crychic.inference import (
     DesignAwareDifferentialResult,
     DesignAwareHypergraphShrinkageV2Result,
+    DifferentialDesignKind,
     DifferentialDesignSpec,
     TwoPartOccurrenceV2Result,
     TwoPartOccurrenceV2Spec,
@@ -66,9 +67,11 @@ def _required_design_columns(design: DifferentialDesignSpec) -> tuple[str, ...]:
 
 def _canonical_metadata_digest(table: pd.DataFrame, columns: tuple[str, ...]) -> str:
     records: list[dict[str, object]] = []
-    for row in table.loc[:, list(columns)].sort_values(
-        columns[0], kind="stable", ignore_index=True
-    ).itertuples(index=False, name=None):
+    for row in (
+        table.loc[:, list(columns)]
+        .sort_values(columns[0], kind="stable", ignore_index=True)
+        .itertuples(index=False, name=None)
+    ):
         record: dict[str, object] = {}
         for column, value in zip(columns, row, strict=True):
             if value is pd.NA or value is pd.NaT or pd.isna(value):
@@ -244,7 +247,12 @@ class V7EstimatorSpec:
                     "UncertaintyAwareHypergraphShrinkageV2Spec or None"
                 )
             contrast = _name(contrast, field_name="hypergraph_contrast_name")
-            declared = {item.name for item in self.design.contrasts}
+            declared = (
+                {f"slope:{self.design.condition_column}"}
+                if DifferentialDesignKind(self.design.design_kind)
+                is DifferentialDesignKind.CONTINUOUS
+                else {item.name for item in self.design.contrasts}
+            )
             if contrast not in declared:
                 raise ValueError("M5 contrast must be pre-registered in the design")
         if self.schema_version != _SCHEMA_VERSION:
@@ -349,12 +357,8 @@ class CrossFitV7EstimatorResult:
         output_digest = str(
             canonical_digest(
                 {
-                    "differential_effects": _frame_digest(
-                        self.differential.effects
-                    ),
-                    "differential_omnibus": _frame_digest(
-                        self.differential.omnibus
-                    ),
+                    "differential_effects": _frame_digest(self.differential.effects),
+                    "differential_omnibus": _frame_digest(self.differential.omnibus),
                     "hypergraph": (
                         None
                         if hypergraph is None
@@ -407,12 +411,8 @@ class CrossFitV7EstimatorResult:
         expected_output_digest = str(
             canonical_digest(
                 {
-                    "differential_effects": _frame_digest(
-                        self.differential.effects
-                    ),
-                    "differential_omnibus": _frame_digest(
-                        self.differential.omnibus
-                    ),
+                    "differential_effects": _frame_digest(self.differential.effects),
+                    "differential_omnibus": _frame_digest(self.differential.omnibus),
                     "hypergraph": (
                         None
                         if self.hypergraph is None
@@ -435,9 +435,7 @@ class CrossFitV7EstimatorResult:
             "crossfit_v7_estimator_result",
             {
                 "crossfit_id": self.crossfit_id,
-                "differential_effect_ids": list(
-                    self.differential.effects["effect_id"]
-                ),
+                "differential_effect_ids": list(self.differential.effects["effect_id"]),
                 "differential_omnibus_ids": list(
                     self.differential.omnibus["omnibus_id"]
                 ),

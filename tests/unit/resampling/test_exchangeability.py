@@ -37,9 +37,7 @@ def _independent_metadata() -> pd.DataFrame:
                 "batch": batch,
             }
         )
-    rows.append(
-        {"sample": "u1-2", "subject": "u1", "condition": "A", "batch": "x"}
-    )
+    rows.append({"sample": "u1-2", "subject": "u1", "condition": "A", "batch": "x"})
     return pd.DataFrame(reversed(rows))
 
 
@@ -188,9 +186,7 @@ def test_apply_permutation_updates_all_sample_cell_rows_without_mutation() -> No
     assert applied.groupby("sample")["condition"].nunique().eq(1).all()
     expected = {
         sample: _context_value(context)
-        for sample, context in zip(
-            plan.sample_ids, plan.permuted_contexts, strict=True
-        )
+        for sample, context in zip(plan.sample_ids, plan.permuted_contexts, strict=True)
     }
     assert applied.groupby("sample")["condition"].first().to_dict() == expected
 
@@ -209,7 +205,39 @@ def test_mixed_paired_unpaired_design_fails_closed() -> None:
     )
 
 
-def test_multi_context_paired_design_requires_explicit_operation() -> None:
+def test_complete_repeated_plan_permutes_all_contexts_within_subject() -> None:
+    exchangeability = build_exchangeability_map(
+        _paired_metadata(("A", "B", "C")),
+        sample_key="sample",
+        subject_key="subject",
+        context_keys=("condition",),
+        strata_keys=("batch",),
+        immutable_covariates=("batch",),
+        multi_context_operation=(
+            ContextPermutationOperation.WITHIN_SUBJECT_COMPLETE_PERMUTATION
+        ),
+    )
+    plans = plan_context_permutations(
+        exchangeability,
+        n_permutations=8,
+        seed_lineage=SeedLineage(19),
+    )
+
+    assert exchangeability.design is ExchangeabilityDesign.REPEATED_COMPLETE
+    assert exchangeability.operation is (
+        ContextPermutationOperation.WITHIN_SUBJECT_COMPLETE_PERMUTATION
+    )
+    rows_by_subject: dict[str, list[int]] = {}
+    for index, subject in enumerate(exchangeability.sample_subject_ids):
+        rows_by_subject.setdefault(subject, []).append(index)
+    expected = set(exchangeability.context_nodes)
+    for plan in plans:
+        for indexes in rows_by_subject.values():
+            observed = {plan.permuted_contexts[index] for index in indexes}
+            assert observed == expected
+
+
+def test_multi_context_permutation_requires_an_explicit_operation() -> None:
     with pytest.raises(ContractError) as error:
         _build(_paired_metadata(("A", "B", "C")))
 
@@ -223,9 +251,7 @@ def test_immutable_covariate_must_be_constant_within_subject() -> None:
     with pytest.raises(ContractError) as error:
         _build(metadata)
 
-    assert error.value.details.code == (
-        "exchangeability_immutable_covariate_varies"
-    )
+    assert error.value.details.code == ("exchangeability_immutable_covariate_varies")
 
 
 def test_no_multicontext_stratum_is_not_permutable() -> None:
@@ -276,6 +302,4 @@ def test_tampered_permutation_identity_and_wrong_sample_universe_are_rejected() 
     missing = metadata.loc[~metadata["sample"].eq("u1-1")]
     with pytest.raises(ContractError) as error:
         apply_context_permutation(missing, exchangeability, plan)
-    assert error.value.details.code == (
-        "context_permutation_sample_universe_mismatch"
-    )
+    assert error.value.details.code == ("context_permutation_sample_universe_mismatch")
