@@ -11,6 +11,7 @@ from benchmarks.adapters.common import sha256_file
 from benchmarks.simulation.run_v7_full_refit_campaign import (
     OUTPUT_TABLES,
     build_v7_full_refit_plan,
+    load_v7_full_refit_frozen_config,
     run_v7_full_refit_dataset,
 )
 from benchmarks.simulation.v7_protocol import (
@@ -47,6 +48,28 @@ def test_full_refit_plan_selects_unique_frozen_datasets() -> None:
     assert plan["dataset_id"].is_unique
     assert plan.loc[0, "dgp_family"] == "global_null"
     assert plan.loc[0, "design_kind"] == "continuous"
+
+
+def test_pr10_smoke_config_authenticates_the_m4_protocol() -> None:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmarks"
+        / "configs"
+        / "suggest_next2_v7_pr10_smoke_v1.json"
+    )
+    frozen = load_v7_full_refit_frozen_config(path)
+    manifest = frozen.to_manifest()
+
+    assert manifest["config_sha256"] == sha256_file(path)
+    assert manifest["base_protocol_sha256"] == sha256_file(AMENDMENT_CONFIG)
+    assert frozen.config["experiment"]["design_kinds"] == [
+        "independent_two_group",
+        "independent_multi_group",
+        "paired",
+        "repeated",
+        "multi_cohort",
+        "continuous",
+    ]
 
 
 def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(

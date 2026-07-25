@@ -43,7 +43,7 @@ from benchmarks.simulation.v7_protocol import (
     V7BenchmarkProtocol,
     load_v7_benchmark_protocol,
 )
-from crychic.core import SeedLineage, stable_id
+from crychic.core import SeedLineage, canonical_digest, stable_id
 from crychic.inference import DifferentialDesignKind, TwoPartOccurrenceV2Spec
 from crychic.resampling import ContextPermutationOperation
 from crychic.scoring import (
@@ -61,6 +61,7 @@ from crychic.workflow import (
 
 CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-campaign-v1"
 DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-dataset-v1"
+FROZEN_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-smoke-v1"
 _TOPOLOGY_VIEWS = ("sender", "ligand", "receptor", "receiver", "pathway")
 _DATASET_PLAN_COLUMNS = (
     "phase",
@@ -246,6 +247,96 @@ class V7FullRefitRunSummary:
 
     def to_record(self) -> dict[str, object]:
         return {column: getattr(self, column) for column in RUN_COLUMNS}
+
+
+@dataclass(frozen=True, slots=True)
+class V7FullRefitFrozenConfig:
+    path: Path
+    protocol_path: Path
+    config: Mapping[str, object]
+    config_digest: str
+
+    def to_manifest(self) -> dict[str, object]:
+        return {
+            "schema_version": FROZEN_CONFIG_SCHEMA_VERSION,
+            "config_path": str(self.path),
+            "config_sha256": sha256_file(self.path),
+            "config_digest": self.config_digest,
+            "minimum_runner_commit": self.config["minimum_runner_commit"],
+            "base_protocol_path": str(self.protocol_path),
+            "base_protocol_sha256": sha256_file(self.protocol_path),
+        }
+
+
+def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
+    """Load the exact first PR10 smoke profile and authenticate its base."""
+
+    resolved = path.resolve()
+    raw: object = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("PR10 frozen config must contain one JSON object")
+    if (
+        raw.get("schema_version") != FROZEN_CONFIG_SCHEMA_VERSION
+        or raw.get("status")
+        != "preregistered_after_runner_validation_before_six_design_smoke"
+    ):
+        raise ValueError("PR10 frozen config schema or status is unsupported")
+    base = raw.get("base_protocol")
+    if not isinstance(base, dict) or set(base) != {"filename", "sha256"}:
+        raise ValueError("PR10 base_protocol must contain filename and sha256")
+    filename = str(base["filename"])
+    if Path(filename).name != filename:
+        raise ValueError("PR10 base protocol filename must be a local component")
+    protocol_path = resolved.parent / filename
+    if sha256_file(protocol_path) != base["sha256"]:
+        raise ValueError("PR10 base protocol checksum differs")
+    experiment = raw.get("experiment")
+    execution = raw.get("execution")
+    release = raw.get("release_policy")
+    if not all(isinstance(value, dict) for value in (experiment, execution, release)):
+        raise ValueError("PR10 config sections must be mappings")
+    assert isinstance(experiment, dict)
+    assert isinstance(execution, dict)
+    assert isinstance(release, dict)
+    expected_designs = list(DESIGN_KINDS)
+    if (
+        experiment.get("name") != "PR10_full_refit_six_design_smoke"
+        or experiment.get("publication_role")
+        != "integration_and_runtime_diagnostic_only"
+        or experiment.get("phase") != "smoke"
+        or experiment.get("dgp_families") != ["global_null"]
+        or experiment.get("design_kinds") != expected_designs
+        or int(experiment.get("maximum_replicates", 0)) != 1
+        or int(experiment.get("maximum_datasets", 0)) != 6
+        or int(experiment.get("n_bootstraps", 0)) != 2
+        or int(experiment.get("n_permutations", 0)) != 2
+        or experiment.get("run_loso") is not True
+        or experiment.get("full_pipeline_refit_per_resample") is not True
+    ):
+        raise ValueError("PR10 six-design smoke axis changed")
+    if (
+        float(execution.get("maximum_memory_fraction", 0.0)) != 0.8
+        or int(execution.get("dataset_jobs", -1)) != 0
+        or int(execution.get("resample_jobs", 0)) != 1
+        or execution.get("thread_oversubscription_forbidden") is not True
+    ):
+        raise ValueError("PR10 execution policy changed")
+    if (
+        release.get("calibration_gate_supplied") is not False
+        or release.get("formal_inference_allowed") is not False
+        or int(release.get("formal_minimum_bootstraps", 0)) != 1_000
+        or int(release.get("formal_minimum_permutations", 0)) != 1_000
+    ):
+        raise ValueError("PR10 smoke release boundary changed")
+    commit = str(raw.get("minimum_runner_commit", ""))
+    if len(commit) != 40 or any(value not in "0123456789abcdef" for value in commit):
+        raise ValueError("minimum_runner_commit must be a full lowercase Git hash")
+    return V7FullRefitFrozenConfig(
+        path=resolved,
+        protocol_path=protocol_path.resolve(),
+        config=raw,
+        config_digest=str(canonical_digest(raw)),
+    )
 
 
 def _count(value: int, *, field_name: str) -> int:
@@ -532,6 +623,7 @@ def run_v7_full_refit_dataset(
     resample_jobs: int = 1,
     maximum_memory_fraction: float = 0.8,
     overwrite: bool = False,
+    frozen_config_manifest: Mapping[str, object] | None = None,
 ) -> V7FullRefitRunSummary:
     """Execute and atomically persist one complete PR10 distribution."""
 
@@ -561,6 +653,10 @@ def run_v7_full_refit_dataset(
             or int(existing_request.get("n_permutations", -1)) != permutations
             or bool(existing_request.get("run_loso")) != run_loso
             or existing_protocol.get("protocol_digest") != protocol.protocol_digest
+            or existing.get("frozen_campaign_config")
+            != (
+                None if frozen_config_manifest is None else dict(frozen_config_manifest)
+            )
         ):
             raise FileExistsError(
                 "completed PR10 output uses a different protocol or resampling "
@@ -584,6 +680,9 @@ def run_v7_full_refit_dataset(
         "schema_version": DATASET_SCHEMA_VERSION,
         "created_utc": _utc_now(),
         "protocol": protocol.to_manifest(),
+        "frozen_campaign_config": (
+            None if frozen_config_manifest is None else dict(frozen_config_manifest)
+        ),
         "dataset_plan": {
             column: json_safe(dataset_plan[column]) for column in _DATASET_PLAN_COLUMNS
         },
@@ -815,6 +914,7 @@ def _worker(payload: Mapping[str, object]) -> dict[str, object]:
         resample_jobs=int(payload["resample_jobs"]),
         maximum_memory_fraction=float(payload["maximum_memory_fraction"]),
         overwrite=bool(payload["overwrite"]),
+        frozen_config_manifest=payload.get("frozen_config_manifest"),  # type: ignore[arg-type]
     )
     return summary.to_record()
 
@@ -830,6 +930,7 @@ def _payload(
     resample_jobs: int,
     maximum_memory_fraction: float,
     overwrite: bool,
+    frozen_config_manifest: Mapping[str, object] | None,
 ) -> dict[str, object]:
     return {
         "protocol_path": str(protocol.path),
@@ -841,6 +942,9 @@ def _payload(
         "resample_jobs": resample_jobs,
         "maximum_memory_fraction": maximum_memory_fraction,
         "overwrite": overwrite,
+        "frozen_config_manifest": (
+            None if frozen_config_manifest is None else dict(frozen_config_manifest)
+        ),
     }
 
 
@@ -874,6 +978,7 @@ def _write_campaign_state(
     effective_jobs: int,
     started_utc: str,
     status: str,
+    frozen_config_manifest: Mapping[str, object] | None,
 ) -> None:
     runs = pd.DataFrame.from_records(records, columns=RUN_COLUMNS)
     runs_path = output_root / "runs.tsv"
@@ -886,6 +991,9 @@ def _write_campaign_state(
             "started_utc": started_utc,
             "updated_utc": _utc_now(),
             "protocol": protocol.to_manifest(),
+            "frozen_campaign_config": (
+                None if frozen_config_manifest is None else dict(frozen_config_manifest)
+            ),
             "planned_datasets": len(plan),
             "completed_datasets": int(runs["status"].eq("completed").sum()),
             "failed_datasets": int(runs["status"].eq("failed").sum()),
@@ -953,6 +1061,7 @@ def run_v7_full_refit_campaign(
     resample_jobs: int = 1,
     overwrite: bool = False,
     allow_dirty: bool = False,
+    frozen_config: V7FullRefitFrozenConfig | None = None,
 ) -> dict[str, object]:
     """Execute a memory-bounded dataset-parallel PR10 campaign."""
 
@@ -979,6 +1088,9 @@ def run_v7_full_refit_campaign(
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "datasets").mkdir(exist_ok=True)
     plan.to_csv(output_root / "run_plan.tsv", sep="\t", index=False)
+    frozen_config_manifest = (
+        None if frozen_config is None else frozen_config.to_manifest()
+    )
     plans = [row._asdict() for row in plan.itertuples(index=False)]
     started_utc = _utc_now()
     records: list[dict[str, object]] = []
@@ -995,6 +1107,7 @@ def run_v7_full_refit_campaign(
             resample_jobs=resample_jobs,
             maximum_memory_fraction=maximum_memory_fraction,
             overwrite=overwrite,
+            frozen_config_manifest=frozen_config_manifest,
         )
     )
     records.append(first)
@@ -1031,6 +1144,7 @@ def run_v7_full_refit_campaign(
         effective_jobs=effective_jobs,
         started_utc=started_utc,
         status="running",
+        frozen_config_manifest=frozen_config_manifest,
     )
     remaining = plans[1:]
     if remaining:
@@ -1063,6 +1177,7 @@ def run_v7_full_refit_campaign(
                             resample_jobs=resample_jobs,
                             maximum_memory_fraction=maximum_memory_fraction,
                             overwrite=overwrite,
+                            frozen_config_manifest=frozen_config_manifest,
                         ),
                     )
                     pending[future] = str(dataset_plan["dataset_id"])
@@ -1131,6 +1246,7 @@ def run_v7_full_refit_campaign(
                         effective_jobs=effective_jobs,
                         started_utc=started_utc,
                         status="running",
+                        frozen_config_manifest=frozen_config_manifest,
                     )
     _aggregate_outputs(output_root, records)
     final_status = (
@@ -1150,6 +1266,7 @@ def run_v7_full_refit_campaign(
         effective_jobs=effective_jobs,
         started_utc=started_utc,
         status=final_status,
+        frozen_config_manifest=frozen_config_manifest,
     )
     return {
         "status": final_status,
@@ -1161,13 +1278,47 @@ def run_v7_full_refit_campaign(
     }
 
 
+def run_v7_full_refit_campaign_from_config(
+    config_path: Path,
+    *,
+    output_root: Path,
+    overwrite: bool = False,
+    allow_dirty: bool = False,
+) -> dict[str, object]:
+    """Execute the checksum-bound six-design PR10 smoke without overrides."""
+
+    frozen = load_v7_full_refit_frozen_config(config_path)
+    experiment = frozen.config["experiment"]
+    execution = frozen.config["execution"]
+    assert isinstance(experiment, Mapping)
+    assert isinstance(execution, Mapping)
+    return run_v7_full_refit_campaign(
+        protocol_path=frozen.protocol_path,
+        phase=str(experiment["phase"]),
+        output_root=output_root,
+        n_bootstraps=int(experiment["n_bootstraps"]),
+        n_permutations=int(experiment["n_permutations"]),
+        run_loso=bool(experiment["run_loso"]),
+        maximum_replicates=int(experiment["maximum_replicates"]),
+        maximum_datasets=int(experiment["maximum_datasets"]),
+        dgp_families=tuple(map(str, experiment["dgp_families"])),
+        design_kinds=tuple(map(str, experiment["design_kinds"])),
+        jobs=int(execution["dataset_jobs"]),
+        resample_jobs=int(execution["resample_jobs"]),
+        overwrite=overwrite,
+        allow_dirty=allow_dirty,
+        frozen_config=frozen,
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--campaign-config", type=Path)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
-    parser.add_argument("--phase", choices=PHASES, required=True)
+    parser.add_argument("--phase", choices=PHASES)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--bootstraps", type=int, required=True)
-    parser.add_argument("--permutations", type=int, required=True)
+    parser.add_argument("--bootstraps", type=int)
+    parser.add_argument("--permutations", type=int)
     parser.add_argument("--no-loso", action="store_true")
     parser.add_argument("--maximum-replicates", type=int)
     parser.add_argument("--maximum-datasets", type=int)
@@ -1189,22 +1340,55 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     for name, value in _THREAD_ENVIRONMENT.items():
         os.environ[name] = value
-    summary = run_v7_full_refit_campaign(
-        protocol_path=arguments.protocol,
-        phase=arguments.phase,
-        output_root=arguments.output_dir,
-        n_bootstraps=arguments.bootstraps,
-        n_permutations=arguments.permutations,
-        run_loso=not arguments.no_loso,
-        maximum_replicates=arguments.maximum_replicates,
-        maximum_datasets=arguments.maximum_datasets,
-        dgp_families=arguments.dgp_families,
-        design_kinds=arguments.design_kinds,
-        jobs=arguments.jobs,
-        resample_jobs=arguments.resample_jobs,
-        overwrite=arguments.overwrite,
-        allow_dirty=arguments.allow_dirty,
-    )
+    if arguments.campaign_config is not None:
+        override_values = (
+            arguments.phase,
+            arguments.bootstraps,
+            arguments.permutations,
+            arguments.maximum_replicates,
+            arguments.maximum_datasets,
+            arguments.dgp_families,
+            arguments.design_kinds,
+        )
+        if any(value is not None for value in override_values) or arguments.no_loso:
+            raise SystemExit(
+                "--campaign-config cannot be combined with scientific overrides"
+            )
+        if arguments.jobs != 0 or arguments.resample_jobs != 1:
+            raise SystemExit(
+                "--campaign-config cannot override frozen parallelism settings"
+            )
+        summary = run_v7_full_refit_campaign_from_config(
+            arguments.campaign_config,
+            output_root=arguments.output_dir,
+            overwrite=arguments.overwrite,
+            allow_dirty=arguments.allow_dirty,
+        )
+    else:
+        if (
+            arguments.phase is None
+            or arguments.bootstraps is None
+            or arguments.permutations is None
+        ):
+            raise SystemExit(
+                "manual mode requires --phase, --bootstraps, and --permutations"
+            )
+        summary = run_v7_full_refit_campaign(
+            protocol_path=arguments.protocol,
+            phase=arguments.phase,
+            output_root=arguments.output_dir,
+            n_bootstraps=arguments.bootstraps,
+            n_permutations=arguments.permutations,
+            run_loso=not arguments.no_loso,
+            maximum_replicates=arguments.maximum_replicates,
+            maximum_datasets=arguments.maximum_datasets,
+            dgp_families=arguments.dgp_families,
+            design_kinds=arguments.design_kinds,
+            jobs=arguments.jobs,
+            resample_jobs=arguments.resample_jobs,
+            overwrite=arguments.overwrite,
+            allow_dirty=arguments.allow_dirty,
+        )
     print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
     return 0 if summary["failed"] == 0 else 1
 
