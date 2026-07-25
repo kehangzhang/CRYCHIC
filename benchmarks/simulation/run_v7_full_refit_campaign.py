@@ -64,6 +64,48 @@ CAMPAIGN_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-campaign-v1"
 DATASET_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-dataset-v1"
 FROZEN_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-smoke-v1"
 M4_LOSO_SCALE_CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-pr10-m4-loso-n12-v1"
+CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION = (
+    "crychic-suggest-next2-v7-pr10-calibration-integration-r2-v1"
+)
+CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION = (
+    "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v1"
+)
+_CALIBRATION_CONFIG_PROFILES = {
+    CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION: {
+        "status": (
+            "preregistered_after_process_regression_before_calibration_integration"
+        ),
+        "name": "PR10_global_null_calibration_integration_r2",
+        "publication_role": "calibration_pipeline_integration_only",
+        "maximum_replicates": 2,
+        "maximum_datasets": 12,
+        "dataset_id_suffix": "n12_pr10_calint_r2",
+        "n_bootstraps": 19,
+        "n_permutations": 19,
+        "expected_resamples_per_dataset": 50,
+        "primary_endpoint": "calibration_pipeline_and_summary_schema_completeness",
+        "pass_rule": ("all_datasets_and_resamples_complete_with_typed_channel_metrics"),
+        "release_guard": "integration_result_cannot_release_p_or_q",
+    },
+    CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION: {
+        "status": (
+            "preregistered_alongside_integration_before_calibration_metrics_inspection"
+        ),
+        "name": "PR10_global_null_calibration_pilot_r20",
+        "publication_role": "calibration_precision_and_runtime_pilot_only",
+        "maximum_replicates": 20,
+        "maximum_datasets": 120,
+        "dataset_id_suffix": "n12_pr10_calpilot_r20",
+        "n_bootstraps": 99,
+        "n_permutations": 99,
+        "expected_resamples_per_dataset": 210,
+        "primary_endpoint": (
+            "channel_design_global_null_type1_fdr_coverage_with_uncertainty"
+        ),
+        "pass_rule": "report_estimates_and_intervals_without_release_decision",
+        "release_guard": "pilot_result_cannot_release_p_or_q",
+    },
+}
 _TOPOLOGY_VIEWS = ("sender", "ligand", "receptor", "receiver", "pathway")
 _DATASET_PLAN_COLUMNS = (
     "phase",
@@ -281,6 +323,7 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
     if schema_version not in {
         FROZEN_CONFIG_SCHEMA_VERSION,
         M4_LOSO_SCALE_CONFIG_SCHEMA_VERSION,
+        *_CALIBRATION_CONFIG_PROFILES,
     }:
         raise ValueError("PR10 frozen config schema is unsupported")
     base = raw.get("base_protocol")
@@ -300,18 +343,48 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
     assert isinstance(experiment, dict)
     assert isinstance(execution, dict)
     assert isinstance(release, dict)
-    common_experiment = (
-        experiment.get("phase") == "smoke"
-        and experiment.get("dgp_families") == ["global_null"]
-        and int(experiment.get("maximum_replicates", 0)) == 1
-        and int(experiment.get("n_bootstraps", 0)) == 2
-        and int(experiment.get("n_permutations", 0)) == 2
-        and experiment.get("run_loso") is True
-        and experiment.get("full_pipeline_refit_per_resample") is True
-    )
-    if not common_experiment:
+    if (
+        experiment.get("dgp_families") != ["global_null"]
+        or experiment.get("run_loso") is not True
+        or experiment.get("full_pipeline_refit_per_resample") is not True
+    ):
         raise ValueError("PR10 common experiment axis changed")
-    if schema_version == FROZEN_CONFIG_SCHEMA_VERSION:
+    calibration_profile = _CALIBRATION_CONFIG_PROFILES.get(str(schema_version))
+    if calibration_profile is not None:
+        if (
+            raw.get("status") != calibration_profile["status"]
+            or experiment.get("name") != calibration_profile["name"]
+            or experiment.get("publication_role")
+            != calibration_profile["publication_role"]
+            or experiment.get("phase") != "null_calibration"
+            or experiment.get("design_kinds") != list(DESIGN_KINDS)
+            or int(experiment.get("maximum_replicates", 0))
+            != calibration_profile["maximum_replicates"]
+            or int(experiment.get("maximum_datasets", 0))
+            != calibration_profile["maximum_datasets"]
+            or int(experiment.get("subjects_per_level_override", 0)) != 12
+            or experiment.get("dataset_id_suffix")
+            != calibration_profile["dataset_id_suffix"]
+            or int(experiment.get("n_bootstraps", 0))
+            != calibration_profile["n_bootstraps"]
+            or int(experiment.get("n_permutations", 0))
+            != calibration_profile["n_permutations"]
+            or int(experiment.get("expected_resamples_per_dataset", 0))
+            != calibration_profile["expected_resamples_per_dataset"]
+            or experiment.get("primary_endpoint")
+            != calibration_profile["primary_endpoint"]
+            or experiment.get("pass_rule") != calibration_profile["pass_rule"]
+            or experiment.get("release_thresholds_evaluated") is not False
+        ):
+            raise ValueError("PR10 global-null calibration profile changed")
+    elif (
+        experiment.get("phase") != "smoke"
+        or int(experiment.get("maximum_replicates", 0)) != 1
+        or int(experiment.get("n_bootstraps", 0)) != 2
+        or int(experiment.get("n_permutations", 0)) != 2
+    ):
+        raise ValueError("PR10 diagnostic experiment axis changed")
+    elif schema_version == FROZEN_CONFIG_SCHEMA_VERSION:
         if (
             raw.get("status")
             != "preregistered_after_runner_validation_before_six_design_smoke"
@@ -336,10 +409,13 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
         != "all_point_observed_m4_rows_have_complete_loso_distribution"
     ):
         raise ValueError("PR10 M4 LOSO n=12 scale-check axis changed")
+    expected_resample_jobs = 64 if calibration_profile is not None else 1
+    expected_backend = "process" if calibration_profile is not None else "thread"
     if (
         float(execution.get("maximum_memory_fraction", 0.0)) != 0.8
         or int(execution.get("dataset_jobs", -1)) != 0
-        or int(execution.get("resample_jobs", 0)) != 1
+        or int(execution.get("resample_jobs", 0)) != expected_resample_jobs
+        or str(execution.get("resample_backend", "thread")) != expected_backend
         or execution.get("thread_oversubscription_forbidden") is not True
     ):
         raise ValueError("PR10 execution policy changed")
@@ -350,10 +426,19 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
         or int(release.get("formal_minimum_permutations", 0)) != 1_000
     ):
         raise ValueError("PR10 release boundary changed")
-    release_guard = (
-        "smoke_result_cannot_release_p_or_q"
-        if schema_version == FROZEN_CONFIG_SCHEMA_VERSION
-        else "scale_check_cannot_release_p_or_q"
+    if (
+        calibration_profile is not None
+        and int(release.get("formal_minimum_null_replicates_per_scenario", 0)) != 1_000
+    ):
+        raise ValueError("PR10 null-replicate release boundary changed")
+    release_guard = str(
+        calibration_profile["release_guard"]
+        if calibration_profile is not None
+        else (
+            "smoke_result_cannot_release_p_or_q"
+            if schema_version == FROZEN_CONFIG_SCHEMA_VERSION
+            else "scale_check_cannot_release_p_or_q"
+        )
     )
     if release.get(release_guard) is not True:
         raise ValueError("PR10 diagnostic p/q release guard changed")

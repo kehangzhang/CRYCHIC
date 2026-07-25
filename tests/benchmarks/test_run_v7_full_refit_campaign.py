@@ -100,6 +100,59 @@ def test_pr10_m4_loso_n12_config_authenticates_and_overrides_plan() -> None:
     assert plan["dataset_id"].str.endswith("_n12_pr10").all()
 
 
+@pytest.mark.parametrize(
+    ("filename", "replicates", "datasets", "resamples", "suffix"),
+    (
+        (
+            "suggest_next2_v7_pr10_calibration_integration_r2_v1.json",
+            2,
+            12,
+            50,
+            "n12_pr10_calint_r2",
+        ),
+        (
+            "suggest_next2_v7_pr10_calibration_pilot_r20_v1.json",
+            20,
+            120,
+            210,
+            "n12_pr10_calpilot_r20",
+        ),
+    ),
+)
+def test_pr10_calibration_configs_freeze_n12_process_plans(
+    filename: str,
+    replicates: int,
+    datasets: int,
+    resamples: int,
+    suffix: str,
+) -> None:
+    path = Path(__file__).resolve().parents[2] / "benchmarks" / "configs" / filename
+    frozen = load_v7_full_refit_frozen_config(path)
+    experiment = frozen.config["experiment"]
+    execution = frozen.config["execution"]
+    assert isinstance(experiment, dict)
+    assert isinstance(execution, dict)
+
+    plan = build_v7_full_refit_plan(
+        load_v7_benchmark_protocol(frozen.protocol_path),
+        phase=str(experiment["phase"]),
+        maximum_replicates=int(experiment["maximum_replicates"]),
+        maximum_datasets=int(experiment["maximum_datasets"]),
+        dgp_families=tuple(map(str, experiment["dgp_families"])),
+        design_kinds=tuple(map(str, experiment["design_kinds"])),
+        subjects_per_level_override=int(experiment["subjects_per_level_override"]),
+        dataset_id_suffix=str(experiment["dataset_id_suffix"]),
+    )
+
+    assert len(plan) == datasets == replicates * 6
+    assert plan.groupby("design_kind").size().eq(replicates).all()
+    assert plan["subjects_per_level"].eq(12).all()
+    assert plan["dataset_id"].str.endswith(f"_{suffix}").all()
+    assert int(experiment["expected_resamples_per_dataset"]) == resamples
+    assert execution["resample_jobs"] == 64
+    assert execution["resample_backend"] == "process"
+
+
 def test_one_pr10_dataset_persists_resumes_and_keeps_formal_fields_closed(
     tmp_path: Path,
 ) -> None:

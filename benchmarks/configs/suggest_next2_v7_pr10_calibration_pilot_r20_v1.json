@@ -1,0 +1,58 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v1",
+  "status": "preregistered_alongside_integration_before_calibration_metrics_inspection",
+  "base_protocol": {
+    "filename": "suggest_next2_v7_benchmark_v3.json",
+    "sha256": "89ca902e09e4828ba910f8641e613b764fed72bfdcc2efcedc7419c670e1aae5"
+  },
+  "minimum_runner_commit": "898cac47d3eb11323253e7eb829c6c67073247d6",
+  "experiment": {
+    "name": "PR10_global_null_calibration_pilot_r20",
+    "publication_role": "calibration_precision_and_runtime_pilot_only",
+    "phase": "null_calibration",
+    "dgp_families": ["global_null"],
+    "design_kinds": [
+      "independent_two_group",
+      "independent_multi_group",
+      "paired",
+      "repeated",
+      "multi_cohort",
+      "continuous"
+    ],
+    "maximum_replicates": 20,
+    "maximum_datasets": 120,
+    "subjects_per_level_override": 12,
+    "dataset_id_suffix": "n12_pr10_calpilot_r20",
+    "n_bootstraps": 99,
+    "n_permutations": 99,
+    "run_loso": true,
+    "full_pipeline_refit_per_resample": true,
+    "expected_resamples_per_dataset": 210,
+    "primary_endpoint": "channel_design_global_null_type1_fdr_coverage_with_uncertainty",
+    "pass_rule": "report_estimates_and_intervals_without_release_decision",
+    "release_thresholds_evaluated": false
+  },
+  "execution": {
+    "maximum_memory_fraction": 0.8,
+    "dataset_jobs": 0,
+    "resample_jobs": 64,
+    "resample_backend": "process",
+    "thread_oversubscription_forbidden": true,
+    "worker_selection": "pilot_peak_rss_with_1_35_safety_factor_cpu_and_memory_bound_v1"
+  },
+  "selection_provenance": {
+    "process_backend_commit": "898cac47d3eb11323253e7eb829c6c67073247d6",
+    "process_scaling_report_commit": "5d9c673554974d82ddd1501d5cd6894763692f1c",
+    "six_design_process_manifest_sha256": "b6070999150980f3b85de915ec732443796f9960e6044105c0e1c87669da348a",
+    "n12_m4_loso_manifest_sha256": "fb81bdcdcdf786d7950ec6d7510c4b78f4dcdce011f78a51074eff3d8126af1c",
+    "locked_or_real_data_used": false
+  },
+  "release_policy": {
+    "calibration_gate_supplied": false,
+    "formal_inference_allowed": false,
+    "formal_minimum_bootstraps": 1000,
+    "formal_minimum_permutations": 1000,
+    "formal_minimum_null_replicates_per_scenario": 1000,
+    "pilot_result_cannot_release_p_or_q": true
+  }
+}
