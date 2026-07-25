@@ -192,6 +192,53 @@ supported design family with at least 1,000 null replicates per scenario,
 empirical type-I in `[0.035, 0.065]`, FDR no greater than `0.12`, and 95%
 coverage in `[0.92, 0.97]`.
 
+## Benchmark diagnostic layer
+
+`build_v7_diagnostics()` consumes the producer-owned OOF cross-fit artifact;
+it does not reconstruct scores from a final ranking. Its gate waterfall has the
+fixed order: common candidate universe, measurable ligand/receptor, receptor
+eligibility, ligand-contrast support, family selection, downstream support,
+sender assignment, native nonzero score, and significance. The first two
+stages come from the v7 measurement table. Intermediate legacy stages come
+from the exact fold application or an explicit benchmark-owned annotation
+ledger. Significance must be supplied at the exact sender-child grain. An
+unavailable stage is `not_estimable` or `not_computed`, never a failed gate.
+The cumulative retained count requires every preceding stage to have passed,
+while separate status counts expose why it stopped.
+
+Waterfalls are emitted for every fold and the combined OOF set. Marginal
+strata cover explicit truth positive/negative/unknown, contact/secreted/ECM
+mechanism, candidate-sender bins `2`, `3-5`, `6-10`, and `>10`, minimum
+sender/receiver cell-count bins, and receptor-complex cardinality. One-sender
+and unknown bins are retained rather than discarded. Truth and cell counts are
+optional benchmark inputs with unique keys; missing truth stays unknown and is
+never counted as a negative.
+
+Score geometry is computed separately for each configured head and fold.
+Parent heads are deduplicated at sample-by-LR-receiver grain before counting,
+whereas sender detection, attribution, coupling, and mechanism support retain
+sender-child grain. The report includes zero and NA fractions, unique values,
+tie fraction `(n_finite - n_unique) / (n_finite - 1)`, IQR and fixed
+quantiles, truth-stratified quantiles, pooled within-condition variance,
+event-centered between-condition variance, and the SD of null-event condition
+effects. A head with no finite values remains explicitly not estimable.
+
+Candidate-number diagnostics use the same fixed bins and report sender
+detection means, parent mean activity, maximum attribution, attribution
+entropy, a pre-registered detection-threshold false-positive rate, top-one
+true-sender accuracy, AUPRC, and tie-aware AUROC. Only explicitly labelled
+truth rows enter discrimination metrics. The raw sender detection score is
+never renormalized for this report.
+
+Multi-resolution evaluation accepts an explicit benchmark-owned ledger for LR,
+LR-receiver parent, sender-LR-receiver child, pathway, and exact-hyperedge
+units. It reports AUPRC, AUROC, effect Spearman correlation, RMSE, and direction
+accuracy. CRYCHIC intentionally does not derive coarse truth from child truth:
+sum, mean, maximum, and any-positive aggregation describe different estimands,
+so the benchmark must declare the correct unit and truth effect. Diagnostic
+inputs and outputs are content-bound, independent of input row order, and
+tamper checked.
+
 ## Inference boundary
 
 For continuous communication intensity, analytic HC3/CR2 models provide point

@@ -208,6 +208,18 @@ from .signature_export import (
     export_crossfit_layered_signatures,
 )
 from .training import FoldTrainingSpec, TrainingArtifacts, fit_training_artifacts
+from .v7_diagnostics import (
+    CANDIDATE_SENDER_BIAS_COLUMNS,
+    GATE_ATTRITION_COLUMNS,
+    GATE_STAGES,
+    RESOLUTION_PERFORMANCE_COLUMNS,
+    SCORE_GEOMETRY_COLUMNS,
+    V7_DIAGNOSTICS_VERSION,
+    V7DiagnosticsResult,
+    V7DiagnosticsSpec,
+    build_v7_diagnostics,
+    summarize_v7_resolution_performance,
+)
 from .v7_estimator import (
     V7_CROSSFIT_ESTIMATOR_VERSION,
     CrossFitV7EstimatorResult,
@@ -235,9 +247,15 @@ from .v7_full_pipeline_resampling import (
 )
 
 __all__ = [
+    "CANDIDATE_SENDER_BIAS_COLUMNS",
     "CROSSFIT_SAMPLE_EDGE_V2_ARTIFACT_KIND",
     "CROSSFIT_SAMPLE_EDGE_V2_SCHEMA_VERSION",
+    "GATE_ATTRITION_COLUMNS",
+    "GATE_STAGES",
+    "RESOLUTION_PERFORMANCE_COLUMNS",
+    "SCORE_GEOMETRY_COLUMNS",
     "V7_CROSSFIT_ESTIMATOR_VERSION",
+    "V7_DIAGNOSTICS_VERSION",
     "V7_FULL_PIPELINE_EFFECT_COLUMNS",
     "V7_FULL_PIPELINE_INFERENCE_VERSION",
     "V7_FULL_PIPELINE_RESAMPLING_VERSION",
@@ -325,6 +343,8 @@ __all__ = [
     "TrainingArtifactApplication",
     "TrainingArtifacts",
     "V7CompactEstimatorSnapshot",
+    "V7DiagnosticsResult",
+    "V7DiagnosticsSpec",
     "V7EstimatorSpec",
     "V7FullPipelineCalibrationGate",
     "V7FullPipelineInferenceResult",
@@ -355,6 +375,7 @@ __all__ = [
     "build_graph_fused_integrated_lr_scores",
     "build_graph_fused_training_problem",
     "build_graph_fused_tuning_folds",
+    "build_v7_diagnostics",
     "derive_graph_fused_family_effects",
     "dry_run_baseline",
     "evaluate_v7_full_pipeline_calibration",
@@ -397,6 +418,7 @@ __all__ = [
     "summarize_frozen_selection_frequency_universe",
     "summarize_frozen_specificity_support_universe",
     "summarize_resampled_family_selection",
+    "summarize_v7_resolution_performance",
     "validate_recommended_crossfit_spec",
     "write_baseline_result",
     "write_crossfit_result",

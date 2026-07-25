@@ -154,15 +154,30 @@ from .omnibus import (
     fit_oof_context_omnibus,
     summarize_full_pipeline_omnibus,
 )
+from .v7_diagnostics import (
+    CANDIDATE_SENDER_BIAS_COLUMNS,
+    RESOLUTION_PERFORMANCE_COLUMNS,
+    SCORE_GEOMETRY_COLUMNS,
+    V7_DIAGNOSTIC_METRICS_VERSION,
+    V7_DIAGNOSTIC_SCORE_HEADS,
+    summarize_v7_candidate_sender_bias,
+    summarize_v7_resolution_performance,
+    summarize_v7_score_geometry,
+)
 
 __all__ = [
+    "CANDIDATE_SENDER_BIAS_COLUMNS",
     "DESIGN_AWARE_DIFFERENTIAL_VERSION",
     "DESIGN_AWARE_EFFECT_COLUMNS",
     "DESIGN_AWARE_OMNIBUS_COLUMNS",
     "OCCURRENCE_CONTRAST_COLUMNS",
     "OCCURRENCE_CONTRAST_VERSION",
+    "RESOLUTION_PERFORMANCE_COLUMNS",
+    "SCORE_GEOMETRY_COLUMNS",
     "TWO_PART_OCCURRENCE_EFFECT_COLUMNS",
     "TWO_PART_OCCURRENCE_VERSION",
+    "V7_DIAGNOSTIC_METRICS_VERSION",
+    "V7_DIAGNOSTIC_SCORE_HEADS",
     "ActiveEdgeScoreStatus",
     "ActiveProbabilityCollection",
     "ActiveProbabilityRecord",
@@ -277,5 +292,8 @@ __all__ = [
     "summarize_g3p_calibration_campaign",
     "summarize_selection_frequency",
     "summarize_specificity_support",
+    "summarize_v7_candidate_sender_bias",
+    "summarize_v7_resolution_performance",
+    "summarize_v7_score_geometry",
     "validate_frozen_hypothesis_coverage",
 ]
