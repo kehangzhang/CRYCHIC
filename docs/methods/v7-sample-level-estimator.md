@@ -1,8 +1,9 @@
 # CRYCHIC v7 sample-level estimator contract
 
-Status: implementation target. This document freezes the estimands before the
-v7 implementation and benchmark cycle. It does not claim that the complete v7
-pipeline is already released or calibrated.
+Status: implementation and calibration target. PR0--PR10 estimator and
+full-refit execution code is present, but the locked simulation and real-data
+campaigns remain release evidence rather than assumptions. This document does
+not claim that v7 is already calibrated or released.
 
 ## Legacy freeze
 
@@ -151,11 +152,45 @@ more of their data, while weak edges borrow more topology information.
 The reported posterior standard error is
 `sqrt(kappa * SE^2)` and is explicitly conditional on the fitted topology mean.
 It omits topology-fit uncertainty, emits no p/q values, and cannot be used for
-formal inference until PR10 refits the complete shrinkage model inside every
-subject-level resample. Missing raw effects remain not estimable rather than
-being replaced by their topology prediction. No-prior, partial-view,
+formal inference unless PR10 refits the complete shrinkage model inside every
+subject-level resample. A legitimate zero analytic SE is retained with
+`kappa=1`; negative or non-finite SE values are rejected. Missing raw effects
+remain not estimable rather than being replaced by their topology prediction.
+No-prior, partial-view,
 exact-degree-matched permutation, and partial-rewiring priors remain required
 controls for every M5 benchmark claim.
+
+## Full-refit resampling
+
+PR10 starts from the sanitized raw-count AnnData for every operation. It never
+relabels a saved score table. The point run and every subject bootstrap,
+condition permutation, and leave-one-subject-out run independently rebuild the
+subject fold plan, availability, M0 transform, configured sender/M1/M2 heads,
+held-out score table, design-aware effect, configured M4 result, and configured
+M5 fit. Large cross-fit children are discarded after their small estimator and
+stage-lineage records have been retained. Per-resample retention is limited to
+the minimal continuous, occurrence, and M5 effect columns; M4 subject-event
+tables, omnibus diagnostics, fold models, and matrices are released at the end
+of each worker.
+
+Independent-group bootstraps draw complete subjects with replacement within
+condition and declared immutable strata, preserving group sizes. Paired and
+repeated bootstraps draw complete subject trajectories. Condition permutations
+use the frozen exchangeability map, while LOSO removes all cells and samples of
+one subject before rerunning fold planning. A resample that can no longer form
+an estimable fold is a typed failed record; it is not omitted from completeness
+counts.
+
+The finalizer keeps three multiplicity scopes separate: continuous raw effect,
+fixed-threshold occurrence prevalence difference, and M5 posterior effect.
+Within each scope it reports the bootstrap standard deviation and percentile
+interval, the two-sided empirical permutation value with the `+1` correction,
+global event-by-contrast BH, and LOSO maximum/median effect displacement and
+sign agreement. These remain explicitly diagnostic until all requested
+resamples are observed and a producer-owned calibration gate passes every
+supported design family with at least 1,000 null replicates per scenario,
+empirical type-I in `[0.035, 0.065]`, FDR no greater than `0.12`, and 95%
+coverage in `[0.92, 0.97]`.
 
 ## Inference boundary
 
@@ -180,5 +215,5 @@ not silently fall back to an independence covariance model.
 Fields named `diagnostic_p_value`, `diagnostic_ci_lower`, and
 `diagnostic_ci_upper` describe only the analytic regression diagnostic. The
 formal `p_value`, `q_value`, `ci_lower`, and `ci_upper` fields remain NA and
-`formal_inference_allowed=false` until the PR10 full-pipeline resampling release
-gate is satisfied.
+`formal_inference_allowed=false` until the PR10 full-pipeline resampling and
+multi-design calibration gates are both satisfied.

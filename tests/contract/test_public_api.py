@@ -63,6 +63,7 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "CrossFitOOFRequirementRecord",
         "CrossFitResult",
         "CrossFitSpec",
+        "CrossFitV7EstimatorResult",
         "Crychic",
         "CrychicConfig",
         "CrychicResult",
@@ -121,6 +122,12 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "ResourceBundle",
         "SemanticScoreCollection",
         "TargetPrior",
+        "V7EstimatorSpec",
+        "V7CompactEstimatorSnapshot",
+        "V7FullPipelineCalibrationGate",
+        "V7FullPipelineInferenceResult",
+        "V7FullPipelineInferenceSpec",
+        "V7FullPipelineResamplingResult",
         "__version__",
         "assess_oof_effect_formal_eligibility",
         "build_crossfit_communication_hypergraph",
@@ -133,13 +140,16 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "derive_graph_fused_family_effects",
         "audit_crossfit_oof_readiness",
         "export_crossfit_layered_signatures",
+        "evaluate_v7_full_pipeline_calibration",
         "fit_crossfit_family_effect",
+        "fit_crossfit_v7_estimator",
         "fit_oof_context_effect",
         "freeze_g3p_simulation_truth",
         "freeze_crossfit_directional_target_program_universe",
         "freeze_directional_target_program_universe",
         "fit_repeated_measures_cr2_receiver_effect",
         "input_schema_from_config",
+        "finalize_v7_full_pipeline_inference",
         "recommended_crossfit_spec",
         "load_cellchat_resource",
         "load_cellphonedb_resource",
@@ -149,6 +159,7 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         "run_active_probability_pipeline",
         "run_repeated_subject_crossfit",
         "run_subject_crossfit",
+        "run_v7_full_pipeline_resampling",
         "score_crossfit_directional_target_programs",
         "summarize_g3_frequency_calibration_campaign",
         "summarize_attested_g3_frequency_calibration_campaign",
@@ -174,6 +185,16 @@ def test_public_api_has_reviewed_v0_1_symbols() -> None:
         crychic.recommended_crossfit_spec
         is workflow.recommended_crossfit_spec
         is public_api.recommended_crossfit_spec
+    )
+    assert (
+        crychic.run_v7_full_pipeline_resampling
+        is workflow.run_v7_full_pipeline_resampling
+        is public_api.run_v7_full_pipeline_resampling
+    )
+    assert (
+        crychic.finalize_v7_full_pipeline_inference
+        is workflow.finalize_v7_full_pipeline_inference
+        is public_api.finalize_v7_full_pipeline_inference
     )
     assert (
         crychic.AttributionSupportMethod.GATED_RESPONSE_NORM_V2.value

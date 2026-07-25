@@ -81,6 +81,37 @@ def _canonical_metadata_digest(table: pd.DataFrame, columns: tuple[str, ...]) ->
     return str(canonical_digest(records))
 
 
+def _frame_digest(table: pd.DataFrame) -> str:
+    records: list[dict[str, object]] = []
+    for row in table.itertuples(index=False, name=None):
+        record: dict[str, object] = {}
+        for column, value in zip(table.columns, row, strict=True):
+            if value is None or value is pd.NA or value is pd.NaT:
+                normalized: object = None
+            elif isinstance(value, (float, np.floating)):
+                normalized = (
+                    None
+                    if not np.isfinite(float(value))
+                    else {"float_hex": float(value).hex()}
+                )
+            elif isinstance(value, (bool, np.bool_)):
+                normalized = bool(value)
+            elif isinstance(value, (int, np.integer)):
+                normalized = int(value)
+            else:
+                normalized = str(value)
+            record[str(column)] = normalized
+        records.append(record)
+    return str(
+        canonical_digest(
+            {
+                "columns": list(map(str, table.columns)),
+                "records": records,
+            }
+        )
+    )
+
+
 def _merge_required_metadata(
     score_table: pd.DataFrame,
     sample_metadata: pd.DataFrame | None,
@@ -270,6 +301,7 @@ class CrossFitV7EstimatorResult:
     hypergraph: DesignAwareHypergraphShrinkageV2Result | None
     score_provenance_ids: tuple[str, ...]
     sample_metadata_digest: str
+    output_digest: str = field(init=False)
     estimator_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -314,6 +346,33 @@ class CrossFitV7EstimatorResult:
         )
         if len(metadata_digest) != 64:
             raise ValueError("sample_metadata_digest must be a canonical digest")
+        output_digest = str(
+            canonical_digest(
+                {
+                    "differential_effects": _frame_digest(
+                        self.differential.effects
+                    ),
+                    "differential_omnibus": _frame_digest(
+                        self.differential.omnibus
+                    ),
+                    "hypergraph": (
+                        None
+                        if hypergraph is None
+                        else _frame_digest(hypergraph.shrinkage)
+                    ),
+                    "occurrence_effects": (
+                        None
+                        if occurrence is None
+                        else _frame_digest(occurrence.occurrence.effects)
+                    ),
+                    "occurrence_subject_events": (
+                        None
+                        if occurrence is None
+                        else _frame_digest(occurrence.occurrence.subject_events)
+                    ),
+                }
+            )
+        )
         payload = {
             "crossfit_id": crossfit_id,
             "differential_effect_ids": list(self.differential.effects["effect_id"]),
@@ -324,6 +383,7 @@ class CrossFitV7EstimatorResult:
             "occurrence_result_id": (
                 None if occurrence is None else occurrence.result_id
             ),
+            "output_digest": output_digest,
             "sample_metadata_digest": metadata_digest,
             "score_provenance_ids": list(provenance),
             "spec_id": self.spec.spec_id,
@@ -332,6 +392,7 @@ class CrossFitV7EstimatorResult:
         object.__setattr__(self, "crossfit_id", crossfit_id)
         object.__setattr__(self, "score_provenance_ids", provenance)
         object.__setattr__(self, "sample_metadata_digest", metadata_digest)
+        object.__setattr__(self, "output_digest", output_digest)
         object.__setattr__(
             self,
             "estimator_id",
@@ -342,13 +403,73 @@ class CrossFitV7EstimatorResult:
             ),
         )
 
+    def _require_intact(self) -> None:
+        expected_output_digest = str(
+            canonical_digest(
+                {
+                    "differential_effects": _frame_digest(
+                        self.differential.effects
+                    ),
+                    "differential_omnibus": _frame_digest(
+                        self.differential.omnibus
+                    ),
+                    "hypergraph": (
+                        None
+                        if self.hypergraph is None
+                        else _frame_digest(self.hypergraph.shrinkage)
+                    ),
+                    "occurrence_effects": (
+                        None
+                        if self.occurrence is None
+                        else _frame_digest(self.occurrence.occurrence.effects)
+                    ),
+                    "occurrence_subject_events": (
+                        None
+                        if self.occurrence is None
+                        else _frame_digest(self.occurrence.occurrence.subject_events)
+                    ),
+                }
+            )
+        )
+        expected_id = stable_id(
+            "crossfit_v7_estimator_result",
+            {
+                "crossfit_id": self.crossfit_id,
+                "differential_effect_ids": list(
+                    self.differential.effects["effect_id"]
+                ),
+                "differential_omnibus_ids": list(
+                    self.differential.omnibus["omnibus_id"]
+                ),
+                "hypergraph_result_id": (
+                    None if self.hypergraph is None else self.hypergraph.result_id
+                ),
+                "occurrence_result_id": (
+                    None if self.occurrence is None else self.occurrence.result_id
+                ),
+                "output_digest": expected_output_digest,
+                "sample_metadata_digest": self.sample_metadata_digest,
+                "score_provenance_ids": list(self.score_provenance_ids),
+                "spec_id": self.spec.spec_id,
+                "version": V7_CROSSFIT_ESTIMATOR_VERSION,
+            },
+            schema_version=_SCHEMA_VERSION,
+        )
+        if (
+            self.output_digest != expected_output_digest
+            or self.estimator_id != expected_id
+        ):
+            raise ValueError("v7 estimator output integrity validation failed")
+
     def to_manifest(self) -> dict[str, object]:
+        self._require_intact()
         return {
             "estimator_id": self.estimator_id,
             "crossfit_id": self.crossfit_id,
             "spec": self.spec.to_dict(),
             "score_provenance_ids": list(self.score_provenance_ids),
             "sample_metadata_digest": self.sample_metadata_digest,
+            "output_digest": self.output_digest,
             "continuous_effect_rows": len(self.differential.effects),
             "continuous_omnibus_rows": len(self.differential.omnibus),
             "occurrence": (

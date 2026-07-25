@@ -362,9 +362,9 @@ def fit_uncertainty_aware_hypergraph_shrinkage_v2(
     if (
         np.isinf(effects).any()
         or np.isinf(standard_errors).any()
-        or (standard_errors[observed] <= 0.0).any()
+        or (standard_errors[observed] < 0.0).any()
     ):
-        raise ValueError("observed M5 v2 effects require finite positive SEs")
+        raise ValueError("observed M5 v2 effects require finite non-negative SEs")
     if int(observed.sum()) < resolved.minimum_observed_edges:
         raise ValueError("M5 v2 has insufficient observed edges")
 

@@ -188,11 +188,21 @@ def test_fit_is_row_order_deterministic_and_rejects_bad_uncertainty() -> None:
             prior=prior,
             spec=spec,
         )
-    nonpositive = estimates.copy()
-    nonpositive.loc[0, "standard_error"] = 0.0
-    with pytest.raises(ValueError, match="positive SEs"):
+    zero = estimates.copy()
+    zero.loc[0, "standard_error"] = 0.0
+    zero_result, _ = fit_uncertainty_aware_hypergraph_shrinkage_v2(
+        zero,
+        prior=prior,
+        spec=spec,
+    )
+    assert zero_result.loc[0, "shrinkage_factor"] == 1.0
+    assert zero_result.loc[0, "posterior_effect"] == zero.loc[0, "effect"]
+    assert zero_result.loc[0, "posterior_standard_error"] == 0.0
+    negative = estimates.copy()
+    negative.loc[0, "standard_error"] = -0.1
+    with pytest.raises(ValueError, match="non-negative SEs"):
         fit_uncertainty_aware_hypergraph_shrinkage_v2(
-            nonpositive,
+            negative,
             prior=prior,
             spec=spec,
         )
