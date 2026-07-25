@@ -136,6 +136,27 @@ occurrence estimand. Active-only conditional-intensity effects remain a
 separate design-aware diagnostic channel until full-pipeline resampling in
 PR10; they do not borrow the occurrence p/q values.
 
+## Uncertainty-aware hypergraph shrinkage
+
+M5 v2 consumes one locked design-aware contrast with a raw edge effect and
+standard error. Its frozen H-prior is represented as a sparse intercept-plus-
+view incidence matrix; resource-confidence values are not multiplied into the
+topology. A weighted ridge fit estimates the additive topology mean, while a
+zero-mean residual second moment estimates the common prior variance `tau^2`.
+For edge standard error `SE`, the saved weight is
+`kappa = tau^2 / (tau^2 + SE^2)` and the posterior working mean is
+`kappa * raw_effect + (1 - kappa) * topology_mean`. High-precision edges retain
+more of their data, while weak edges borrow more topology information.
+
+The reported posterior standard error is
+`sqrt(kappa * SE^2)` and is explicitly conditional on the fitted topology mean.
+It omits topology-fit uncertainty, emits no p/q values, and cannot be used for
+formal inference until PR10 refits the complete shrinkage model inside every
+subject-level resample. Missing raw effects remain not estimable rather than
+being replaced by their topology prediction. No-prior, partial-view,
+exact-degree-matched permutation, and partial-rewiring priors remain required
+controls for every M5 benchmark claim.
+
 ## Inference boundary
 
 For continuous communication intensity, analytic HC3/CR2 models provide point

@@ -103,6 +103,14 @@ from .hypergraph_prior import (
     rewire_hypergraph_prior_degree_matched,
     select_hypergraph_prior_views,
 )
+from .hypergraph_shrinkage_v2 import (
+    HYPERGRAPH_UNCERTAINTY_SHRINKAGE_V2_COLUMNS,
+    HYPERGRAPH_UNCERTAINTY_SHRINKAGE_V2_VERSION,
+    UncertaintyAwareHypergraphShrinkageV2Fit,
+    UncertaintyAwareHypergraphShrinkageV2Spec,
+    fit_uncertainty_aware_hypergraph_shrinkage_v2,
+    sparse_hypergraph_incidence_v2,
+)
 from .integration import (
     DownstreamDirectionPolicy,
     DownstreamEvidencePolicy,
@@ -183,6 +191,8 @@ __all__ = [
     "GLOBAL_COMMON_SENDER_SCORE_COLUMNS",
     "HYPERGRAPH_PRIOR_VERSION",
     "HYPERGRAPH_SHRINKAGE_VERSION",
+    "HYPERGRAPH_UNCERTAINTY_SHRINKAGE_V2_COLUMNS",
+    "HYPERGRAPH_UNCERTAINTY_SHRINKAGE_V2_VERSION",
     "INCREMENTAL_DOWNSTREAM_ALGORITHM_CONTRACT",
     "LEGACY_UNTRACKED_SCORE_VERSION",
     "RECEIVER_PROGRAM_SCORE_COLUMNS",
@@ -250,6 +260,8 @@ __all__ = [
     "SignedProgramReceiverTransformV2",
     "SignedProgramV2Spec",
     "SubjectEqualActiveEdgeScore",
+    "UncertaintyAwareHypergraphShrinkageV2Fit",
+    "UncertaintyAwareHypergraphShrinkageV2Spec",
     "apply_absolute_activity_v2_transform",
     "apply_cross_receiver_common_scoring_functional",
     "apply_downstream_functional",
@@ -274,6 +286,7 @@ __all__ = [
     "fit_receiver_family_scoring_artifact",
     "fit_receiver_program_training_artifact",
     "fit_signed_program_v2",
+    "fit_uncertainty_aware_hypergraph_shrinkage_v2",
     "float64_array_digest",
     "freeze_active_edge_universe",
     "freeze_hypergraph_prior",
@@ -295,6 +308,7 @@ __all__ = [
     "select_hypergraph_prior_views",
     "signed_geometric_program_concordance",
     "signed_program_definitions_from_resources_v2",
+    "sparse_hypergraph_incidence_v2",
     "summarize_subject_equal_active_edge_score",
     "validate_common_functional",
     "weighted_geometric_strength",

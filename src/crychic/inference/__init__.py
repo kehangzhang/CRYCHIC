@@ -111,6 +111,10 @@ from .hierarchical import (
     evaluate_hierarchical_fdr,
     freeze_hierarchical_fdr_spec,
 )
+from .hypergraph_shrinkage_v2 import (
+    DesignAwareHypergraphShrinkageV2Result,
+    fit_design_aware_hypergraph_shrinkage_v2,
+)
 from .hypotheses import (
     FrozenHypothesisCoverage,
     FrozenHypothesisUniverse,
@@ -172,6 +176,7 @@ __all__ = [
     "CalibrationReplayRegistry",
     "CalibrationReplayRequest",
     "DesignAwareDifferentialResult",
+    "DesignAwareHypergraphShrinkageV2Result",
     "DifferentialContrastSpec",
     "DifferentialDesignKind",
     "DifferentialDesignSpec",
@@ -256,6 +261,7 @@ __all__ = [
     "evaluate_hierarchical_fdr",
     "fit_beta_uniform_mixture",
     "fit_design_aware_differential",
+    "fit_design_aware_hypergraph_shrinkage_v2",
     "fit_oof_context_effect",
     "fit_oof_context_omnibus",
     "fit_subject_occurrence_contrasts",
