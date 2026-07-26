@@ -1,0 +1,68 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-real-e1-v1",
+  "status": "preregistered_before_v7_real_refit",
+  "estimator_commit": "5dc22aaa87896eafbeb687aea8d8e96e3654af01",
+  "score_projection_commit": "35db184d62653ff8c960e2b135fa8e3060e1d394",
+  "datasets": {
+    "kuppe": {
+      "dataset_id": "Kuppe_MI_CTRL_vs_IZ",
+      "role": "development_non_independent",
+      "condition_column": "condition",
+      "reference": "CTRL",
+      "target": "IZ",
+      "contrast_name": "IZ_vs_CTRL",
+      "batch_columns": [],
+      "seed": 20260717,
+      "outer_fold_partition_seed": 20260717
+    },
+    "ms": {
+      "dataset_id": "LermaMartin_MS_CA_vs_Ctrl",
+      "role": "reused_locked_external_not_fresh_independent",
+      "condition_column": "lesion_type",
+      "reference": "Ctrl",
+      "target": "CA",
+      "contrast_name": "CA_vs_Ctrl",
+      "batch_columns": ["batch"],
+      "seed": 20260717,
+      "outer_fold_partition_seed": 20260718
+    }
+  },
+  "estimator": {
+    "execution_profile": "v7_primary_m0_m5_v1",
+    "bottleneck_penalty": 0.0,
+    "minimum_sender_calibration_subjects": 4,
+    "minimum_signed_program_samples": 4,
+    "minimum_signed_program_subjects": 3,
+    "minimum_coupling_subjects": 4,
+    "minimum_coupling_edges_for_eb": 2,
+    "attribution_coupling_weight": 0.25,
+    "minimum_cells_per_sample_cell_type": 10,
+    "minimum_subjects_per_level": 4,
+    "minimum_clusters_for_cr2": 6,
+    "inference_id": "I1",
+    "generators": ["G0", "G2", "G3", "G4", "G5"],
+    "legacy_g1_source": "checksum_bound_existing_full_profile_run_only"
+  },
+  "spatial_des": {
+    "sender_resolved_generators": ["G0", "G2", "G3", "G5"],
+    "endpoints": [
+      "continuous_weighted_des",
+      "diagnostic_one_se_native_count_des",
+      "top_k_count_des"
+    ],
+    "event_budgets": [100, 250, 500, 1000],
+    "top_k_scope": "global_across_both_effect_directions",
+    "score_type": "pos",
+    "weight_exponent": 1.0,
+    "tie_policy": "fgsea_native",
+    "exclude_self_pairs": true
+  },
+  "release": {
+    "formal_inference_allowed": false,
+    "diagnostic_p_values_are_not_formal": true,
+    "real_data_edge_auroc_forbidden": true,
+    "spatial_colocalization_is_an_indirect_silver_endpoint": true,
+    "g4_sender_resolved_des_forbidden": true,
+    "ms_parameter_selection_forbidden": true
+  }
+}
