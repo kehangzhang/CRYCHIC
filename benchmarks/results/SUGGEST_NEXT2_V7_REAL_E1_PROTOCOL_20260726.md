@@ -20,16 +20,18 @@ forbidden.
 
 Frozen protocol:
 `benchmarks/configs/suggest_next2_v7_real_e1_v1.json`, SHA256
-`7223ba4f93217967c51c3875dc7e4a3f6f8b4df959d2a9406da3331f4a8a6166`.
+`2a733fb6a076996c70075ad36f6085329aa7578b72b59db16fc3ef6a4211d0c8`.
 
 ## Bound cohort, truth and resource inputs
 
 | Dataset | Cells x genes | H5AD SHA256 | Preparation manifest SHA256 | Truth manifest SHA256 | Expected-set SHA256 |
 |---|---:|---|---|---|---|
-| Kuppe | 76,141 x 29,126 | `c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926` | `2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e` | `4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff` | `1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655` |
-| MS paper-matched | 69,168 x 32,115 | `433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c` | `35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d` | `648d77217c75773fe32e6a80d6918a52c49317743354936467f61a31ddf1ffb6` | `402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2` |
+| Kuppe | 76,141 x 29,126 | `c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926` | `2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e` | `4fe12433c953edaab760c64f369bb44762335346b2ba7a57fe10549ae71fd9b9` | `b883f58e1df3c773d09f80a32f966a5f8db5dee91740f10e2db70d6cd4e7119b` |
+| MS paper-matched | 69,168 x 32,115 | `433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c` | `35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d` | `f93042a947ce6dd0260a40f58ebc3155890c03b44d8674b38ffe275fbb2c20bd` | `9c91513503b7715949d247a558e23e9801d33cf56a327a0df52a87b1a2e5342d` |
 
-The MS binding excludes the earlier approximately 75k-cell object. Shared inputs
+Both truth manifests use `subject_id`, floor-sized top sets and exclude self
+pairs; repeated sections are averaged within subject. The MS binding excludes
+the earlier approximately 75k-cell object. Shared inputs
 are frozen to the 2,293-row ConnectomeDB2020 payload SHA256 `e7813632...`, its
 manifest `3dd10324...`, the NicheNet manifest `4e2a1077...`, and runtime Parquet
 `42a6fa37...`. The runner validates all payloads before creating the output
@@ -63,7 +65,7 @@ CRYCHIC_PROGRESS=1 python -m benchmarks.literature.run_v7_real_multigroup \
   --resource-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/resources/connectomedb2020/manifest.json \
   --database-root /media/subunit/bioinfo/crychic_dev/databases \
   --nichenet-manifest /media/subunit/bioinfo/crychic_dev/databases/nichenet/v2_2021/manifest.json \
-  --truth-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/kuppe_figure3_sample_floor_exclude_self_v2/manifest.json \
+  --truth-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/kuppe_subject_floor_exclude_self_v2_20260726/manifest.json \
   --legacy-source-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/kuppe/manifest.json \
   --legacy-crossfit-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/kuppe/crossfit_result/crossfit_manifest.json \
   --legacy-components /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/kuppe/crossfit_result/family_common_components.parquet \
@@ -82,7 +84,7 @@ CRYCHIC_PROGRESS=1 python -m benchmarks.literature.run_v7_real_multigroup \
   --resource-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/resources/connectomedb2020/manifest.json \
   --database-root /media/subunit/bioinfo/crychic_dev/databases \
   --nichenet-manifest /media/subunit/bioinfo/crychic_dev/databases/nichenet/v2_2021/manifest.json \
-  --truth-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/ms_figure3_sample_floor_exclude_self_v2/manifest.json \
+  --truth-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/spatial_truth/ms_subject_floor_exclude_self_v2_20260726/manifest.json \
   --legacy-source-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/ms/manifest.json \
   --legacy-crossfit-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/ms/crossfit_result/crossfit_manifest.json \
   --legacy-components /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/latest_core_2d10f36_20260724/runs/ms/crossfit_result/family_common_components.parquet \
@@ -98,7 +100,7 @@ variants, coverage, score geometry and effect summaries. The manifest must be
 `complete`, `dirty=false`, bind every output checksum, and retain
 `formal_inference_allowed=false` before spatial-geometry evaluation is allowed.
 
-Focused verification: 9 real-runner tests passed. These tests cover frozen roles,
+Focused verification: 10 real-runner tests passed. These tests cover frozen roles,
 input and payload drift rejection, subject-level contrasts, G1 component
 projection, the G4 sender-resolution guard, withheld formal fields,
 fixed-K/continuous DES and complete cell-pair axes.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -43,10 +44,10 @@ def _contract() -> RealDatasetContract:
         n_obs=76141,
         n_vars=29126,
         truth_manifest_sha256=(
-            "4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff"
+            "4fe12433c953edaab760c64f369bb44762335346b2ba7a57fe10549ae71fd9b9"
         ),
         truth_expected_sets_sha256=(
-            "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655"
+            "b883f58e1df3c773d09f80a32f966a5f8db5dee91740f10e2db70d6cd4e7119b"
         ),
         condition_column="condition",
         reference="CTRL",
@@ -228,6 +229,44 @@ def test_frozen_checksum_guard_rejects_payload_drift(tmp_path: Path) -> None:
     payload.write_text("drifted\n", encoding="utf-8")
     with pytest.raises(ValueError, match="fixture payload checksum mismatch"):
         real_runner._require_sha256(payload, expected, "fixture payload")
+
+
+def test_spatial_truth_requires_subject_floor_exclude_self(tmp_path: Path) -> None:
+    expected_path = tmp_path / "expected.tsv"
+    _expected().to_csv(expected_path, sep="\t", index=False)
+    contract = replace(
+        _contract(),
+        truth_expected_sets_sha256=real_runner.sha256_file(expected_path),
+    )
+    des_contract = real_runner.DES_CONTRACTS[contract.slug]
+    manifest = {
+        "schema_version": des_contract["truth_schema"],
+        "status": "complete",
+        "dataset_id": des_contract["truth_dataset"],
+        "design": {"multi_sample_unit": "subject_id"},
+        "protocol": {
+            "include_self_pairs": False,
+            "top_count_rule": "floor(top_fraction * rankable_pairs)",
+        },
+        "outputs": {
+            "expected_sets": {
+                "filename": expected_path.name,
+                "sha256": real_runner.sha256_file(expected_path),
+            }
+        },
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    observed, _, _ = real_runner._load_expected_sets(
+        manifest_path, dataset_contract=contract
+    )
+    assert len(observed) == len(_expected())
+
+    manifest["design"]["multi_sample_unit"] = "sample_id"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="truth manifest does not match"):
+        real_runner._load_expected_sets(manifest_path, dataset_contract=contract)
 
 
 def test_real_design_is_subject_level_target_minus_reference() -> None:

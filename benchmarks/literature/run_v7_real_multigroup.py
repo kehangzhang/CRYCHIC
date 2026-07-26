@@ -339,8 +339,8 @@ def load_real_e1_config(
             "2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e",
             76141,
             29126,
-            "4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff",
-            "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
+            "4fe12433c953edaab760c64f369bb44762335346b2ba7a57fe10549ae71fd9b9",
+            "b883f58e1df3c773d09f80a32f966a5f8db5dee91740f10e2db70d6cd4e7119b",
             "condition",
             "CTRL",
             "IZ",
@@ -356,8 +356,8 @@ def load_real_e1_config(
             "35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d",
             69168,
             32115,
-            "648d77217c75773fe32e6a80d6918a52c49317743354936467f61a31ddf1ffb6",
-            "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
+            "f93042a947ce6dd0260a40f58ebc3155890c03b44d8674b38ffe275fbb2c20bd",
+            "9c91513503b7715949d247a558e23e9801d33cf56a327a0df52a87b1a2e5342d",
             "lesion_type",
             "Ctrl",
             "CA",
@@ -875,10 +875,18 @@ def _load_expected_sets(
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, object]]:
     contract = DES_CONTRACTS[dataset_contract.slug]
     manifest = _read_json(truth_manifest_path)
+    design = manifest.get("design")
+    protocol = manifest.get("protocol")
     if (
         manifest.get("schema_version") != contract["truth_schema"]
         or manifest.get("status") != "complete"
         or manifest.get("dataset_id") != contract["truth_dataset"]
+        or not isinstance(design, Mapping)
+        or design.get("multi_sample_unit") != "subject_id"
+        or not isinstance(protocol, Mapping)
+        or protocol.get("include_self_pairs") is not False
+        or protocol.get("top_count_rule")
+        != "floor(top_fraction * rankable_pairs)"
     ):
         raise ValueError("real E1 spatial truth manifest does not match its contract")
     outputs = manifest.get("outputs")
