@@ -243,10 +243,10 @@ def run(
             resource_id=resource_id,
         )
         ranking_path = staged / "condition_cell_pair_rankings.tsv"
-        ledger_path = staged / "scseqcommdiff_event_ledger.parquet"
+        ledger_path = staged / "scseqcommdiff_event_ledger.tsv.gz"
         diagnostics_path = staged / "track_diagnostics.tsv"
         rankings.to_csv(ranking_path, sep="\t", index=False)
-        ledger.to_parquet(ledger_path, index=False, compression="zstd")
+        ledger.to_csv(ledger_path, sep="\t", index=False, compression="gzip")
         diagnostics.to_csv(diagnostics_path, sep="\t", index=False)
         manifest = {
             "schema_version": SCHEMA_VERSION,
