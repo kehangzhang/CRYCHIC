@@ -1,0 +1,139 @@
+{
+  "schema_version": "crychic-suggest-next2-v7-intervention-v1",
+  "status": "preregistered_before_v7_intervention_refit",
+  "estimator_commit": "5dc22aaa87896eafbeb687aea8d8e96e3654af01",
+  "score_projection_commit": "35db184d62653ff8c960e2b135fa8e3060e1d394",
+  "datasets": {
+    "kang": {
+      "dataset_id": "GSE96583_Kang2018_batch2",
+      "role": "legacy_development_supportive_silver_intervention",
+      "condition_column": "condition",
+      "reference": "ctrl",
+      "target": "stim",
+      "contrast_name": "stim_vs_ctrl",
+      "seed": 20260726,
+      "outer_fold_partition_seed": 20260726,
+      "allowed_outer_folds": [4, 2],
+      "input_schema": "crychic-expanded-real-input-v1",
+      "input_sha256": "5ee14c9df0a58e385828f9339dc93eff52fae7614218e82ed9c9a022804b30ac",
+      "input_manifest_sha256": "2b394fcb7020f20a8f3adcf9ee53896d65ccd750c6ef3987d04f7f067285a4fd",
+      "cells": 24673,
+      "genes": 32938,
+      "samples": 16,
+      "subjects": 8,
+      "cell_types": [
+        "B cells",
+        "CD14+ Monocytes",
+        "CD4 T cells",
+        "CD8 T cells",
+        "Dendritic cells",
+        "FCGR3A+ Monocytes",
+        "Megakaryocytes",
+        "NK cells"
+      ],
+      "truth_schema": "kang2018_ifnb_supportive_v1",
+      "truth_sha256": "d732f865fff388935ece3ff8a055d32236b6cdfe532be92ea33b7378ae1de9a0"
+    },
+    "brca_e": {
+      "dataset_id": "brca_anti_pd1__E_On_vs_Pre",
+      "role": "secondary_reused_real_intervention_descriptive",
+      "condition_column": "condition",
+      "reference": "PreE",
+      "target": "OnE",
+      "contrast_name": "OnE_vs_PreE",
+      "seed": 20260727,
+      "outer_fold_partition_seed": 20260727,
+      "allowed_outer_folds": [3, 2],
+      "input_schema": "crychic-brca-antipd1-benchmark-input-v1",
+      "input_sha256": "2d26f24075e63c722edc86fc2af2cd35dd52f2ed17f7b1630ab7a89b6b8acc40",
+      "input_manifest_sha256": "9fcf4376ee3446ed22df16750f9944b767f713ec669e813e1be242a6532d1a9f",
+      "cells": 18465,
+      "genes": 24414,
+      "samples": 18,
+      "subjects": 9,
+      "cell_types": ["CD4T", "Fibroblast", "macrophages"]
+    },
+    "brca_ne": {
+      "dataset_id": "brca_anti_pd1__NE_On_vs_Pre",
+      "role": "secondary_reused_real_intervention_descriptive",
+      "condition_column": "condition",
+      "reference": "PreNE",
+      "target": "OnNE",
+      "contrast_name": "OnNE_vs_PreNE",
+      "seed": 20260728,
+      "outer_fold_partition_seed": 20260728,
+      "allowed_outer_folds": [3, 2],
+      "input_schema": "crychic-brca-antipd1-benchmark-input-v1",
+      "input_sha256": "2d87b9de68cf2449bc5cfd58093a539dd5826cf6d99b59f0d2eaaca8397052cc",
+      "input_manifest_sha256": "94b993838809004bc919566bd1011b128129e76d48c000c38821638d0322c592",
+      "cells": 30243,
+      "genes": 24414,
+      "samples": 40,
+      "subjects": 20,
+      "cell_types": ["CD4T", "Fibroblast", "macrophages"]
+    }
+  },
+  "resource": {
+    "schema_version": "crychic-harmonized-lr-v1",
+    "resource_id": "crychic_misc_four_method_harmonized_simple_lr",
+    "interactions": 455,
+    "table_sha256": "4707a67c304cf6c7e17d667e42af730f0ac52dc4952b23fefb0e41a0cbac0463",
+    "manifest_sha256": "7ba74a3884f9fb6e468f8b96cfbb4fb2ecc69c76371f1151319e50a381129d44"
+  },
+  "target_prior": {
+    "release": "v2_2021",
+    "manifest_sha256": "4e2a107768e5dee7457fdb5b73ff3659d1f5dbb0a1f82f09dd5ddfc12749f146"
+  },
+  "estimator": {
+    "execution_profile": "v7_primary_m0_m5_v1",
+    "bottleneck_penalty": 0.0,
+    "minimum_sender_calibration_subjects": 4,
+    "minimum_signed_program_samples": 4,
+    "minimum_signed_program_subjects": 3,
+    "minimum_coupling_subjects": 4,
+    "minimum_coupling_edges_for_eb": 2,
+    "attribution_coupling_weight": 0.25,
+    "minimum_cells_per_sample_cell_type": 10,
+    "minimum_subjects_per_level": 4,
+    "minimum_clusters_for_cr2": 6,
+    "minimum_common_sender_subjects": 4,
+    "minimum_pooled_availability": 0.0,
+    "minimum_train_subjects_per_context": 4,
+    "minimum_test_subjects_per_context": 2,
+    "inference_id": "I1",
+    "generators": ["G0", "G2", "G3", "G4", "G5"],
+    "inference_score_views": {
+      "G0": ["primary_sender_detection"],
+      "G2": ["primary_sender_detection"],
+      "G3": ["primary_sender_detection"],
+      "G4": ["m0_parent_mean_component", "program_signed_component"],
+      "G5": ["primary_sender_detection"]
+    }
+  },
+  "endpoints": {
+    "kang": [
+      "paired_gene_effect_direction",
+      "donor_direction_consistency",
+      "cell_type_composition_stability",
+      "g4_signed_program_direction",
+      "m0_program_concordance",
+      "endogenous_ifnb_guardrail"
+    ],
+    "brca": [
+      "paired_on_minus_pre_effect",
+      "g4_signed_program_direction",
+      "m0_program_concordance",
+      "descriptive_expander_minus_nonexpander_effect"
+    ]
+  },
+  "release": {
+    "formal_inference_allowed": false,
+    "diagnostic_p_values_are_not_formal": true,
+    "real_data_edge_auroc_forbidden": true,
+    "causal_sender_claim_forbidden": true,
+    "dataset_specific_parameter_selection_forbidden": true,
+    "kang_exogenous_ifnb_sender_recovery_required": false,
+    "brca_e_and_ne_must_be_fit_separately": true,
+    "brca_cross_subtype_effect_is_descriptive_only": true
+  }
+}
