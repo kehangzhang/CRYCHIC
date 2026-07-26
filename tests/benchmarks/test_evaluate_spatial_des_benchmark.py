@@ -210,14 +210,23 @@ def test_subject_run_cannot_be_evaluated_in_condition_level_scenario(
         )
 
 
-def test_scseqcommdiff_manifest_binds_subject_unit_and_ranking(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "schema_version",
+    [
+        "crychic-scseqcommdiff-paper-benchmark-v1",
+        "crychic-scseqcommdiff-paper-benchmark-v2",
+    ],
+)
+def test_scseqcommdiff_manifest_binds_subject_unit_and_ranking(
+    tmp_path: Path, schema_version: str
+) -> None:
     ranking = tmp_path / "condition_cell_pair_rankings.tsv"
     ranking.write_text("fixture\n", encoding="utf-8")
     manifest = tmp_path / "run_manifest.json"
     manifest.write_text(
         json.dumps(
             {
-                "schema_version": "crychic-scseqcommdiff-paper-benchmark-v1",
+                "schema_version": schema_version,
                 "status": "complete",
                 "dataset_id": "fixture",
                 "preflight": {

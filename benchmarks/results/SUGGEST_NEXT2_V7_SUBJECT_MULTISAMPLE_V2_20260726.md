@@ -4,7 +4,8 @@ Date: 2026-07-26
 
 Status: subject-level truth and Kuppe scSeqCommDiff/LIANA replays complete;
 Kuppe/MS CRYCHIC v7 refits, current-version CellChat and paper-matched MS
-external refits are pending the active PR10 calibration campaign. No complete
+external refits are pending the active PR10 calibration campaign. Paper-matched
+MS scSeqCommDiff and LIANA+ actual-data preflights are complete. No complete
 cross-method rank is claimed.
 
 ## Frozen comparison contract
@@ -71,6 +72,36 @@ After the calibration campaign releases the 192 logical cores, run the native
 scSeqCommDiff and LIANA+ jobs and the LIANA/CellChat sample-score sensitivity
 jobs against this exact input. The old MS CellChat sample job ended through an
 external `KeyboardInterrupt`, not an algorithm-level non-estimability result.
+
+### Paper-matched MS actual-data preflights
+
+Both native subject-level adapters were executed through their full input,
+checksum, resource and environment preflight paths against the exact 69,168-cell
+object. These are execution-readiness artifacts, not benchmark outcomes.
+
+| Adapter | Status | Key checks | Elapsed under calibration load |
+|---|---|---|---:|
+| scSeqCommDiff 2.0.0 | preflight complete | input/resource hashes; R 4.3.3; 5 CA/5 Ctrl subjects; 68,858 eligible cells and 7 eligible cell types | 548.5 s |
+| LIANA+ DE 1.5.0 | prepared | input/resource hashes; frozen Python package set; 5 CA/5 Ctrl subjects; 2,054/2,293 resource interactions matched | 178.7 s |
+
+The scSeqCommDiff paper-compatible support filter excludes BC and SC before
+inference because they lack the required cross-condition pseudobulk support;
+this is persisted as method-specific estimability rather than converted to zero.
+LIANA+ retains all nine source cell types at preparation and applies its own
+frozen pseudobulk support rules in the exact worker.
+
+Artifacts are under:
+
+```text
+benchmark_work/suggest_next2_v7/subject_multi_sample_v2_20260726/ms/preflight/
+  scseqcommdiff_native_20260726/
+  liana_plus_de_native_20260726/
+```
+
+The spatial DES evaluator now explicitly accepts both checksum-bound
+scSeqCommDiff manifest schemas v1 and v2. This is a schema compatibility fix;
+status, ranking checksum, input checksum, resource checksum and subject-unit
+checks remain fail closed.
 
 ### scSeqCommDiff native subject arm
 

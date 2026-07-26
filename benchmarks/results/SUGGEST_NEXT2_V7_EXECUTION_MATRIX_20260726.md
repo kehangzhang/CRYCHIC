@@ -23,7 +23,7 @@ evidence.
 | PR10 full-pipeline resampling | complete | serial/process identity and six-design regression | r20 calibration active |
 | intervention validation | complete | Kang/BRCA preflight and 10 tests | formal runs pending |
 | sparse spatial geometry | complete | Kuppe/MS real-section smoke and 13 tests | formal runs pending |
-| subject multi-sample v2 replay | complete | 24 evaluator/lineage tests | Kuppe external partial; CRYCHIC/MS pending |
+| subject multi-sample v2 replay | complete | evaluator/lineage tests plus actual-data MS preflights | Kuppe external partial; CRYCHIC/MS formal runs pending |
 
 The current real/spatial benchmark branch is
 `benchmark/suggest-next2-v7-real-locked-20260726`. The spatial implementation is
@@ -82,12 +82,13 @@ multicohort and continuous designs are represented where preregistered.
 | MS sparse geometry | 11 sections, 40,587 spots | formal run pending | indirect spatial silver evidence |
 | subject-level floor/exclude-self truth | Kuppe 4/7; MS 5/5 subjects | complete | same-unit v2 replay |
 | Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | three observed; legacy CellChat NE | no CRYCHIC rank until v7 refit |
-| MS subject-v2 external replay | paper-matched 69,168 cells | pending | old 75,004-cell outputs excluded |
+| MS subject-v2 external replay | paper-matched 69,168 cells | scSeqCommDiff/LIANA+ preflight complete; formal runs pending | old 75,004-cell outputs excluded |
 
-At 2026-07-26 14:43 CST, the active r20 campaign had completed 46/120 datasets
-with zero failures. It had finished the 20 independent-multigroup replicates and
-6/20 independent-two-group replicates. Its live campaign manifest, not this
-timestamped row, is the authoritative status source.
+At 2026-07-26 15:47 CST, the active r20 campaign had completed 54/120 datasets
+with zero failures. It had finished the 20 continuous and 20
+independent-multigroup replicates plus 14/20 independent-two-group replicates.
+Its live campaign manifest, not this timestamped row, is the authoritative
+status source.
 
 The current M4 candidate is not a release candidate despite its development
 ranking gain. Mean AUPRC was 0.4999 (independent) and 0.6526 (paired), but pooled
