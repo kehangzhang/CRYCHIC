@@ -53,6 +53,16 @@ pair; NE is not converted to zero and is excluded from ranks. CRYCHIC v7 and a
 clean CellChat 2.1.2 rerun are not yet present, so this table is not a final
 algorithm ranking.
 
+Track-labeled v3 replays are complete for scSeqCommDiff
+(`native_cardinality`) and LIANA rank aggregate
+(`continuous_strength`). Their score and method-summary checksums are
+identical to the preceding evaluations. The existing LIANA+ run persisted the
+full resource-manifest content but predates persistence of the resource
+manifest file checksum, so it cannot satisfy the new strict three-checksum
+gate. Its reported DES remains descriptive evidence; promotion into the final
+`native_cardinality` track requires a short current-adapter Kuppe rerun after
+the PR10 campaign. No missing checksum is imputed.
+
 ## MS exclusion and required reruns
 
 The existing subject outputs under `benchmark_work/multi-group/runs/ms` use the
@@ -229,7 +239,8 @@ Do not oversubscribe the active 192-core calibration run. Once it completes:
 
 1. Wave 1: Kuppe/MS CRYCHIC v7 refits plus intervention validation, at most
    approximately 176 requested threads.
-2. Wave 2: MS external refits, Kuppe/MS CellChat 2.1.2 and Kuppe/MS sparse
-   geometry, with memory monitoring and immediate stop at 80% system memory.
+2. Wave 2: MS external refits, the provenance-upgrade Kuppe LIANA+ rerun,
+   Kuppe/MS CellChat 2.1.2 and Kuppe/MS sparse geometry, with memory monitoring
+   and immediate stop at 80% system memory.
 3. Evaluate native cardinality, continuous sensitivity, fixed-K and geometry
    as separate panels, then summarize ranks only within identical contracts.

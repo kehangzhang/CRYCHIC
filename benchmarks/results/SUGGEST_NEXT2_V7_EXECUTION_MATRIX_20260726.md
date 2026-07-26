@@ -81,14 +81,14 @@ multicohort and continuous designs are represented where preregistered.
 | Kuppe sparse geometry | 13 sections, 43,051 spots | formal run pending | indirect spatial silver evidence |
 | MS sparse geometry | 11 sections, 40,587 spots | formal run pending | indirect spatial silver evidence |
 | subject-level floor/exclude-self truth | Kuppe 4/7; MS 5/5 subjects | complete | same-unit v2 replay |
-| Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | three observed; legacy CellChat NE | no CRYCHIC rank until v7 refit |
+| Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | scSeq/LIANA track-v3 complete; LIANA+ provenance rerun pending; legacy CellChat NE | no CRYCHIC rank until v7 refit |
 | MS subject-v2 external replay | paper-matched 69,168 cells | scSeqCommDiff/LIANA+ preflight complete; formal runs pending | old 75,004-cell outputs excluded |
 
-At 2026-07-26 15:47 CST, the active r20 campaign had completed 54/120 datasets
-with zero failures. It had finished the 20 continuous and 20
-independent-multigroup replicates plus 14/20 independent-two-group replicates.
-Its live campaign manifest, not this timestamped row, is the authoritative
-status source.
+At 2026-07-26 17:26 CST, the active r20 campaign had completed 67/120 datasets
+with zero failures. It had finished the 20 continuous, 20
+independent-multigroup and 20 independent-two-group replicates plus 7/20
+multi-cohort replicates. Its live campaign manifest, not this timestamped row,
+is the authoritative status source.
 
 The current M4 candidate is not a release candidate despite its development
 ranking gain. Mean AUPRC was 0.4999 (independent) and 0.6526 (paired), but pooled
