@@ -34,6 +34,20 @@ def _contract() -> RealDatasetContract:
         slug="kuppe",
         dataset_id="Kuppe_MI_CTRL_vs_IZ",
         role="development_non_independent",
+        input_sha256=(
+            "c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926"
+        ),
+        input_manifest_sha256=(
+            "2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e"
+        ),
+        n_obs=76141,
+        n_vars=29126,
+        truth_manifest_sha256=(
+            "4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff"
+        ),
+        truth_expected_sets_sha256=(
+            "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655"
+        ),
         condition_column="condition",
         reference="CTRL",
         target="IZ",
@@ -194,6 +208,26 @@ def test_frozen_real_protocol_loads_roles_and_rejects_endpoint_drift(
     changed_path.write_text(json.dumps(changed), encoding="utf-8")
     with pytest.raises(ValueError, match="release boundary changed"):
         load_real_e1_config(changed_path)
+
+    changed = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    changed["datasets"]["ms"]["input_sha256"] = "0" * 64
+    changed_path = tmp_path / "changed-input.json"
+    changed_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="inputs, or design contracts changed"):
+        load_real_e1_config(changed_path)
+
+
+def test_frozen_checksum_guard_rejects_payload_drift(tmp_path: Path) -> None:
+    payload = tmp_path / "payload.tsv"
+    payload.write_text("frozen\n", encoding="utf-8")
+    expected = real_runner.sha256_file(payload)
+
+    record = real_runner._require_sha256(payload, expected, "fixture payload")
+    assert record["sha256"] == expected
+
+    payload.write_text("drifted\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="fixture payload checksum mismatch"):
+        real_runner._require_sha256(payload, expected, "fixture payload")
 
 
 def test_real_design_is_subject_level_target_minus_reference() -> None:

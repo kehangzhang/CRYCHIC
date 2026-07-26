@@ -8,6 +8,12 @@
     "kuppe": {
       "dataset_id": "Kuppe_MI_CTRL_vs_IZ",
       "role": "development_non_independent",
+      "input_sha256": "c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926",
+      "input_manifest_sha256": "2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e",
+      "n_obs": 76141,
+      "n_vars": 29126,
+      "truth_manifest_sha256": "4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff",
+      "truth_expected_sets_sha256": "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
       "condition_column": "condition",
       "reference": "CTRL",
       "target": "IZ",
@@ -19,6 +25,12 @@
     "ms": {
       "dataset_id": "LermaMartin_MS_CA_vs_Ctrl",
       "role": "reused_locked_external_not_fresh_independent",
+      "input_sha256": "433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c",
+      "input_manifest_sha256": "35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d",
+      "n_obs": 69168,
+      "n_vars": 32115,
+      "truth_manifest_sha256": "648d77217c75773fe32e6a80d6918a52c49317743354936467f61a31ddf1ffb6",
+      "truth_expected_sets_sha256": "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
       "condition_column": "lesion_type",
       "reference": "Ctrl",
       "target": "CA",
@@ -27,6 +39,18 @@
       "seed": 20260717,
       "outer_fold_partition_seed": 20260718
     }
+  },
+  "resource": {
+    "resource_id": "ConnectomeDB2020_Hou_2020_human",
+    "rows": 2293,
+    "payload_sha256": "e781363288a26c15e03246500111bfecb818eef997f5ebe1b936aaa465151c3a",
+    "manifest_sha256": "3dd10324ae0fc3b903ee09fece3fbeb1933db94c92fe1fbf4eb644d407d6b7af"
+  },
+  "target_prior": {
+    "resource_id": "nichenet_v2_ligand_target_human",
+    "release_alias": "v2_2021",
+    "manifest_sha256": "4e2a107768e5dee7457fdb5b73ff3659d1f5dbb0a1f82f09dd5ddfc12749f146",
+    "runtime_payload_sha256": "42a6fa3746ad3ab4ba3f03c35fe693d7d2ef0a9b28677295ec838cfc2e0f0293"
   },
   "estimator": {
     "execution_profile": "v7_primary_m0_m5_v1",

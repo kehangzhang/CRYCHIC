@@ -19,7 +19,21 @@ p/q fields are withheld; real-data edge AUROC and causal sender claims are
 forbidden.
 
 Frozen protocol:
-`benchmarks/configs/suggest_next2_v7_real_e1_v1.json`.
+`benchmarks/configs/suggest_next2_v7_real_e1_v1.json`, SHA256
+`7223ba4f93217967c51c3875dc7e4a3f6f8b4df959d2a9406da3331f4a8a6166`.
+
+## Bound cohort, truth and resource inputs
+
+| Dataset | Cells x genes | H5AD SHA256 | Preparation manifest SHA256 | Truth manifest SHA256 | Expected-set SHA256 |
+|---|---:|---|---|---|---|
+| Kuppe | 76,141 x 29,126 | `c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926` | `2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e` | `4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff` | `1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655` |
+| MS paper-matched | 69,168 x 32,115 | `433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c` | `35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d` | `648d77217c75773fe32e6a80d6918a52c49317743354936467f61a31ddf1ffb6` | `402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2` |
+
+The MS binding excludes the earlier approximately 75k-cell object. Shared inputs
+are frozen to the 2,293-row ConnectomeDB2020 payload SHA256 `e7813632...`, its
+manifest `3dd10324...`, the NicheNet manifest `4e2a1077...`, and runtime Parquet
+`42a6fa37...`. The runner validates all payloads before creating the output
+directory, then validates H5AD dimensions and truth-output lineage after load.
 
 ## Bound legacy G1 inputs
 
@@ -84,6 +98,7 @@ variants, coverage, score geometry and effect summaries. The manifest must be
 `complete`, `dirty=false`, bind every output checksum, and retain
 `formal_inference_allowed=false` before spatial-geometry evaluation is allowed.
 
-Focused verification: 8 real-runner tests passed. These tests cover frozen roles,
-subject-level contrasts, G1 component projection, the G4 sender-resolution guard,
-withheld formal fields, fixed-K/continuous DES and complete cell-pair axes.
+Focused verification: 9 real-runner tests passed. These tests cover frozen roles,
+input and payload drift rejection, subject-level contrasts, G1 component
+projection, the G4 sender-resolution guard, withheld formal fields,
+fixed-K/continuous DES and complete cell-pair axes.

@@ -102,6 +102,12 @@ class RealDatasetContract:
     slug: str
     dataset_id: str
     role: str
+    input_sha256: str
+    input_manifest_sha256: str
+    n_obs: int
+    n_vars: int
+    truth_manifest_sha256: str
+    truth_expected_sets_sha256: str
     condition_column: str
     reference: str
     target: str
@@ -124,6 +130,21 @@ def _input_record(path: Path) -> dict[str, object]:
         "bytes": path.stat().st_size,
         "sha256": sha256_file(path),
     }
+
+
+def _require_sha256(path: Path, expected: object, label: str) -> dict[str, object]:
+    if (
+        not isinstance(expected, str)
+        or len(expected) != 64
+        or any(character not in "0123456789abcdef" for character in expected)
+    ):
+        raise ValueError(f"{label} frozen checksum is invalid")
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} does not exist: {path}")
+    record = _input_record(path)
+    if record["sha256"] != expected:
+        raise ValueError(f"{label} checksum mismatch")
+    return record
 
 
 def _output_record(path: Path, table: pd.DataFrame) -> dict[str, object]:
@@ -168,9 +189,19 @@ def load_real_e1_config(
     release = config.get("release")
     datasets = config.get("datasets")
     legacy_g1 = config.get("legacy_g1")
+    resource = config.get("resource")
+    target_prior = config.get("target_prior")
     if not all(
         isinstance(value, Mapping)
-        for value in (estimator, spatial, release, datasets, legacy_g1)
+        for value in (
+            estimator,
+            spatial,
+            release,
+            datasets,
+            legacy_g1,
+            resource,
+            target_prior,
+        )
     ):
         raise ValueError("v7 real E1 config sections must be mappings")
     assert isinstance(estimator, Mapping)
@@ -178,6 +209,8 @@ def load_real_e1_config(
     assert isinstance(release, Mapping)
     assert isinstance(datasets, Mapping)
     assert isinstance(legacy_g1, Mapping)
+    assert isinstance(resource, Mapping)
+    assert isinstance(target_prior, Mapping)
     if (
         estimator.get("execution_profile") != "v7_primary_m0_m5_v1"
         or estimator.get("generators") != ["G0", "G2", "G3", "G4", "G5"]
@@ -207,6 +240,28 @@ def load_real_e1_config(
         is not True
         or release.get("g4_sender_resolved_des_forbidden") is not True
         or release.get("ms_parameter_selection_forbidden") is not True
+        or dict(resource)
+        != {
+            "resource_id": "ConnectomeDB2020_Hou_2020_human",
+            "rows": 2293,
+            "payload_sha256": (
+                "e781363288a26c15e03246500111bfecb818eef997f5ebe1b936aaa465151c3a"
+            ),
+            "manifest_sha256": (
+                "3dd10324ae0fc3b903ee09fece3fbeb1933db94c92fe1fbf4eb644d407d6b7af"
+            ),
+        }
+        or dict(target_prior)
+        != {
+            "resource_id": "nichenet_v2_ligand_target_human",
+            "release_alias": "v2_2021",
+            "manifest_sha256": (
+                "4e2a107768e5dee7457fdb5b73ff3659d1f5dbb0a1f82f09dd5ddfc12749f146"
+            ),
+            "runtime_payload_sha256": (
+                "42a6fa3746ad3ab4ba3f03c35fe693d7d2ef0a9b28677295ec838cfc2e0f0293"
+            ),
+        }
     ):
         raise ValueError("v7 real E1 estimator, endpoint, or release boundary changed")
     contracts: dict[str, RealDatasetContract] = {}
@@ -218,6 +273,14 @@ def load_real_e1_config(
             slug=slug,
             dataset_id=str(record["dataset_id"]),
             role=str(record["role"]),
+            input_sha256=str(record["input_sha256"]),
+            input_manifest_sha256=str(record["input_manifest_sha256"]),
+            n_obs=int(record["n_obs"]),
+            n_vars=int(record["n_vars"]),
+            truth_manifest_sha256=str(record["truth_manifest_sha256"]),
+            truth_expected_sets_sha256=str(
+                record["truth_expected_sets_sha256"]
+            ),
             condition_column=str(record["condition_column"]),
             reference=str(record["reference"]),
             target=str(record["target"]),
@@ -272,6 +335,12 @@ def load_real_e1_config(
         "kuppe": (
             "Kuppe_MI_CTRL_vs_IZ",
             "development_non_independent",
+            "c47112ce01a192bb157af1ba5feb09c1616601e280102fd11a658f570698c926",
+            "2254d4e9ec46723cf0619ad8ad26fa8ee2f7ce83e7e223b88cd8f5174571a10e",
+            76141,
+            29126,
+            "4e9cf5d2ac6f7baf9926f04d580dead5610f7fde3a4b6825f141935f69e5f3ff",
+            "1a9ad459a7c2cf7eb1e52d47ec7f6d77815b28b604b63315fe8524a95fdf7655",
             "condition",
             "CTRL",
             "IZ",
@@ -283,6 +352,12 @@ def load_real_e1_config(
         "ms": (
             "LermaMartin_MS_CA_vs_Ctrl",
             "reused_locked_external_not_fresh_independent",
+            "433717d9fd98e57e15a444a338a6e1002f7ca3224022321d28a386c0a8498e1c",
+            "35644aec92e6e383ef982e18bb3c6aff24c2e5faf8ae52ea921c01c440f0c15d",
+            69168,
+            32115,
+            "648d77217c75773fe32e6a80d6918a52c49317743354936467f61a31ddf1ffb6",
+            "402f6e8255cf032a40f456c441d6881d07131d05d21608406475fdf0de0a44a2",
             "lesion_type",
             "Ctrl",
             "CA",
@@ -296,6 +371,12 @@ def load_real_e1_config(
         slug: (
             item.dataset_id,
             item.role,
+            item.input_sha256,
+            item.input_manifest_sha256,
+            item.n_obs,
+            item.n_vars,
+            item.truth_manifest_sha256,
+            item.truth_expected_sets_sha256,
             item.condition_column,
             item.reference,
             item.target,
@@ -307,8 +388,74 @@ def load_real_e1_config(
         for slug, item in contracts.items()
     }
     if observed_contracts != expected_contracts:
-        raise ValueError("v7 real E1 dataset roles or design contracts changed")
+        raise ValueError(
+            "v7 real E1 dataset roles, inputs, or design contracts changed"
+        )
     return config, contracts
+
+
+def _validate_frozen_real_inputs(
+    *,
+    contract: RealDatasetContract,
+    protocol: Mapping[str, object],
+    input_h5ad: Path,
+    input_manifest: Path,
+    truth_manifest: Path,
+    resource_path: Path,
+    resource_manifest: Path,
+    database_root: Path,
+    nichenet_release: str,
+    nichenet_manifest: Path | None,
+) -> dict[str, dict[str, object]]:
+    resource = cast(Mapping[str, object], protocol["resource"])
+    target_prior = cast(Mapping[str, object], protocol["target_prior"])
+    if nichenet_release != target_prior["release_alias"]:
+        raise ValueError("real E1 NicheNet release differs from the frozen alias")
+    if nichenet_manifest is None:
+        raise ValueError("real E1 requires the explicit frozen NicheNet manifest")
+    runtime_prior = (
+        database_root
+        / "nichenet"
+        / nichenet_release
+        / "ligand_target_top250.parquet"
+    )
+    return {
+        "h5ad": _require_sha256(
+            input_h5ad,
+            contract.input_sha256,
+            f"{contract.slug} input H5AD",
+        ),
+        "preparation_manifest": _require_sha256(
+            input_manifest,
+            contract.input_manifest_sha256,
+            f"{contract.slug} preparation manifest",
+        ),
+        "spatial_truth_manifest": _require_sha256(
+            truth_manifest,
+            contract.truth_manifest_sha256,
+            f"{contract.slug} spatial truth manifest",
+        ),
+        "lr_resource": _require_sha256(
+            resource_path,
+            resource["payload_sha256"],
+            "ConnectomeDB2020 payload",
+        ),
+        "lr_resource_manifest": _require_sha256(
+            resource_manifest,
+            resource["manifest_sha256"],
+            "ConnectomeDB2020 manifest",
+        ),
+        "target_prior_manifest": _require_sha256(
+            nichenet_manifest,
+            target_prior["manifest_sha256"],
+            "NicheNet manifest",
+        ),
+        "target_prior_runtime_payload": _require_sha256(
+            runtime_prior,
+            target_prior["runtime_payload_sha256"],
+            "NicheNet runtime payload",
+        ),
+    }
 
 
 def _validate_legacy_g1_inputs(
@@ -489,6 +636,12 @@ def _load_dataset(
             "subject_support": support,
             "repeated_subjects": repeated,
         }
+    if (int(data.n_obs), int(data.n_vars)) != (contract.n_obs, contract.n_vars):
+        raise ValueError(
+            "real E1 input shape changed: expected "
+            f"{contract.n_obs}x{contract.n_vars}, "
+            f"observed={data.n_obs}x{data.n_vars}"
+        )
     if base_spec.outer_fold_partition_seed != contract.outer_fold_partition_seed:
         raise ValueError("real E1 outer-fold partition seed differs from its contract")
     observed = set(metadata[contract.condition_column].astype(str))
@@ -718,9 +871,9 @@ def _pair_axes(
 def _load_expected_sets(
     truth_manifest_path: Path,
     *,
-    dataset_slug: str,
+    dataset_contract: RealDatasetContract,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, object]]:
-    contract = DES_CONTRACTS[dataset_slug]
+    contract = DES_CONTRACTS[dataset_contract.slug]
     manifest = _read_json(truth_manifest_path)
     if (
         manifest.get("schema_version") != contract["truth_schema"]
@@ -732,6 +885,8 @@ def _load_expected_sets(
     record = outputs.get("expected_sets") if isinstance(outputs, Mapping) else None
     if not isinstance(record, Mapping):
         raise ValueError("real E1 spatial truth lacks expected_sets")
+    if record.get("sha256") != dataset_contract.truth_expected_sets_sha256:
+        raise ValueError("real E1 spatial expected-set frozen checksum changed")
     filename = record.get("filename")
     if not isinstance(filename, str) or Path(filename).name != filename:
         raise ValueError("real E1 spatial expected-set filename is invalid")
@@ -927,6 +1082,18 @@ def run(
             f"real E1 requires frozen min_cells={frozen_min_cells}, "
             f"observed={min_cells}"
         )
+    frozen_inputs = _validate_frozen_real_inputs(
+        contract=contract,
+        protocol=protocol,
+        input_h5ad=input_h5ad,
+        input_manifest=input_manifest,
+        truth_manifest=truth_manifest,
+        resource_path=resource_path,
+        resource_manifest=resource_manifest,
+        database_root=database_root,
+        nichenet_release=nichenet_release,
+        nichenet_manifest=nichenet_manifest,
+    )
     code = git_metadata(REPOSITORY_ROOT)
     if code["dirty"] and not allow_dirty:
         raise RuntimeError("v7 real E1 benchmark refuses a dirty worktree")
@@ -952,10 +1119,16 @@ def run(
             "primary_panel": True,
         },
         "inputs": {
-            "h5ad": _input_record(input_h5ad),
-            "preparation_manifest": _input_record(input_manifest),
+            "h5ad": frozen_inputs["h5ad"],
+            "preparation_manifest": frozen_inputs["preparation_manifest"],
             "protocol": _input_record(config_path),
-            "spatial_truth": _input_record(truth_manifest),
+            "spatial_truth": frozen_inputs["spatial_truth_manifest"],
+            "lr_resource": frozen_inputs["lr_resource"],
+            "lr_resource_manifest": frozen_inputs["lr_resource_manifest"],
+            "target_prior_manifest": frozen_inputs["target_prior_manifest"],
+            "target_prior_runtime_payload": frozen_inputs[
+                "target_prior_runtime_payload"
+            ],
             "legacy_g1": legacy_provenance,
         },
         "parameters": {
@@ -987,6 +1160,16 @@ def run(
             nichenet_release=nichenet_release,
             nichenet_manifest=nichenet_manifest,
         )
+        resource_contract = cast(Mapping[str, object], protocol["resource"])
+        target_prior_contract = cast(
+            Mapping[str, object], protocol["target_prior"]
+        )
+        if (
+            bundle.resource_id != resource_contract["resource_id"]
+            or len(bundle.interactions) != resource_contract["rows"]
+            or target_prior.resource_id != target_prior_contract["resource_id"]
+        ):
+            raise ValueError("real E1 loaded resource identity changed")
         _append_log(
             log_path,
             "resources_loaded",
@@ -1103,7 +1286,7 @@ def run(
         ledger = build_sender_resolved_event_ledger(effects, bundle, contract)
         expected, truth, truth_provenance = _load_expected_sets(
             truth_manifest,
-            dataset_slug=contract.slug,
+            dataset_contract=contract,
         )
         rankings, des_scores, des_coverage = evaluate_v7_real_spatial_des(
             ledger,
