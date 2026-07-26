@@ -79,3 +79,64 @@ composition tables.
 The full fits are intentionally not launched while the 192-core PR10
 calibration campaign is active. This keeps the campaign throughput stable and
 prevents simultaneous fold-local matrices from competing for memory.
+
+## Frozen execution commands
+
+The three jobs may run concurrently after PR10 releases the host. Kang uses four
+outer-fold workers and each BRCA subtype uses three; every fold is limited to eight
+BLAS threads. Their maximum requested concurrency is therefore 80 logical threads.
+Set `CRYCHIC_PROGRESS=1` so fold-stage progress and ETA are present in the captured
+stderr log.
+
+```bash
+CRYCHIC_PROGRESS=1 python -m benchmarks.literature.run_v7_intervention_validation \
+  --dataset kang \
+  --input-h5ad /media/subunit/bioinfo/crychic_dev/benchmark_work/kang2018_batch2.h5ad \
+  --input-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/expanded_full_20260723/real_tracks/kang2018_ifnb_paired/input_manifest.json \
+  --output-dir /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_kang_v7_v1_20260726 \
+  --resource /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/harmonized_lr.tsv \
+  --resource-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/manifest.json \
+  --database-root /media/subunit/bioinfo/crychic_dev/databases \
+  --nichenet-manifest /media/subunit/bioinfo/crychic_dev/databases/nichenet/v2_2021/manifest.json \
+  --truth /media/subunit/bioinfo/crychic_dev/.worktrees/suggest_next2_v7_real/benchmarks/truth/kang2018_expected_biology.yaml \
+  --fold-jobs 4 \
+  --threads 8
+```
+
+```bash
+CRYCHIC_PROGRESS=1 python -m benchmarks.literature.run_v7_intervention_validation \
+  --dataset brca_e \
+  --input-h5ad /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/expanded_full_20260723/real_tracks/brca_anti_pd1_2x2/benchmark_input/inputs/brca_anti_pd1.E_On_vs_Pre.h5ad \
+  --input-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/expanded_full_20260723/real_tracks/brca_anti_pd1_2x2/benchmark_input/inputs/E_On_vs_Pre.manifest.json \
+  --output-dir /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_brca_e_v7_v1_20260726 \
+  --resource /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/harmonized_lr.tsv \
+  --resource-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/manifest.json \
+  --database-root /media/subunit/bioinfo/crychic_dev/databases \
+  --nichenet-manifest /media/subunit/bioinfo/crychic_dev/databases/nichenet/v2_2021/manifest.json \
+  --fold-jobs 3 \
+  --threads 8
+```
+
+```bash
+CRYCHIC_PROGRESS=1 python -m benchmarks.literature.run_v7_intervention_validation \
+  --dataset brca_ne \
+  --input-h5ad /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/expanded_full_20260723/real_tracks/brca_anti_pd1_2x2/benchmark_input/inputs/brca_anti_pd1.NE_On_vs_Pre.h5ad \
+  --input-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/expanded_full_20260723/real_tracks/brca_anti_pd1_2x2/benchmark_input/inputs/NE_On_vs_Pre.manifest.json \
+  --output-dir /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_brca_ne_v7_v1_20260726 \
+  --resource /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/harmonized_lr.tsv \
+  --resource-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/comprehensive_multicontext_20260722/runs/multigroup_headtohead_20260723/misc_prepared/resource/manifest.json \
+  --database-root /media/subunit/bioinfo/crychic_dev/databases \
+  --nichenet-manifest /media/subunit/bioinfo/crychic_dev/databases/nichenet/v2_2021/manifest.json \
+  --fold-jobs 3 \
+  --threads 8
+```
+
+After both BRCA fits complete, construct the bounded cross-subtype descriptive
+contrast with:
+
+```bash
+python -m benchmarks.literature.summarize_v7_brca_response \
+  --expander-root /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_brca_e_v7_v1_20260726 \
+  --nonexpander-root /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_brca_ne_v7_v1_20260726 \
+  --output-dir /media/subunit/bioinfo/crychic_dev/benchmark_work/suggest_next2_v7/intervention_brca_response_v7_v1_20260726
+```
