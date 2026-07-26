@@ -81,7 +81,7 @@ multicohort and continuous designs are represented where preregistered.
 | Kuppe sparse geometry | 13 sections, 43,051 spots | formal run pending | indirect spatial silver evidence |
 | MS sparse geometry | 11 sections, 40,587 spots | formal run pending | indirect spatial silver evidence |
 | subject-level floor/exclude-self truth | Kuppe 4/7; MS 5/5 subjects | complete | same-unit v2 replay |
-| Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | scSeq/LIANA track-v3 complete; LIANA+ provenance rerun pending; legacy CellChat NE | no CRYCHIC rank until v7 refit |
+| Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | scSeq native/continuous/fixed-K and LIANA continuous tracks complete; LIANA+ provenance rerun pending; legacy CellChat NE | no final CRYCHIC rank until v7 refit |
 | MS subject-v2 external replay | paper-matched 69,168 cells | scSeqCommDiff/LIANA+ preflight complete; formal runs pending | old 75,004-cell outputs excluded |
 
 At 2026-07-26 17:26 CST, the active r20 campaign had completed 67/120 datasets

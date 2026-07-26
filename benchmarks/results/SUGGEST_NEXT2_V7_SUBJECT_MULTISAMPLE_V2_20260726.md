@@ -41,6 +41,7 @@ separate continuous common-score sensitivity arm.
 |---|---|---:|---:|---:|
 | native cardinality | scSeqCommDiff 2.0.0 | 0.6596 | 0.6720 | 8/8 |
 | native cardinality | LIANA+ DE 1.5.0 | 0.3798 | 0.3858 | 8/8 |
+| continuous sensitivity | scSeqCommDiff 2.0.0 event strength | 0.7713 | 0.7403 | 8/8 |
 | continuous sensitivity | LIANA rank aggregate 1.7.3 | 0.1631 | 0.1958 | 8/8 |
 | continuous sensitivity | legacy CellChat 2.2-dev source | NE | NE | 0/8 |
 
@@ -62,6 +63,33 @@ manifest file checksum, so it cannot satisfy the new strict three-checksum
 gate. Its reported DES remains descriptive evidence; promotion into the final
 `native_cardinality` track requires a short current-adapter Kuppe rerun after
 the PR10 campaign. No missing checksum is imputed.
+
+The checksum-bound external-only `continuous_strength` summary currently ranks
+scSeqCommDiff 1/2 and LIANA 2/2. scSeqCommDiff has complete rank-universe
+coverage; LIANA has 0.8 rank-universe coverage, reported separately rather than
+used as a score penalty. The summary is under
+`kuppe/continuous_strength_external_summary_v1` and has output SHA256
+`c6825524e71907744deca698f351a552347c76d12ac9922a278674adeeb59f4a`.
+CRYCHIC v7 and current CellChat are still absent, so this is not a final
+cross-algorithm rank.
+
+The new subject-level scSeqCommDiff event producer exported 234,256 events from
+the frozen RDS and selected exact global budgets across both effect directions.
+All fixed-K tracks have 8/8 observed strata:
+
+| Track | Median DES | Mean DES |
+|---|---:|---:|
+| fixed K=100 | 0.1862 | 0.1778 |
+| fixed K=250 | 0.1862 | 0.1778 |
+| fixed K=500 | 0.6363 | 0.6115 |
+| fixed K=1000 | 0.8513 | 0.6787 |
+
+The derived track manifest is
+`kuppe/scseqcommdiff_subject_event_tracks_v1/manifest.json`, SHA256
+`fd2a65fde138f101e4272ee2b56ef2ab23ac727f778872bfb8bb4b01368818ea`.
+Its 1,517-second runtime, including a 1,210-second RDS export, is preprocessing
+time and is not counted as scSeqCommDiff algorithm runtime. Fixed-K ranks remain
+pending the identically budgeted CRYCHIC v7 results.
 
 ## MS exclusion and required reruns
 
