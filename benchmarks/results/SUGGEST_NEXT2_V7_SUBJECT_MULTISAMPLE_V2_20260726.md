@@ -142,7 +142,7 @@ PYTHONPATH=src python -m benchmarks.adapters.cellchat.run_by_sample \
   --harmonized-manifest /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/resources/connectomedb2020/manifest.json \
   --custom-database-rds /media/subunit/bioinfo/crychic_dev/benchmark_work/multi-group/resources/connectomedb2020/CellChatDB_ConnectomeDB2020.rds \
   --environment r_cellchat_2_1_2 --nboot 100 --min-cells 10 \
-  --sample-jobs 11 --threads 2 --seed 20260717
+  --sample-jobs 11 --threads 1 --seed 20260717
 ```
 
 Its output is also passed through the same lineage-bound `sample_effect_des`
@@ -161,6 +161,27 @@ Every MS v2 evaluation must additionally pass these fail-closed bindings:
 
 The v2 evaluator rejects the ranking if any supplied source manifest lacks or
 disagrees with these values.
+
+## CellChat 2.1.2 execution smoke
+
+The current worker was executed, not only syntax-checked, on a deterministic
+MS377I subset with at most 50 cells per observed cell type:
+
+| Item | Result |
+|---|---|
+| input | 392 cells x 32,115 genes; 8 cell types |
+| input SHA256 | `756e37ee52a5bf6d0d87d1bb0f25721c330afc45e5ed7d2ee78c19aab538e7b7` |
+| CellChat | 2.1.2, R 4.5.3 |
+| execution | 1 sample job, 1 thread, 2 bootstraps |
+| elapsed | 623.625 seconds under concurrent calibration load |
+| output | 146,752 fixed-universe rows, SHA256 `0394227e...` |
+| failures | 0 |
+
+The run manifest records `future.globals.maxSize=8 GiB`, sequential future
+execution and a clean code commit. This closes the two legacy source failures:
+the 500 MiB future-global limit and the obsolete R output path. Formal CellChat
+therefore uses one sequential R process per sample and maximum safe sample-level
+parallelism: 11 jobs for MS and 15 for Kuppe, subject to the 80% memory stop.
 
 ## Resource waves
 
