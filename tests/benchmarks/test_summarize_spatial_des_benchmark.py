@@ -37,6 +37,7 @@ def _write_evaluation(
     schema_version: str = "crychic-spatial-des-evaluation-v1",
     tie_policy: str | None = None,
     comparison_track: str | None = None,
+    expected_run_bindings: dict[str, str | None] | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     strata = [
@@ -117,6 +118,8 @@ def _write_evaluation(
         manifest["tie_policy"] = tie_policy
     if comparison_track is not None:
         manifest["comparison_track"] = comparison_track
+    if expected_run_bindings is not None:
+        manifest["expected_run_bindings"] = expected_run_bindings
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
@@ -178,6 +181,37 @@ def test_comparison_tracks_form_separate_panels(tmp_path: Path) -> None:
         "native_cardinality",
         "fixed_k_100",
     }
+
+
+def test_frozen_resource_bindings_form_separate_panels(tmp_path: Path) -> None:
+    first = _write_evaluation(
+        tmp_path / "first_resource",
+        method="same",
+        values=[0.8] * 8,
+        comparison_track="native_cardinality",
+        expected_run_bindings={
+            "input_sha256": "1" * 64,
+            "resource_sha256": "a" * 64,
+            "resource_manifest_sha256": "c" * 64,
+        },
+    )
+    second = _write_evaluation(
+        tmp_path / "second_resource",
+        method="same",
+        values=[0.4] * 8,
+        comparison_track="native_cardinality",
+        expected_run_bindings={
+            "input_sha256": "1" * 64,
+            "resource_sha256": "b" * 64,
+            "resource_manifest_sha256": "c" * 64,
+        },
+    )
+
+    summary, _, panels = summarize_evaluations([first, second])
+
+    assert len(panels) == 2
+    assert summary["comparison_panel_id"].nunique() == 2
+    assert set(summary["resource_sha256"]) == {"a" * 64, "b" * 64}
 
 
 def test_incomplete_method_is_not_ranked_but_remains_reported(tmp_path: Path) -> None:
@@ -360,6 +394,11 @@ def test_cli_writer_binds_inputs_and_output_checksum(tmp_path: Path) -> None:
         method="method",
         values=list(np.linspace(0.1, 0.8, 8)),
         comparison_track="native_cardinality",
+        expected_run_bindings={
+            "input_sha256": "1" * 64,
+            "resource_sha256": "a" * 64,
+            "resource_manifest_sha256": "c" * 64,
+        },
     )
     output = tmp_path / "summary"
 
@@ -375,6 +414,9 @@ def test_cli_writer_binds_inputs_and_output_checksum(tmp_path: Path) -> None:
     assert manifest["inputs"]["evaluation_manifests"][0][
         "comparison_track"
     ] == "native_cardinality"
+    assert manifest["inputs"]["evaluation_manifests"][0][
+        "expected_run_bindings"
+    ]["resource_sha256"] == "a" * 64
     assert len(manifest["inputs"]["evaluation_manifest_aggregate_sha256"]) == 64
     on_disk = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert on_disk == manifest

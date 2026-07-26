@@ -30,6 +30,11 @@ EXPECTED_DES_STRATA = 8
 SUMMARY_FILENAME = "spatial_des_benchmark_summary.tsv"
 MANIFEST_FILENAME = "manifest.json"
 ANALYSIS_UNITS = frozenset({"subject_id", "sample_id", "condition_level"})
+RUN_BINDING_FIELDS = (
+    "input_sha256",
+    "resource_sha256",
+    "resource_manifest_sha256",
+)
 COMPARISON_TRACKS = frozenset(
     {
         "legacy_unspecified",
@@ -53,6 +58,7 @@ class EvaluationBundle:
     scenario: str
     expected_sha256: str
     expected_filters: dict[str, str]
+    expected_run_bindings: dict[str, str | None]
     comparison_track: str
     analysis_unit: str
     analysis_unit_source: str
@@ -130,6 +136,29 @@ def _comparison_track(value: object) -> str:
     if track not in COMPARISON_TRACKS:
         raise ValueError(f"unsupported comparison_track: {track!r}")
     return track
+
+
+def _canonical_run_bindings(value: object) -> dict[str, str | None]:
+    if value is None:
+        payload: Mapping[str, object] = {}
+    elif isinstance(value, Mapping):
+        payload = value
+    else:
+        raise ValueError("evaluation expected_run_bindings must be an object")
+    unknown = set(payload).difference(RUN_BINDING_FIELDS)
+    if unknown:
+        raise ValueError(f"unsupported expected run bindings: {sorted(unknown)}")
+    return {
+        field: (
+            None
+            if payload.get(field) is None
+            else _canonical_sha256(
+                payload[field],
+                field=f"expected run binding {field}",
+            )
+        )
+        for field in RUN_BINDING_FIELDS
+    }
 
 
 def _resolve_manifest(path: str | Path) -> Path:
@@ -396,6 +425,9 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
         raise ValueError(f"evaluation is not complete: {manifest_path}")
     scenario = _canonical_string(manifest.get("scenario"), field="scenario")
     expected_filters = _canonical_filters(manifest.get("expected_filters"))
+    expected_run_bindings = _canonical_run_bindings(
+        manifest.get("expected_run_bindings")
+    )
     comparison_track = _comparison_track(manifest.get("comparison_track"))
     direction = _canonical_string(
         manifest.get("cell_pair_direction"), field="cell_pair_direction"
@@ -466,6 +498,7 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
         scenario=scenario,
         expected_sha256=expected_sha256,
         expected_filters=expected_filters,
+        expected_run_bindings=expected_run_bindings,
         comparison_track=comparison_track,
         analysis_unit=analysis_unit,
         analysis_unit_source=unit_source,
@@ -489,6 +522,7 @@ def _panel_contract(bundle: EvaluationBundle) -> dict[str, Any]:
         "expected_sets_sha256": bundle.expected_sha256,
         "expected_filters": bundle.expected_filters,
         "expected_variant": bundle.expected_filters.get("variant", "not_applicable"),
+        "expected_run_bindings": bundle.expected_run_bindings,
         "comparison_track": bundle.comparison_track,
         "analysis_unit": bundle.analysis_unit,
         "conditions": list(bundle.conditions),
@@ -600,6 +634,10 @@ def summarize_evaluations(
                 "expected_sets_sha256": panel["expected_sets_sha256"],
                 "expected_variant": panel["expected_variant"],
                 "expected_filters_json": _canonical_json(panel["expected_filters"]),
+                "expected_run_bindings_json": _canonical_json(
+                    panel["expected_run_bindings"]
+                ),
+                **panel["expected_run_bindings"],
                 "conditions_json": json.dumps(
                     panel["conditions"], separators=(",", ":")
                 ),
@@ -755,9 +793,9 @@ def run(
             ),
             "panel_isolation": (
                 "dataset, scenario, expected-set SHA256, expected filters/variant, "
-                "comparison track, analysis unit, condition/fraction strata, "
-                "cell-pair direction, self-pair policy, tie policy, and score "
-                "semantics"
+                "frozen input/resource bindings, comparison track, analysis unit, "
+                "condition/fraction strata, cell-pair direction, self-pair policy, "
+                "tie policy, and score semantics"
             ),
             "coverage_reporting": (
                 "rank_eligible_fraction and expected_pair_coverage_fraction are "
@@ -784,6 +822,7 @@ def run(
                     "scenario": bundle.scenario,
                     "expected_sets_sha256": bundle.expected_sha256,
                     "expected_filters": bundle.expected_filters,
+                    "expected_run_bindings": bundle.expected_run_bindings,
                     "comparison_track": bundle.comparison_track,
                     "analysis_unit": bundle.analysis_unit,
                     "analysis_unit_source": bundle.analysis_unit_source,
