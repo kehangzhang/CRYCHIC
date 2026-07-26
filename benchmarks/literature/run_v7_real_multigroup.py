@@ -35,6 +35,7 @@ from benchmarks.literature.event_level_des import (
 from benchmarks.literature.run_event_level_des_real import CONTRACTS as DES_CONTRACTS
 from benchmarks.simulation.v7_integrated import (
     V7InferenceFitCache,
+    build_legacy_g1_score_view_from_components,
     build_v7_primary_score_views,
     g0_g2_equivalence_diagnostic,
     run_v7_inference_matrix,
@@ -61,6 +62,38 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = REPOSITORY_ROOT / "benchmarks/configs/suggest_next2_v7_real_e1_v1.json"
 PRIMARY_SCORE_VIEW = "primary_sender_detection"
 SENDER_RESOLVED_GENERATORS = ("G0", "G2", "G3", "G5")
+INFERENCE_SCORE_VIEWS = {
+    "G0": ("primary_sender_detection",),
+    "G1": ("primary_sender_resolved_state",),
+    "G2": ("primary_sender_detection",),
+    "G3": ("primary_sender_detection",),
+    "G4": ("m0_parent_mean_component", "program_signed_component"),
+    "G5": ("primary_sender_detection",),
+}
+LEGACY_G1_COMPONENT_COLUMNS = (
+    "crossfit_id",
+    "spec_id",
+    "repeat_id",
+    "fold_id",
+    "contrast",
+    "sample_id",
+    "subject_id",
+    "context_id",
+    "sender",
+    "receiver",
+    "interaction_id",
+    "mode",
+    "component",
+    "component_value",
+    "status",
+    "reason_code",
+    "score_version",
+    "certification_status",
+    "is_oof_certified",
+    "formal_inference_status",
+    "claim_scope",
+    "source_table",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,19 +164,26 @@ def load_real_e1_config(
     spatial = config.get("spatial_des")
     release = config.get("release")
     datasets = config.get("datasets")
+    legacy_g1 = config.get("legacy_g1")
     if not all(
-        isinstance(value, Mapping) for value in (estimator, spatial, release, datasets)
+        isinstance(value, Mapping)
+        for value in (estimator, spatial, release, datasets, legacy_g1)
     ):
         raise ValueError("v7 real E1 config sections must be mappings")
     assert isinstance(estimator, Mapping)
     assert isinstance(spatial, Mapping)
     assert isinstance(release, Mapping)
     assert isinstance(datasets, Mapping)
+    assert isinstance(legacy_g1, Mapping)
     if (
         estimator.get("execution_profile") != "v7_primary_m0_m5_v1"
         or estimator.get("generators") != ["G0", "G2", "G3", "G4", "G5"]
         or estimator.get("inference_id") != "I1"
         or estimator.get("minimum_cells_per_sample_cell_type") != 10
+        or estimator.get("legacy_g1_source")
+        != "checksum_bound_existing_full_profile_run_only"
+        or estimator.get("inference_score_views")
+        != {key: list(value) for key, value in INFERENCE_SCORE_VIEWS.items()}
         or spatial.get("sender_resolved_generators") != list(SENDER_RESOLVED_GENERATORS)
         or spatial.get("endpoints")
         != [
@@ -183,6 +223,48 @@ def load_real_e1_config(
             seed=int(record["seed"]),
             outer_fold_partition_seed=int(record["outer_fold_partition_seed"]),
         )
+        legacy_record = legacy_g1.get(slug)
+        if not isinstance(legacy_record, Mapping):
+            raise ValueError(f"v7 real E1 config lacks legacy G1 source {slug!r}")
+        required_legacy = {
+            "source_run_manifest_sha256",
+            "crossfit_manifest_sha256",
+            "family_common_components_sha256",
+            "rows",
+            "crossfit_id",
+            "spec_id",
+            "repeat_id",
+            "score_version",
+            "certification_status",
+            "is_oof_certified",
+            "formal_inference_status",
+            "claim_scope",
+        }
+        if set(legacy_record) != required_legacy:
+            raise ValueError(f"v7 real E1 legacy G1 source fields changed for {slug}")
+        hashes = (
+            legacy_record["source_run_manifest_sha256"],
+            legacy_record["crossfit_manifest_sha256"],
+            legacy_record["family_common_components_sha256"],
+        )
+        if any(
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in hashes
+        ):
+            raise ValueError(f"v7 real E1 legacy G1 hashes are invalid for {slug}")
+        if (
+            isinstance(legacy_record["rows"], bool)
+            or not isinstance(legacy_record["rows"], int)
+            or legacy_record["rows"] < 1
+            or legacy_record["is_oof_certified"] is not False
+            or legacy_record["formal_inference_status"]
+            != "not_available_descriptive_only"
+        ):
+            raise ValueError(
+                f"v7 real E1 legacy G1 release boundary changed for {slug}"
+            )
     expected_contracts = {
         "kuppe": (
             "Kuppe_MI_CTRL_vs_IZ",
@@ -224,6 +306,94 @@ def load_real_e1_config(
     if observed_contracts != expected_contracts:
         raise ValueError("v7 real E1 dataset roles or design contracts changed")
     return config, contracts
+
+
+def _validate_legacy_g1_inputs(
+    *,
+    source_run_manifest_path: Path,
+    crossfit_manifest_path: Path,
+    components_path: Path,
+    source_contract: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate the three checksum-bound persisted G1 source artifacts."""
+
+    paths = {
+        "source_run_manifest": source_run_manifest_path,
+        "crossfit_manifest": crossfit_manifest_path,
+        "family_common_components": components_path,
+    }
+    records = {name: _input_record(path) for name, path in paths.items()}
+    expected_hashes = {
+        "source_run_manifest": source_contract["source_run_manifest_sha256"],
+        "crossfit_manifest": source_contract["crossfit_manifest_sha256"],
+        "family_common_components": source_contract["family_common_components_sha256"],
+    }
+    for name, expected in expected_hashes.items():
+        if records[name]["sha256"] != expected:
+            raise ValueError(f"legacy G1 {name} checksum mismatch")
+    source_manifest = _read_json(source_run_manifest_path)
+    crossfit = source_manifest.get("crossfit_result")
+    code = source_manifest.get("code")
+    if (
+        source_manifest.get("status") != "complete"
+        or not isinstance(crossfit, Mapping)
+        or crossfit.get("manifest_sha256")
+        != source_contract["crossfit_manifest_sha256"]
+        or not isinstance(code, Mapping)
+        or code.get("dirty") is not False
+    ):
+        raise ValueError("legacy G1 source run is not a clean completed cross-fit")
+    return {
+        **records,
+        "source_commit": code.get("commit"),
+        "source_crossfit_result_id": crossfit.get("crossfit_result_id"),
+    }
+
+
+def _read_legacy_g1_components(components_path: Path) -> pd.DataFrame:
+    return pd.read_parquet(
+        components_path,
+        columns=list(LEGACY_G1_COMPONENT_COLUMNS),
+        filters=[
+            ("mode", "==", "state"),
+            ("component", "==", "sender_resolved_strength"),
+            ("source_table", "==", "sender_scores"),
+        ],
+    )
+
+
+def _inference_score_views(
+    score_views: pd.DataFrame,
+    estimator_config: Mapping[str, object],
+) -> pd.DataFrame:
+    configured = estimator_config.get("inference_score_views")
+    expected = {key: list(value) for key, value in INFERENCE_SCORE_VIEWS.items()}
+    if configured != expected:
+        raise ValueError("real E1 inference score views differ from the frozen matrix")
+    selected = score_views.loc[
+        [
+            str(view) in INFERENCE_SCORE_VIEWS.get(str(generator), ())
+            for generator, view in score_views.loc[
+                :, ["generator_id", "score_view"]
+            ].itertuples(index=False, name=None)
+        ]
+    ].copy()
+    observed = (
+        selected.loc[:, ["generator_id", "score_view"]]
+        .drop_duplicates()
+        .groupby("generator_id", observed=True, sort=True)["score_view"]
+        .agg(lambda values: tuple(sorted(map(str, values))))
+        .to_dict()
+    )
+    expected_observed = {
+        generator: tuple(sorted(views))
+        for generator, views in INFERENCE_SCORE_VIEWS.items()
+    }
+    if observed != expected_observed:
+        raise ValueError(
+            f"real E1 inference score-view matrix is incomplete: {observed}"
+        )
+    return selected.reset_index(drop=True)
 
 
 def _load_resources(
@@ -720,6 +890,9 @@ def run(
     resource_manifest: Path,
     database_root: Path,
     truth_manifest: Path,
+    legacy_source_manifest: Path,
+    legacy_crossfit_manifest: Path,
+    legacy_components: Path,
     config_path: Path = DEFAULT_CONFIG,
     nichenet_release: str = "v2_2021",
     nichenet_manifest: Path | None = None,
@@ -743,6 +916,8 @@ def run(
     protocol, contracts = load_real_e1_config(config_path)
     contract = contracts[dataset]
     estimator_config = cast(Mapping[str, object], protocol["estimator"])
+    legacy_config = cast(Mapping[str, Mapping[str, object]], protocol["legacy_g1"])
+    legacy_contract = legacy_config[dataset]
     frozen_min_cells = int(estimator_config["minimum_cells_per_sample_cell_type"])
     if min_cells != frozen_min_cells:
         raise ValueError(
@@ -752,6 +927,12 @@ def run(
     code = git_metadata(REPOSITORY_ROOT)
     if code["dirty"] and not allow_dirty:
         raise RuntimeError("v7 real E1 benchmark refuses a dirty worktree")
+    legacy_provenance = _validate_legacy_g1_inputs(
+        source_run_manifest_path=legacy_source_manifest,
+        crossfit_manifest_path=legacy_crossfit_manifest,
+        components_path=legacy_components,
+        source_contract=legacy_contract,
+    )
     output = prepare_output(output_dir, overwrite=overwrite)
     started = time.perf_counter()
     log_path = output / "run.jsonl"
@@ -772,6 +953,7 @@ def run(
             "preparation_manifest": _input_record(input_manifest),
             "protocol": _input_record(config_path),
             "spatial_truth": _input_record(truth_manifest),
+            "legacy_g1": legacy_provenance,
         },
         "parameters": {
             "threads": threads,
@@ -862,14 +1044,49 @@ def run(
             crossfit,
             dataset_id=contract.dataset_id,
         )
+        legacy_component_table = _read_legacy_g1_components(legacy_components)
+        legacy_score_views = build_legacy_g1_score_view_from_components(
+            legacy_component_table,
+            sample_metadata,
+            dataset_id=contract.dataset_id,
+            condition_column=contract.condition_column,
+            contrast_name=contract.contrast_name,
+            expected_provenance=legacy_contract,
+        )
+        del legacy_component_table
+        score_views = pd.concat(
+            [score_views, legacy_score_views],
+            ignore_index=True,
+            sort=False,
+        ).sort_values(
+            [
+                "generator_id",
+                "score_view",
+                "contrast_scope",
+                "event_id",
+                "fold_id",
+                "sample_id",
+            ],
+            kind="stable",
+            ignore_index=True,
+        )
+        _append_log(
+            log_path,
+            "legacy_g1_projected",
+            elapsed_seconds=time.perf_counter() - started,
+            rows=len(legacy_score_views),
+            source_commit=legacy_provenance["source_commit"],
+        )
+        inference_score_views = _inference_score_views(
+            score_views,
+            estimator_config,
+        )
         fit_cache = V7InferenceFitCache()
         effects = run_v7_inference_matrix(
-            score_views,
+            inference_score_views,
             design=design,
             sample_metadata=sample_metadata,
-            arms=tuple(
-                (generator, "I1") for generator in ("G0", "G2", "G3", "G4", "G5")
-            ),
+            arms=tuple((generator, "I1") for generator in INFERENCE_SCORE_VIEWS),
             fit_cache=fit_cache,
         )
         _append_log(
@@ -877,6 +1094,7 @@ def run(
             "inference_completed",
             elapsed_seconds=time.perf_counter() - started,
             effect_rows=len(effects),
+            inference_score_rows=len(inference_score_views),
             score_rows=len(score_views),
         )
         ledger = build_sender_resolved_event_ledger(effects, bundle, contract)
@@ -954,6 +1172,15 @@ def run(
                 "crossfit_spec": crossfit_spec.to_dict(),
                 "differential_design": design.to_dict(),
                 "inference_cache": fit_cache.to_dict(),
+                "inference_score_views": {
+                    key: list(value) for key, value in INFERENCE_SCORE_VIEWS.items()
+                },
+                "legacy_g1": {
+                    "source_contract": dict(legacy_contract),
+                    "source_provenance": legacy_provenance,
+                    "score_rows": len(legacy_score_views),
+                    "formal_inference_allowed": False,
+                },
                 "g0_g2_equivalence": g0_g2_equivalence_diagnostic(score_views),
                 "spatial_truth": {
                     "schema_version": truth["schema_version"],
@@ -1013,6 +1240,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resource-manifest", type=Path, required=True)
     parser.add_argument("--database-root", type=Path, required=True)
     parser.add_argument("--truth-manifest", type=Path, required=True)
+    parser.add_argument("--legacy-source-manifest", type=Path, required=True)
+    parser.add_argument("--legacy-crossfit-manifest", type=Path, required=True)
+    parser.add_argument("--legacy-components", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--nichenet-release", default="v2_2021")
     parser.add_argument("--nichenet-manifest", type=Path)
@@ -1035,6 +1265,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         resource_manifest=arguments.resource_manifest.resolve(),
         database_root=arguments.database_root.resolve(),
         truth_manifest=arguments.truth_manifest.resolve(),
+        legacy_source_manifest=arguments.legacy_source_manifest.resolve(),
+        legacy_crossfit_manifest=arguments.legacy_crossfit_manifest.resolve(),
+        legacy_components=arguments.legacy_components.resolve(),
         config_path=arguments.config.resolve(),
         nichenet_release=arguments.nichenet_release,
         nichenet_manifest=(

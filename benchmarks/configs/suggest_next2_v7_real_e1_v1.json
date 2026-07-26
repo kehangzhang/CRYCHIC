@@ -41,7 +41,45 @@
     "minimum_clusters_for_cr2": 6,
     "inference_id": "I1",
     "generators": ["G0", "G2", "G3", "G4", "G5"],
-    "legacy_g1_source": "checksum_bound_existing_full_profile_run_only"
+    "legacy_g1_source": "checksum_bound_existing_full_profile_run_only",
+    "inference_score_views": {
+      "G0": ["primary_sender_detection"],
+      "G1": ["primary_sender_resolved_state"],
+      "G2": ["primary_sender_detection"],
+      "G3": ["primary_sender_detection"],
+      "G4": ["m0_parent_mean_component", "program_signed_component"],
+      "G5": ["primary_sender_detection"]
+    }
+  },
+  "legacy_g1": {
+    "kuppe": {
+      "source_run_manifest_sha256": "7e32915ee0b7ee3b18a738aa8571baa7ae54a09abb5d9e9e5f22ce3e34f82735",
+      "crossfit_manifest_sha256": "0c14c65fd1c1eb1beb191eb7acb8daf10f08418bf878fdbee6d8534bb2db9da0",
+      "family_common_components_sha256": "89363b7a66b811e02deb1ad911aad517bbbb50545bf605b31940b7fd0ecb0a95",
+      "rows": 3361380,
+      "crossfit_id": "subject_crossfit_a042f6e81ce807fb5eedaaa33aa3b16f",
+      "spec_id": "subject_crossfit_spec_d632d9a26741743d055f053b21ab6342",
+      "repeat_id": "subject_crossfit_repeat_eca4dda80d2a3699ca1f7650ca1a8515",
+      "score_version": "family_first_mechanistic_ligand_contrast_gated_softmin_v2",
+      "certification_status": "verified_train_only_oof_partial_pipeline",
+      "is_oof_certified": false,
+      "formal_inference_status": "not_available_descriptive_only",
+      "claim_scope": "heldout_family_common_diagnostic_not_complete_oof_certified"
+    },
+    "ms": {
+      "source_run_manifest_sha256": "cd1c4e7ebb9581e234494dde98ffc930e20a69409e1c1d64327be0cf295ec1ad",
+      "crossfit_manifest_sha256": "216f6fa71055f34251ebcc098d7ca8d0b305e1b9f2a16a884ff9c7e3b1aa79a5",
+      "family_common_components_sha256": "766f646cff1f8bcdbcf020b01ba9360c12bda519d5e5b5d2d32a1f8ef892dcb5",
+      "rows": 1750815,
+      "crossfit_id": "subject_crossfit_4e44c11ecc414bf634ae46ac1db89e15",
+      "spec_id": "subject_crossfit_spec_fa8e3aba9784f62a367610c2acfa0d05",
+      "repeat_id": "subject_crossfit_repeat_b65713e7838c50cb3164a67278a24827",
+      "score_version": "family_first_mechanistic_ligand_contrast_gated_softmin_v2",
+      "certification_status": "verified_train_only_oof_partial_pipeline",
+      "is_oof_certified": false,
+      "formal_inference_status": "not_available_descriptive_only",
+      "claim_scope": "heldout_family_common_diagnostic_not_complete_oof_certified"
+    }
   },
   "spatial_des": {
     "sender_resolved_generators": ["G0", "G2", "G3", "G5"],

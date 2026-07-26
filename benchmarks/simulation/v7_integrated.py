@@ -644,6 +644,175 @@ def build_v7_primary_score_views(
     return result
 
 
+def build_legacy_g1_score_view_from_components(
+    components: pd.DataFrame,
+    sample_metadata: pd.DataFrame,
+    *,
+    dataset_id: str,
+    condition_column: str,
+    contrast_name: str,
+    expected_provenance: Mapping[str, object],
+) -> pd.DataFrame:
+    """Project a checksum-bound persisted family-common G1 sample score view."""
+
+    dataset_id = _name(dataset_id, field="dataset_id")
+    condition_column = _name(condition_column, field="condition_column")
+    contrast_name = _name(contrast_name, field="contrast_name")
+    required = {
+        "crossfit_id",
+        "spec_id",
+        "repeat_id",
+        "fold_id",
+        "contrast",
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+        "mode",
+        "component",
+        "component_value",
+        "status",
+        "score_version",
+        "certification_status",
+        "is_oof_certified",
+        "formal_inference_status",
+        "claim_scope",
+        "source_table",
+    }
+    missing = required.difference(components.columns)
+    if missing or components.empty:
+        raise ValueError(
+            f"legacy G1 components are empty or missing: {sorted(missing)}"
+        )
+    source = components.copy(deep=True)
+    fixed_values: Mapping[str, object] = {
+        "crossfit_id": expected_provenance.get("crossfit_id"),
+        "spec_id": expected_provenance.get("spec_id"),
+        "repeat_id": expected_provenance.get("repeat_id"),
+        "contrast": contrast_name,
+        "mode": "state",
+        "component": "sender_resolved_strength",
+        "score_version": expected_provenance.get("score_version"),
+        "certification_status": expected_provenance.get("certification_status"),
+        "is_oof_certified": expected_provenance.get("is_oof_certified"),
+        "formal_inference_status": expected_provenance.get("formal_inference_status"),
+        "claim_scope": expected_provenance.get("claim_scope"),
+        "source_table": "sender_scores",
+    }
+    for column, expected in fixed_values.items():
+        observed = set(source[column].drop_duplicates().tolist())
+        if observed != {expected}:
+            raise ValueError(
+                f"legacy G1 {column} differs from its frozen provenance: "
+                f"{sorted(map(str, observed))}"
+            )
+    expected_rows = expected_provenance.get("rows")
+    if (
+        isinstance(expected_rows, bool)
+        or not isinstance(expected_rows, int)
+        or expected_rows < 1
+        or len(source) != expected_rows
+    ):
+        raise ValueError(
+            f"legacy G1 row count differs from its frozen provenance: {len(source)}"
+        )
+    identifiers = (
+        "fold_id",
+        "sample_id",
+        "subject_id",
+        "context_id",
+        "sender",
+        "receiver",
+        "interaction_id",
+    )
+    for column in identifiers:
+        values = source[column].astype(str)
+        if (
+            source[column].isna().any()
+            or values.eq("").any()
+            or values.str.strip().ne(values).any()
+        ):
+            raise ValueError(f"legacy G1 {column} contains non-canonical values")
+        source[column] = values
+    duplicate_keys = ["sample_id", "sender", "receiver", "interaction_id"]
+    if source.duplicated(duplicate_keys).any():
+        raise ValueError("legacy G1 components duplicate sample-event rows")
+    sample_folds = source.loc[:, ["sample_id", "fold_id"]].drop_duplicates()
+    subject_folds = source.loc[:, ["subject_id", "fold_id"]].drop_duplicates()
+    if (
+        sample_folds["sample_id"].duplicated().any()
+        or subject_folds["subject_id"].duplicated().any()
+    ):
+        raise ValueError(
+            "legacy G1 samples or subjects occur in multiple held-out folds"
+        )
+    metadata_required = ("sample_id", "subject_id", condition_column)
+    metadata_missing = set(metadata_required).difference(sample_metadata.columns)
+    if metadata_missing or sample_metadata.empty:
+        raise ValueError(
+            f"legacy G1 sample metadata are empty or missing: "
+            f"{sorted(metadata_missing)}"
+        )
+    design = sample_metadata.loc[:, list(metadata_required)].drop_duplicates()
+    if design["sample_id"].duplicated().any():
+        raise ValueError("legacy G1 metadata require unique sample IDs")
+    if set(source["sample_id"]) != set(design["sample_id"].astype(str)):
+        raise ValueError("legacy G1 component and metadata sample axes differ")
+    design = design.rename(
+        columns={
+            "subject_id": "_metadata_subject_id",
+            condition_column: "condition",
+        }
+    )
+    source = source.merge(
+        design,
+        on="sample_id",
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
+    if not source["subject_id"].eq(source["_metadata_subject_id"].astype(str)).all():
+        raise ValueError("legacy G1 component and metadata subject axes differ")
+    source = source.drop(columns="_metadata_subject_id")
+    status = source["status"].map(
+        {
+            "observed": "observed",
+            "structural_zero": "low_evidence",
+            "not_estimable": "not_estimable",
+        }
+    )
+    if status.isna().any():
+        raise ValueError("legacy G1 component status is unsupported")
+    score = pd.to_numeric(source["component_value"], errors="coerce")
+    usable = status.isin(_USABLE_SCORE_STATUSES)
+    if (
+        not np.isfinite(score.loc[usable]).all()
+        or score.loc[status.eq("not_estimable")].notna().any()
+    ):
+        raise ValueError("legacy G1 component values disagree with their statuses")
+    return _view_frame(
+        source,
+        dataset_id=dataset_id,
+        generator_id="G1",
+        score_view="primary_sender_resolved_state",
+        estimand="legacy_condition_gated_family_common_strength",
+        resolution="sender_lr_receiver_child",
+        score=score,
+        status=status,
+        contrast_scope=contrast_name,
+        outcome_agnostic=False,
+        condition_gate_used=True,
+        primary_view=True,
+        source_version=str(expected_provenance["score_version"]),
+    ).sort_values(
+        ["event_id", "fold_id", "sample_id"],
+        kind="stable",
+        ignore_index=True,
+    )
+
+
 def _design_for_scope(
     design: DifferentialDesignSpec,
     contrast_scope: str,
@@ -1472,6 +1641,7 @@ __all__ = [
     "SCORE_VIEW_COLUMNS",
     "V7InferenceFitCache",
     "V7IntegratedMatrixResult",
+    "build_legacy_g1_score_view_from_components",
     "build_v7_primary_score_views",
     "build_v7_score_views",
     "g0_g2_equivalence_diagnostic",

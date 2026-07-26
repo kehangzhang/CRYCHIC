@@ -17,6 +17,9 @@ from benchmarks.literature.run_v7_real_multigroup import (
     evaluate_v7_real_spatial_des,
     load_real_e1_config,
 )
+from benchmarks.simulation.v7_integrated import (
+    build_legacy_g1_score_view_from_components,
+)
 from crychic.resources import (
     GeneNamespace,
     Interaction,
@@ -128,6 +131,54 @@ def _expected() -> pd.DataFrame:
     )
 
 
+def _legacy_provenance() -> dict[str, object]:
+    return {
+        "rows": 2,
+        "crossfit_id": "legacy_crossfit",
+        "spec_id": "legacy_spec",
+        "repeat_id": "legacy_repeat",
+        "score_version": "family_first_mechanistic_ligand_contrast_gated_softmin_v2",
+        "certification_status": "verified_train_only_oof_partial_pipeline",
+        "is_oof_certified": False,
+        "formal_inference_status": "not_available_descriptive_only",
+        "claim_scope": "heldout_family_common_diagnostic_not_complete_oof_certified",
+    }
+
+
+def _legacy_components() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "crossfit_id": ["legacy_crossfit"] * 2,
+            "spec_id": ["legacy_spec"] * 2,
+            "repeat_id": ["legacy_repeat"] * 2,
+            "fold_id": ["fold-1", "fold-2"],
+            "contrast": ["IZ_vs_CTRL"] * 2,
+            "sample_id": ["sample-ctrl", "sample-iz"],
+            "subject_id": ["subject-ctrl", "subject-iz"],
+            "context_id": ["CTRL", "IZ"],
+            "sender": ["X", "X"],
+            "receiver": ["Y", "Y"],
+            "interaction_id": ["i1", "i1"],
+            "mode": ["state"] * 2,
+            "component": ["sender_resolved_strength"] * 2,
+            "component_value": [0.25, 0.75],
+            "status": ["observed"] * 2,
+            "score_version": [
+                "family_first_mechanistic_ligand_contrast_gated_softmin_v2"
+            ]
+            * 2,
+            "certification_status": ["verified_train_only_oof_partial_pipeline"] * 2,
+            "is_oof_certified": [False] * 2,
+            "formal_inference_status": ["not_available_descriptive_only"] * 2,
+            "claim_scope": [
+                "heldout_family_common_diagnostic_not_complete_oof_certified"
+            ]
+            * 2,
+            "source_table": ["sender_scores"] * 2,
+        }
+    )
+
+
 def test_frozen_real_protocol_loads_roles_and_rejects_endpoint_drift(
     tmp_path: Path,
 ) -> None:
@@ -153,6 +204,64 @@ def test_real_design_is_subject_level_target_minus_reference() -> None:
     assert design.condition_levels == ("CTRL", "IZ")
     assert design.subject_column == "subject_id"
     assert design.contrasts[0].weights == (("CTRL", -1.0), ("IZ", 1.0))
+
+
+def test_legacy_g1_component_projection_preserves_heldout_sample_scores() -> None:
+    metadata = pd.DataFrame(
+        {
+            "sample_id": ["sample-ctrl", "sample-iz"],
+            "subject_id": ["subject-ctrl", "subject-iz"],
+            "condition": ["CTRL", "IZ"],
+        }
+    )
+
+    scores = build_legacy_g1_score_view_from_components(
+        _legacy_components(),
+        metadata,
+        dataset_id="Kuppe_MI_CTRL_vs_IZ",
+        condition_column="condition",
+        contrast_name="IZ_vs_CTRL",
+        expected_provenance=_legacy_provenance(),
+    )
+
+    assert set(scores["generator_id"]) == {"G1"}
+    assert set(scores["score_view"]) == {"primary_sender_resolved_state"}
+    assert set(scores["condition"]) == {"CTRL", "IZ"}
+    assert scores["out_of_fold"].all()
+    assert not scores["outcome_agnostic"].any()
+    assert scores["condition_gate_used"].all()
+    observed = scores.set_index("sample_id")["score"]
+    assert observed.loc["sample-ctrl"] == pytest.approx(0.25)
+    assert observed.loc["sample-iz"] == pytest.approx(0.75)
+
+
+def test_real_inference_matrix_excludes_annotation_only_views() -> None:
+    rows = [
+        {"generator_id": generator, "score_view": view, "row": index}
+        for index, (generator, views) in enumerate(
+            real_runner.INFERENCE_SCORE_VIEWS.items()
+        )
+        for view in views
+    ]
+    rows.append(
+        {
+            "generator_id": "G5",
+            "score_view": "coupling_prior_annotation",
+            "row": 999,
+        }
+    )
+    selected = real_runner._inference_score_views(
+        pd.DataFrame.from_records(rows),
+        {
+            "inference_score_views": {
+                key: list(value)
+                for key, value in real_runner.INFERENCE_SCORE_VIEWS.items()
+            }
+        },
+    )
+
+    assert len(selected) == 7
+    assert "coupling_prior_annotation" not in set(selected["score_view"])
 
 
 def test_sender_ledger_excludes_g4_and_withholds_formal_inference() -> None:
