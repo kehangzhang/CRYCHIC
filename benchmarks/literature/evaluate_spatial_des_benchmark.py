@@ -27,6 +27,7 @@ SCSEQCOMMDIFF_MANIFEST_SCHEMAS = frozenset(
         "crychic-scseqcommdiff-paper-benchmark-v2",
     }
 )
+V7_REAL_E1_MANIFEST_SCHEMA = "crychic-suggest-next2-v7-real-e1-run-v1"
 RankingStatistic = str
 RANKING_STATISTICS = frozenset(
     {"raw_cardinality", "raw_strength", "average_rank"}
@@ -261,17 +262,25 @@ def _validate_run_binding(
         resource = payload.get("resource")
         if isinstance(inputs, Mapping):
             h5ad = inputs.get("h5ad")
-            input_manifest = inputs.get("manifest")
-            resource_manifest = inputs.get("resource_manifest")
+            if schema == V7_REAL_E1_MANIFEST_SCHEMA:
+                input_manifest = inputs.get("preparation_manifest")
+                resource_input = inputs.get("lr_resource")
+                resource_manifest = inputs.get("lr_resource_manifest")
+            else:
+                input_manifest = inputs.get("manifest")
+                resource_input = None
+                resource_manifest = inputs.get("resource_manifest")
             if isinstance(h5ad, Mapping):
                 provenance["input_sha256"] = h5ad.get("sha256")
             if isinstance(input_manifest, Mapping):
                 provenance["input_manifest_sha256"] = input_manifest.get("sha256")
+            if isinstance(resource_input, Mapping):
+                provenance["resource_sha256"] = resource_input.get("sha256")
             if isinstance(resource_manifest, Mapping):
                 provenance["resource_manifest_sha256"] = resource_manifest.get(
                     "sha256"
                 )
-        if isinstance(resource, Mapping):
+        if "resource_sha256" not in provenance and isinstance(resource, Mapping):
             provenance["resource_sha256"] = resource.get("sha256")
     elif schema in SCSEQCOMMDIFF_MANIFEST_SCHEMAS:
         if payload.get("status") != "complete":

@@ -100,6 +100,12 @@ variants, coverage, score geometry and effect summaries. The manifest must be
 `complete`, `dirty=false`, bind every output checksum, and retain
 `formal_inference_allowed=false` before spatial-geometry evaluation is allowed.
 
+For the cross-method subject-v2 replay, the common DES evaluator binds the v7
+manifest's `inputs.h5ad`, `inputs.preparation_manifest`,
+`inputs.lr_resource`, `inputs.lr_resource_manifest` and
+`outputs.condition_cell_pair_rankings.tsv` checksums explicitly. Schema-bound
+manifests with any status other than `complete` are rejected.
+
 Focused verification: 10 real-runner tests passed. These tests cover frozen roles,
 input and payload drift rejection, subject-level contrasts, G1 component
 projection, the G4 sender-resolution guard, withheld formal fields,

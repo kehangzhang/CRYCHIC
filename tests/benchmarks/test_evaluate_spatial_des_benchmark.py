@@ -238,6 +238,62 @@ def test_schema_bound_analysis_unit_manifest_must_be_complete(
         )
 
 
+def test_v7_real_manifest_binds_frozen_subject_inputs_and_ranking(
+    tmp_path: Path,
+) -> None:
+    ranking = tmp_path / "condition_cell_pair_rankings.tsv"
+    ranking.write_text("fixture\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "crychic-suggest-next2-v7-real-e1-run-v1",
+                "status": "complete",
+                "analysis_unit": {
+                    "replicate_key": "subject_id",
+                    "subject_key": "subject_id",
+                    "primary_panel": True,
+                },
+                "inputs": {
+                    "h5ad": {"sha256": "i" * 64},
+                    "preparation_manifest": {"sha256": "m" * 64},
+                    "lr_resource": {"sha256": "r" * 64},
+                    "lr_resource_manifest": {"sha256": "s" * 64},
+                },
+                "outputs": {
+                    "condition_cell_pair_rankings.tsv": {
+                        "sha256": _sha256(ranking)
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    binding = _validate_run_binding(
+        manifest,
+        scenario="multi_sample",
+        analysis_unit="subject_id",
+        ranking_paths=[ranking],
+    )
+    assert binding["input_sha256"] == "i" * 64
+    assert binding["input_manifest_sha256"] == "m" * 64
+    assert binding["resource_sha256"] == "r" * 64
+    assert binding["resource_manifest_sha256"] == "s" * 64
+    assert binding["primary_panel"] is True
+    assert _validate_expected_run_bindings(
+        binding,
+        input_sha256="i" * 64,
+        resource_sha256="r" * 64,
+        resource_manifest_sha256="s" * 64,
+    ) == {
+        "input_sha256": "i" * 64,
+        "resource_sha256": "r" * 64,
+        "resource_manifest_sha256": "s" * 64,
+    }
+
+
 @pytest.mark.parametrize(
     "schema_version",
     [

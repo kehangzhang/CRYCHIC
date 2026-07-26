@@ -101,7 +101,9 @@ benchmark_work/suggest_next2_v7/subject_multi_sample_v2_20260726/ms/preflight/
 The spatial DES evaluator now explicitly accepts both checksum-bound
 scSeqCommDiff manifest schemas v1 and v2. This is a schema compatibility fix;
 status, ranking checksum, input checksum, resource checksum and subject-unit
-checks remain fail closed.
+checks remain fail closed. It also resolves the v7 real E1 manifest's explicit
+preparation-manifest and LR-resource input records, so CRYCHIC and external
+methods can be replayed through the same checksum-bound evaluator.
 
 ### scSeqCommDiff native subject arm
 
