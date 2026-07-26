@@ -28,6 +28,7 @@ from crychic.inference import (
     fit_design_aware_differential,
 )
 from crychic.workflow import CrossFitArtifacts
+from crychic.workflow.crossfit import _V7PrimaryCrossFitArtifacts
 
 SCHEMA_VERSION = "crychic-suggest-next2-v7-integrated-matrix-v1"
 ALL_CONTRASTS = "__all__"
@@ -581,6 +582,65 @@ def build_v7_score_views(
         raise ValueError(f"integrated score-view duplicate: {duplicate.to_dict()}")
     if not result["out_of_fold"].astype(bool).all():
         raise ValueError("integrated v7 score views must all be out of fold")
+    return result
+
+
+def build_v7_primary_score_views(
+    crossfit: _V7PrimaryCrossFitArtifacts,
+    *,
+    dataset_id: str,
+) -> pd.DataFrame:
+    """Build G0/G2--G5 views from the lean PR10 execution profile.
+
+    G1 is intentionally unavailable because its legacy family-common stages
+    are omitted by the v7-primary profile.  This benchmark-only projection
+    does not alter or relabel any v7 score.
+    """
+
+    if not isinstance(crossfit, _V7PrimaryCrossFitArtifacts):
+        raise TypeError("crossfit must be v7-primary cross-fit artifacts")
+    dataset_id = _name(dataset_id, field="dataset_id")
+    crossfit._require_intact()
+    frames: list[pd.DataFrame] = []
+    for fold in crossfit.folds:
+        artifact = fold.sample_edge_scores_v2
+        if artifact is None:
+            raise ValueError("v7-primary score views require M0 v2 in every fold")
+        v2 = artifact.table
+        g0, g2 = _v1_views(fold, v2, dataset_id=dataset_id)
+        frames.extend((g0, g2))
+        frames.extend(_v2_views(v2, dataset_id=dataset_id))
+    if not frames:
+        raise ValueError("v7-primary projection produced no score views")
+    result = pd.concat(frames, ignore_index=True).loc[:, list(SCORE_VIEW_COLUMNS)]
+    result = result.sort_values(
+        [
+            "generator_id",
+            "score_view",
+            "contrast_scope",
+            "event_id",
+            "fold_id",
+            "sample_id",
+        ],
+        kind="stable",
+        ignore_index=True,
+    )
+    duplicate_keys = [
+        "generator_id",
+        "score_view",
+        "contrast_scope",
+        "event_id",
+        "sample_id",
+    ]
+    if result.duplicated(duplicate_keys).any():
+        duplicate = result.loc[result.duplicated(duplicate_keys), duplicate_keys].iloc[
+            0
+        ]
+        raise ValueError(f"v7-primary score-view duplicate: {duplicate.to_dict()}")
+    if not result["out_of_fold"].astype(bool).all():
+        raise ValueError("v7-primary score views must all be out of fold")
+    if set(result["generator_id"].astype(str)) != {"G0", "G2", "G3", "G4", "G5"}:
+        raise ValueError("v7-primary score views have an unexpected generator axis")
     return result
 
 
@@ -1412,6 +1472,7 @@ __all__ = [
     "SCORE_VIEW_COLUMNS",
     "V7InferenceFitCache",
     "V7IntegratedMatrixResult",
+    "build_v7_primary_score_views",
     "build_v7_score_views",
     "g0_g2_equivalence_diagnostic",
     "run_v7_inference_matrix",

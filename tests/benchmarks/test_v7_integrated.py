@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import benchmarks.simulation.v7_integrated as v7_integrated_module
 import pandas as pd
 import pytest
+
+import benchmarks.simulation.v7_integrated as v7_integrated_module
 from benchmarks.simulation.v7_component_swaps import (
     E2_ANNOTATION_ARMS,
     E2_ARMS,
@@ -27,6 +28,7 @@ from benchmarks.simulation.v7_integrated import (
     SCORE_VIEW_COLUMNS,
     V7InferenceFitCache,
     V7IntegratedMatrixResult,
+    build_v7_primary_score_views,
     build_v7_score_views,
     g0_g2_equivalence_diagnostic,
     run_v7_integrated_matrix,
@@ -47,8 +49,9 @@ from benchmarks.simulation.v7_sender_swaps import (
     build_e3_sender_swap_score_views,
     run_v7_e3_sender_swap,
 )
-
 from crychic.workflow import CrossFitArtifacts, run_subject_crossfit
+from crychic.workflow.crossfit import _run_v7_primary_crossfit
+from crychic.workflow.training import _sanitized_raw_input_snapshot
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,34 @@ def test_score_matrix_covers_frozen_generators_and_keeps_estimands_separate(
         "coupling_prior_annotation",
     }.issubset(set(g5["score_view"]))
     assert set(g5.loc[g5["primary_view"], "score_view"]) == {"primary_sender_detection"}
+
+
+def test_v7_primary_projection_matches_full_profile_nonlegacy_views_exactly(
+    prepared: _Prepared,
+) -> None:
+    snapshot = _sanitized_raw_input_snapshot(
+        prepared.fixture.adata,
+        prepared.fixture.config,
+    )
+    primary = _run_v7_primary_crossfit(
+        snapshot,
+        prepared.fixture.config,
+        prepared.fixture.resource,
+        prepared.fixture.target_prior,
+        spec=prepared.fixture.crossfit_spec,
+    )
+    projected = build_v7_primary_score_views(
+        primary,
+        dataset_id=prepared.fixture.dataset_id,
+    )
+    full = build_v7_score_views(
+        prepared.crossfit,
+        dataset_id=prepared.fixture.dataset_id,
+    )
+    expected = full.loc[~full["generator_id"].eq("G1")].reset_index(drop=True)
+
+    assert set(projected["generator_id"]) == {"G0", "G2", "G3", "G4", "G5"}
+    pd.testing.assert_frame_equal(projected, expected, check_exact=True)
 
 
 def test_g0_g2_frozen_formulas_report_constant_scale_equivalence(
