@@ -15,6 +15,8 @@ cross-method rank is claimed.
 - cell-pair universe: canonical unordered pairs, self-pairs excluded;
 - endpoint: weighted fgsea positive running sum, `gseaParam=1`, native stable
   tie order;
+- ranking statistic: `raw_cardinality` for native event counts and
+  `raw_strength` for continuous common-score effects;
 - primary spatial variant for Kuppe: `spatial_neighbor_max`;
 - resource: 2,293-row ConnectomeDB2020 payload SHA256 `e7813632...`, manifest
   SHA256 `3dd10324...`;

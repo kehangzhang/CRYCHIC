@@ -58,6 +58,7 @@ def test_evaluator_aligns_condition_aliases_and_unordered_mode() -> None:
         dataset_map={"local": "truth"},
         condition_map={"case": "disease", "ctrl": "control"},
         exclude_self_pairs=False,
+        ranking_statistic="raw_strength",
     )
 
     assert len(scores) == 8

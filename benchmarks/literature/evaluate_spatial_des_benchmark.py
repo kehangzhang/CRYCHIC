@@ -22,7 +22,9 @@ SCHEMA_VERSION = "crychic-spatial-des-evaluation-v2"
 METHOD_COLUMNS = ("method", "method_version", "resource", "ranking_semantics")
 ANALYSIS_UNITS = frozenset({"condition_level", "sample_id", "subject_id"})
 RankingStatistic = str
-RANKING_STATISTICS = frozenset({"raw_cardinality", "average_rank"})
+RANKING_STATISTICS = frozenset(
+    {"raw_cardinality", "raw_strength", "average_rank"}
+)
 
 
 def _sha256(path: Path) -> str:
@@ -51,9 +53,7 @@ def evaluate_rankings(
     if not scenario or scenario != scenario.strip():
         raise ValueError("scenario must be a canonical non-empty string")
     if ranking_statistic not in RANKING_STATISTICS:
-        raise ValueError(
-            "ranking_statistic must be 'raw_cardinality' or 'average_rank'"
-        )
+        raise ValueError(f"unsupported ranking_statistic: {ranking_statistic!r}")
     required_rank = {
         "dataset",
         *METHOD_COLUMNS,

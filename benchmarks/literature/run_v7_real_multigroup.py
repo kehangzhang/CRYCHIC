@@ -982,7 +982,11 @@ def evaluate_v7_real_spatial_des(
                 weight_exponent=1.0,
                 tie_policy="fgsea_native",
                 exclude_self_pairs=True,
-                ranking_statistic="raw_cardinality",
+                ranking_statistic=(
+                    "raw_strength"
+                    if endpoint == "continuous_weighted_des"
+                    else "raw_cardinality"
+                ),
             )
             for table in (rankings, scores, coverage):
                 table.insert(0, "generator_id", generator)
