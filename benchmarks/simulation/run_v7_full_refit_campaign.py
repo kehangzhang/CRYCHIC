@@ -73,6 +73,9 @@ CALIBRATION_PILOT_CONFIG_SCHEMA_VERSION = (
 CALIBRATION_PILOT_PERFORMANCE_CONFIG_SCHEMA_VERSION = (
     "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v3"
 )
+CALIBRATION_PILOT_BOOTSTRAP_CONFIG_SCHEMA_VERSION = (
+    "crychic-suggest-next2-v7-pr10-calibration-pilot-r20-v4"
+)
 _CALIBRATION_CONFIG_PROFILES = {
     CALIBRATION_INTEGRATION_CONFIG_SCHEMA_VERSION: {
         "status": "amended_after_v1_plan_count_mismatch_before_metric_inspection",
@@ -173,6 +176,65 @@ _CALIBRATION_CONFIG_PROFILES = {
             "reason": (
                 "execution_only_pruning_of_unconsumed_legacy_diagnostics_"
                 "after_multigroup_runtime_diagnosis"
+            ),
+        },
+    },
+    CALIBRATION_PILOT_BOOTSTRAP_CONFIG_SCHEMA_VERSION: {
+        "status": (
+            "amended_after_continuous_bootstrap_estimability_failure_"
+            "before_metric_inspection"
+        ),
+        "name": "PR10_global_null_calibration_pilot_r20_v4",
+        "publication_role": "calibration_precision_and_runtime_pilot_only",
+        "maximum_replicates": 20,
+        "maximum_datasets": 120,
+        "dataset_id_suffix": "n12_pr10_calpilot_r20v4",
+        "n_bootstraps": 99,
+        "n_permutations": 99,
+        "expected_resamples_per_dataset_by_design": {
+            "independent_two_group": 222,
+            "independent_multi_group": 234,
+            "paired": 210,
+            "repeated": 210,
+            "multi_cohort": 222,
+            "continuous": 222,
+        },
+        "primary_endpoint": (
+            "channel_design_global_null_type1_fdr_coverage_with_uncertainty"
+        ),
+        "pass_rule": "report_estimates_and_intervals_without_release_decision",
+        "release_guard": "pilot_result_cannot_release_p_or_q",
+        "crossfit_execution_profile": "v7_primary_m0_m5_v1",
+        "peak_rss_poll_seconds": 2.0,
+        "minimum_runner_commit": "721202898a611587e3594d2d52a8c354c8a6f739",
+        "resampling_amendment": {
+            "source_dataset_id": (
+                "v7_null_calibration_global_null_continuous_r0001_n12_"
+                "pr10_calpilot_r20v3"
+            ),
+            "failed_operation": "subject_bootstrap",
+            "failed_resample_index": 45,
+            "failure_code": "no_estimable_subject_fold_plan",
+            "drawn_crossfit_context_counts": {"A": 2, "B": 22},
+            "old_bootstrap_policy": (
+                "design_stratified_complete_subject_block_with_replacement_v1"
+            ),
+            "new_bootstrap_policy": (
+                "design_stratified_complete_subject_block_with_subject_"
+                "invariant_context_v2"
+            ),
+            "continuous_context_strata": ["condition"],
+            "paired_and_repeated_complete_trajectory_policy_changed": False,
+            "calibration_metrics_inspected_before_amendment": False,
+        },
+        "supersedes_frozen_config": {
+            "filename": "suggest_next2_v7_pr10_calibration_pilot_r20_v3.json",
+            "sha256": (
+                "9423d07ed3b0b6c6f583e249a325dae8592946bb8ae1e4e6e21b2cf4e6e90262"
+            ),
+            "reason": (
+                "continuous_bootstraps_did_not_preserve_the_subject_"
+                "invariant_crossfit_context_axis"
             ),
         },
     },
@@ -462,6 +524,13 @@ def load_v7_full_refit_frozen_config(path: Path) -> V7FullRefitFrozenConfig:
             or sha256_file(superseded_path) != expected_superseded["sha256"]
         ):
             raise ValueError("PR10 superseded calibration config checksum differs")
+        expected_amendment = calibration_profile.get("resampling_amendment")
+        if expected_amendment is not None and (
+            raw.get("resampling_amendment") != expected_amendment
+            or raw.get("minimum_runner_commit")
+            != calibration_profile["minimum_runner_commit"]
+        ):
+            raise ValueError("PR10 bootstrap amendment provenance changed")
     elif (
         experiment.get("phase") != "smoke"
         or int(experiment.get("maximum_replicates", 0)) != 1

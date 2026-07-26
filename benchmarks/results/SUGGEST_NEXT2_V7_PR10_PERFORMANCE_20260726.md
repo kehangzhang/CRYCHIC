@@ -86,7 +86,11 @@ Reference completed manifest:
 ## Interpretation boundary
 
 These measurements justify using the optimized execution path for the fresh
-r20-v3 pilot.  They do not establish calibration, ranking, biological
+r20 pilot.  The initial r20-v3 launch was subsequently superseded by the
+pre-metric continuous-bootstrap amendment documented in
+`SUGGEST_NEXT2_V7_PR10_BOOTSTRAP_AMENDMENT_20260726.md`; the performance
+measurements remain valid, but r20-v3 calibration output must not be used.
+They do not establish calibration, ranking, biological
 validity, or a release decision.  Locked simulation, formal null calibration,
 independent real-cohort, and spatial validation results must be reported
 separately after completion.
