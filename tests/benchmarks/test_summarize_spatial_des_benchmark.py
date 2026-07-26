@@ -359,6 +359,7 @@ def test_cli_writer_binds_inputs_and_output_checksum(tmp_path: Path) -> None:
         tmp_path / "evaluation",
         method="method",
         values=list(np.linspace(0.1, 0.8, 8)),
+        comparison_track="native_cardinality",
     )
     output = tmp_path / "summary"
 
@@ -369,7 +370,11 @@ def test_cli_writer_binds_inputs_and_output_checksum(tmp_path: Path) -> None:
     assert manifest["output"]["sha256"] == _sha256(summary_path)
     assert manifest["output"]["rows"] == 1
     assert manifest["protocol"]["no_cross_panel_ranking"] is True
+    assert "comparison track" in manifest["protocol"]["panel_isolation"]
     assert len(manifest["comparison_panels"]) == 1
+    assert manifest["inputs"]["evaluation_manifests"][0][
+        "comparison_track"
+    ] == "native_cardinality"
     assert len(manifest["inputs"]["evaluation_manifest_aggregate_sha256"]) == 64
     on_disk = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert on_disk == manifest

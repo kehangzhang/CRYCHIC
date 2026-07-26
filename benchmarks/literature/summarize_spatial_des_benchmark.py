@@ -755,8 +755,9 @@ def run(
             ),
             "panel_isolation": (
                 "dataset, scenario, expected-set SHA256, expected filters/variant, "
-                "analysis unit, condition/fraction strata, cell-pair direction, "
-                "self-pair policy, tie policy, and score semantics"
+                "comparison track, analysis unit, condition/fraction strata, "
+                "cell-pair direction, self-pair policy, tie policy, and score "
+                "semantics"
             ),
             "coverage_reporting": (
                 "rank_eligible_fraction and expected_pair_coverage_fraction are "
@@ -783,6 +784,7 @@ def run(
                     "scenario": bundle.scenario,
                     "expected_sets_sha256": bundle.expected_sha256,
                     "expected_filters": bundle.expected_filters,
+                    "comparison_track": bundle.comparison_track,
                     "analysis_unit": bundle.analysis_unit,
                     "analysis_unit_source": bundle.analysis_unit_source,
                 }
