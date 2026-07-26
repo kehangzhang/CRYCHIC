@@ -204,11 +204,11 @@ def _parse_dataset_map(values: list[str]) -> dict[str, str]:
     return result
 
 
-def _parse_expected_filters(values: list[str]) -> dict[str, str]:
+def _parse_filters(values: list[str], *, label: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError("expected filters must use COLUMN=VALUE")
+            raise ValueError(f"{label} filters must use COLUMN=VALUE")
         column, expected = value.split("=", 1)
         if (
             not column
@@ -216,11 +216,34 @@ def _parse_expected_filters(values: list[str]) -> dict[str, str]:
             or column != column.strip()
             or expected != expected.strip()
         ):
-            raise ValueError("expected filters require canonical non-empty labels")
+            raise ValueError(
+                f"{label} filters require canonical non-empty labels"
+            )
         if column in result:
-            raise ValueError(f"duplicate expected filter column: {column}")
+            raise ValueError(f"duplicate {label} filter column: {column}")
         result[column] = expected
     return result
+
+
+def _parse_expected_filters(values: list[str]) -> dict[str, str]:
+    return _parse_filters(values, label="expected")
+
+
+def _parse_ranking_filters(values: list[str]) -> dict[str, str]:
+    return _parse_filters(values, label="ranking")
+
+
+def _filter_rankings(
+    rankings: pd.DataFrame, filters: Mapping[str, str]
+) -> pd.DataFrame:
+    filtered = rankings
+    for column, value in filters.items():
+        if column not in filtered.columns:
+            raise ValueError(f"ranking filter column is missing: {column}")
+        filtered = filtered.loc[filtered[column].astype(str).eq(value)]
+    if filtered.empty:
+        raise ValueError("ranking filters removed every row")
+    return filtered.copy()
 
 
 def _resolved_analysis_unit(scenario: str, value: str | None) -> str | None:
@@ -405,6 +428,7 @@ def run(
     dataset_map: dict[str, str],
     condition_map: dict[str, str],
     expected_filters: dict[str, str],
+    ranking_filters: dict[str, str] | None = None,
     score_type: ScoreType = "std",
     weight_exponent: float = 1.0,
     tie_policy: TiePolicy = "fgsea_native",
@@ -445,6 +469,7 @@ def run(
     rankings = pd.concat(
         [pd.read_csv(path, sep="\t") for path in ranking_paths], ignore_index=True
     )
+    rankings = _filter_rankings(rankings, ranking_filters or {})
     expected = pd.read_csv(expected_path, sep="\t")
     scores, coverage = evaluate_rankings(
         rankings,
@@ -482,6 +507,7 @@ def run(
         "dataset_map": dataset_map,
         "condition_map": condition_map,
         "expected_filters": expected_filters,
+        "ranking_filters": ranking_filters or {},
         "cell_pair_direction": "unordered_directions_collapsed",
         "score": (
             f"{weighting}_fgsea_{score_type}_running_sum_gseaParam="
@@ -556,6 +582,7 @@ def main() -> None:
     parser.add_argument("--dataset-map", action="append", default=[])
     parser.add_argument("--condition-map", action="append", default=[])
     parser.add_argument("--expected-filter", action="append", default=[])
+    parser.add_argument("--ranking-filter", action="append", default=[])
     parser.add_argument(
         "--score-type",
         choices=("std", "pos", "abs"),
@@ -596,6 +623,7 @@ def main() -> None:
         dataset_map=_parse_dataset_map(args.dataset_map),
         condition_map=_parse_condition_map(args.condition_map),
         expected_filters=_parse_expected_filters(args.expected_filter),
+        ranking_filters=_parse_ranking_filters(args.ranking_filter),
         score_type=args.score_type,
         weight_exponent=args.weight_exponent,
         tie_policy=args.tie_policy,

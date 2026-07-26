@@ -103,7 +103,11 @@ scSeqCommDiff manifest schemas v1 and v2. This is a schema compatibility fix;
 status, ranking checksum, input checksum, resource checksum and subject-unit
 checks remain fail closed. It also resolves the v7 real E1 manifest's explicit
 preparation-manifest and LR-resource input records, so CRYCHIC and external
-methods can be replayed through the same checksum-bound evaluator.
+methods can be replayed through the same checksum-bound evaluator. CRYCHIC's
+multi-endpoint ranking payload is filtered only after that full-payload check:
+`diagnostic_one_se_native_count_des` enters the native-cardinality panel,
+`continuous_weighted_des` enters the continuous panel, and each
+`top_k_count_des` event budget remains a separate fixed-K sensitivity.
 
 ### scSeqCommDiff native subject arm
 

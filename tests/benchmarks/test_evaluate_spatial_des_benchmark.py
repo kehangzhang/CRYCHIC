@@ -10,11 +10,15 @@ from benchmarks.literature.evaluate_spatial_des_benchmark import (
     _parse_condition_map,
     _parse_dataset_map,
     _parse_expected_filters,
+    _parse_ranking_filters,
     _resolved_analysis_unit,
     _sha256,
     _validate_expected_run_bindings,
     _validate_run_binding,
     evaluate_rankings,
+)
+from benchmarks.literature.evaluate_spatial_des_benchmark import (
+    run as run_evaluation,
 )
 
 
@@ -436,3 +440,91 @@ def test_evaluator_filters_one_frozen_spatial_variant() -> None:
     assert _parse_expected_filters(["variant=primary"]) == {"variant": "primary"}
     with pytest.raises(ValueError, match="COLUMN=VALUE"):
         _parse_expected_filters(["bad"])
+
+
+def test_bound_runner_filters_one_crychic_ranking_variant(tmp_path: Path) -> None:
+    ranking_path = tmp_path / "condition_cell_pair_rankings.tsv"
+    ranking = pd.DataFrame(
+        {
+            "dataset": ["fixture"] * 4,
+            "method": ["CRYCHIC_v7_G3_I1"] * 4,
+            "method_version": ["v7"] * 4,
+            "resource": ["r"] * 4,
+            "ranking_semantics": ["count_selected_directed_lr_events"] * 4,
+            "condition": ["case"] * 4,
+            "sender": ["A", "A", "A", "A"],
+            "receiver": ["B", "C", "B", "C"],
+            "ranked_strength": [2.0, 1.0, 200.0, 100.0],
+            "status": ["observed"] * 4,
+            "des_variant": [
+                "diagnostic_one_se_native_count_des",
+                "diagnostic_one_se_native_count_des",
+                "top_k_count_des",
+                "top_k_count_des",
+            ],
+        }
+    )
+    ranking.to_csv(ranking_path, sep="\t", index=False)
+    expected_path = tmp_path / "expected.tsv"
+    expected = pd.DataFrame.from_records(
+        {
+            "dataset": "fixture",
+            "scenario": "multi_sample",
+            "condition": "case",
+            "top_fraction": fraction,
+            "sender": sender,
+            "receiver": receiver,
+            "is_expected": receiver == "B",
+        }
+        for fraction in (0.1, 0.2, 0.3, 0.4)
+        for sender, receiver in (("A", "B"), ("A", "C"))
+    )
+    expected.to_csv(expected_path, sep="\t", index=False)
+    run_manifest = tmp_path / "run_manifest.json"
+    run_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "crychic-suggest-next2-v7-real-e1-run-v1",
+                "status": "complete",
+                "analysis_unit": {
+                    "replicate_key": "subject_id",
+                    "subject_key": "subject_id",
+                    "primary_panel": True,
+                },
+                "outputs": {
+                    ranking_path.name: {"sha256": _sha256(ranking_path)}
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = run_evaluation(
+        [ranking_path],
+        expected_path,
+        tmp_path / "evaluation",
+        scenario="multi_sample",
+        analysis_unit="subject_id",
+        dataset_map={},
+        condition_map={},
+        expected_filters={},
+        ranking_filters={
+            "des_variant": "diagnostic_one_se_native_count_des"
+        },
+        score_type="pos",
+        exclude_self_pairs=True,
+        ranking_statistic="raw_cardinality",
+        overwrite=False,
+        run_manifest_path=run_manifest,
+    )
+
+    assert manifest["ranking_filters"] == {
+        "des_variant": "diagnostic_one_se_native_count_des"
+    }
+    assert manifest["outputs"]["scores"]["rows"] == 4
+    assert _parse_ranking_filters(["des_variant=native"]) == {
+        "des_variant": "native"
+    }
+    with pytest.raises(ValueError, match="COLUMN=VALUE"):
+        _parse_ranking_filters(["bad"])
