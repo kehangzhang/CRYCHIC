@@ -69,7 +69,9 @@ scSeqCommDiff 1/2 and LIANA 2/2. scSeqCommDiff has complete rank-universe
 coverage; LIANA has 0.8 rank-universe coverage, reported separately rather than
 used as a score penalty. The summary is under
 `kuppe/continuous_strength_external_summary_v1` and has output SHA256
-`c6825524e71907744deca698f351a552347c76d12ac9922a278674adeeb59f4a`.
+`e3335fe6f5ea3baf01c3e864c2e9db9974974bc6080225107b061141365e0485`.
+Its panel digest includes the frozen input, resource payload and resource
+manifest checksums.
 CRYCHIC v7 and current CellChat are still absent, so this is not a final
 cross-algorithm rank.
 
