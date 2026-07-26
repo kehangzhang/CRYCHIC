@@ -785,6 +785,7 @@ def run(
         base_manifest["inputs"] = {
             "h5ad": _output_record(input_h5ad),
             "manifest": _output_record(input_manifest),
+            "resource_manifest": _output_record(resource_manifest),
         }
         base_manifest["resource_manifest"] = resource_payload
         base_manifest["environment"] = probe

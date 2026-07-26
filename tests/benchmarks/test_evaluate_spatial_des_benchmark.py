@@ -5,11 +5,14 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
 from benchmarks.literature.evaluate_spatial_des_benchmark import (
     _parse_condition_map,
     _parse_dataset_map,
     _parse_expected_filters,
     _resolved_analysis_unit,
+    _sha256,
+    _validate_expected_run_bindings,
     _validate_run_binding,
     evaluate_rankings,
 )
@@ -204,6 +207,98 @@ def test_subject_run_cannot_be_evaluated_in_condition_level_scenario(
         _validate_run_binding(
             manifest, scenario="multi_sample", analysis_unit="sample_id"
         )
+
+
+def test_scseqcommdiff_manifest_binds_subject_unit_and_ranking(tmp_path: Path) -> None:
+    ranking = tmp_path / "condition_cell_pair_rankings.tsv"
+    ranking.write_text("fixture\n", encoding="utf-8")
+    manifest = tmp_path / "run_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "crychic-scseqcommdiff-paper-benchmark-v1",
+                "status": "complete",
+                "dataset_id": "fixture",
+                "preflight": {
+                    "input": {
+                        "sample_unit_key": "subject_id",
+                        "sha256": "i" * 64,
+                        "manifest_sha256": "m" * 64,
+                    },
+                    "resource": {
+                        "sha256": "r" * 64,
+                        "manifest_sha256": "s" * 64,
+                    },
+                },
+                "outputs": {
+                    "condition_cell_pair_rankings.tsv": {
+                        "sha256": _sha256(ranking)
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    binding = _validate_run_binding(
+        manifest,
+        scenario="multi_sample",
+        analysis_unit="subject_id",
+        ranking_paths=[ranking],
+    )
+    assert binding["replicate_key"] == "subject_id"
+    assert binding["binding_source"] == "preflight.input.sample_unit_key"
+    assert binding["input_sha256"] == "i" * 64
+    assert _validate_expected_run_bindings(
+        binding,
+        input_sha256="i" * 64,
+        resource_sha256="r" * 64,
+        resource_manifest_sha256="s" * 64,
+    )["input_sha256"] == "i" * 64
+    with pytest.raises(ValueError, match="input_sha256 differs"):
+        _validate_expected_run_bindings(
+            binding,
+            input_sha256="x" * 64,
+            resource_sha256=None,
+            resource_manifest_sha256=None,
+        )
+
+    ranking.write_text("drifted\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not bind"):
+        _validate_run_binding(
+            manifest,
+            scenario="multi_sample",
+            analysis_unit="subject_id",
+            ranking_paths=[ranking],
+        )
+
+
+def test_sample_effect_manifest_is_labeled_sensitivity_only(tmp_path: Path) -> None:
+    ranking = tmp_path / "condition_cell_pair_rankings.tsv"
+    ranking.write_text("fixture\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "crychic-sample-effect-des-ranking-v1",
+                "status": "complete",
+                "specification": {"statistical_unit": "subject_id"},
+                "input": {"sha256": "u" * 64},
+                "outputs": {"rankings": {"sha256": _sha256(ranking)}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    binding = _validate_run_binding(
+        manifest,
+        scenario="multi_sample",
+        analysis_unit="subject_id",
+        ranking_paths=[ranking],
+    )
+    assert binding["primary_panel"] is False
+    assert binding["panel_role"] == "continuous_common_sensitivity_only"
+    assert binding["upstream_interactions_sha256"] == "u" * 64
 
 
 def test_evaluator_filters_one_frozen_spatial_variant() -> None:

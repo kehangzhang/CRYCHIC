@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -229,14 +230,102 @@ def _validate_run_binding(
     *,
     scenario: str,
     analysis_unit: str | None,
+    ranking_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     payload: object = json.loads(run_manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("run manifest must be a JSON object")
+    schema = payload.get("schema_version")
     analysis = payload.get("analysis_unit")
-    if not isinstance(analysis, dict):
-        raise ValueError("run manifest lacks an analysis_unit object")
-    replicate_key = analysis.get("replicate_key")
+    binding_source = "analysis_unit.replicate_key"
+    provenance: dict[str, object] = {}
+    expected_ranking_sha256: object = None
+    if isinstance(analysis, Mapping):
+        replicate_key = analysis.get("replicate_key")
+        subject_key = analysis.get("subject_key")
+        primary_panel = analysis.get("primary_panel")
+        outputs = payload.get("outputs")
+        if isinstance(outputs, Mapping):
+            record = outputs.get("condition_cell_pair_rankings.tsv")
+            if isinstance(record, Mapping):
+                expected_ranking_sha256 = record.get("sha256")
+        inputs = payload.get("inputs")
+        resource = payload.get("resource")
+        if isinstance(inputs, Mapping):
+            h5ad = inputs.get("h5ad")
+            input_manifest = inputs.get("manifest")
+            resource_manifest = inputs.get("resource_manifest")
+            if isinstance(h5ad, Mapping):
+                provenance["input_sha256"] = h5ad.get("sha256")
+            if isinstance(input_manifest, Mapping):
+                provenance["input_manifest_sha256"] = input_manifest.get("sha256")
+            if isinstance(resource_manifest, Mapping):
+                provenance["resource_manifest_sha256"] = resource_manifest.get(
+                    "sha256"
+                )
+        if isinstance(resource, Mapping):
+            provenance["resource_sha256"] = resource.get("sha256")
+    elif schema == "crychic-scseqcommdiff-paper-benchmark-v1":
+        if payload.get("status") != "complete":
+            raise ValueError("scSeqCommDiff run manifest is not complete")
+        preflight = payload.get("preflight")
+        if not isinstance(preflight, Mapping):
+            raise ValueError("scSeqCommDiff run manifest lacks preflight binding")
+        input_record = preflight.get("input")
+        resource_record = preflight.get("resource")
+        if not isinstance(input_record, Mapping) or not isinstance(
+            resource_record, Mapping
+        ):
+            raise ValueError("scSeqCommDiff run manifest lacks input/resource binding")
+        replicate_key = input_record.get("sample_unit_key")
+        subject_key = "subject_id" if replicate_key == "subject_id" else None
+        primary_panel = None
+        binding_source = "preflight.input.sample_unit_key"
+        provenance = {
+            "dataset_id": payload.get("dataset_id"),
+            "input_sha256": input_record.get("sha256"),
+            "input_manifest_sha256": input_record.get("manifest_sha256"),
+            "resource_sha256": resource_record.get("sha256"),
+            "resource_manifest_sha256": resource_record.get("manifest_sha256"),
+        }
+        outputs = payload.get("outputs")
+        if isinstance(outputs, Mapping):
+            record = outputs.get("condition_cell_pair_rankings.tsv")
+            if isinstance(record, Mapping):
+                expected_ranking_sha256 = record.get("sha256")
+    elif schema == "crychic-sample-effect-des-ranking-v1":
+        if payload.get("status") != "complete":
+            raise ValueError("sample-effect ranking manifest is not complete")
+        specification = payload.get("specification")
+        if not isinstance(specification, Mapping):
+            raise ValueError("sample-effect ranking manifest lacks its specification")
+        replicate_key = specification.get("statistical_unit")
+        subject_key = "subject_id" if replicate_key == "subject_id" else None
+        primary_panel = False
+        binding_source = "specification.statistical_unit"
+        input_record = payload.get("input")
+        if isinstance(input_record, Mapping):
+            provenance["upstream_interactions_sha256"] = input_record.get("sha256")
+        source_run = payload.get("source_run")
+        if isinstance(source_run, Mapping):
+            provenance.update(
+                {
+                    "source_run_manifest_sha256": source_run.get("sha256"),
+                    "input_sha256": source_run.get("input_h5ad_sha256"),
+                    "resource_sha256": source_run.get("resource_payload_sha256"),
+                    "resource_manifest_sha256": source_run.get(
+                        "resource_manifest_sha256"
+                    ),
+                }
+            )
+        provenance["panel_role"] = "continuous_common_sensitivity_only"
+        outputs = payload.get("outputs")
+        if isinstance(outputs, Mapping):
+            record = outputs.get("rankings")
+            if isinstance(record, Mapping):
+                expected_ranking_sha256 = record.get("sha256")
+    else:
+        raise ValueError("run manifest lacks a supported analysis-unit binding")
     if replicate_key not in {"sample_id", "subject_id"}:
         raise ValueError("run manifest replicate_key is unsupported")
     resolved = _resolved_analysis_unit(scenario, analysis_unit)
@@ -246,11 +335,47 @@ def _validate_run_binding(
             f"replicate_key={replicate_key!r} requires "
             f"scenario='multi_sample' and analysis_unit={replicate_key!r}"
         )
-    return {
+    if ranking_paths:
+        observed_hashes = {_sha256(path) for path in ranking_paths}
+        if (
+            not isinstance(expected_ranking_sha256, str)
+            or observed_hashes != {expected_ranking_sha256}
+        ):
+            raise ValueError("run manifest does not bind the supplied ranking payload")
+    result: dict[str, Any] = {
         "replicate_key": replicate_key,
-        "subject_key": analysis.get("subject_key"),
-        "primary_panel": analysis.get("primary_panel"),
+        "subject_key": subject_key,
+        "primary_panel": primary_panel,
     }
+    if schema is not None:
+        result.update(
+            {
+                "manifest_schema_version": schema,
+                "binding_source": binding_source,
+                **provenance,
+            }
+        )
+    return result
+
+
+def _validate_expected_run_bindings(
+    run_binding: Mapping[str, object] | None,
+    *,
+    input_sha256: str | None,
+    resource_sha256: str | None,
+    resource_manifest_sha256: str | None,
+) -> dict[str, str | None]:
+    expected = {
+        "input_sha256": input_sha256,
+        "resource_sha256": resource_sha256,
+        "resource_manifest_sha256": resource_manifest_sha256,
+    }
+    for field, value in expected.items():
+        if value is None:
+            continue
+        if run_binding is None or run_binding.get(field) != value:
+            raise ValueError(f"run manifest {field} differs from the frozen panel")
+    return expected
 
 
 def run(
@@ -270,6 +395,9 @@ def run(
     ranking_statistic: RankingStatistic = "raw_cardinality",
     overwrite: bool,
     run_manifest_path: Path | None = None,
+    expected_input_sha256: str | None = None,
+    expected_resource_sha256: str | None = None,
+    expected_resource_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     if not ranking_paths or any(not path.is_file() for path in ranking_paths):
         raise FileNotFoundError("one or more ranking paths are missing")
@@ -283,9 +411,16 @@ def run(
             run_manifest_path,
             scenario=scenario,
             analysis_unit=analysis_unit,
+            ranking_paths=ranking_paths,
         )
         if run_manifest_path is not None
         else None
+    )
+    expected_bindings = _validate_expected_run_bindings(
+        run_binding,
+        input_sha256=expected_input_sha256,
+        resource_sha256=expected_resource_sha256,
+        resource_manifest_sha256=expected_resource_manifest_sha256,
     )
     if output_dir.exists() and not overwrite:
         raise FileExistsError(f"output exists: {output_dir}")
@@ -326,6 +461,7 @@ def run(
         "scenario": scenario,
         "analysis_unit": resolved_analysis_unit,
         "run_binding": run_binding,
+        "expected_run_bindings": expected_bindings,
         "dataset_map": dataset_map,
         "condition_map": condition_map,
         "expected_filters": expected_filters,
@@ -343,15 +479,21 @@ def run(
         "ranking_statistic": ranking_statistic,
         "inputs": {
             "rankings": [
-                {"filename": path.name, "sha256": _sha256(path)}
+                {
+                    "path": str(path.resolve()),
+                    "filename": path.name,
+                    "sha256": _sha256(path),
+                }
                 for path in ranking_paths
             ],
             "expected_sets": {
+                "path": str(expected_path.resolve()),
                 "filename": expected_path.name,
                 "sha256": _sha256(expected_path),
             },
             "run_manifest": (
                 {
+                    "path": str(run_manifest_path.resolve()),
                     "filename": run_manifest_path.name,
                     "sha256": _sha256(run_manifest_path),
                 }
@@ -391,6 +533,9 @@ def main() -> None:
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--analysis-unit", choices=sorted(ANALYSIS_UNITS))
     parser.add_argument("--run-manifest", type=Path)
+    parser.add_argument("--expected-input-sha256")
+    parser.add_argument("--expected-resource-sha256")
+    parser.add_argument("--expected-resource-manifest-sha256")
     parser.add_argument("--dataset-map", action="append", default=[])
     parser.add_argument("--condition-map", action="append", default=[])
     parser.add_argument("--expected-filter", action="append", default=[])
@@ -441,6 +586,9 @@ def main() -> None:
         ranking_statistic=args.ranking_statistic,
         overwrite=args.overwrite,
         run_manifest_path=args.run_manifest,
+        expected_input_sha256=args.expected_input_sha256,
+        expected_resource_sha256=args.expected_resource_sha256,
+        expected_resource_manifest_sha256=args.expected_resource_manifest_sha256,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 

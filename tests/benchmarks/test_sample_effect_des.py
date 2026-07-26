@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+
 from benchmarks.literature.sample_effect_des import (
     SampleEffectDESSpec,
+    _sha256,
+    _validate_source_run_manifest,
     build_sample_effect_rankings,
 )
 
@@ -100,3 +104,46 @@ def test_duplicate_sample_edges_and_bad_context_fail_closed() -> None:
     scores.loc[scores["sample_id"].eq("a1"), "context_json"] = "not-json"
     with pytest.raises(ValueError, match="invalid JSON"):
         build_sample_effect_rankings(scores, spec)
+
+
+def test_source_run_manifest_binds_input_cohort_and_resource(tmp_path: Path) -> None:
+    input_parquet = tmp_path / "interactions_long.parquet"
+    input_parquet.write_bytes(b"fixture")
+    manifest = tmp_path / "manifest.json"
+    payload = {
+        "schema_version": "crychic-external-adapter-manifest-v1",
+        "status": "complete",
+        "run_id": "run-fixture",
+        "dataset_id": "toy",
+        "method": {"id": "method"},
+        "input": {"sha256": "i" * 64, "shape": [6, 3]},
+        "resource": {
+            "resource_id": "resource",
+            "payload_sha256": "r" * 64,
+            "manifest_sha256": "m" * 64,
+        },
+        "output": {
+            "table": input_parquet.name,
+            "sha256": _sha256(input_parquet),
+        },
+    }
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    binding = _validate_source_run_manifest(
+        manifest,
+        input_parquet,
+        dataset_id="toy",
+        method_id="method",
+    )
+    assert binding["input_h5ad_sha256"] == "i" * 64
+    assert binding["resource_payload_sha256"] == "r" * 64
+
+    payload["dataset_id"] = "wrong"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not bind"):
+        _validate_source_run_manifest(
+            manifest,
+            input_parquet,
+            dataset_id="toy",
+            method_id="method",
+        )

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -63,6 +64,49 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_source_run_manifest(
+    source_manifest_path: Path,
+    input_parquet: Path,
+    *,
+    dataset_id: str,
+    method_id: str,
+) -> dict[str, object]:
+    payload: object = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("source run manifest must be a JSON object")
+    source_input = payload.get("input")
+    source_resource = payload.get("resource")
+    source_output = payload.get("output")
+    source_method = payload.get("method")
+    if (
+        payload.get("schema_version") != "crychic-external-adapter-manifest-v1"
+        or payload.get("status") != "complete"
+        or payload.get("dataset_id") != dataset_id
+        or not isinstance(source_input, Mapping)
+        or not isinstance(source_resource, Mapping)
+        or not isinstance(source_output, Mapping)
+        or not isinstance(source_method, Mapping)
+        or source_method.get("id") != method_id
+        or source_output.get("table") != input_parquet.name
+        or source_output.get("sha256") != _sha256(input_parquet)
+    ):
+        raise ValueError("source run manifest does not bind the ranking input")
+    return {
+        "path": str(source_manifest_path.resolve()),
+        "sha256": _sha256(source_manifest_path),
+        "schema_version": payload["schema_version"],
+        "run_id": payload.get("run_id"),
+        "dataset_id": payload["dataset_id"],
+        "method_id": source_method["id"],
+        "input_h5ad_sha256": source_input.get("sha256"),
+        "input_shape": source_input.get("shape"),
+        "resource_id": source_resource.get("resource_id"),
+        "resource_payload_sha256": source_resource.get("payload_sha256"),
+        "resource_manifest_sha256": source_resource.get("manifest_sha256"),
+        "output_sha256": source_output["sha256"],
+    }
 
 
 def _single_value(table: pd.DataFrame, column: str) -> str:
@@ -309,6 +353,7 @@ def run(
     *,
     specification: SampleEffectDESSpec,
     overwrite: bool,
+    source_run_manifest: Path | None = None,
 ) -> dict[str, Any]:
     if not input_parquet.is_file():
         raise FileNotFoundError(input_parquet)
@@ -331,6 +376,16 @@ def run(
         "status",
     ]
     scores = pd.read_parquet(input_parquet, columns=columns)
+    source_binding = (
+        None
+        if source_run_manifest is None
+        else _validate_source_run_manifest(
+            source_run_manifest,
+            input_parquet,
+            dataset_id=_single_value(scores, "dataset_id"),
+            method_id=_single_value(scores, "method_id"),
+        )
+    )
     rankings, effects = build_sample_effect_rankings(scores, specification)
     ranking_path = output_dir / "condition_cell_pair_rankings.tsv"
     effects_path = output_dir / "directed_lr_effects.parquet"
@@ -345,6 +400,7 @@ def run(
             "sha256": _sha256(input_parquet),
             "rows": len(scores),
         },
+        "source_run": source_binding,
         "specification": {
             "context_key": specification.context_key,
             "reference": specification.reference,
@@ -386,6 +442,7 @@ def main() -> None:
     parser.add_argument("--reference", required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--min-subjects-per-context", type=int, default=3)
+    parser.add_argument("--source-run-manifest", type=Path)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     manifest = run(
@@ -398,6 +455,7 @@ def main() -> None:
             min_subjects_per_context=args.min_subjects_per_context,
         ),
         overwrite=args.overwrite,
+        source_run_manifest=args.source_run_manifest,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
