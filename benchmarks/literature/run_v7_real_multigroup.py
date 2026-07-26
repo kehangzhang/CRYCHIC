@@ -58,6 +58,7 @@ SCHEMA_VERSION = "crychic-suggest-next2-v7-real-e1-run-v1"
 CONFIG_SCHEMA_VERSION = "crychic-suggest-next2-v7-real-e1-v1"
 FROZEN_ESTIMATOR_COMMIT = "5dc22aaa87896eafbeb687aea8d8e96e3654af01"
 FROZEN_SCORE_PROJECTION_COMMIT = "35db184d62653ff8c960e2b135fa8e3060e1d394"
+FROZEN_LEGACY_G1_PROJECTION_COMMIT = "63aa11d87e2e97707bc4e5f5c25a4bb46249db3d"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = REPOSITORY_ROOT / "benchmarks/configs/suggest_next2_v7_real_e1_v1.json"
 PRIMARY_SCORE_VIEW = "primary_sender_detection"
@@ -158,6 +159,8 @@ def load_real_e1_config(
         or config.get("status") != "preregistered_before_v7_real_refit"
         or config.get("estimator_commit") != FROZEN_ESTIMATOR_COMMIT
         or config.get("score_projection_commit") != FROZEN_SCORE_PROJECTION_COMMIT
+        or config.get("legacy_g1_projection_commit")
+        != FROZEN_LEGACY_G1_PROJECTION_COMMIT
     ):
         raise ValueError("v7 real E1 config schema or status is unsupported")
     estimator = config.get("estimator")

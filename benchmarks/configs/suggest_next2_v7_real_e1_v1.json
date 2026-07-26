@@ -3,6 +3,7 @@
   "status": "preregistered_before_v7_real_refit",
   "estimator_commit": "5dc22aaa87896eafbeb687aea8d8e96e3654af01",
   "score_projection_commit": "35db184d62653ff8c960e2b135fa8e3060e1d394",
+  "legacy_g1_projection_commit": "63aa11d87e2e97707bc4e5f5c25a4bb46249db3d",
   "datasets": {
     "kuppe": {
       "dataset_id": "Kuppe_MI_CTRL_vs_IZ",
