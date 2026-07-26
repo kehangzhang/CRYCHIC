@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from benchmarks.literature.summarize_spatial_des_benchmark import (
     SUMMARY_FILENAME,
     run,
@@ -35,6 +36,7 @@ def _write_evaluation(
     ranking_semantics: str | None = None,
     schema_version: str = "crychic-spatial-des-evaluation-v1",
     tie_policy: str | None = None,
+    comparison_track: str | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     strata = [
@@ -113,6 +115,8 @@ def _write_evaluation(
     }
     if tie_policy is not None:
         manifest["tie_policy"] = tie_policy
+    if comparison_track is not None:
+        manifest["comparison_track"] = comparison_track
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
@@ -149,6 +153,31 @@ def test_summary_ranks_complete_methods_and_reports_coverage(tmp_path: Path) -> 
     assert result.loc["high", "rank_eligible_fraction_mean"] == pytest.approx(0.75)
     assert result.loc["high", "expected_set_coverage_min"] == pytest.approx(0.5)
     assert result.loc["high", "expected_set_coverage_mean"] == pytest.approx(0.8125)
+    assert set(summary["comparison_track"]) == {"legacy_unspecified"}
+
+
+def test_comparison_tracks_form_separate_panels(tmp_path: Path) -> None:
+    native = _write_evaluation(
+        tmp_path / "native",
+        method="same",
+        values=[0.8] * 8,
+        comparison_track="native_cardinality",
+    )
+    fixed_k = _write_evaluation(
+        tmp_path / "fixed_k",
+        method="same",
+        values=[0.4] * 8,
+        comparison_track="fixed_k_100",
+    )
+
+    summary, _, panels = summarize_evaluations([native, fixed_k])
+
+    assert len(panels) == 2
+    assert summary["comparison_panel_id"].nunique() == 2
+    assert set(summary["comparison_track"]) == {
+        "native_cardinality",
+        "fixed_k_100",
+    }
 
 
 def test_incomplete_method_is_not_ranked_but_remains_reported(tmp_path: Path) -> None:

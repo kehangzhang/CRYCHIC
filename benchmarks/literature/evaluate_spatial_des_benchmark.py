@@ -21,6 +21,17 @@ from benchmarks.metrics.spatial_des import (
 SCHEMA_VERSION = "crychic-spatial-des-evaluation-v2"
 METHOD_COLUMNS = ("method", "method_version", "resource", "ranking_semantics")
 ANALYSIS_UNITS = frozenset({"condition_level", "sample_id", "subject_id"})
+COMPARISON_TRACKS = frozenset(
+    {
+        "legacy_unspecified",
+        "native_cardinality",
+        "continuous_strength",
+        "fixed_k_100",
+        "fixed_k_250",
+        "fixed_k_500",
+        "fixed_k_1000",
+    }
+)
 SCSEQCOMMDIFF_MANIFEST_SCHEMAS = frozenset(
     {
         "crychic-scseqcommdiff-paper-benchmark-v1",
@@ -246,6 +257,20 @@ def _filter_rankings(
     return filtered.copy()
 
 
+def _resolved_comparison_track(
+    value: str | None, *, ranking_filters: Mapping[str, str]
+) -> str:
+    if value is None:
+        if ranking_filters:
+            raise ValueError(
+                "ranking filters require an explicit comparison track"
+            )
+        return "legacy_unspecified"
+    if value not in COMPARISON_TRACKS:
+        raise ValueError(f"unsupported comparison track: {value!r}")
+    return value
+
+
 def _resolved_analysis_unit(scenario: str, value: str | None) -> str | None:
     resolved = (
         "condition_level" if value is None and scenario == "condition_aware" else value
@@ -429,6 +454,7 @@ def run(
     condition_map: dict[str, str],
     expected_filters: dict[str, str],
     ranking_filters: dict[str, str] | None = None,
+    comparison_track: str | None = None,
     score_type: ScoreType = "std",
     weight_exponent: float = 1.0,
     tie_policy: TiePolicy = "fgsea_native",
@@ -446,6 +472,11 @@ def run(
         raise FileNotFoundError(expected_path)
     if run_manifest_path is not None and not run_manifest_path.is_file():
         raise FileNotFoundError(run_manifest_path)
+    selected_ranking_filters = ranking_filters or {}
+    resolved_comparison_track = _resolved_comparison_track(
+        comparison_track,
+        ranking_filters=selected_ranking_filters,
+    )
     resolved_analysis_unit = _resolved_analysis_unit(scenario, analysis_unit)
     run_binding = (
         _validate_run_binding(
@@ -469,7 +500,7 @@ def run(
     rankings = pd.concat(
         [pd.read_csv(path, sep="\t") for path in ranking_paths], ignore_index=True
     )
-    rankings = _filter_rankings(rankings, ranking_filters or {})
+    rankings = _filter_rankings(rankings, selected_ranking_filters)
     expected = pd.read_csv(expected_path, sep="\t")
     scores, coverage = evaluate_rankings(
         rankings,
@@ -507,7 +538,8 @@ def run(
         "dataset_map": dataset_map,
         "condition_map": condition_map,
         "expected_filters": expected_filters,
-        "ranking_filters": ranking_filters or {},
+        "ranking_filters": selected_ranking_filters,
+        "comparison_track": resolved_comparison_track,
         "cell_pair_direction": "unordered_directions_collapsed",
         "score": (
             f"{weighting}_fgsea_{score_type}_running_sum_gseaParam="
@@ -583,6 +615,7 @@ def main() -> None:
     parser.add_argument("--condition-map", action="append", default=[])
     parser.add_argument("--expected-filter", action="append", default=[])
     parser.add_argument("--ranking-filter", action="append", default=[])
+    parser.add_argument("--comparison-track", choices=sorted(COMPARISON_TRACKS))
     parser.add_argument(
         "--score-type",
         choices=("std", "pos", "abs"),
@@ -624,6 +657,7 @@ def main() -> None:
         condition_map=_parse_condition_map(args.condition_map),
         expected_filters=_parse_expected_filters(args.expected_filter),
         ranking_filters=_parse_ranking_filters(args.ranking_filter),
+        comparison_track=args.comparison_track,
         score_type=args.score_type,
         weight_exponent=args.weight_exponent,
         tie_policy=args.tie_policy,

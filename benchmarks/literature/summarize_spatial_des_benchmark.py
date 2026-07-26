@@ -30,6 +30,17 @@ EXPECTED_DES_STRATA = 8
 SUMMARY_FILENAME = "spatial_des_benchmark_summary.tsv"
 MANIFEST_FILENAME = "manifest.json"
 ANALYSIS_UNITS = frozenset({"subject_id", "sample_id", "condition_level"})
+COMPARISON_TRACKS = frozenset(
+    {
+        "legacy_unspecified",
+        "native_cardinality",
+        "continuous_strength",
+        "fixed_k_100",
+        "fixed_k_250",
+        "fixed_k_500",
+        "fixed_k_1000",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -42,6 +53,7 @@ class EvaluationBundle:
     scenario: str
     expected_sha256: str
     expected_filters: dict[str, str]
+    comparison_track: str
     analysis_unit: str
     analysis_unit_source: str
     conditions: tuple[str, ...]
@@ -109,6 +121,15 @@ def _canonical_filters(value: object) -> dict[str, str]:
         column = _canonical_string(key, field="expected filter column")
         result[column] = _canonical_string(item, field=f"expected filter {column}")
     return dict(sorted(result.items()))
+
+
+def _comparison_track(value: object) -> str:
+    if value is None:
+        return "legacy_unspecified"
+    track = _canonical_string(value, field="comparison_track")
+    if track not in COMPARISON_TRACKS:
+        raise ValueError(f"unsupported comparison_track: {track!r}")
+    return track
 
 
 def _resolve_manifest(path: str | Path) -> Path:
@@ -235,7 +256,7 @@ def _canonical_fraction(value: object) -> float:
         raise ValueError("top_fractions must use 0.1, 0.2, 0.3, or 0.4")
     if isinstance(value, np.generic):
         value = value.item()
-    if not isinstance(value, (str, int, float)):
+    if not isinstance(value, str | int | float):
         raise ValueError("top_fractions must use 0.1, 0.2, 0.3, or 0.4")
     try:
         numeric = float(value)
@@ -375,6 +396,7 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
         raise ValueError(f"evaluation is not complete: {manifest_path}")
     scenario = _canonical_string(manifest.get("scenario"), field="scenario")
     expected_filters = _canonical_filters(manifest.get("expected_filters"))
+    comparison_track = _comparison_track(manifest.get("comparison_track"))
     direction = _canonical_string(
         manifest.get("cell_pair_direction"), field="cell_pair_direction"
     )
@@ -444,6 +466,7 @@ def _load_evaluation(path: str | Path) -> EvaluationBundle:
         scenario=scenario,
         expected_sha256=expected_sha256,
         expected_filters=expected_filters,
+        comparison_track=comparison_track,
         analysis_unit=analysis_unit,
         analysis_unit_source=unit_source,
         conditions=conditions,
@@ -466,6 +489,7 @@ def _panel_contract(bundle: EvaluationBundle) -> dict[str, Any]:
         "expected_sets_sha256": bundle.expected_sha256,
         "expected_filters": bundle.expected_filters,
         "expected_variant": bundle.expected_filters.get("variant", "not_applicable"),
+        "comparison_track": bundle.comparison_track,
         "analysis_unit": bundle.analysis_unit,
         "conditions": list(bundle.conditions),
         "top_fractions": list(bundle.fractions),
@@ -572,6 +596,7 @@ def summarize_evaluations(
             {
                 **identity_record,
                 "analysis_unit": panel["analysis_unit"],
+                "comparison_track": panel["comparison_track"],
                 "expected_sets_sha256": panel["expected_sets_sha256"],
                 "expected_variant": panel["expected_variant"],
                 "expected_filters_json": _canonical_json(panel["expected_filters"]),

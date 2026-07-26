@@ -107,7 +107,10 @@ methods can be replayed through the same checksum-bound evaluator. CRYCHIC's
 multi-endpoint ranking payload is filtered only after that full-payload check:
 `diagnostic_one_se_native_count_des` enters the native-cardinality panel,
 `continuous_weighted_des` enters the continuous panel, and each
-`top_k_count_des` event budget remains a separate fixed-K sensitivity.
+`top_k_count_des` event budget remains a separate fixed-K sensitivity. These
+are frozen as `native_cardinality`, `continuous_strength`, and
+`fixed_k_100/250/500/1000` comparison tracks; the summarizer ranks methods
+only within an identical track.
 
 ### scSeqCommDiff native subject arm
 

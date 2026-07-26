@@ -111,12 +111,15 @@ as separate panels only after the whole-file checksum check:
 
 - native cardinality: `--ranking-filter
   des_variant=diagnostic_one_se_native_count_des --ranking-statistic
-  raw_cardinality`;
+  raw_cardinality --comparison-track native_cardinality`;
 - continuous sensitivity: `--ranking-filter
-  des_variant=continuous_weighted_des --ranking-statistic raw_strength`;
+  des_variant=continuous_weighted_des --ranking-statistic raw_strength
+  --comparison-track continuous_strength`;
 - fixed-K sensitivity: `--ranking-filter des_variant=top_k_count_des` plus one
-  explicit `event_budget` filter for each budget.
+  explicit `event_budget` filter and matching `--comparison-track
+  fixed_k_K` for each budget.
 
+External-method evaluations must declare the same shared comparison track.
 Endpoints or fixed-K budgets must never be pooled into one method row.
 
 Focused verification: 10 real-runner tests passed. These tests cover frozen roles,

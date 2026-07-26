@@ -12,6 +12,7 @@ from benchmarks.literature.evaluate_spatial_des_benchmark import (
     _parse_expected_filters,
     _parse_ranking_filters,
     _resolved_analysis_unit,
+    _resolved_comparison_track,
     _sha256,
     _validate_expected_run_bindings,
     _validate_run_binding,
@@ -512,6 +513,7 @@ def test_bound_runner_filters_one_crychic_ranking_variant(tmp_path: Path) -> Non
         ranking_filters={
             "des_variant": "diagnostic_one_se_native_count_des"
         },
+        comparison_track="native_cardinality",
         score_type="pos",
         exclude_self_pairs=True,
         ranking_statistic="raw_cardinality",
@@ -522,9 +524,15 @@ def test_bound_runner_filters_one_crychic_ranking_variant(tmp_path: Path) -> Non
     assert manifest["ranking_filters"] == {
         "des_variant": "diagnostic_one_se_native_count_des"
     }
+    assert manifest["comparison_track"] == "native_cardinality"
     assert manifest["outputs"]["scores"]["rows"] == 4
     assert _parse_ranking_filters(["des_variant=native"]) == {
         "des_variant": "native"
     }
     with pytest.raises(ValueError, match="COLUMN=VALUE"):
         _parse_ranking_filters(["bad"])
+    with pytest.raises(ValueError, match="explicit comparison track"):
+        _resolved_comparison_track(
+            None,
+            ranking_filters={"des_variant": "native"},
+        )
