@@ -210,6 +210,34 @@ def test_subject_run_cannot_be_evaluated_in_condition_level_scenario(
         )
 
 
+def test_schema_bound_analysis_unit_manifest_must_be_complete(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "run_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "crychic-liana-condition-aware-s4-benchmark-v1",
+                "status": "prepared",
+                "analysis_unit": {
+                    "replicate_key": "subject_id",
+                    "subject_key": "subject_id",
+                    "primary_panel": False,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="not complete"):
+        _validate_run_binding(
+            manifest,
+            scenario="multi_sample",
+            analysis_unit="subject_id",
+        )
+
+
 @pytest.mark.parametrize(
     "schema_version",
     [

@@ -242,6 +242,8 @@ def _validate_run_binding(
     if not isinstance(payload, dict):
         raise ValueError("run manifest must be a JSON object")
     schema = payload.get("schema_version")
+    if schema is not None and payload.get("status") != "complete":
+        raise ValueError("schema-bound run manifest is not complete")
     analysis = payload.get("analysis_unit")
     binding_source = "analysis_unit.replicate_key"
     provenance: dict[str, object] = {}
