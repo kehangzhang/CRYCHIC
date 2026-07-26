@@ -176,6 +176,7 @@ def test_independent_bootstrap_is_stratified_by_condition() -> None:
         subject_column="subject_id",
         n_bootstraps=8,
         strata_keys=(),
+        context_keys=("condition",),
         seed_lineage=SeedLineage(17),
     )
     condition_by_subject = dict(
@@ -188,6 +189,81 @@ def test_independent_bootstrap_is_stratified_by_condition() -> None:
         ]
         assert draw_conditions.count("control") == 3
         assert draw_conditions.count("stim") == 3
+
+
+def test_continuous_bootstrap_preserves_subject_invariant_crossfit_context() -> None:
+    metadata = pd.DataFrame(
+        [
+            {
+                "sample_id": f"subject-{index:02d}",
+                "subject_id": f"subject-{index:02d}",
+                "condition": "A" if index < 12 else "B",
+                "dose": float(index - 12),
+            }
+            for index in range(24)
+        ]
+    )
+    exchangeability = build_exchangeability_map(
+        metadata,
+        sample_key="sample_id",
+        subject_key="subject_id",
+        context_keys=("condition", "dose"),
+    )
+    plans = _plan_design_stratified_bootstraps(
+        metadata,
+        exchangeability,
+        V7EstimatorSpec(design=_continuous_design()),
+        subject_column="subject_id",
+        n_bootstraps=99,
+        strata_keys=(),
+        context_keys=("condition",),
+        seed_lineage=SeedLineage(17),
+    )
+    condition_by_subject = dict(
+        zip(metadata["subject_id"], metadata["condition"], strict=True)
+    )
+
+    for plan in plans:
+        draw_conditions = [
+            condition_by_subject[draw.source_subject_id] for draw in plan.draws
+        ]
+        assert draw_conditions.count("A") == 12
+        assert draw_conditions.count("B") == 12
+
+
+def test_paired_bootstrap_does_not_stratify_within_subject_context() -> None:
+    metadata = pd.DataFrame(
+        [
+            {
+                "sample_id": f"subject-{index:02d}-{condition}",
+                "subject_id": f"subject-{index:02d}",
+                "condition": condition,
+            }
+            for index in range(5)
+            for condition in ("control", "stim")
+        ]
+    )
+    exchangeability = build_exchangeability_map(
+        metadata,
+        sample_key="sample_id",
+        subject_key="subject_id",
+        context_keys=("condition",),
+    )
+    plans = _plan_design_stratified_bootstraps(
+        metadata,
+        exchangeability,
+        V7EstimatorSpec(design=_paired_design()),
+        subject_column="subject_id",
+        n_bootstraps=8,
+        strata_keys=(),
+        context_keys=("condition",),
+        seed_lineage=SeedLineage(17),
+    )
+
+    assert all(len(plan.draws) == 5 for plan in plans)
+    assert any(
+        len({draw.source_subject_id for draw in plan.draws}) < 5 for plan in plans
+    )
 
 
 def test_continuous_m5_accepts_the_registered_slope_contrast() -> None:

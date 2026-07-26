@@ -71,7 +71,9 @@ from .v7_estimator import (
 V7_FULL_PIPELINE_RESAMPLING_VERSION = "v7_full_refit_bootstrap_permutation_loso_v2"
 _SCHEMA_VERSION = "2.0.0"
 _LOSO_POLICY = "remove_complete_subject_block_then_refit_v1"
-_BOOTSTRAP_POLICY = "design_stratified_complete_subject_block_with_replacement_v1"
+_BOOTSTRAP_POLICY = (
+    "design_stratified_complete_subject_block_with_subject_invariant_context_v2"
+)
 _SERIAL_BACKEND = "serial_v1"
 _THREAD_BACKEND = "bounded_shared_snapshot_thread_pool_v1"
 _PROCESS_BACKEND = "bounded_initialized_spawn_process_pool_v1"
@@ -296,6 +298,7 @@ def _bootstrap_strata_columns(
     design: V7EstimatorSpec,
     *,
     strata_keys: tuple[str, ...],
+    subject_invariant_context_keys: tuple[str, ...],
 ) -> tuple[str, ...]:
     result = set(strata_keys)
     kind = DifferentialDesignKind(design.design.design_kind)
@@ -304,6 +307,8 @@ def _bootstrap_strata_columns(
         DifferentialDesignKind.INDEPENDENT_MULTI_GROUP,
     }:
         result.add(design.design.condition_column)
+    if kind is DifferentialDesignKind.CONTINUOUS:
+        result.update(subject_invariant_context_keys)
     if design.design.cohort_column is not None:
         result.add(design.design.cohort_column)
     return tuple(sorted(result))
@@ -317,13 +322,34 @@ def _plan_design_stratified_bootstraps(
     subject_column: str,
     n_bootstraps: int,
     strata_keys: tuple[str, ...],
+    context_keys: tuple[str, ...],
     seed_lineage: SeedLineage,
 ) -> tuple[SubjectBootstrapPlan, ...]:
     if n_bootstraps == 0:
         return ()
+    context_required = {subject_column, *context_keys}
+    context_missing = context_required.difference(sample_metadata.columns)
+    if context_missing:
+        raise ValueError(
+            "bootstrap metadata is missing fields: "
+            f"{sorted(context_missing)}"
+        )
+    context_grouped = sample_metadata.loc[:, list(context_required)].groupby(
+        subject_column,
+        observed=True,
+        sort=False,
+    )
+    subject_invariant_context_keys = tuple(
+        sorted(
+            column
+            for column in context_keys
+            if context_grouped[column].nunique(dropna=False).eq(1).all()
+        )
+    )
     strata_columns = _bootstrap_strata_columns(
         estimator_spec,
         strata_keys=strata_keys,
+        subject_invariant_context_keys=subject_invariant_context_keys,
     )
     required = {subject_column, *strata_columns}
     missing = required.difference(sample_metadata.columns)
@@ -1815,6 +1841,7 @@ def run_v7_full_pipeline_resampling(
         subject_column="subject_id",
         n_bootstraps=bootstraps,
         strata_keys=resolved_strata,
+        context_keys=tuple(config.context_keys),
         seed_lineage=lineage,
     )
     permutation_plans = (
