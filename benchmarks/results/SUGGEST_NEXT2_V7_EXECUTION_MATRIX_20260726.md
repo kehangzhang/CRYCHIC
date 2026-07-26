@@ -23,10 +23,12 @@ evidence.
 | PR10 full-pipeline resampling | complete | serial/process identity and six-design regression | r20 calibration active |
 | intervention validation | complete | Kang/BRCA preflight and 10 tests | formal runs pending |
 | sparse spatial geometry | complete | Kuppe/MS real-section smoke and 13 tests | formal runs pending |
+| subject multi-sample v2 replay | complete | 24 evaluator/lineage tests | Kuppe external partial; CRYCHIC/MS pending |
 
 The current real/spatial benchmark branch is
 `benchmark/suggest-next2-v7-real-locked-20260726`. The spatial implementation is
-commit `9d26b0d`; the intervention implementation is commit `1173e40`.
+commit `9d26b0d`; the intervention implementation is commit `1173e40`; strict
+subject-v2 replay lineage is commit `82081c4`.
 
 ## Experiment coverage
 
@@ -78,10 +80,14 @@ multicohort and continuous designs are represented where preregistered.
 | BRCA paired treatment validation | E: 9 pairs; NE: 20 pairs | pending | descriptive external response evidence |
 | Kuppe sparse geometry | 13 sections, 43,051 spots | formal run pending | indirect spatial silver evidence |
 | MS sparse geometry | 11 sections, 40,587 spots | formal run pending | indirect spatial silver evidence |
+| subject-level floor/exclude-self truth | Kuppe 4/7; MS 5/5 subjects | complete | same-unit v2 replay |
+| Kuppe subject-v2 external replay | scSeqCommDiff, LIANA+, LIANA, CellChat | three observed; legacy CellChat NE | no CRYCHIC rank until v7 refit |
+| MS subject-v2 external replay | paper-matched 69,168 cells | pending | old 75,004-cell outputs excluded |
 
-At 2026-07-26 12:37 CST, the active r20 campaign had completed 31/120 datasets
-with zero failures. Its live campaign manifest, not this timestamped row, is the
-authoritative status source.
+At 2026-07-26 14:43 CST, the active r20 campaign had completed 46/120 datasets
+with zero failures. It had finished the 20 independent-multigroup replicates and
+6/20 independent-two-group replicates. Its live campaign manifest, not this
+timestamped row, is the authoritative status source.
 
 The current M4 candidate is not a release candidate despite its development
 ranking gain. Mean AUPRC was 0.4999 (independent) and 0.6526 (paired), but pooled
@@ -111,8 +117,10 @@ must not be described as a calibrated probability.
 2. Apply its prespecified diagnostic gate; do not tune on MS or locked families.
 3. Run Kuppe and MS v7 real refits in parallel, then Kang/BRCA and both formal
    geometry jobs within the 80% system-memory boundary.
-4. Resume the amended development root so its existing 200 occurrence datasets
+4. Run the paper-matched MS subject-v2 external methods and current CellChat
+   sensitivity arms; rank only within identical native/continuous contracts.
+5. Resume the amended development root so its existing 200 occurrence datasets
    are reused and the remaining 600 datasets are added.
-5. Run the untouched 5,750-dataset locked campaign.
-6. Run the 1,000-replicate formal null calibration required for any formal p/q
+6. Run the untouched 5,750-dataset locked campaign.
+7. Run the 1,000-replicate formal null calibration required for any formal p/q
    release, summarize all leaderboards, then generate notebooks and archive.
