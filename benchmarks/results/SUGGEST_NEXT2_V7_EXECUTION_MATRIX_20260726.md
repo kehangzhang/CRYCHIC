@@ -18,7 +18,7 @@ evidence.
 | PR5 sender detection, null attribution and diagnostics | complete | decoy/cardinality tests | code evidence |
 | PR6 EB-shrunken M2 coupling | complete | sender-coupling tests | code evidence |
 | PR7 signed M1 head | complete | program/inhibitory/null tests | separate head |
-| PR8 M4 two-part occurrence | complete | smoke and 200-dataset development slice | calibration incomplete |
+| PR8 M4 two-part occurrence | complete | smoke and 200-dataset development slice | development ranking gain; release rejected |
 | PR9 uncertainty-aware M5 topology swaps | complete | topology and smoke tests | locked evidence pending |
 | PR10 full-pipeline resampling | complete | serial/process identity and six-design regression | r20 calibration active |
 | intervention validation | complete | Kang/BRCA preflight and 10 tests | formal runs pending |
@@ -43,7 +43,7 @@ inference crossover fixes G3 and compares I0/I1/I2.
 | E3 sender detection/attribution | detection, legacy assignment, null sender, +M2 at 2/5/10/20 candidates | complete | development/locked pending |
 | E4 signed program | G3 versus G4 on program, inhibitory and generic-state null | complete | locked families pending |
 | E5 hypergraph | no/partial/full/permuted/rewired/clique/tensor priors | complete | locked families pending |
-| E6 occurrence | raw/Fisher/DCST-compatible/logistic/beta-binomial/M4 | complete | occurrence development slice complete; remaining calibration pending |
+| E6 occurrence | raw/Fisher/DCST-compatible/logistic/beta-binomial/M4 | complete | occurrence development complete; current candidate rejected for release |
 
 ## Dataset-family coverage
 
@@ -82,6 +82,12 @@ multicohort and continuous designs are represented where preregistered.
 At 2026-07-26 12:37 CST, the active r20 campaign had completed 31/120 datasets
 with zero failures. Its live campaign manifest, not this timestamped row, is the
 authoritative status source.
+
+The current M4 candidate is not a release candidate despite its development
+ranking gain. Mean AUPRC was 0.4999 (independent) and 0.6526 (paired), but pooled
+calibration slopes were 0.1570 and 0.1852, prevalence-effect RMSE did not improve,
+and no positive event survived q <= 0.10. Its output remains a working score and
+must not be described as a calibrated probability.
 
 ## Release boundaries
 
